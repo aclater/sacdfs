@@ -1,0 +1,44 @@
+# NFS export (issue #18): file handles through the kernel, as root, and a real export with
+# the kernel NFS server over loopback, with sacdfs restarted under an open file. Needs root
+# and the nfsd module, which the runner has; the NFS server runs in a privileged Fedora
+# container (the only privileged container of the checks).
+name: nfs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+  # registry.fedoraproject.org/fedora:44, pinned by digest.
+  FEDORA: registry.fedoraproject.org/fedora@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
+
+jobs:
+  nfs:
+    name: nfs export
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - name: Build
+        run: cargo test --locked --test export --no-run && cargo build --locked
+      # open_by_handle_at of files needs CAP_DAC_READ_SEARCH in the initial user namespace,
+      # as the NFS server has: run the file handle tests as root.
+      - name: File handles across a restart (as root)
+        run: sudo --preserve-env=HOME,PATH,CARGO_TERM_COLOR env SACDFS_FUSE_TESTS=1 SACDFS_EXPORT_TESTS=1 cargo test --locked --test export
+      - name: NFS export over loopback
+        run: |
+          sudo modprobe nfsd
+          sudo docker run --rm --privileged -v "$PWD:/src" -w /src "$FEDORA" \
+            sh -c 'dnf -y -q install nfs-utils rpcbind fuse3 python3 util-linux procps-ng findutils && tests/nfs-loopback.sh target/debug/sacdfs'

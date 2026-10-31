@@ -22,6 +22,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- Persistent file identity and NFS export (#18): inode numbers come from what an entry is
+  (a directory's or an image's relative path; an area's image and slot; a file's image,
+  slot, track number, format and PCM options), so they are the same on every mount, with
+  `--flatten` on or off. Track files carry a generation number that changes with their
+  image's size or mtime and with the PCM options, so stale handles fail with `ESTALE`. FUSE
+  export support is on, `.` and `..` are looked up, and an inode number from a file handle
+  kept across a restart is found again from the names walked at mount: the kernel NFS server
+  can export the mount, and its clients read on through a restart of sacdfs.
 - Persistent seek index (#20): the frame positions sacdfs learns in each image are kept in
   `$XDG_CACHE_HOME/sacdfs` (`--index-cache DIR`, `--no-index-cache`), so that a seek after a
   remount needs about one read of the image instead of four to five; on a network share each
