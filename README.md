@@ -169,12 +169,22 @@ with four to five reads of the image (three for plain DSD discs), or one read wh
 index cache already knows that part of the disc. With images on a network share, each read of
 the image is a round trip, so these counts matter most there. Reading a WAV file straight through
 takes 1.1 to 1.2 times as long as reading the same track's DSF file (the WAV file holds 1.5
-times the bytes), and a seek in it returns in about 2 ms. See
+times the bytes), and a seek in it returns in about 2 ms. Over SMB on a gigabit LAN, a seek
+returns in about 5 ms with sacdfs on the server, or with the images on the share. See
 [docs/performance.md](docs/performance.md).
+
+## Running it on a NAS
+
+The container image in this repository runs sacdfs next to the images and shares its mount
+over SMB and NFS, so that any client (Windows, macOS, phones, network players) sees the DSF
+and WAV files, and seeks stay fast because sacdfs's reads of the images stay on the NAS. See
+[docs/deployment.md](docs/deployment.md) for Docker, Podman, Compose and TrueNAS SCALE, and
+for mounting the shares.
 
 ## Limits
 
-- Linux only for now, and read-only.
+- Linux only for now, and read-only; other systems can read the files over SMB or NFS from
+  [the container](docs/deployment.md).
 - DSF and WAV output only: no DSDIFF (DFF), no FLAC, no 44.1/48 kHz or 16-bit PCM. The converter is measured in
   [docs/pcm-quality.md](docs/pcm-quality.md).
 - The directory tree is read once, at mount time. Images added to or removed from `SOURCE`

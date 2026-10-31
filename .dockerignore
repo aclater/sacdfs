@@ -1,0 +1,5 @@
+# Only what the build stage copies is needed; keep the context small.
+target
+.git
+tests
+docs

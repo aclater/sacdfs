@@ -25,3 +25,15 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: deps
+  # The base images of Containerfile, pinned by digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      images:
+        patterns: ["*"]
+    commit-message:
+      prefix: container
