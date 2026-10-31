@@ -45,6 +45,19 @@ shares.
     start, because FUSE has no stable device number. A changing id would also invalidate
     every client's handles.
 
+## The published image
+
+Each release publishes the image to GitHub's container registry, built for generic x86-64
+by the release workflow after the share test (SMB and NFS) passed on it:
+
+```sh
+docker pull ghcr.io/aclater/sacdfs:0.1.0       # a release; :latest is the newest
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.0 -R aclater/sacdfs
+```
+
+The attestation shows which commit and workflow built it. In the commands below, use
+`ghcr.io/aclater/sacdfs:<version>` where they say `sacdfs`, or build the image yourself.
+
 ## Building the image
 
 ```sh
@@ -192,9 +205,10 @@ These steps follow TrueNAS SCALE 24.10 ("Electric Eel") and later, whose apps ru
 They are written from TrueNAS's documentation, not tested on a TrueNAS system; the names of
 screens and fields may differ between releases.
 
-1. **The image.** TrueNAS cannot build images. Build it elsewhere (above) and push it to a
-   registry the NAS can reach, for example a private registry or your own GitHub Container
-   Registry namespace, or load it from a file in a shell on the NAS (`docker load`).
+1. **The image.** Use the published one, `ghcr.io/aclater/sacdfs:<version>`. TrueNAS
+   cannot build images: for a build of your own, build it elsewhere (above) and push it to
+   a registry the NAS can reach, or load it from a file in a shell on the NAS
+   (`docker load`).
 2. **Addresses.** TrueNAS's own SMB and NFS services use ports 445 and 2049 on all its
    addresses. If you use them, give sacdfs an address of its own: add an alias IP address
    to the network interface (Network, Interfaces), then bind TrueNAS's SMB and NFS services
@@ -208,7 +222,7 @@ screens and fields may differ between releases.
    ```yaml
    services:
      sacdfs:
-       image: registry.example.org/you/sacdfs:latest
+       image: ghcr.io/aclater/sacdfs:0.1.0
        restart: unless-stopped
        devices:
          - /dev/fuse

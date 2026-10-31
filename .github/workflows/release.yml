@@ -1,0 +1,386 @@
+# The release (#44). On a version tag (v0.1.0, ...; tags are immutable by ruleset): check
+# that the tag matches Cargo.toml and has a CHANGELOG.md section, build and test the Linux
+# binaries and the container image, then publish:
+#   - a GitHub release with the notes from CHANGELOG.md and two Linux binaries (glibc 2.28+),
+#     sacdfs-<version>-x86_64-linux.tar.gz (generic x86-64) and
+#     sacdfs-<version>-x86_64-v3-linux.tar.gz (x86-64-v3: AVX2 CPUs), each with COPYING,
+#     README.md and CHANGELOG.md, a .sha256 checksum and a build provenance attestation;
+#   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, attested, after the
+#     container share test passed on that very image.
+#
+# Dry run: run by hand (workflow_dispatch), or on a pull request that changes the release's
+# files, it builds and tests everything and publishes nothing. Every job or step that
+# publishes is guarded by `github.ref_type == 'tag'`, and only a tag push makes that true.
+#
+# Not crates.io: scarletbook is a git dependency, which crates.io refuses. The release
+# checklist is in CONTRIBUTING.md, "Releasing".
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/scripts/**"
+      - "Containerfile"
+      - "deploy/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+permissions:
+  contents: read
+
+# One release per tag at a time; a second run for the same ref waits instead of racing it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+  IMAGE: ghcr.io/aclater/sacdfs
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Cheap checks first: a tag that doesn't match the version, or has no CHANGELOG.md section,
+  # stops the release before anything is built.
+  preflight:
+    name: version and notes
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tag matches Cargo.toml's version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(python3 -I -c '
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              print(tomllib.load(f)["package"]["version"])')
+          locked=$(python3 -I -c '
+          import tomllib
+          with open("Cargo.lock", "rb") as f:
+              print(next(p["version"] for p in tomllib.load(f)["package"] if p["name"] == "sacdfs"))')
+          if [[ "$locked" != "$version" ]]; then
+            echo "::error::Cargo.lock has sacdfs $locked, Cargo.toml $version"
+            exit 1
+          fi
+          if [[ "$REF_TYPE" == tag ]]; then
+            if [[ "$REF_NAME" != "v$version" ]]; then
+              echo "::error::tag $REF_NAME does not match Cargo.toml's version $version (expected v$version)"
+              exit 1
+            fi
+          else
+            echo "::notice::dry run of sacdfs $version from $REF_NAME: nothing will be published"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Release notes from CHANGELOG.md
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          dry=()
+          [[ "$REF_TYPE" == tag ]] || dry=(--dry-run)
+          python3 -I .github/scripts/changelog-notes.py CHANGELOG.md "$VERSION" "${dry[@]}" > notes.md
+          cat notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: notes
+          path: notes.md
+          retention-days: 7
+
+  # Linux binaries, linked against glibc 2.28: built on UBI 8 (RHEL 8's glibc), so they run
+  # on RHEL 8 and later, Debian 10, Ubuntu 20.04, Fedora 29 and later. Not static musl,
+  # although sacdfs could build so (fuser here is pure Rust, no dependency builds C code):
+  # measured, musl's allocator and string functions made WAV reads 1.4 to 1.5 times slower and
+  # plain DSF reads up to 1.2 times slower (docs/design.md, "Release binaries"). Rust comes
+  # from rustup, the toolchain the rest of CI tests with: RHEL 8's Rust is older than sacdfs's
+  # MSRV. Each build is tested in that container (the whole test suite, FUSE included,
+  # against that very build), and the packaged binary is then checked on the corpus on the
+  # runner's newer system.
+  binaries:
+    name: binary (${{ matrix.name }})
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: x86_64, cpu: x86-64}
+          - {name: x86_64-v3, cpu: x86-64-v3}
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      NAME: ${{ matrix.name }}
+      # registry.access.redhat.com/ubi8/ubi, pinned by digest: glibc 2.28.
+      UBI8: registry.access.redhat.com/ubi8/ubi@sha256:c322aa68f2d630b36b9faab64094357f62720be2f56f7099376ca2d6c4fe389b
+      GLIBC_MAX: "2.28"
+      # target-cpu is always set, never left to a toolchain's default (RHEL's Rust defaults
+      # to x86-64-v3). Paths of the build container are left out of the binary.
+      RUSTFLAGS: -C target-cpu=${{ matrix.cpu }} --remap-path-prefix=/root/.cargo=/cargo --remap-path-prefix=/src=/sacdfs
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The runner can run an x86-64-v3 build
+        if: matrix.cpu == 'x86-64-v3'
+        run: |
+          # The v3 binary is published only if it passed its tests on this runner.
+          for f in avx2 bmi1 bmi2 fma movbe; do
+            grep -qw "$f" /proc/cpuinfo || { echo "::error::runner CPU has no $f: the x86-64-v3 build cannot be tested"; exit 1; }
+          done
+      - name: Build and test on UBI 8 (FUSE tests required)
+        run: |
+          docker run --rm --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+            -e RUSTFLAGS -e CARGO_PROFILE_RELEASE_STRIP -e RUST_STABLE -e CARGO_TERM_COLOR \
+            -e SACDFS_FUSE_TESTS=1 -v "$PWD:/src" -w /src "$UBI8" bash -euxc '
+              rpm -q glibc
+              dnf -y -q --setopt=install_weak_deps=False install gcc fuse3
+              curl -sSfL --proto =https --tlsv1.2 -o /tmp/rustup-init \
+                https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+              chmod +x /tmp/rustup-init
+              /tmp/rustup-init -y -q --no-modify-path --profile minimal --default-toolchain "$RUST_STABLE"
+              export PATH=/root/.cargo/bin:$PATH
+              cargo build --release --locked --bin sacdfs
+              cargo test --release --locked'
+      - name: glibc 2.28 or later, stripped
+        run: |
+          bin=target/release/sacdfs
+          file "$bin"
+          readelf -d "$bin" | grep NEEDED
+          max=$(objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)
+          echo "newest glibc symbol version: $max"
+          if [[ "$(printf '%s\n' "$max" "$GLIBC_MAX" | sort -V | tail -n 1)" != "$GLIBC_MAX" ]]; then
+            echo "::error::the binary needs glibc $max, newer than $GLIBC_MAX"; exit 1
+          fi
+          if readelf -S "$bin" | grep -q '\.symtab'; then
+            echo "::error::the binary is not stripped"; exit 1
+          fi
+      - name: Package
+        run: |
+          pkg="sacdfs-$VERSION-$NAME-linux"
+          mkdir -p "dist/$pkg"
+          install -m 0755 target/release/sacdfs "dist/$pkg/sacdfs"
+          install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
+          # Reproducible: fixed order, owner and times (the commit's), no gzip timestamp.
+          mtime=$(git log -1 --format=%ct)
+          tar -C dist --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$mtime" \
+            -cf - "$pkg" | gzip -n -9 > "dist/$pkg.tar.gz"
+          (cd dist && sha256sum "$pkg.tar.gz" > "$pkg.tar.gz.sha256" && cat "$pkg.tar.gz.sha256")
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - name: The packaged binary serves the corpus
+        run: |
+          mkdir -p /tmp/check /tmp/mnt
+          tar -C /tmp/check -xzf "dist/$PKG.tar.gz"
+          bin="/tmp/check/$PKG/sacdfs"
+          "$bin" --version
+          "$bin" tests/corpus/images /tmp/mnt
+          status=0
+          python3 -I deploy/check-share.py tests/corpus/manifest.json /tmp/mnt --min 400 --wav || status=$?
+          fusermount3 -u /tmp/mnt
+          exit $status
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: bin-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # The image is built and tested here without any write permission; publishing it (below,
+  # on a tag) loads the very image tested.
+  image:
+    name: container image
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image (generic x86-64)
+        run: |
+          docker build -f Containerfile \
+            --build-arg RUSTFLAGS="-C target-cpu=x86-64" \
+            --label org.opencontainers.image.version="$VERSION" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            -t sacdfs:release .
+      - name: Container share test on this image (deploy/ci-share-test.sh)
+        run: deploy/ci-share-test.sh sacdfs:release
+      - name: Server log
+        if: always()
+        run: docker logs sacdfs 2>&1 | grep -v ' INFO  sacdfs::' | tail -n 200 || true
+      - name: Save the tested image
+        run: docker save sacdfs:release | gzip > sacdfs-image.tar.gz && ls -l sacdfs-image.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: image
+          path: sacdfs-image.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  # What a dry run would have published.
+  dry-run:
+    name: dry run summary
+    if: github.ref_type != 'tag'
+    needs: [preflight, binaries, image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: bin-*
+          path: dist
+          merge-multiple: true
+      - name: Summary
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          (cd dist && sha256sum -c ./*.sha256)
+          {
+            echo "## Dry run: sacdfs $VERSION, nothing published"
+            echo
+            echo "Release assets that a tag would publish:"
+            echo
+            echo '```'
+            (cd dist && ls -l && cat ./*.sha256)
+            echo '```'
+            echo
+            echo "Image that a tag would push: \`$IMAGE:$VERSION\` and \`$IMAGE:latest\` (share test passed)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishing, on a tag only.
+  release:
+    name: GitHub release
+    if: github.ref_type == 'tag'
+    needs: [preflight, binaries, image]
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating the release and uploading its assets.
+      contents: write
+      # Build provenance attestations (Sigstore, through the workflow's OIDC token).
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: bin-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: notes
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum -c ./*.sha256
+          cat ./*.tar.gz.sha256 > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        id: attest
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+      # The attestation also goes on the release as <asset>.intoto.jsonl (one bundle covers
+      # both), so it can be checked offline; each copy is verified first.
+      - name: Provenance bundles
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          for f in dist/*.tar.gz; do
+            cp "$BUNDLE" "$f.intoto.jsonl"
+            gh attestation verify "$f" --bundle "$f.intoto.jsonl" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          done
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        run: |
+          {
+            cat notes.md
+            echo
+            echo "## Downloads"
+            echo
+            echo "Linux binaries for x86_64, glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later), needing FUSE and \`fusermount3\` (package fuse3):"
+            echo
+            echo "- \`sacdfs-$VERSION-x86_64-linux.tar.gz\`: generic x86-64, for any x86_64 CPU."
+            echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
+            echo
+            echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic x86-64)."
+            echo
+            echo "Verify a download: \`sha256sum -c <asset>.sha256\` and \`gh attestation verify <asset> -R $GITHUB_REPOSITORY\`; the image: \`gh attestation verify oci://$IMAGE:$VERSION -R $GITHUB_REPOSITORY\`. See the README, \"Install\"."
+            echo
+            echo "Built from $GITHUB_SHA."
+          } > release-notes.md
+          pre=()
+          [[ "$VERSION" == *-* ]] && pre=(--prerelease)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
+            --title "sacdfs $VERSION" --notes-file release-notes.md \
+            dist/*.tar.gz dist/*.sha256 dist/*.intoto.jsonl dist/SHA256SUMS
+
+  image-publish:
+    name: publish image
+    if: github.ref_type == 'tag'
+    needs: [preflight, image, release]
+    runs-on: ubuntu-latest
+    permissions:
+      # Pushing to ghcr.io, and the attestation pushed next to the image.
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: image
+      - name: Push
+        id: push
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          docker load < sacdfs-image.tar.gz
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          tags=("$IMAGE:$VERSION")
+          # A pre-release (0.2.0-rc.1) doesn't move :latest.
+          [[ "$VERSION" == *-* ]] || tags+=("$IMAGE:latest")
+          for t in "${tags[@]}"; do
+            docker tag sacdfs:release "$t"
+            docker push "$t"
+          done
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION")
+          echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"
+          echo "pushed ${tags[*]} ($digest)"
+      - name: Attest build provenance
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Log out
+        if: always()
+        run: docker logout ghcr.io || true

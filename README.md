@@ -19,6 +19,56 @@ ls /mnt/sacd/"Some Disc"/Stereo
 fusermount3 -u /mnt/sacd
 ```
 
+## Install
+
+sacdfs runs on Linux (x86_64) and needs FUSE 3's `fusermount3` helper (package `fuse3` on
+most distributions). Each [release](https://github.com/aclater/sacdfs/releases) has two
+builds, and the container image for a NAS is on GitHub's registry. Nothing is on crates.io
+yet: sacdfs's engine, scarletbook, isn't on crates.io, and crates.io refuses a crate that
+depends on a git repository. `cargo install` from crates.io comes once scarletbook is there.
+
+### Binaries
+
+- `sacdfs-<version>-x86_64-linux.tar.gz`: generic x86-64, for any x86_64 CPU.
+- `sacdfs-<version>-x86_64-v3-linux.tar.gz`: for x86-64-v3 CPUs (AVX2, BMI2, FMA: most Intel
+  and AMD CPUs since about 2015, the Intel N100 family included). WAV conversion costs about
+  20 % less CPU; on an older CPU this build stops with an illegal-instruction error.
+  `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
+
+Both need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). Each
+archive holds `sacdfs`, `COPYING`, `README.md` and `CHANGELOG.md`. To download, check and
+install one:
+
+```sh
+v=0.1.0 a=x86_64          # or a=x86_64-v3
+gh release download "v$v" -R aclater/sacdfs -p "sacdfs-$v-$a-linux.tar.gz*"
+sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
+gh attestation verify "sacdfs-$v-$a-linux.tar.gz" -R aclater/sacdfs
+tar -xzf "sacdfs-$v-$a-linux.tar.gz"
+install -m 0755 "sacdfs-$v-$a-linux/sacdfs" ~/.local/bin/
+```
+
+Without `gh`, download the files from the release page (or with `curl -LO`). The checksum
+shows the download is intact; the attestation (GitHub's build provenance, signed with
+Sigstore) shows that this repository's release workflow built it, from which commit.
+`gh attestation verify` also accepts the `.intoto.jsonl` bundle next to each archive, with
+`--bundle`, to check offline.
+
+### Container image
+
+```sh
+docker pull ghcr.io/aclater/sacdfs:0.1.0        # or :latest
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.0 -R aclater/sacdfs
+```
+
+It runs sacdfs with Samba and NFS-Ganesha for a NAS, built for generic x86-64; how to run it
+is in [docs/deployment.md](docs/deployment.md).
+
+### From source
+
+See [Building](#building): `cargo build --release` with Rust 1.85 or later, or
+`cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.1.0`.
+
 ## Usage
 
 ```
@@ -175,8 +225,8 @@ returns in about 5 ms with sacdfs on the server, or with the images on the share
 
 ## Running it on a NAS
 
-The container image in this repository runs sacdfs next to the images and shares its mount
-over SMB and NFS, so that any client (Windows, macOS, phones, network players) sees the DSF
+The container image (`ghcr.io/aclater/sacdfs`, or built from this repository) runs sacdfs
+next to the images and shares its mount over SMB and NFS, so that any client (Windows, macOS, phones, network players) sees the DSF
 and WAV files, and seeks stay fast because sacdfs's reads of the images stay on the NAS. See
 [docs/deployment.md](docs/deployment.md) for Docker, Podman, Compose and TrueNAS SCALE, and
 for mounting the shares.

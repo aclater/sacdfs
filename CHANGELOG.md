@@ -8,6 +8,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- Release workflow (#44): on a version tag, Linux x86_64 binaries (generic and x86-64-v3,
+  glibc 2.28 or later, stripped, with COPYING, README and CHANGELOG), SHA-256 checksums,
+  build provenance attestations, release notes from this file, and the container image on
+  `ghcr.io/aclater/sacdfs` (version and `latest`) after the share test passed on it. Run by
+  hand, it is a dry run that publishes nothing. Install instructions in the README; release
+  checklist in CONTRIBUTING.md. Not on crates.io while scarletbook is a git dependency.
 - A container image for a NAS (`Containerfile`): sacdfs with Samba and NFS-Ganesha, sharing
   the mount read-only over SMB and NFSv4, configured with environment variables, with a
   health check and logs on standard output. Compose file in `deploy/`, guide in
@@ -24,6 +30,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- The container image is built for generic x86-64 by default, as documented: RHEL 10's
+  Rust, which builds it, targets x86-64-v3 (AVX2) unless told otherwise, so the image
+  didn't start on CPUs without AVX2. The container share test is now
+  `deploy/ci-share-test.sh`, shared by CI and the release.
 - SIGINT and SIGTERM detach a busy mount (open files, an NFS export) instead of logging an
   error and serving on: sacdfs stops when the last open file is closed. fuser already
   unmounted lazily for users other than root; now root behaves the same.

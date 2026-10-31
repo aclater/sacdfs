@@ -847,6 +847,61 @@ decisions, each with its reason:
 - **If one process stops, the container stops**, so the runtime's restart policy restarts
   all three together instead of leaving a server sharing an empty directory.
 
+## Release binaries and image (#44)
+
+`.github/workflows/release.yml` builds, tests and publishes a release on a `v*` tag, and does
+everything but publish when run by hand or on a pull request that changes it (a dry run).
+The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its reason:
+
+- **glibc 2.28, not static musl.** A static musl binary was the first choice (it runs on
+  any Linux), and sacdfs builds so: fuser is used without libfuse, and no dependency
+  compiles C. It passed the DSF gate (93/93 on the real discs), but measured on 2026-10-31
+  (3 fresh-mount straight reads of a stereo area each, same compiler and flags, generic
+  x86-64, under the benchmark lock, the host's VM nearly idle) it was much slower:
+
+  | Straight read, stereo area, s | glibc | musl | |
+  |---|---|---|---|
+  | DST disc, DSF files | 5.47 | 7.79 | 1.42x (median 1.34x) |
+  | DST disc, WAV files | 5.26 | 8.20 | 1.56x |
+  | plain DSD disc, WAV files | 2.47 | 3.73 | 1.51x |
+
+  Most likely musl's allocator and memory copies, under many decoder threads;
+  not investigated further. Performance comes first for sacdfs, so the release builds
+  against glibc instead, on **UBI 8** (RHEL 8's glibc 2.28) so that one binary covers RHEL 8
+  and later, Debian 10, Ubuntu 20.04 and Fedora 29 and later. CI fails the build if the
+  binary needs a newer glibc symbol. Older bases (glibc 2.17, CentOS 7) are out of support
+  and not Red Hat's current images. *Possible later:* musl with a faster allocator
+  (mimalloc), measured against this.
+- **Two builds: generic x86-64 and x86-64-v3,** `-C target-cpu` always explicit, since RHEL's
+  Rust defaults to x86-64-v3. Generic runs everywhere and already converts with AVX2 where
+  the CPU has it (#23); v3 costs about 20 % less CPU for WAV. The v3 build is tested on the
+  runner only if its CPU is x86-64-v3, and the release stops otherwise.
+- **Rust from rustup** (the version the other workflows use), not RHEL's: RHEL 8's Rust is
+  older than sacdfs's MSRV, and the tested toolchain should be the shipped one.
+- **Each build is tested as built:** the whole suite, FUSE tests required, in the UBI 8
+  container with the release profile and the build's flags; then the packaged binary,
+  unpacked on the runner, mounts the corpus and every track is checked against the corpus
+  manifest (DSF hashes, WAV headers).
+- **Stripped** (`CARGO_PROFILE_RELEASE_STRIP=symbols`, so Cargo.toml's release profile, which
+  the measurements use, is unchanged), **build paths remapped**, and the tarballs
+  **reproducible** (sorted, fixed owner, the commit's time, `gzip -n`).
+- **Integrity:** a `.sha256` per archive and `SHA256SUMS`; a GitHub build provenance
+  attestation (Sigstore) for both archives and for the image, the archives' bundle also on
+  the release as `.intoto.jsonl` for offline checks. The tag must equal `v` plus
+  Cargo.toml's version (and Cargo.lock's), and the notes are the tag's CHANGELOG.md section
+  (`.github/scripts/changelog-notes.py`); either missing stops the release before any build.
+- **The image** is the Containerfile built for generic x86-64 (many NAS CPUs, Atom, Celeron
+  and Pentium Silver among them, have no AVX2). The share test (`deploy/ci-share-test.sh`,
+  the one `container.yml` runs on every pull request) runs on that image, which is then
+  saved and loaded by the job that pushes it, so the pushed image is the tested one. That job
+  alone has `packages: write`. `:latest` follows releases without a hyphen.
+- **Permissions:** `contents: read` for the workflow; `contents: write` (the release) and
+  `id-token`/`attestations: write` only in the two publishing jobs, which run only when
+  `github.ref_type == 'tag'`. No caches (nothing a pull request writes can reach a release
+  build), no persisted credentials, actions pinned by SHA.
+- **Not crates.io.** scarletbook is a git dependency and crates.io refuses those
+  (`publish = false`). Publishing waits for scarletbook on crates.io (scarletbook-rs#39).
+
 ## Testing
 
 - Unit tests: DSF header and tag layout, offset-to-frame mapping (including the padded

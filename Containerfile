@@ -19,9 +19,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY src src
 COPY benches benches
 COPY examples examples
-# Generic x86-64 by default, what most distributions build; pass
+# Generic x86-64 by default, set explicitly: RHEL 10's Rust targets x86-64-v3 (AVX2) unless
+# told otherwise, and many NAS CPUs (Atom, Celeron, Pentium Silver) have no AVX2. The PCM
+# converter still uses AVX2 where the CPU has it (runtime dispatch, #23). Pass
 # --build-arg RUSTFLAGS="-C target-cpu=x86-64-v3" for an AVX2 NAS (about 20 % less CPU for PCM).
-ARG RUSTFLAGS=""
+ARG RUSTFLAGS="-C target-cpu=x86-64"
 RUN RUSTFLAGS="$RUSTFLAGS" cargo build --release --locked --bin sacdfs \
  && install -D -m 0755 target/release/sacdfs /out/sacdfs
 
