@@ -164,6 +164,12 @@ cargo build --release
 target/release/sacdfs --help
 ```
 
+The DSD-to-PCM converter chooses its code when it starts: AVX2 (x86-64-v3) where the CPU has
+it, SSE2 otherwise. A generic build therefore runs the converter at AVX2 speed on most
+current CPUs, with the same output bit for bit. `SACDFS_SIMD=baseline`, `v3` or `v4` picks
+another copy, for tests and measurements; the AVX-512 copy (`v4`) is not the default because
+it measured slower ([docs/design.md](docs/design.md#pcm-conversion-phase-1-the-converter)).
+
 Run the tests with `cargo test`. The mount tests need `/dev/fuse` and `fusermount3` and pass
 silently without them; set `SACDFS_FUSE_TESTS=1` to make their absence a failure. See
 [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -22,6 +22,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- Runtime CPU dispatch for the DSD-to-PCM converter (#23): its kernels are compiled for
+  generic x86-64, x86-64-v3 (AVX2) and x86-64-v4 (AVX-512), and the AVX2 copy runs where the
+  CPU has it, so generic builds convert about 1.4 times faster on most current CPUs, with
+  the same output bit for bit. `SACDFS_SIMD=baseline|v3|v4` picks a copy (for tests and
+  measurements); `pcm::Simd` and `Converter::with_simd` do it per converter.
 - Open image files are kept in a bounded cache (#26): an image stays open from the listing
   of its directory and between reads, so that a seek no longer opens it again (0.6 to 0.9 ms
   on an NFS share). `--max-open-images N` (default 64) bounds them, least recently used
