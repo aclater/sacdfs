@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! sacdfs: a read-only FUSE filesystem that shows the audio of Super Audio CD disc images
-//! as DSF files, decoded on demand by [scarletbook].
+//! as DSF and WAV files, decoded (and converted to PCM) on demand by [scarletbook].
 //!
 //! The library holds everything but the command line, so that tests can read the files
 //! without mounting: [`tree::Tree`] is the directory tree, [`track::Reader`] reads a byte
@@ -17,3 +17,4 @@ pub mod names;
 pub mod pcm;
 pub mod track;
 pub mod tree;
+pub mod wav;
