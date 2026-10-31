@@ -21,7 +21,7 @@ anything first.
    missing directory or an I/O error on one file, never as a crash of the mount.
 
 Not goals for 0.1: writing, DSDIFF (DFF) output, PCM output (WAV/FLAC, which needs DSD to
-PCM conversion), PS3 network sources, macOS/FreeBSD (Linux first; fuser supports both later).
+PCM conversion; planned in #11, the converter is in, see below), PS3 network sources, macOS/FreeBSD (Linux first; fuser supports both later).
 
 ## Engine
 
@@ -305,6 +305,106 @@ then wait, on the same thread, for the demultiplexer lock the first one holds. T
 file is opened on its first audio read, and refused if its size changed since the TOC was
 read. Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O
 error on that read.
+
+## PCM conversion (phase 1: the converter)
+
+PCM output (WAV files next to the DSF files, #11) needs DSD-to-PCM conversion. Phase 1 adds
+the converter, `sacdfs::pcm`, and its measurements; no WAV file is shown yet (that is phase
+2, #7 and #8). The filter designs and the measurements are in
+[pcm-quality.md](pcm-quality.md), the speed in [performance.md](performance.md#pcm-conversion).
+Each decision below says why, the alternatives and the trade-off.
+
+**Output.** 24-bit PCM at 176.4 kHz (DSD64 ÷ 16, the default), 88.2 kHz (÷ 32) or
+352.8 kHz (÷ 8); a pass band to 40 kHz (default, fully attenuated by 48 kHz), 30 kHz
+(attenuated by 36 kHz), or a wide 80 kHz (176.4 and 352.8 kHz only); a gain, 0 dB by
+default, where 100 % DSD modulation is full scale. These are owner decisions, recorded with
+their reasons in #11 and #5.
+
+**Stateless per frame (why: random reads).** Frame `f`'s PCM is computed from DSD frames
+`f - 1`, `f` and `f + 1` only, and equals, bit for bit, a conversion of the whole area in one
+pass (`pcm::convert_area`, tested for every frame, 1 to 6 channels, every rate and cutoff,
+and by proptest on random windows). Every stage is a linear-phase FIR, so each output sample
+depends on a fixed window of DSD bits: at most about 2 200 DSD samples each way (about 270
+bytes per channel of each neighbour, the 30 kHz and wide filters being the longest), far
+less than a frame. *Alternative:* pysacd's converter carries filter state from frame to
+frame, which needs every earlier frame converted first: a seek would cost a conversion from
+the start of the area. *Trade-off:* each frame converts its neighbours' margins again, about
+8 % more work than streaming.
+
+**Aligned (why: DSF and WAV of a track line up).** PCM sample `n` is centred on DSD sample
+`d × n` of the same frame, exactly: every stage has an odd number of taps, so a whole-sample
+delay, and stage 1's 8 × 12 - 1 = 95 taps are placed so that their centre is the first bit of
+a byte. *Alternative:* pysacd's even-length (96-tap) stage 1 has a half-sample delay, which
+it rounds to whole output samples; measured against pysacd, its output is 0.26 samples (at
+88.2 kHz) away from the DSD timeline (see pcm-quality.md).
+
+**Silence (why 0x69).** Before the first and after the last frame of an area the filter
+reads DSD silence, the byte 0x69 (01101001), the Scarlet Book silence pattern that
+scarletbook and sacdfs already use for missing frames. Stage 1's eight polyphase sums are
+made equal, which puts exact zeros at every multiple of 352.8 kHz; any byte-periodic
+balanced pattern, 0x69 included, then converts to exact digital zero (and after the integer
+tables are rounded, the last table's 0x69 entry is adjusted so the sum is exactly 0).
+*Alternatives:* zero bytes are -100 % modulation, a full-scale negative step; repeating the
+area's first or last frame would invent audio. A track that starts at the area start fades
+in from true zero.
+
+**The port (why: proven code, same author).** The structure is ported from pysacd's
+`csrc/dsp.c` (GPL-2.0-or-later, the owner's own; commit 2113789, named in the source): the
+Kaiser-windowed design, the byte lookup tables of the ÷ 8 stage and the cascade of ÷ 2
+stages. What changed: stateless per frame; odd lengths; equal polyphase sums; new tap
+counts for the 40/30/80 kHz bands at every rate (pysacd's 176.4 kHz path passes to 60 kHz);
+half-band stages where the band allows, which halves their cost; integer stage 1 and f64
+accumulation (below). FFmpeg's and dsd2pcm's DSD code were not needed.
+
+**Arithmetic (why: nothing above the 24-bit step, and the same bits everywhere).** Stage 1
+adds integer table entries (fixed point, 2^-28): exact. The later stages accumulate in f64.
+Measured on random DSD against a plain f64 evaluation of the same filters, f32 accumulation
+in stage 3 alone added 0.34 of a 24-bit step RMS, and an f32 stage 2 another 0.15: more
+than the 24-bit quantisation itself (0.29). In f64 the difference is below 0.00001 of a
+step. Every output is a fixed sequence of operations (Rust never fuses a multiply and an
+add, nor reorders float sums), so the SSE2, AVX2 and AVX-512 builds give identical bytes
+(a test pins the output's hash for every configuration). *Trade-off:* f64 halves the SIMD
+width of the FIR stages; the bar is still met with margin (performance.md).
+
+**Coefficients computed at start-up (why).** A converter designs its filters when it is made:
+27 to 42 µs (Kaiser windows, a Bessel series, the stage-1 tables), once per worker thread.
+*Alternative:* tables generated by a script and committed, which would need a generator and a
+check that the two agree; with start-up design the parameters (taps, attenuation, edges)
+are what the code says. The risk, a platform maths library giving different `sin` results,
+is covered by the pinned-hash test, which passes on the local RHEL glibc and on CI's
+Ubuntu glibc.
+
+**SIMD (why portable code).** The FIR kernels are written so that the compiler vectorises
+them (blocks of 16 independent outputs, windows cut to exact lengths so there are no bounds
+checks, the generated code checked: packed `addpd`/`mulpd` on generic x86-64, `vaddpd` on
+`ymm` registers on x86-64-v3). Stage 1 reads its bytes as words and takes them apart with
+shifts (half the loads). `std::arch` with runtime detection would need `unsafe`, which the
+crate denies; the generic build already clears the bar for the default filter, and x86-64-v3 builds
+(RHEL 10's default, or `-C target-cpu=x86-64-v3`) are 1.1 to 1.6 times faster. Runtime dispatch is a
+follow-up if a generic build ever needs it.
+
+**Interleaved input.** The converter takes frames as scarletbook gives them (`C × 4704`
+interleaved, MSB first) and copies one channel at a time into a window buffer with its
+neighbours' margins (about 5 KB); the kernels then run on contiguous data. *Alternative:*
+reading the interleaved bytes in stage 1 directly; it would lose the word loads, and the
+copy costs about 7 % of the conversion.
+
+**Gain and clipping.** The gain is a multiply folded into the final rounding (f64, ties to
+even, by the 1.5 × 2^52 trick, which needs no libm call). Samples beyond the 24-bit range are
+clamped and counted (`convert` returns the count). 100 % positive modulation is exactly one
+step above the largest code, so a full-scale positive DC counts as clipping; a full-scale
+step overshoots by about 9 % (the filter's ringing). Real discs stay far below this (SACD's
+reference level is 50 % modulation): no clips on the local discs.
+
+**API for phase 2.** `pcm::Converter::new(channels, &PcmConfig)` holds its buffers (about
+100 KiB), is `Send`, allocates nothing per frame, and is made once per worker thread.
+`convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM
+(`frame_bytes()` long) and returns the clip count; `None` neighbours are silence.
+`convert_f32` gives the samples before rounding (for tests, and for FLAC later).
+`new` never fails: a configuration that `PcmConfig::validate` refuses (the wide filter at
+88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()`
+reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once,
+with `validate`, when the mount starts.
 
 ## Performance basis
 

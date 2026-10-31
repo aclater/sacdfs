@@ -15,5 +15,6 @@ pub mod engine;
 pub mod fs;
 pub mod index_cache;
 pub mod names;
+pub mod pcm;
 pub mod track;
 pub mod tree;

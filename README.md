@@ -102,7 +102,8 @@ the image is a round trip, so these counts matter most there. See
 ## Limits
 
 - Linux only for now, and read-only.
-- DSF output only: no DSDIFF (DFF), no PCM (WAV, FLAC).
+- DSF output only: no DSDIFF (DFF), no PCM (WAV, FLAC) yet. WAV is planned (#11); its DSD-to-PCM
+  converter is in place and measured ([docs/pcm-quality.md](docs/pcm-quality.md)).
 - The directory tree is read once, at mount time. Images added to or removed from `SOURCE`
   later need a remount.
 - Each image is read through one file handle; reads of one disc's sectors are serialised.
