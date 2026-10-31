@@ -14,6 +14,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- `--flatten`: a chain of folders below the top level that holds a single image collapses
+  into its outermost folder, which then holds the image's `Stereo`/`Multichannel` folders
+  (#13). Decided from the names walked at mount, so mounting is as fast as without it.
 - `sacdfs SOURCE MOUNTPOINT`: a read-only FUSE filesystem showing SACD images (one file, or a
   directory searched recursively for `*.iso`) as DSF files with ID3v2.4 tags, decoded on
   demand by scarletbook 0.3.0. Options `-f`, `--threads`, `--cache-mb`, `--allow-other`,
