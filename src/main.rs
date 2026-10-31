@@ -8,6 +8,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::Parser;
 use fuser::{Config, MountOption, Session, SessionACL};
@@ -17,6 +18,7 @@ use signal_hook::iterator::Signals;
 use sacdfs::disc::Tuning;
 use sacdfs::engine::{Engine, default_threads};
 use sacdfs::fs::{MAX_READ, SacdFs};
+use sacdfs::index_cache::{self, IndexCache};
 use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
 use sacdfs::tree::{Output, SourceDir, Tree};
 
@@ -62,6 +64,13 @@ struct Args {
     /// Let other users see the mount (needs `user_allow_other` in /etc/fuse.conf).
     #[arg(long)]
     allow_other: bool,
+    /// Directory of the persistent seek index, which lets seeks after a remount skip most
+    /// of their search (default: $XDG_CACHE_HOME/sacdfs, else ~/.cache/sacdfs).
+    #[arg(long, value_name = "DIR")]
+    index_cache: Option<PathBuf>,
+    /// Keep no persistent seek index: every mount starts with an empty one.
+    #[arg(long, conflicts_with = "index_cache")]
+    no_index_cache: bool,
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -160,6 +169,9 @@ fn run(args: Args) -> io::Result<()> {
     let root = SourceDir::scan(&source).map_err(|e| with_path(e, &source))?;
     log::info!("{}: {} image files", source.display(), root.image_count());
 
+    // Before daemonizing, which changes the working directory.
+    open_index_cache(&args);
+
     // Become a daemon before any thread exists; the parent waits for the mount.
     let notify = if args.foreground { None } else { Some(daemonize()?) };
 
@@ -214,12 +226,58 @@ fn run(args: Args) -> io::Result<()> {
             }
         }
     })?;
+    if let Some(cache) = index_cache::global() {
+        let cache = cache.clone();
+        std::thread::Builder::new().name("sacdfs-index".to_owned()).spawn(move || {
+            let mut warned = false;
+            loop {
+                std::thread::sleep(FLUSH_EVERY);
+                if let Err(e) = cache.flush() {
+                    if !std::mem::replace(&mut warned, true) {
+                        log::warn!("seek index cache {}: {e}", cache.dir().display());
+                    }
+                }
+            }
+        })?;
+    }
     if let Some(n) = notify {
         n.ok();
     }
     log::info!("mounted {} on {}", source.display(), mountpoint.display());
-    session.run()?;
+    let result = session.run();
+    if let Some(cache) = index_cache::global() {
+        match cache.flush() {
+            Ok(n) => log::debug!("seek index cache: {n} entries written"),
+            Err(e) => log::warn!("seek index cache {}: {e}", cache.dir().display()),
+        }
+    }
+    let (calls, bytes) = sacdfs::disc::total_reads();
+    log::info!("image reads for audio: {calls} calls, {bytes} bytes");
+    result?;
     Ok(())
+}
+
+/// How often the persistent seek index is saved, if it changed.
+const FLUSH_EVERY: Duration = Duration::from_secs(30);
+
+/// Installs the persistent seek index the options ask for. A cache that cannot be used is
+/// only a warning: it costs speed, never the mount.
+fn open_index_cache(args: &Args) {
+    if args.no_index_cache {
+        return;
+    }
+    let Some(dir) = args.index_cache.clone().or_else(index_cache::default_dir) else {
+        log::warn!("no seek index cache: neither XDG_CACHE_HOME nor HOME is set");
+        return;
+    };
+    let opened = std::path::absolute(&dir).and_then(|d| IndexCache::open(&d));
+    match opened {
+        Ok(cache) => {
+            log::debug!("seek index cache in {}", cache.dir().display());
+            index_cache::install(Arc::new(cache));
+        }
+        Err(e) => log::warn!("no seek index cache in {}: {e}", dir.display()),
+    }
 }
 
 fn with_path(e: io::Error, path: &std::path::Path) -> io::Error {

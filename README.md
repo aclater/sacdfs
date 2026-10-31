@@ -39,10 +39,20 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default 0). Samples that would clip are clamped, and the log says so once per file. |
 | `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder (see below). Top-level folders of `SOURCE` are never collapsed. |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
+| `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where sacdfs found frames in each image, so that seeks after a remount or reboot skip most of their search: on a network share that saves round trips (see below). |
+| `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
 | `-v` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 
 Unmount with `fusermount3 -u MOUNTPOINT`. SIGINT (Ctrl-C) and SIGTERM unmount and stop sacdfs
 too.
+
+**The seek index cache** holds one small file per image (a few tens of KB for a disc played
+through), named by a hash of the image's path, never the path itself, and is bounded to 32 MiB
+in all (the least recently used files go first). It is written every 30 seconds if it changed
+and at unmount, and never leaves the machine. An image whose size or modification time
+changes misses its entry. sacdfs never trusts the cache: every saved position is checked when
+it is used, so a stale or damaged cache can only make a seek slower, never wrong. Deleting the
+directory is always safe.
 
 ## Layout
 
@@ -118,8 +128,11 @@ for those.
 
 A straight read of a DST stereo disc runs at 1.2x the time scarletbook's own `bench decode`
 takes for the same area on an idle machine (about 500 MB/s), and at 1.4x on a heavily loaded
-one; a read at a random offset returns in about 4 ms on a fresh mount, with about five reads of
-the image. See [docs/performance.md](docs/performance.md).
+one; a read at a random offset returns in about 1 to 4 ms on a fresh mount from a local disk,
+with four to five reads of the image (three for plain DSD discs), or one read when the seek
+index cache already knows that part of the disc. With images on a network share, each read of
+the image is a round trip, so these counts matter most there. See
+[docs/performance.md](docs/performance.md).
 
 ## Limits
 

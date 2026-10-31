@@ -17,6 +17,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- Persistent seek index (#20): the frame positions sacdfs learns in each image are kept in
+  `$XDG_CACHE_HOME/sacdfs` (`--index-cache DIR`, `--no-index-cache`), so that a seek after a
+  remount needs about one read of the image instead of four to five; on a network share each
+  is a round trip. One small file per image, named by a hash of its path, keyed by the
+  image's size and mtime, versioned and checksummed, written atomically every 30 s if changed
+  and at unmount, 32 MiB in all with LRU eviction. Every saved position is checked when used,
+  so a stale or damaged cache only costs speed.
+- `Disc::sector_bytes`, `disc::total_reads` (logged at `-v` when sacdfs stops) and
+  `examples/seek_latency`, which measures calls, bytes and time per seek.
 - PCM output, phase 1 (#11): the DSD-to-PCM converter, `sacdfs::pcm`, behind the WAV
   files below. 24-bit PCM at 176.4 kHz (default), 88.2 or 352.8 kHz; pass band to 40 kHz (default,
   at least 105 dB down from 48 kHz), 30 kHz, or 80 kHz (176.4/352.8 kHz only); a gain with
@@ -63,6 +72,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- Smaller cold seeks (#20): probes read about two of the area's frames (was 16 sectors), the
+  first read after a seek is sized for a 128 KiB request (was 64 sectors) and reuses the last
+  probe's sectors, the search stops at about two frames on discs with large frames, and keeps
+  interpolating after a probe that lands next to its frame. A cold seek on real discs needs
+  4.5 calls to the image and 139 KiB on average (was 5.3 and 293 KiB); plain DSD discs 3.0
+  calls.
+- A straight read learns a seek point every 40 frames (was 75), so any frame of a stretch
+  already read can be started at directly.
 - scarletbook 0.3.0 (was 0.2.0), and its conformance corpus of 136 cases (was 129). The
   new frame-range API was evaluated and not adopted: it scans from the area start, so a
   seek at 72 % of a disc takes about 100 ms instead of 1 to 2 ms (see docs/design.md).
