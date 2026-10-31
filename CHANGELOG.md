@@ -12,6 +12,16 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- Speaker layouts (#31): the WAV channel mask and the DSF channel type come from the area's
+  loudspeaker layout on the disc (scarletbook's `Area::loudspeaker_layout` and
+  `Area::channel_speakers`) instead of the channel count alone: stereo FL FR, 5-channel (3/2)
+  FL FR FC BL BR ("5.0") and 5.1 FL FR FC LFE BL BR, in decoded order, so no reordering. An
+  area without a defined layout keeps the layout of its channel count, logged once per disc.
+  Output on discs with a defined layout is unchanged; the provisional count-based mapping and
+  its `TODO(scarletbook#75)` are gone.
+- scarletbook 0.4.1 (was 0.3.0). No change in decoded output; the seek indexes and cold
+  seeks it adds are not used yet (#28).
+
 - Read-ahead starts only after reads of audio, and not on a file's first one: reading a
   file's header, or walking its chunks (as taggers do), no longer decodes its first seconds in
   the background.
@@ -45,7 +55,7 @@ All notable changes to sacdfs are recorded here. The format follows
   (#13). Decided from the names walked at mount, so mounting is as fast as without it.
 - WAV files next to the DSF files (#7, #8, plan #11): each track also appears as
   `NN - title.wav`, 24-bit PCM converted from the DSD on demand. RIFF/WAVE with
-  `WAVE_FORMAT_EXTENSIBLE` and a channel mask (from the channel count, provisionally), RF64 for
+  `WAVE_FORMAT_EXTENSIBLE` and a channel mask (from the area's loudspeaker layout, #31), RF64 for
   files over 4 GiB; the DSF file's ID3v2.4 tag in an `id3 ` chunk and a `LIST`/`INFO` chunk,
   after the audio, which is padded (`JUNK`) to start at 256 KiB and end on a page boundary.
   Exact sizes from the TOC; listing, `stat`, and reading the header or the tags never

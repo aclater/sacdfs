@@ -401,6 +401,7 @@ impl Disc {
                 }
             })
             .collect();
+        log_unspecified_layouts(path, &toc);
         let disc = Disc {
             id,
             path: path.to_owned(),
@@ -915,6 +916,29 @@ impl Cursor {
     /// The channel count of the area.
     pub fn channels(&self) -> u8 {
         self.channels
+    }
+}
+
+/// Logs, once per disc, the areas without a loudspeaker layout the specification defines
+/// (specification 3, 3.4.1): their WAV channel mask and DSF channel type come from the
+/// channel count alone ([`crate::wav::channel_mask`], [`crate::dsf::channel_type`]).
+fn log_unspecified_layouts(path: &Path, toc: &Toc) {
+    let unspecified: Vec<String> = toc
+        .areas
+        .iter()
+        .filter_map(|a| match a.loudspeaker_layout() {
+            scarletbook::LoudspeakerLayout::Unspecified { channels, config } => {
+                Some(format!("{:?} area (channel count {channels}, configuration {config:#04x})", a.slot))
+            }
+            _ => None,
+        })
+        .collect();
+    if !unspecified.is_empty() {
+        log::info!(
+            "{}: no defined loudspeaker layout in {}; speakers assigned from the channel count",
+            path.display(),
+            unspecified.join(", ")
+        );
     }
 }
 
