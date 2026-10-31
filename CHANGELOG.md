@@ -85,3 +85,15 @@ The first release.
   sharing over NFS, troubleshooting); `docs/design.md` with the current design and the reason
   for each decision; `docs/performance.md` by deployment against the targets of #6, with a
   history of each improvement (#37).
+
+### Fixed
+
+- A sacdfs restarted on the same mount point while the previous one was still exiting lost
+  its mount (#51). fuser 0.18.0 unmounts by path when a session ends, and its check that the
+  mount still exists always passes, so a sacdfs unmounted with `fusermount3 -u` unmounted the
+  path again on its way out, removing the new mount (every time the old one exited after the
+  new one had mounted). sacdfs now serves the session without fuser's unmount, and unmounts
+  or detaches on a signal only while the mount at its path is its own (by device number).
+  A sacdfs started while the old mount is still there waits for it to go (up to 10 s) instead
+  of mounting over it, where the old one's unmount removed the new mount (as root) or the
+  restart failed (as a user). Regression tests in `tests/mount.rs`.

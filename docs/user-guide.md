@@ -68,6 +68,11 @@ are still open, or an NFS server still exports the mount, the mount is detached 
 `umount -l` would: it disappears at once, the open files still read, and sacdfs stops when the
 last one is closed.
 
+**Restarting on the same mount point.** A sacdfs started while the previous one is still on
+the mount point (it is stopping) waits up to 10 s for that mount to go, instead of mounting
+over it, then fails with "already a FUSE mount". A stopping sacdfs only ever unmounts its own
+mount, never one started on the same path since.
+
 **CPU code paths.** The WAV converter picks its code when it starts: AVX2 (x86-64-v3) where the
 CPU has it, SSE2 otherwise, with the same output bit for bit. `SACDFS_SIMD=baseline`, `v3` or
 `v4` forces a path, for tests and measurements; the AVX-512 path (`v4`) is not the default
