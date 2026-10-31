@@ -246,10 +246,23 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
    cached (the PCM frame is what is served again).
 5. **Random reads.** A read of k frames that are not cached decodes k + 2 DSD frames (or
    fewer at the area's edges) and converts the k frames in parallel on the decoder pool.
+   *Pipeline:* one pool thread demultiplexes plain DSD frames 16 at a time, and each PCM
+   frame is handed to the other pool threads as soon as its next neighbour is decoded. Once it
+   meets a DST frame, the rest of the range is demultiplexed and decoded in one parallel batch
+   first: decoding 16 DST frames at a time left most threads idle and made DST reads 1.8 to 1.9
+   times DSF's instead of 1.3. **Why:** on a plain DSD area there is no DST
+   decoding, so demultiplexing (serial) and conversion (parallel) took turns; overlapping them
+   cut a straight read of a plain DSD stereo area from 3.28 s to 2.90 s (generic build, mean of
+   3), before the longer read-ahead below.
 6. **Sequential reads.** Each open file keeps, next to its demultiplexer, the last two DSD
    frames it decoded (*carry*): the previous neighbour and the first frame of the next read.
-   A read that continues the file therefore decodes every DSD frame once. Read-ahead (2 s of
-   audio, as for DSF) decodes and converts ahead on the pool and keeps the carry up to date.
+   A read that continues the file therefore decodes every DSD frame once. Read-ahead decodes
+   and converts ahead on the pool and keeps the carry up to date. Its window is about 8 MiB of
+   PCM, between 150 and 600 frames (2 to 8 s; 8 s for stereo at 176.4 kHz, 2 s for six
+   channels at 352.8 kHz), where DSF reads 150 frames ahead. **Why:** a fast reader (`cp`)
+   of a plain DSD area used up a 2 s window before the next was ready; with the longer window
+   the same read took 2.29 s instead of 2.90 s, within the 1.5x target of #6 (DSF: 1.65 s).
+   Bounded in bytes, so that six-channel files at 352.8 kHz don't take 50 MB per reader.
 7. **Converters.** One `Converter` per pool thread and channel count, made on first use and
    kept in a thread-local, keyed by engine as well so that two engines in one process (tests)
    never share one. Conversion always runs on the pool, never on a request thread.

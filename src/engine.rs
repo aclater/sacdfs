@@ -141,8 +141,9 @@ pub struct Carry {
 /// previous neighbour and the first frame of the next sequential read.
 const CARRY: usize = 2;
 
-/// DSD frames demultiplexed and decoded per step of the PCM pipeline: small enough that
-/// conversion starts early, large enough that DST frames still decode in parallel.
+/// Plain DSD frames demultiplexed per step of the PCM pipeline, so that conversion starts
+/// early. Once a step meets a DST frame, the rest of the range is decoded in one parallel
+/// batch instead.
 const PIPELINE_CHUNK: u32 = 16;
 
 /// One decoded DSD frame in scarletbook's interleaved layout, the converter's input.
@@ -414,16 +415,26 @@ impl Engine {
             };
             let channels = cur.channels();
             while t < d1 {
-                let chunk_end = (t + PIPELINE_CHUNK).min(d1);
+                let mut chunk_end = (t + PIPELINE_CHUNK).min(d1);
                 let mut jobs = Vec::with_capacity((chunk_end - t) as usize);
-                for n in t..chunk_end {
+                let mut n = t;
+                while n < chunk_end {
                     match cur.content(disc, n) {
-                        Ok(content) => jobs.push(TrackFrame { number: n, content }),
+                        Ok(content) => {
+                            // DST frames are what costs here: decode all that are left in
+                            // one parallel batch rather than 16 at a time, which would leave
+                            // most threads idle while this one demultiplexes.
+                            if matches!(content, FrameContent::Dst(_)) {
+                                chunk_end = d1;
+                            }
+                            jobs.push(TrackFrame { number: n, content });
+                        }
                         Err(e) => {
                             *cursor = None;
                             return Err(e);
                         }
                     }
+                    n += 1;
                 }
                 let decoded: Vec<Result<(u32, Dsd), ReadError>> =
                     if jobs.iter().any(|j| matches!(j.content, FrameContent::Dst(_))) {
