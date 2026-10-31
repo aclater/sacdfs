@@ -61,6 +61,36 @@ fn bench(c: &mut Criterion) {
     }
     g.finish();
 
+    // Runs of consecutive frames (#24), as sequential WAV reads convert them: the time is
+    // per frame (Throughput::Elements(run)), comparable with the cases above.
+    let mut g = c.benchmark_group("pcm-run");
+    let n = 2 * FRAME_BYTES;
+    let frames: Vec<Vec<u8>> = (0..10).map(|i| dsd(n, 10 + i)).collect();
+    for cutoff in [Cutoff::Khz40, Cutoff::Wide80] {
+        let cfg = PcmConfig { cutoff, ..PcmConfig::default() };
+        let band = if cutoff == Cutoff::Wide80 { "wide80k" } else { "40k" };
+        for run in [1usize, 2, 4, 8] {
+            g.throughput(Throughput::Elements(run as u64));
+            let mut conv = Converter::new(2, &cfg);
+            let mut out = vec![0u8; run * conv.frame_bytes()];
+            let mut clips = vec![0u32; run];
+            let cur: Vec<&[u8]> = frames[1..=run].iter().map(Vec::as_slice).collect();
+            let id = BenchmarkId::new(format!("2ch-{band}-176400"), run);
+            g.bench_function(id, |b| {
+                b.iter(|| {
+                    black_box(conv.convert_run(
+                        Some(&frames[0]),
+                        black_box(&cur),
+                        Some(&frames[run + 1]),
+                        &mut out,
+                        &mut clips,
+                    ))
+                })
+            });
+        }
+    }
+    g.finish();
+
     // Making a converter designs its filters (Kaiser windows, Bessel series, stage 1 tables).
     let mut g = c.benchmark_group("pcm-new");
     for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {

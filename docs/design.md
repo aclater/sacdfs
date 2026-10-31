@@ -412,6 +412,14 @@ loudspeaker layout, which scarletbook (0.4.0 and later) gives as `Area::loudspea
 7. **Converters.** One `Converter` per pool thread and channel count, made on first use and
    kept in a thread-local, keyed by engine as well so that two engines in one process (tests)
    never share one. Conversion always runs on the pool, never on a request thread.
+8. **Runs of frames (#24).** Frames of the plain DSD pipeline are converted up to four at a
+   time, consecutive ones in one job (`Converter::convert_run`, byte-identical to converting
+   each alone): a straight WAV read of a plain DSD area took 15 % less time and 29 % less CPU.
+   **Why only plain DSD:** its frames arrive 16 at a time from one demultiplexing thread, and
+   one job per frame spent much of the conversion's cost on scheduling and on each frame's
+   margins; a DST batch arrives all at once with enough frames for every thread, where runs
+   of four made reads 5 % slower. **Why four:** two and eight gained less (11 and 12 %), and
+   a short job (about 0.2 ms) keeps the 4 players and a tagger under 50 ms per read (#15).
 
 *Why convert per frame, with neighbours, rather than as a stream:* any byte of any file can be
 produced from three DSD frames, with no state carried from earlier reads, so a seek costs the
@@ -779,6 +787,8 @@ reference level is 50 % modulation): no clips on the local discs.
 `convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM
 (`frame_bytes()` long) and returns the clip count; `None` neighbours are silence.
 `convert_f32` gives the samples before rounding (for tests, and for FLAC later).
+`convert_run(prev, frames, next, out, clips)` converts consecutive frames in one window, the
+same bytes as `convert` on each, and each frame's clip count (#24).
 `new` never fails: a configuration that `PcmConfig::validate` refuses (the wide filter at
 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()`
 reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once,

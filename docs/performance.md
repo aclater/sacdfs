@@ -19,7 +19,7 @@ the guest's.
 | First bytes of a read at a random offset, fresh mount | under 100 ms | **3.4 ms** (image in the page cache), **3.7 ms** (image evicted) | met |
 | DSD-to-PCM conversion, stereo, 176.4 kHz, default filter, one core (#6) | at least 100x real time | **305x** generic x86-64 build with runtime dispatch (AVX2 copy), 242x SSE2 only ([below](#runtime-cpu-dispatch-23)) | met |
 | The same with the wide (80 kHz) filter (#23) | at least 100x real time | **147x** generic build (AVX2 copy), 93x SSE2 only | met |
-| Straight read of WAV files vs the same area's DSF files (#6) | within 1.5x | **1.09x** to **1.37x** ([below](#wav-files-6-7-8)) | met |
+| Straight read of WAV files vs the same area's DSF files (#6) | within 1.5x | **1.09x** to **1.20x** ([below](#converting-runs-of-frames-24)); 1.37x plain DSD before #24 | met |
 | WAV: first byte at a random offset, fresh mount (#6) | under 20 ms | **1.8 ms** | met |
 | WAV: 4 players and a tagger (#6) | no read over 50 ms | worst **30.6 ms** | met |
 
@@ -450,6 +450,44 @@ Frames per second are 10⁶ / (µs per frame); a stream plays 75 frames per seco
 Reproduce: `cargo bench --bench pcm`, and for the generic build
 `RUSTFLAGS="-C target-cpu=x86-64" cargo bench --bench pcm`. CI runs every case once
 (`-- --test`) as a smoke test.
+
+## Converting runs of frames (#24)
+
+Measured on 2026-10-31, after scarletbook 0.4.1 (#39): the same straight reads as below (`cat`
+of every file of an area, 1 MiB reads, a fresh mount each, `--no-index-cache`, images in the
+page cache), generic x86-64 release builds, under the benchmark lock, means of 3. The virtual
+machine on the host kept 0.1 to 0.5 hardware threads busy. *Before* is the converter with
+runtime dispatch (#23), one frame per job; *after* converts plain DSD frames four at a time
+(`Converter::convert_run`).
+
+| Area | DSF before / after (s) | WAV before (s) | WAV after (s) | WAV/DSF before → after | sacdfs CPU, WAV, before → after |
+|---|---|---|---|---|---|
+| DST stereo, 50 min | 4.44 / 4.41 | 4.68 | 4.79 | 1.06 → 1.09 | 117 → 118 s |
+| plain DSD stereo, 79 min | 1.74 / 1.73 | 2.42 | **2.07** (−15 %) | 1.40 → **1.20** | 48 → **34 s** |
+| DST 6 channels, 50 min | 13.46 / 13.40 | 15.70 | 15.55 | 1.17 → 1.16 | 380 → 378 s |
+
+**Choosing the run length** (the same reads, one round each of WAV with runs of 1, 2, 4 and 8
+frames for every job, 3 rounds; plain DSD / DST stereo WAV): 2.58 / 4.59 s, 2.31 / 4.71 s,
+2.13 / 4.84 s and 2.26 / 4.94 s. Runs help plain DSD most at four frames and cost DST stereo
+3 to 8 %. So plain DSD frames, which come from the serial demultiplexer 16 at a time, are
+converted four per job, and the frames of a DST batch, decoded all at once, one per job: a
+DST read has enough frames for every thread, and fewer, longer jobs left a ragged last wave.
+The DST stereo WAV figure above (+2 %) is within the spread of its runs (4.57 to 4.83 s), with
+the same CPU time.
+
+**The converter alone** (`cargo bench --bench pcm`, `pcm-run` cases, stereo, 176.4 kHz,
+µs per frame, means of 3): default filter 46.9 / 44.7 / 47.6 / 45.5 for runs of 1 / 2 / 4 /
+8, wide filter 92.7 / 91.5 / 89.1 / 95.2. The margins a frame converts beyond itself cost less
+than the expected 8 % once each run's buffers grow past the caches; most of the gain through
+the mount (29 % less CPU) is fewer, larger jobs on the pool.
+
+**Concurrency** (4 players and a tagger, as below, 3 rounds of 30 s): worst read 12.8, 11.6
+and 18.0 ms before; 26.4, 17.9 and 24.3 ms after (each the first read of a player; players'
+99th percentile 0.2 to 0.5 ms, the tagger's worst 7.5 to 11.9 ms). Within the 50 ms target of
+#6. A job converts at most four frames, about 0.2 ms of one thread.
+
+**DSF unchanged:** the per-channel SHA-256 check against the reference hashes, 93 of 93
+tracks in 7 areas.
 
 ## WAV files (#6, #7, #8)
 

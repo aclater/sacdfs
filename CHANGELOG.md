@@ -52,6 +52,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- `Converter::convert_run` (#24): converts consecutive frames together, byte-identical to
+  converting each alone. WAV files of plain DSD areas use it, four frames per job: a straight
+  read takes 15 % less time and 29 % less CPU.
 - Runtime CPU dispatch for the DSD-to-PCM converter (#23): its kernels are compiled for
   generic x86-64, x86-64-v3 (AVX2) and x86-64-v4 (AVX-512), and the AVX2 copy runs where the
   CPU has it, so generic builds convert about 1.4 times faster on most current CPUs, with
