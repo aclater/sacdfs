@@ -238,5 +238,6 @@ overheads, not by decoding. Measured figures are in [performance.md](performance
 ratarmount (MIT; lazy archive indexing, seek points), squashfuse (BSD), fuser's examples
 (MIT), libfuse's passthrough_hp (big reads, multithreading), Vangoor et al., "To FUSE or
 Not to FUSE: Performance of User-Space File Systems", FAST 2017. GPL/LGPL FUSE archive
-filesystems (fuse-zip, archivemount, mount-zip, rar2fs) may inform ideas only; no code
-is copied from them into this permissively licensed project.
+filesystems (fuse-zip, archivemount, mount-zip, rar2fs). sacdfs is GPL-3.0-or-later, so
+code from compatibly licensed projects may be adapted, with attribution (see
+CONTRIBUTING.md); SACD parsing and DST decoding still come only from scarletbook.

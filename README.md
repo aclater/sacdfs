@@ -3,7 +3,7 @@
 [![CI](https://github.com/aclater/sacdfs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aclater/sacdfs/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/aclater/sacdfs/branch/main/graph/badge.svg)](https://codecov.io/gh/aclater/sacdfs)
 [![CodeQL](https://github.com/aclater/sacdfs/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/aclater/sacdfs/actions/workflows/codeql.yml)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#licence)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](COPYING)
 [![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-orange)](Cargo.toml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aclater/sacdfs/badge)](https://scorecard.dev/viewer/?uri=github.com/aclater/sacdfs)
 
@@ -106,6 +106,7 @@ caching and concurrency.
 
 ## Licence
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option. The test corpus in `tests/corpus/` is dedicated to
+sacdfs is free software: you can redistribute it and/or modify it under the terms of the
+[GNU General Public License](COPYING) as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version. The test corpus in `tests/corpus/` is dedicated to
 the public domain under CC0 1.0 (see its [licence](tests/corpus/LICENSE)).

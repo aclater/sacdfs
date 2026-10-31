@@ -1,4 +1,4 @@
-# cargo-deny: dependency licences (permissive only), security advisories, bans and sources.
+# cargo-deny: dependency licences (GPL-3.0-compatible), security advisories, bans and sources.
 name: cargo-deny
 
 on:

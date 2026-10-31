@@ -31,10 +31,17 @@ see [SECURITY.md](SECURITY.md).
 
 ## Ground rules
 
-- **Licences.** sacdfs is MIT OR Apache-2.0. Dependencies must be permissively licensed
-  (`deny.toml` lists what is accepted). Don't copy code from GPL or LGPL projects (pysacd,
-  GPL FUSE filesystems, sacd-ripper) or anywhere else whose licence is incompatible; ideas
-  are fine, code is not.
+- **Licences.** sacdfs is GPL-3.0-or-later. Code may be adapted from projects whose licence
+  allows it into GPL-3.0-or-later (GPL-2.0-or-later, GPL-3.0, LGPL-2.1-or-later, Apache-2.0,
+  MIT, BSD, ...; not GPL-2.0-only), keeping its copyright notices and naming the source in the
+  commit and in a comment. Dependencies are checked by `deny.toml`.
+- **The clean-room wall.** sacdfs is outside the clean room of scarletbook-rs. Nothing from
+  sacdfs (code, issues, design notes) may be offered to scarletbook-rs, and sacdfs code must
+  never be pointed to from there. Integration needs go to scarletbook-rs as requirements.
+- **No SACD format or DST code from elsewhere.** Disc parsing and DST decoding come only from
+  scarletbook's public API; don't adapt them from pysacd, sacd-ripper or any other reader
+  (and never from the DST reference implementation). Code for other parts (DSD to PCM
+  conversion, file formats, FUSE techniques) may be adapted as above.
 - **SACD knowledge lives in scarletbook.** sacdfs uses its public API only. A parsing or
   decoding problem is fixed there.
 - **Hostile input.** Every image is untrusted. Nothing an image contains may panic, hang or
