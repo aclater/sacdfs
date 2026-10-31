@@ -37,6 +37,7 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 | `--pcm-rate HZ` | Sample rate of the WAV files: `88200`, `176400` (the default) or `352800`. Always 24-bit. |
 | `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz. |
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default 0). Samples that would clip are clamped, and the log says so once per file. |
+| `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder (see below). Top-level folders of `SOURCE` are never collapsed. |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
 | `-v` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 
@@ -67,6 +68,19 @@ MOUNTPOINT/
   them are left out too.
 - A track the disc cannot play (an empty track, or one that runs past the end of the image) is
   left out; the reason is logged at `-v`.
+
+With `--flatten`, a folder whose only content is one image, directly or through a chain of
+folders that each hold nothing else, holds that image's `Stereo` and `Multichannel` folders
+itself. Folders directly in `SOURCE` (usually artists) are always kept. For example
+
+```
+SOURCE/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc.iso
+```
+
+shows as `MOUNTPOINT/Artist/2001 - Album [SACD]/Stereo/01 - Title.dsf` instead of
+`MOUNTPOINT/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc/Stereo/01 - Title.dsf`.
+A folder with an image and another folder of images, or with two images, is kept as it is.
+Flattening is decided from the file names alone, so it does not slow down mounting.
 
 Each file is a standard DSF file (2.8224 MHz, 1 bit, 4096-byte blocks) with an ID3v2.4 tag:
 title, performer, album artist, album, track n/N, disc n/N for multi-disc sets, composer, date,

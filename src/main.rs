@@ -54,6 +54,10 @@ struct Args {
     /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
     #[arg(long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
     pcm_gain: f32,
+    /// Collapse each chain of folders below the top level that holds a single image into
+    /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
+    #[arg(long)]
+    flatten: bool,
     /// Let other users see the mount (needs `user_allow_other` in /etc/fuse.conf).
     #[arg(long)]
     allow_other: bool,
@@ -157,7 +161,7 @@ fn run(args: Args) -> io::Result<()> {
         samples_per_frame: rate.samples_per_frame() as u32,
     };
     let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
-    let tree = Arc::new(Tree::with_options(root, Tuning::default(), output));
+    let tree = Arc::new(Tree::with_options(root, Tuning::default(), output).with_flatten(args.flatten));
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;

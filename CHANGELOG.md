@@ -14,6 +14,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- `--flatten`: a chain of folders below the top level that holds a single image collapses
+  into its outermost folder, which then holds the image's `Stereo`/`Multichannel` folders
+  (#13). Decided from the names walked at mount, so mounting is as fast as without it.
 - WAV files next to the DSF files (#7, #8, plan #11): each track also appears as
   `NN - title.wav`, 24-bit PCM converted from the DSD on demand. RIFF/WAVE with
   `WAVE_FORMAT_EXTENSIBLE` and a channel mask (from the channel count, provisionally), RF64 for

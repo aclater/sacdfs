@@ -222,6 +222,98 @@ fn corpus_through_the_kernel() {
     mount.stop("INT");
 }
 
+/// Every file under `dir`, relative to it, sorted.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_owned()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let e = e.unwrap();
+            if e.file_type().unwrap().is_dir() {
+                stack.push(e.path());
+            } else {
+                out.push(e.path().strip_prefix(dir).unwrap().to_owned());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `--flatten` on a library-like tree of corpus images: single-image chains collapse below
+/// the top level, everything else is kept, and the files are the same files.
+#[test]
+fn flatten_through_the_kernel() {
+    if !fuse_available() {
+        return;
+    }
+    let src = tempfile::tempdir().unwrap();
+    let link = |path: &str, id: &str| {
+        let p = src.path().join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(corpus().join("images").join(format!("{id}.iso")), p).unwrap();
+    };
+    link("Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc.iso", "dsd-stereo-mch-2048");
+    link("Artist/2002 - Box/Disc 1.iso", "full-text");
+    link("Artist/2002 - Box/Bonus/bonus.iso", "no-text");
+    link("Solo/Only/only.iso", "dst-features-2ch-6ch");
+    link("Pair/two-a.iso", "dsd-stereo-mch-2054");
+    link("Pair/two-b.iso", "dsd-stereo-mch-2064");
+    std::fs::write(src.path().join("Artist/2001 - Album [SACD]/cover.txt"), b"x").unwrap();
+
+    let plain = Mount::foreground(src.path(), &[]);
+    let plain_files = files_under(&plain.path());
+    let plain_sizes: Vec<u64> =
+        plain_files.iter().map(|p| std::fs::metadata(plain.path().join(p)).unwrap().len()).collect();
+    plain.stop("TERM");
+
+    let mount = Mount::foreground(src.path(), &["--flatten"]);
+    let root = mount.path();
+    let ls = |p: &str| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(root.join(p))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(ls(""), ["Artist", "Pair", "Solo"]);
+    assert_eq!(ls("Artist"), ["2001 - Album [SACD]", "2002 - Box"]);
+    assert_eq!(ls("Artist/2001 - Album [SACD]"), ["Multichannel", "Stereo"]);
+    assert_eq!(ls("Artist/2002 - Box"), ["Bonus", "Disc 1"]);
+    assert_eq!(ls("Artist/2002 - Box/Bonus"), ["Stereo"]);
+    assert_eq!(ls("Solo"), ["Only"]);
+    assert_eq!(ls("Pair"), ["two-a", "two-b"]);
+    // `..` of an area leads back to the collapsed folder.
+    let stereo = root.join("Artist/2001 - Album [SACD]/Stereo");
+    assert_eq!(std::fs::canonicalize(stereo.join("..")).unwrap(), root.join("Artist/2001 - Album [SACD]"));
+
+    // The same files, with the same sizes and bytes, under shorter paths.
+    let files = files_under(&root);
+    assert_eq!(files.len(), plain_files.len());
+    let sizes: Vec<u64> = files.iter().map(|p| std::fs::metadata(root.join(p)).unwrap().len()).collect();
+    let mut a = sizes.clone();
+    let mut b = plain_sizes;
+    a.sort_unstable();
+    b.sort_unstable();
+    assert_eq!(a, b);
+    let case = cases().into_iter().find(|c| c["id"] == "dsd-stereo-mch-2048").unwrap();
+    let first = &case["expected"]["audio"][0]["tracks"][0];
+    let name = ls("Artist/2001 - Album [SACD]/Stereo").into_iter().next().unwrap();
+    let data = std::fs::read(stereo.join(name)).unwrap();
+    let hashes: Vec<String> = dsf_channels(&data).iter().map(|c| sha256(c)).collect();
+    let expected: Vec<String> =
+        first["sha256"].as_array().unwrap().iter().map(|h| h.as_str().unwrap().to_owned()).collect();
+    assert_eq!(hashes, expected);
+    // Inode numbers stay put for the mount's lifetime.
+    use std::os::unix::fs::MetadataExt;
+    let ino = |p: &Path| std::fs::metadata(p).unwrap().ino();
+    let before: Vec<u64> = files.iter().map(|p| ino(&root.join(p))).collect();
+    let after: Vec<u64> = files_under(&root).iter().map(|p| ino(&root.join(p))).collect();
+    assert_eq!(before, after);
+    mount.stop("TERM");
+}
+
 #[test]
 fn background_mount_and_unmount() {
     if !fuse_available() {
