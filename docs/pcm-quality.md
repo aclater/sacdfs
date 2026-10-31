@@ -151,6 +151,11 @@ The same picture on the other two tracks (to within 1 dB in every band).
 
 ## The filter designs, and why
 
+**Credit.** The converter's structure is ported from pysacd's `csrc/dsp.c` (the owner's own,
+GPL-2.0-or-later). Stage 1's technique, lookup tables of filter partial sums indexed by whole
+DSD bytes, is credited to Sebastian Gesemann's dsd2pcm (BSD-3-Clause, 2009), which FFmpeg and
+MPD also use.
+
 All stages are Kaiser-windowed linear-phase low-passes (pysacd's design, `kaiser_lowpass`,
 with β = 0.1102 (A - 8.7)) of odd length, so that the cascade is centred exactly on a DSD
 sample. Tap counts were chosen per stage with scipy so that each stage alone reaches at

@@ -41,6 +41,7 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
 | `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where sacdfs found frames in each image, so that seeks after a remount or reboot skip most of their search: on a network share that saves round trips (see below). |
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
+| `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default 64). An image stays open after its directory is listed and between reads, so that a seek does not have to open it again (a round trip or two on a network share); the least recently used one is closed when the limit is reached, and any image unused for 5 minutes is closed. |
 | `-v` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 
 Unmount with `fusermount3 -u MOUNTPOINT`. SIGINT (Ctrl-C) and SIGTERM unmount and stop sacdfs
@@ -144,7 +145,10 @@ times the bytes), and a seek in it returns in about 2 ms. See
 - The directory tree is read once, at mount time. Images added to or removed from `SOURCE`
   later need a remount.
 - Each image is read through one file handle; reads of one disc's sectors are serialised.
-  Decoding runs in parallel.
+  Decoding runs in parallel. At most `--max-open-images` images are open at once.
+- An image file that changes while mounted (another size, modification time or file) is
+  opened again, at most a second after the change; an image whose size changed gives I/O
+  errors until the next mount, since its directory still shows the old tracks.
 - A damaged disc image shows up as missing directories or files, filled audio (missing frames as
   0x69, invalid DST frames as 0x55, as the reference extractors do, with a warning in the log)
   or an I/O error on one file. It never stops the mount.
