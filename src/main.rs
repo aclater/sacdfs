@@ -71,6 +71,11 @@ struct Args {
     /// Keep no persistent seek index: every mount starts with an empty one.
     #[arg(long, conflicts_with = "index_cache")]
     no_index_cache: bool,
+    /// Most image files kept open at once (1 to 1024); the least recently used is closed
+    /// first, and any closes after 5 minutes unused.
+    #[arg(long, default_value_t = sacdfs::handles::DEFAULT_MAX_OPEN, value_name = "N",
+          value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=1024))]
+    max_open_images: usize,
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -175,6 +180,8 @@ fn run(args: Args) -> io::Result<()> {
     // Become a daemon before any thread exists; the parent waits for the mount.
     let notify = if args.foreground { None } else { Some(daemonize()?) };
 
+    sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
+
     let threads = if args.threads == 0 { default_threads() } else { args.threads };
     // Opening the images of a directory listing runs on rayon's global pool.
     let _ = rayon::ThreadPoolBuilder::new()
@@ -226,6 +233,7 @@ fn run(args: Args) -> io::Result<()> {
             }
         }
     })?;
+    sacdfs::handles::start_idle_closer()?;
     if let Some(cache) = index_cache::global() {
         let cache = cache.clone();
         std::thread::Builder::new().name("sacdfs-index".to_owned()).spawn(move || {

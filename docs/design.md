@@ -475,8 +475,8 @@ repeated reads. Large reads (`max_read` 1 MiB) and kernel read-ahead are enabled
 fuser dispatches requests on one thread. Reads are answered from a thread pool: the
 request's `ReplyData` moves to a worker, which decodes or copies and replies, so slow
 reads on one file don't block `lookup`/`readdir` or reads of other files. Each image has
-one open handle; sector reads are serialised per image (a `Mutex<Image>`), decoding is
-not.
+at most one open handle, from a bounded cache of them; sector reads are serialised per
+handle (a `Mutex<Image>`), decoding is not.
 
 *Implementation:* fuser 0.18 can run several dispatch threads; sacdfs uses 4, so that a
 directory listing that opens many images does not hold up other requests. Reads go to a
@@ -485,10 +485,39 @@ DST frames are decoded, and frames converted to PCM, on a separate rayon pool (`
 one `DstDecoder` and one `Converter` per channel count per thread.
 The request pool is deliberately not a rayon pool: a rayon worker that waits for another
 pool runs other jobs of its own pool meanwhile, and a second read of the same file would
-then wait, on the same thread, for the demultiplexer lock the first one holds. The image
-file is opened on its first audio read, and refused if its size changed since the TOC was
-read. Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O
-error on that read.
+then wait, on the same thread, for the demultiplexer lock the first one holds. Every read
+runs under `catch_unwind`, so even an unexpected panic becomes an I/O error on that read.
+
+**Open images** (`handles.rs`, #26). The handle an image's TOC was read through is kept,
+and every audio read of the disc uses it; a closed one is opened again on the next read,
+and refused if the image's size changed since the TOC was read. The handles live in one
+least-recently-used cache for the process, bounded by `--max-open-images` (default 64);
+a handle unused for 5 minutes is closed by a thread that looks every 30 seconds. A handle
+is checked against its path (one `stat`) when it is used, at most once a second: if the
+file's size, modification time, device or inode changed, the handle is closed and the
+image opened again, as a first open would. A disc that is dropped closes its handle.
+- *Why keep handles:* on a network share an open costs a round trip or two (0.6 to 0.9 ms
+  over NFS, measured in #25), as much as the one read a seek with a warm seek index needs;
+  before, a fresh mount opened every image twice (for its TOC, then for its first audio
+  read). The TOC handle is kept because a seek right after a directory listing (a player
+  resuming) is the common case.
+- *Why a bound and an idle timeout:* a library has hundreds or thousands of images, and a
+  listing of a directory opens all of its images; the process's file limit is commonly
+  1024. 64 covers several players and a tagger on different discs with room to spare. An
+  idle mount should not keep files open on a share: a handle pins a deleted or replaced
+  file on the server and keeps NFSv4 open state alive. Five minutes outlasts a pause in
+  playback.
+- *Why the check once a second, not on every read:* a `stat` of the path is a round trip
+  on a share whose attribute cache has expired. Once a second costs nothing measurable on a
+  straight read and bounds how long a replaced file is read through its old handle. The
+  tree, the frame cache and the seek index still describe the image as it was mounted (the
+  seek index checks every point it uses, so it costs only speed); a changed image needs a
+  remount, as before.
+- *Why the cache drops handles instead of closing them:* a handle is shared (`Arc`), so a
+  read in progress on an evicted handle finishes on it, and the file is closed when that
+  read ends. No lock is held while opening a file, and the cache's lock never waits for a
+  read, so eviction cannot deadlock or stall a read. The keys are per disc and unique in
+  the process (not the disc id, which callers choose).
 
 ## PCM conversion (phase 1: the converter)
 
@@ -632,6 +661,14 @@ overheads, not by decoding. Measured figures are in [performance.md](performance
 - *DSF header reads:* `tests/dsf_header.rs` reads every DSF file of the corpus as the
   kernel does for a tagger (128 KiB at 0, 128 KiB at 128 KiB, the tag's page): none of the
   reads starts read-ahead, and a player reading on starts it exactly at 256 KiB.
+- *Open images:* unit tests of the handle cache (reuse, the bound, idle closing, a new
+  handle after a change of size, of modification time or of the file, and none within the
+  check interval). `tests/handles.rs` walks the whole corpus with at most 3 images open,
+  reading every file whole and then pieces of all files interleaved (so that handles are
+  closed and opened again mid-file), and requires the bytes of a walk with every image open
+  and never more than 3 image descriptors in `/proc/self/fd`; and mounts the corpus with
+  `--max-open-images 2`, reads the start, middle and end of every file through the kernel,
+  and checks sacdfs's own descriptors.
 - *WAV files:* `tests/wav.rs`, every check written against the converter's API only, so that it
   holds for any converter whose output for a frame depends only on that frame and its two
   neighbours. At every rate, every WAV file of every corpus case parses (RIFF, fmt, data,

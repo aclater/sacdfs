@@ -101,13 +101,46 @@ track of each was played and 1 400 cold seeks, took about 130 KB.
 |---|---|---|---|
 | Local images (page cache) | < 20 ms | 0.4 to 1.6 ms | met |
 | Client-side, images on NFS, cold | < 50 ms | 18.6 / 26.8 ms (plain DSD / DST, first touch, mean; worst single seek 37 ms); 3.6 / 4.5 ms with the NAS's cache warm | met |
-| Client-side, warm seek index | within 2x local + one round trip | 2.7 ms against 2 x 1.4 + 0.4 = 3.2 ms (DST); against 2 x 0.5 + 0.4 = 1.4 ms for plain DSD it is not met, because opening the image over NFS (0.6 to 0.9 ms) and moving 170 KiB (1.4 ms) take longer than the local seek itself | met for DST |
+| Client-side, warm seek index | within 2x local + one round trip | 2.7 ms against 2 x 1.4 + 0.4 = 3.2 ms (DST); plain DSD 2.0 ms with images kept open (#26, [below](#keeping-images-open-26); 2.7 ms before) against 2 x 0.5 + 0.4 = 1.4 ms: not met, since moving the 170 KiB it reads takes about 1.45 ms on gigabit Ethernet, and even 128 KiB take 1.1 ms | met for DST |
 | Client-side, images on SMB, cold | < 80 ms | not measured (see below) | |
 
 **SMB** was not measured: mounting an SMB share needs root (`mount.cifs`), and there is no
 user-space SMB client in the build image. Each call to the image is one SMB read request, so a
 cold seek costs about its 3 to 5.7 calls times the share's per-request latency, plus the
 transfer, and a warm one a single request.
+
+### Keeping images open (#26)
+
+Measured on 2026-10-31 as above (fresh mount, `O_DIRECT` shim, the NFS READ counts), on the
+same three plain DSD stereo images on the NAS, 3 rounds of one seek per image, each round at
+another position; the virtual machine on the host used 5 s of CPU over the 40 s run (about
+0.1 hardware thread). "Warm" is a remount whose seek index cache a cold seek at the same
+position just saved, so the NAS has those sectors cached. "Before" is `main`, "after" keeps
+the handle the TOC was read through (the listing just before the seek) instead of opening
+the image again on the first audio read.
+
+| Time to the first 128 KiB, ms (mean; min to max) | before | after |
+|---|---|---|
+| NFS, plain DSD, warm seek index | 3.05 (2.50 to 3.65) | **2.02** (1.82 to 2.29) |
+| the same, 2 s between the listing and the seek | 4.59 (3.96 to 5.19) | **3.38** (3.06 to 3.99) |
+
+Both make one call to the image (170 KiB) and the same 7 NFS READs (6 of them the TOCs);
+the gain is the open, about 1.0 to 1.2 ms. A warm seek is now the one read: 170 KiB take
+about 1.45 ms on gigabit Ethernet, plus a round trip (0.35 to 0.45 ms by ping), which is
+what remains. The pause costs both builds the same 1.3 ms; locally (the plain
+DSD disc, page cache, 3 seeks each) a 2 s pause adds 0.2 to 0.4 ms (mean 0.43 to 0.84 ms
+before, 0.47 to 0.65 ms after), so most of it is the network and the NAS waking up, not
+sacdfs: the handle check once a second is a `stat` that this share (mounted `nocto`,
+attributes cached 600 s) answers locally.
+
+**Against #6** (warm seek index within 2x local plus one round trip, 2 x 0.5 + 0.4 = 1.4 ms
+for plain DSD): **not met, and not reachable on gigabit Ethernet.** The 128 KiB the read
+returns are plain DSD, so at least 128 KiB of the image must cross the network: 1.1 ms of
+wire time at about 117 MB/s, plus the round trip, is 1.5 ms before sacdfs, FUSE or the NAS
+do anything. The target's formula leaves out transfer time, which on a local disk is
+negligible and over a network is not. The read could be about 30 KiB smaller (it covers two
+frames and the search's stop distance more than a 128 KiB read needs, which a cursor started
+at a known point does not need; a possible follow-up), which would save about 0.25 ms.
 
 ## Straight read
 
