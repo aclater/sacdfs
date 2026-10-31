@@ -13,7 +13,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use fuser::{
     AccessFlags, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo,
@@ -27,6 +27,9 @@ use crate::tree::{Node, Tree};
 
 /// How long the kernel may cache entries and attributes: the tree never changes.
 const TTL: Duration = Duration::from_secs(24 * 3600);
+
+/// How long a reading of the source's size is used before it is read again.
+const STATFS_REFRESH: Duration = Duration::from_secs(60);
 
 /// Largest read the kernel is asked to send, and its read-ahead.
 pub const MAX_READ: u32 = 1 << 20;
@@ -86,6 +89,67 @@ pub struct SacdFs {
     next_fh: AtomicU64,
     uid: u32,
     gid: u32,
+    /// The source filesystem's size, and when it was read: see [`SacdFs::statfs`].
+    source_size: Arc<Mutex<SourceSize>>,
+}
+
+/// The size of the source filesystem, as `statfs` reports it.
+#[derive(Debug, Clone, Copy)]
+struct SourceSize {
+    blocks: u64,
+    frsize: u32,
+    read: Instant,
+    refreshing: bool,
+}
+
+impl SourceSize {
+    /// `statvfs` of `path`; 0 blocks if it fails.
+    fn of(path: &std::path::Path) -> SourceSize {
+        let (blocks, frsize) = statvfs(path).unwrap_or_else(|e| {
+            log::debug!("{}: statvfs: {e}", path.display());
+            (0, 1 << 16)
+        });
+        SourceSize { blocks, frsize, read: Instant::now(), refreshing: false }
+    }
+}
+
+/// The total size of the filesystem holding `path`, in blocks of the returned size. The
+/// library's only `unsafe`: std has no `statvfs`, and it is one plain call.
+#[allow(unsafe_code)]
+fn statvfs(path: &std::path::Path) -> io::Result<(u64, u32)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    let mut st = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
+    // SAFETY: `c` is a NUL-terminated path, `st` is a writable statvfs buffer.
+    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: statvfs succeeded and filled it.
+    let st = unsafe { st.assume_init() };
+    let frsize = if st.f_frsize > 0 { st.f_frsize } else { st.f_bsize };
+    Ok((st.f_blocks, u32::try_from(frsize).unwrap_or(1 << 16).max(1)))
+}
+
+/// The attributes of a negative entry: only the inode number 0 counts.
+fn negative_attr() -> FileAttr {
+    let t = std::time::SystemTime::UNIX_EPOCH;
+    FileAttr {
+        ino: INodeNo(0),
+        size: 0,
+        blocks: 0,
+        atime: t,
+        mtime: t,
+        ctime: t,
+        crtime: t,
+        kind: FileType::RegularFile,
+        perm: 0,
+        nlink: 0,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        blksize: 0,
+        flags: 0,
+    }
 }
 
 impl SacdFs {
@@ -99,6 +163,8 @@ impl SacdFs {
         gid: u32,
     ) -> io::Result<Self> {
         let requests = Workers::new(request_threads, "sacdfs-read")?;
+        // Read now, while the source has just been walked; refreshed in the background.
+        let source_size = Arc::new(Mutex::new(SourceSize::of(tree.source())));
         Ok(SacdFs {
             tree,
             engine,
@@ -107,14 +173,16 @@ impl SacdFs {
             next_fh: AtomicU64::new(1),
             uid,
             gid,
+            source_size,
         })
     }
 
     fn attr(&self, ino: u64, node: &Node) -> FileAttr {
-        let (kind, size, perm, nlink, mtime) = match node {
-            Node::Dir(d) => (FileType::Directory, 0, 0o555, 2, d.mtime),
-            Node::File(f) => (FileType::RegularFile, f.size, 0o444, 1, f.disc.mtime),
+        let (kind, size, perm, nlink) = match node {
+            Node::Dir(_) => (FileType::Directory, 0, 0o555, 2),
+            Node::File(f) => (FileType::RegularFile, f.size, 0o444, 1),
         };
+        let mtime = self.tree.mtime(node);
         FileAttr {
             ino: INodeNo(ino),
             size,
@@ -154,6 +222,7 @@ impl Filesystem for SacdFs {
     }
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
+        let mut negative = false;
         let ino = match name.as_encoded_bytes() {
             // The kernel's export code asks for `.` of an inode number from a file handle
             // and for `..` of a directory, to rebuild its path.
@@ -166,12 +235,23 @@ impl Filesystem for SacdFs {
                 }
                 None => None,
             },
-            _ => self.tree.lookup(parent.0, name),
+            _ => match self.tree.children(parent.0) {
+                Some(children) => {
+                    negative = true;
+                    children.iter().find(|e| e.name == name).map(|e| e.ino)
+                }
+                None => None,
+            },
         };
         match ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n))) {
             Some((ino, node)) => {
                 reply.entry(&TTL, &self.attr(ino, &node), Generation(self.tree.generation(&node)))
             }
+            // A name missing from a directory stays missing (its listing is made once), so
+            // the kernel may remember that it is: inode 0 is a negative entry, cached for
+            // the TTL (#61). `.` and `..` of an unknown number stay errors, for the export
+            // code.
+            None if negative => reply.entry(&TTL, &negative_attr(), Generation(0)),
             None => reply.error(Errno::ENOENT),
         }
     }
@@ -315,15 +395,34 @@ impl Filesystem for SacdFs {
         }
     }
 
+    // No extended attributes. ENOSYS, not ENODATA or an empty list: the kernel then remembers
+    // that the filesystem has none and answers every later request itself, with EOPNOTSUPP
+    // (#61), instead of sending one per file listed.
     fn getxattr(&self, _req: &Request, _ino: INodeNo, _name: &OsStr, _size: u32, reply: ReplyXattr) {
-        reply.error(Errno::NO_XATTR);
+        reply.error(Errno::ENOSYS);
     }
 
-    fn listxattr(&self, _req: &Request, _ino: INodeNo, size: u32, reply: ReplyXattr) {
-        if size == 0 { reply.size(0) } else { reply.data(&[]) }
+    fn listxattr(&self, _req: &Request, _ino: INodeNo, _size: u32, reply: ReplyXattr) {
+        reply.error(Errno::ENOSYS);
     }
 
+    /// The source filesystem's size, all of it used: `df` and SMB clients see a filesystem
+    /// of that size, full (#62). Read at mount and again at most every minute, in the
+    /// background, so that a slow source never holds up this reply.
     fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
-        reply.statfs(0, 0, 0, self.tree.len() as u64, 0, 1 << 16, 255, 1 << 16);
+        let size = {
+            let mut s = self.source_size.lock().unwrap_or_else(|p| p.into_inner());
+            if !s.refreshing && s.read.elapsed() >= STATFS_REFRESH {
+                s.refreshing = true;
+                let (cell, path) = (self.source_size.clone(), self.tree.source().to_owned());
+                self.requests.spawn(move || {
+                    let new = SourceSize::of(&path);
+                    *cell.lock().unwrap_or_else(|p| p.into_inner()) = new;
+                });
+            }
+            *s
+        };
+        let files = self.tree.len() as u64;
+        reply.statfs(size.blocks, 0, 0, files, 0, 1 << 16, 255, size.frsize);
     }
 }

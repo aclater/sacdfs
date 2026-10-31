@@ -38,7 +38,7 @@
 use std::collections::{HashMap, HashSet};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use scarletbook::Slot;
 use sha2::{Digest, Sha256};
@@ -57,12 +57,23 @@ const KIND_AREA: u64 = 1 << 14;
 const KIND_FILE: u64 = 2 << 14;
 
 /// Version of the bytes of DSF files: bump when a change makes the same track's DSF file
-/// differ (header, tag, padding), so that handles to the old bytes go stale.
+/// differ (header, tag, padding), so that handles to the old bytes go stale and the files'
+/// mtime moves forward (#64).
 const DSF_VERSION: u32 = 1;
 
 /// Version of the bytes of WAV files: bump when a change makes the same track's WAV file
 /// differ (converter coefficients, rounding, header, tags).
 const WAV_VERSION: u32 = 1;
+
+/// Seconds a file's mtime moves forward per output version: more than any PCM offset, so
+/// that a version bump moves every file past every time it showed before.
+const VERSION_STEP: u64 = PCM_OFFSETS;
+
+/// Number of distinct PCM offsets: 3 cutoffs times 8401 gains.
+const PCM_OFFSETS: u64 = 3 * GAINS as u64;
+
+/// Gains with their own offset: -60.00 to +24.00 dB in steps of 0.01 dB.
+const GAINS: i64 = 8401;
 
 /// What a key names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -107,6 +118,38 @@ pub fn pcm_flavour(pcm: &PcmConfig) -> u64 {
     // As the converter: a gain that is not finite counts as 0 (and -0 as 0).
     let gain = if pcm.gain_db.is_finite() && pcm.gain_db != 0.0 { pcm.gain_db.to_bits() } else { 0 };
     sha64(&[b"sacdfs pcm v1\0", &[cutoff], &gain.to_be_bytes()])
+}
+
+/// Seconds added to a WAV file's mtime for the PCM options that change its bytes but not its
+/// size (issue #64): 0 for the default options, else a different number below
+/// [`PCM_OFFSETS`] for every cutoff and gain in steps of 0.01 dB from -60 to +24 dB (at most
+/// 25,202 s, 7 hours). The rate is not included: it changes the file's size.
+pub fn pcm_mtime_offset(pcm: &PcmConfig) -> u64 {
+    let cutoff: u64 = match pcm.cutoff {
+        Cutoff::Khz40 => 0,
+        Cutoff::Khz30 => 1,
+        Cutoff::Wide80 => 2,
+    };
+    // As the converter: a gain that is not finite counts as 0. 0 dB first.
+    let gain = if pcm.gain_db.is_finite() { (f64::from(pcm.gain_db) * 100.0).round() as i64 } else { 0 };
+    cutoff * GAINS as u64 + gain.rem_euclid(GAINS) as u64
+}
+
+/// The modification time shown for a track file (issue #64): its image's, moved forward by
+/// [`VERSION_STEP`] per output version after the first and, for WAV, by the PCM options'
+/// offset ([`pcm_mtime_offset`]). The same on every mount with the same options; anything
+/// that changes it also changes the file's [`generation`].
+pub fn mtime(file: &TrackFile, pcm_offset: u64) -> SystemTime {
+    let (version, offset) = match file.format() {
+        Format::Dsf => (DSF_VERSION, 0),
+        Format::Wav => (WAV_VERSION, pcm_offset),
+    };
+    shown_mtime(file.disc.mtime, version, offset)
+}
+
+fn shown_mtime(image: SystemTime, version: u32, pcm_offset: u64) -> SystemTime {
+    let step = u64::from(version.saturating_sub(1)) * VERSION_STEP;
+    image + Duration::from_secs(step + pcm_offset.min(PCM_OFFSETS - 1))
 }
 
 /// One source directory or image of the index.
@@ -220,6 +263,11 @@ impl Ids {
     /// that shows it with `--flatten`).
     pub fn image(&self, path: &Path) -> u64 {
         self.of(Domain::Image, path)
+    }
+
+    /// The source root.
+    pub fn source(&self) -> &Path {
+        &self.root
     }
 
     /// Number of directories and images indexed.
@@ -405,6 +453,35 @@ mod tests {
         assert_eq!(one.chain(n[3]).unwrap(), vec![n[1], n[3]]);
         assert_eq!(one.chain(area(n[3], Slot::Multichannel)).unwrap(), vec![n[1], n[3]]);
         assert!(one.chain(123 << 16).is_none());
+    }
+
+    #[test]
+    fn mtime_offsets() {
+        use crate::pcm::PcmRate;
+        let base = PcmConfig::default();
+        let o = |gain_db: f32, cutoff: Cutoff| pcm_mtime_offset(&PcmConfig { gain_db, cutoff, ..base });
+        // The defaults keep the image's mtime; the rate is not part of it.
+        assert_eq!(pcm_mtime_offset(&base), 0);
+        assert_eq!(pcm_mtime_offset(&PcmConfig { rate: PcmRate::R352800, ..base }), 0);
+        assert_eq!(o(-0.0, Cutoff::Khz40), 0);
+        assert_eq!(o(f32::NAN, Cutoff::Khz40), 0);
+        // Every gain step of 0.01 dB in the range, with every cutoff, gets its own offset.
+        let mut seen = HashSet::new();
+        for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
+            for g in -6000..=2400 {
+                let off = o(g as f32 / 100.0, cutoff);
+                assert!(off <= 25_202, "{off}");
+                assert!(seen.insert(off), "gain {g} cutoff {cutoff:?}: offset {off} taken");
+            }
+        }
+        // A version bump moves past every time shown before, whatever the options.
+        let t = |s: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(s);
+        assert_eq!(shown_mtime(t(1000), 1, 0), t(1000));
+        assert_eq!(shown_mtime(t(1000), 1, 7), t(1007));
+        let highest = seen.iter().copied().max().unwrap();
+        assert_eq!(highest, PCM_OFFSETS - 1);
+        assert!(shown_mtime(t(1000), 2, 0) > shown_mtime(t(1000), 1, highest));
+        assert!(shown_mtime(t(1000), 3, 0) > shown_mtime(t(1000), 2, highest));
     }
 
     const PINNED: u64 = 0x0fbd_e4b4_daf9_0000;
