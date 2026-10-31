@@ -129,14 +129,23 @@ fn detect() -> Simd {
 /// into each copy with that copy's features.
 pub(super) trait Kernel {
     type Out;
-    fn run(self) -> Self::Out;
+    /// Runs the work, computing `W` independent outputs together where it can: wider
+    /// vectors need more of them in flight to keep the adders busy (each output's sum is a
+    /// chain of dependent adds), and `W` never changes any output's operations.
+    fn run<const W: usize>(self) -> Self::Out;
 }
+
+/// Outputs computed together on each path ([`Kernel::run`]'s `W`): 8 SSE2 registers of 2
+/// f64 each, 8 AVX2 registers of 4, 8 AVX-512 registers of 8.
+const LANES_BASELINE: usize = 16;
+const LANES_V3: usize = 32;
+const LANES_V4: usize = 64;
 
 /// Runs `k` with the code for `simd` (never more than the CPU has).
 #[inline]
 pub(super) fn dispatch<K: Kernel>(simd: Simd, k: K) -> K::Out {
     match simd {
-        Simd::Baseline => k.run(),
+        Simd::Baseline => k.run::<LANES_BASELINE>(),
         Simd::V3 => v3(k),
         Simd::V4 => v4(k),
     }
@@ -148,7 +157,7 @@ pub(super) fn dispatch<K: Kernel>(simd: Simd, k: K) -> K::Out {
 // the CPU lacks the features, so calling it is always safe.
 #[multiversion(targets("x86_64+avx+avx2+bmi1+bmi2+f16c+fma+lzcnt+movbe+popcnt+sse3+ssse3+sse4.1+sse4.2"))]
 fn v3<K: Kernel>(k: K) -> K::Out {
-    k.run()
+    k.run::<LANES_V3>()
 }
 
 #[rustversion::since(1.89)]
@@ -156,7 +165,7 @@ fn v3<K: Kernel>(k: K) -> K::Out {
     "x86_64+avx+avx2+bmi1+bmi2+f16c+fma+lzcnt+movbe+popcnt+sse3+ssse3+sse4.1+sse4.2+avx512f+avx512bw+avx512cd+avx512dq+avx512vl"
 ))]
 fn v4<K: Kernel>(k: K) -> K::Out {
-    k.run()
+    k.run::<LANES_V4>()
 }
 
 #[rustversion::before(1.89)]
