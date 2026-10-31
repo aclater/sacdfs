@@ -270,12 +270,15 @@ fn file_handles_survive_a_restart() {
     let at = tempfile::tempdir().unwrap();
     for extra in [&[][..], &["--flatten"][..]] {
         let m = Mount::new(src.path(), at.path(), cache.path(), extra);
-        let area =
-            if extra.is_empty() { "Artist/Album/Rip/disc/Multichannel" } else { "Artist/Album/Multichannel" };
+        let (area, other) = if extra.is_empty() {
+            ("Artist/Album/Rip/disc/Multichannel", "Artist/Other/dst/Stereo")
+        } else {
+            ("Artist/Album/Multichannel", "Artist/Other/Stereo")
+        };
         let dir = m.at.join(area);
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
         files.sort();
-        files.push(m.at.join("Artist/Other/dst/Stereo").read_dir().unwrap().next().unwrap().unwrap().path());
+        files.push(m.at.join(other).read_dir().unwrap().next().unwrap().unwrap().path());
         if !handles_available(&m.at, &files[0]) {
             return;
         }
