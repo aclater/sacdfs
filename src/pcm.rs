@@ -5,6 +5,10 @@
 // 2113789 (pysacd HEAD 846030d), `SPDX-License-Identifier: GPL-2.0-or-later`, by sacdfs's
 // author; see `pcm/filters.rs`. pysacd streams with filter state carried from frame to
 // frame; this port is stateless per frame instead, and has new filter designs.
+//
+// Stage 1's lookup tables of filter partial sums, indexed by whole DSD bytes, are the
+// technique credited to Sebastian Gesemann's dsd2pcm (BSD-3-Clause, 2009), which FFmpeg
+// and MPD also use.
 
 //! DSD to PCM conversion: DSD64 (2.8224 MHz, 1 bit) to 24-bit PCM at 88.2, 176.4 or
 //! 352.8 kHz, one SACD frame at a time.
