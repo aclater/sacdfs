@@ -54,8 +54,6 @@ pub enum Cutoff {
     Khz40,
     /// 30 kHz.
     Khz30,
-    /// Wide, about 80 kHz: 176.4 and 352.8 kHz only.
-    Wide80,
 }
 
 /// Conversion settings.
