@@ -10,7 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use proptest::prelude::*;
-use sacdfs::pcm::{Converter, Cutoff, DSD_SILENCE, FRAME_BYTES, PcmConfig, PcmRate, convert_area};
+use sacdfs::pcm::{Converter, Cutoff, DSD_SILENCE, FRAME_BYTES, PcmConfig, PcmRate, Simd, convert_area};
 use std::f64::consts::PI;
 
 const FS: f64 = 2_822_400.0;
@@ -720,6 +720,61 @@ fn golden_output() {
     }
     let want = GOLDEN;
     assert_eq!(got, want);
+}
+
+/// Every instruction set's code (#23) gives the golden output, frame by frame, at 24 bits and
+/// in f32: the baseline, x86-64-v3 and x86-64-v4 paths, as far as this CPU has them (the
+/// others fall back and are reported). `SACDFS_SIMD` additionally forces the path of every
+/// other test in a run.
+#[test]
+fn every_simd_path_gives_the_golden_output() {
+    use sha2::{Digest, Sha256};
+    let n = 2 * FRAME_BYTES;
+    let dsd = noise(3 * n, 11);
+    let frame = |f: usize| (f < 3).then(|| &dsd[f * n..(f + 1) * n]);
+    eprintln!("CPU supports {}", Simd::detected().name());
+    let mut f32_ref: Vec<Vec<u32>> = Vec::new();
+    for simd in [Simd::Baseline, Simd::V3, Simd::V4] {
+        let mut got = Vec::new();
+        let mut f32s = Vec::new();
+        for cutoff in CUTOFFS {
+            for rate in RATES {
+                if !valid(rate, cutoff) {
+                    continue;
+                }
+                let mut conv = Converter::with_simd(2, &cfg(rate, cutoff), simd);
+                if conv.simd() != simd {
+                    eprintln!("{} not available here: testing {}", simd.name(), conv.simd().name());
+                }
+                let mut pcm = vec![0u8; 3 * conv.frame_bytes()];
+                let mut flt = vec![0f32; 3 * conv.frame_bytes() / 3];
+                let fb = conv.frame_bytes();
+                for f in 0..3usize {
+                    conv.convert(
+                        f.checked_sub(1).and_then(frame),
+                        &dsd[f * n..(f + 1) * n],
+                        frame(f + 1),
+                        &mut pcm[f * fb..(f + 1) * fb],
+                    );
+                    conv.convert_f32(
+                        f.checked_sub(1).and_then(frame),
+                        &dsd[f * n..(f + 1) * n],
+                        frame(f + 1),
+                        &mut flt[f * fb / 3..(f + 1) * fb / 3],
+                    );
+                }
+                let h = Sha256::digest(&pcm);
+                got.push(h.iter().take(8).map(|b| format!("{b:02x}")).collect::<String>());
+                f32s.push(flt.iter().map(|v| v.to_bits()).collect::<Vec<u32>>());
+            }
+        }
+        assert_eq!(got, GOLDEN, "{}", simd.name());
+        if f32_ref.is_empty() {
+            f32_ref = f32s;
+        } else {
+            assert!(f32_ref == f32s, "{}: f32 output differs from the baseline", simd.name());
+        }
+    }
 }
 
 /// First 8 bytes of the SHA-256 of each configuration's output, in the order of the loops:

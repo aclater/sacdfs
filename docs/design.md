@@ -724,13 +724,42 @@ is covered by the pinned-hash test, which passes on the local RHEL glibc and on 
 Ubuntu glibc.
 
 **SIMD (why portable code).** The FIR kernels are written so that the compiler vectorises
-them (blocks of 16 independent outputs, windows cut to exact lengths so there are no bounds
+them (blocks of independent outputs, windows cut to exact lengths so there are no bounds
 checks, the generated code checked: packed `addpd`/`mulpd` on generic x86-64, `vaddpd` on
 `ymm` registers on x86-64-v3). Stage 1 reads its bytes as words and takes them apart with
-shifts (half the loads). `std::arch` with runtime detection would need `unsafe`, which the
-crate denies; the generic build already clears the bar for the default filter, and x86-64-v3 builds
-(RHEL 10's default, or `-C target-cpu=x86-64-v3`) are 1.1 to 1.6 times faster. Runtime dispatch is a
-follow-up if a generic build ever needs it.
+shifts (half the loads).
+
+**Runtime CPU dispatch (#23, why).** Generic x86-64 builds, which distributions and
+`cargo install` users get, would otherwise run the converter with SSE2 only; the wide filter
+then sat near the 100x bar of #6. So stage 1 and the three FIR kernels are compiled three
+times, for the baseline, x86-64-v3 (AVX2) and x86-64-v4 (AVX-512), by the `multiversion`
+crate (MIT OR Apache-2.0), and the copy is chosen from the CPU when the first converter is
+made (`pcm::Simd`). *Why `multiversion`:* calling `#[target_feature]` code needs `unsafe`,
+which sacdfs denies outside its daemonising code; the crate's macro keeps that call behind its
+own CPU check, so no copy can run on a CPU without its features, and sacdfs keeps
+`unsafe_code = "deny"`. *Alternatives:* a local `unsafe` block with `std::arch` (more control,
+breaks the policy for no measured gain); shipping x86-64-v3 builds only (excludes older CPUs);
+a 112 dB wide filter (about 5 % faster, lower quality).
+- *Granularity:* the kernels are dispatched, not the whole channel. Forcing all of a channel's
+  code inline into one dispatched function made the baseline path about 10 % slower than
+  before; dispatching each kernel (a few calls per channel and frame) leaves the baseline as it
+  was.
+- *Wider blocks on wider vectors:* each output is a chain of dependent adds, so a block must
+  hold enough independent outputs to keep the adders busy: 16 on the baseline, 32 on v3, 64
+  on v4 (8 registers of accumulators each). The block size never changes an output's
+  operations.
+- *v3 by default, even with AVX-512:* measured on a Zen 5 CPU, the v4 copy was slower than v3
+  on every filter but one (performance.md), and much slower with both threads of a core
+  converting, as the decoder pool does under load. It is built and tested, and
+  `SACDFS_SIMD=v4` selects it, so that other CPUs can be measured; the default changes only
+  with a measurement. AVX-512 target features need Rust 1.89, so a build with an older
+  compiler (the MSRV is 1.85) has no v4 copy.
+- *Identical output:* every output is the same sequence of operations on every path (Rust does
+  not fuse multiplies and adds, even with FMA enabled, nor reorder float sums). The pinned
+  hashes are checked on all three paths in one process (`Converter::with_simd`), and CI runs
+  the converter and WAV tests once per `SACDFS_SIMD` value.
+- *Building:* RHEL 10's Rust targets x86-64-v3 by default; there every copy has AVX2, and
+  `-C target-cpu=x86-64` gives a true baseline (how the figures were measured).
 
 **Interleaved input.** The converter takes frames as scarletbook gives them (`C × 4704`
 interleaved, MSB first) and copies one channel at a time into a window buffer with its

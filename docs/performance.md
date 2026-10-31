@@ -17,7 +17,8 @@ the guest's.
 |---|---|---|---|
 | Straight read of a whole area, vs `bench decode` at the same thread count | within 1.5x | **1.43x** (machine loaded) | met |
 | First bytes of a read at a random offset, fresh mount | under 100 ms | **3.4 ms** (image in the page cache), **3.7 ms** (image evicted) | met |
-| DSD-to-PCM conversion, stereo, 176.4 kHz, default filter, one core (#6) | at least 100x real time | **209x** generic x86-64, **264x** x86-64-v3 ([below](#pcm-conversion)) | met |
+| DSD-to-PCM conversion, stereo, 176.4 kHz, default filter, one core (#6) | at least 100x real time | **305x** generic x86-64 build with runtime dispatch (AVX2 copy), 242x SSE2 only ([below](#runtime-cpu-dispatch-23)) | met |
+| The same with the wide (80 kHz) filter (#23) | at least 100x real time | **147x** generic build (AVX2 copy), 93x SSE2 only | met |
 | Straight read of WAV files vs the same area's DSF files (#6) | within 1.5x | **1.09x** to **1.37x** ([below](#wav-files-6-7-8)) | met |
 | WAV: first byte at a random offset, fresh mount (#6) | under 20 ms | **1.8 ms** | met |
 | WAV: 4 players and a tagger (#6) | no read over 50 ms | worst **30.6 ms** | met |
@@ -323,6 +324,68 @@ The WAV files of the same discs (2026-10-31, with the converter of #16):
 
 ## PCM conversion
 
+### Runtime CPU dispatch (#23)
+
+Measured on 2026-10-31 with `cargo bench --bench pcm` (criterion, one frame at a time with
+both neighbours, noise-like DSD; 1 s warm-up and 3 s measurement per case), three rounds,
+under the benchmark lock, pinned to one core (`taskset -c 2`, its other hardware thread idle).
+Every build is generic x86-64 (`RUSTFLAGS="-C target-cpu=x86-64"`; note that RHEL 10's Rust
+targets x86-64-v3 by default, so a plain `cargo build` there is not generic). *Before* is
+`main` before this change; *after* is this change, with the copy it picks (x86-64-v3) and
+with each copy forced by `SACDFS_SIMD`. µs per frame, mean of 3 (best round in brackets); ×
+real time per stereo stream, for 6 channels per stereo pair (three pairs):
+
+| Ch | Filter | Rate | before µs | after, baseline µs | after, v3 (default) µs | after, v4 µs | × real time before → after (v3) |
+|---|---|---|---|---|---|---|---|
+| 2 | 40 kHz | 88.2 kHz | 46.3 (44.5) | 43.8 (43.3) | 36.9 (36.7) | 49.6 (44.7) | 288× → 361× |
+| 2 | 40 kHz | 176.4 kHz | **55.1 (54.0)** | **54.9 (54.2)** | **43.7 (43.5)** | **55.4 (49.7)** | **242× → 305×** |
+| 2 | 40 kHz | 352.8 kHz | 66.1 (65.5) | 66.6 (65.5) | 53.4 (52.9) | 59.8 (57.8) | 202× → 250× |
+| 2 | 30 kHz | 88.2 kHz | 67.0 (65.1) | 66.5 (65.9) | 51.7 (49.8) | 57.4 (54.6) | 199× → 258× |
+| 2 | 30 kHz | 176.4 kHz | 97.2 (95.1) | 95.8 (94.9) | 68.7 (68.5) | 74.2 (66.7) | 137× → 194× |
+| 2 | 30 kHz | 352.8 kHz | 117.9 (107.7) | 108.1 (107.3) | 78.8 (78.6) | 76.9 (75.8) | 113× → 169× |
+| 2 | wide 80 kHz | 176.4 kHz | **143.0 (128.1)** | **125.5 (123.9)** | **90.5 (90.4)** | **98.0 (92.7)** | **93× → 147×** |
+| 2 | wide 80 kHz | 352.8 kHz | 126.6 (116.9) | 117.9 (115.4) | 86.5 (85.2) | 98.0 (97.0) | 105× → 154× |
+| 6 | 40 kHz | 88.2 kHz | 140.8 (133.6) | 131.8 (130.5) | 114.8 (109.4) | 136.6 (133.3) | 284× → 348× per pair |
+| 6 | 40 kHz | 176.4 kHz | 179.5 (164.3) | 165.3 (162.3) | 130.8 (130.6) | 152.3 (148.4) | 223× → 306× per pair |
+| 6 | 40 kHz | 352.8 kHz | 213.1 (199.1) | 199.7 (196.8) | 164.1 (158.2) | 184.7 (174.3) | 188× → 244× per pair |
+| 6 | 30 kHz | 88.2 kHz | 201.6 (196.4) | 198.2 (195.5) | 149.6 (149.2) | 167.5 (162.9) | 198× → 267× per pair |
+| 6 | 30 kHz | 176.4 kHz | 301.2 (286.3) | 287.0 (284.1) | 205.7 (205.6) | 216.4 (201.1) | 133× → 194× per pair |
+| 6 | 30 kHz | 352.8 kHz | 335.5 (323.2) | 328.9 (321.9) | 236.8 (236.0) | 239.0 (226.7) | 119× → 169× per pair |
+| 6 | wide 80 kHz | 176.4 kHz | 382.9 (375.3) | 377.7 (373.0) | 272.6 (270.0) | 285.2 (277.7) | 104× → 147× per pair |
+| 6 | wide 80 kHz | 352.8 kHz | 349.4 (347.8) | 355.7 (349.0) | 258.8 (253.7) | 297.6 (294.8) | 114× → 155× per pair |
+
+**The bars of #6:** the default filter, 176.4 kHz stereo, at **305×** (was 242×); the wide
+filter, 176.4 kHz stereo, at **147×** (was 93×, 106× in its two less loaded rounds), so over
+the 100× bar with margin on a generic build. The baseline copy is as fast as before, so a CPU
+without AVX2 loses nothing. The output is bit-identical on every path (tests).
+
+**Machine load.** The virtual machine on the host kept 0.2 to 4.5 hardware threads busy (from
+its CPU time, `/proc/<pid>/stat` fields 14 and 15): 4.5, 1.9 and 3.3 during the three *before*
+rounds, 2.0, 1.1 and 0.5 during the v3 rounds, 2.4 to 0.2 during the others. Its virtual CPUs
+are not pinned, so they sometimes ran on the sibling thread of the measured core; that slows
+the AVX copies most (an earlier set of 3 rounds, with the machine at 7.3 threads busy during
+one v3 round, gave v3 means up to 1.6 times its best round and is not used here).
+
+**AVX-512 is not the default.** The v4 copy is slower than v3 in every case but one (30 kHz at
+352.8 kHz, 2 % faster). With both hardware threads of the core converting (two benchmarks at
+once on the core's two threads, as the decoder pool does under load), it is much slower
+(µs per frame on one thread, means of one round each):
+
+| Filter, 176.4 kHz stereo | before | v3 | v4 |
+|---|---|---|---|
+| 40 kHz | 92.9 | 71.9 | 97.0 |
+| 30 kHz | 165.1 | 102.6 | 133.6 |
+| wide 80 kHz | 208.6 | 142.8 | 178.1 |
+
+So v3 is the default even where the CPU has AVX-512 (a Zen 5 CPU here); `SACDFS_SIMD=v4` selects
+v4 to measure other CPUs.
+
+**Wider blocks.** The AVX copies compute 32 (v3) or 64 (v4) outputs per block instead of 16,
+which gained up to 4 % (30 kHz and wide filters, both threads busy); with 16, v3 measured
+72.2, 104.9 and 148.2 µs in the table above.
+
+### Phase 1 figures (#16)
+
 The DSD-to-PCM converter alone (phase 1 of #11; the WAV files are [below](#wav-files-6-7-8)), measured 2026-10-31 with
 `cargo bench --bench pcm` (criterion, one frame at a time as the filesystem will call it,
 with both neighbours, noise-like DSD; 2 s warm-up, 5 s measurement per case), three rounds
@@ -371,8 +434,9 @@ Frames per second are 10⁶ / (µs per frame); a stream plays 75 frames per seco
   stage 3.
 - The 30 kHz filter is not a half-band, so its stage 3 costs about 2.5 times the default's.
 - The wide filter at 176.4 kHz is the costliest (its 337-tap stage, required to be fully
-  attenuated by 88.2 kHz): 2.2 times the default. It is at the bar on a generic build
-  (94× mean, 107× in the best round) and clears it on x86-64-v3 (133×).
+  attenuated by 88.2 kHz): 2.2 times the default. It was at the bar on a generic build
+  (94× mean, 107× in the best round) and cleared it on x86-64-v3 (133×); with runtime
+  dispatch (#23, above) a generic build runs the AVX2 copy.
 - The 6-channel figures scale with the channel count: channels are converted one after the
   other with the same kernels.
 - Making a converter (designing its filters) takes 38 to 55 µs generic, 27 to 42 µs v3; it
