@@ -27,8 +27,8 @@ depends on a git repository. `cargo install` from crates.io comes once scarletbo
   converter already uses AVX2 where the CPU has it.
 - `sacdfs-<version>-x86_64-v3-linux.tar.gz`: for x86-64-v3 CPUs (AVX2, BMI2, FMA: most Intel
   and AMD CPUs since about 2015, the Intel N100 family included), with all of sacdfs built for
-  them ([performance](docs/performance.md#converter-throughput)). On an older CPU this build
-  stops with an illegal-instruction error. `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
+  them: DST areas read 10 to 18 % faster ([performance](docs/performance.md#straight-reads)).
+  On an older CPU this build stops with an illegal-instruction error. `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
 
 Both need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). Each
 archive holds `sacdfs`, `COPYING`, `README.md` and `CHANGELOG.md`. To download, check and
@@ -170,16 +170,16 @@ scanners are served: [user guide](docs/user-guide.md#formats).
 ## Deployment
 
 - **Locally:** run sacdfs on the Linux machine that holds the images, as in the
-  [quick start](#quick-start). A cold seek returns in about 1 ms, a WAV seek in about 2 ms.
+  [quick start](#quick-start). A cold seek returns in about 2 ms, a WAV seek in under 3 ms.
 - **On a NAS (the main deployment):** the [container image](docs/deployment.md) runs sacdfs
   next to the images and shares its mount over SMB and NFS, so any client (Linux, macOS,
   Windows, phones, network players) sees the DSF and WAV files. sacdfs's reads of the images
-  stay on the NAS, so a seek costs about one network round trip more than locally: about 5 ms
+  stay on the NAS, so a seek costs about one network round trip more than locally: 5 to 6 ms
   over SMB on a gigabit LAN. Docker, Podman, Compose and TrueNAS SCALE are covered.
 - **On a Linux client, images on a network share:** sacdfs runs on the client, and each read
-  of an image is a round trip to the server. A cold seek takes about 19 to 27 ms over NFS from
-  a NAS's hard disks, about 2 to 3 ms once the seek index knows that part of the disc. The
-  mount can also be re-exported by the kernel NFS server
+  of an image is a round trip to the server. A cold seek over NFS from a NAS's hard disks takes
+  about 22 ms for plain DSD and 37 ms for DST on average, and about 2 ms once the seek index
+  knows that part of the disc. The mount can also be re-exported by the kernel NFS server
   ([user guide](docs/user-guide.md#sharing-the-mount-over-nfs)).
 
 How fast each one is, against the project's targets: [docs/performance.md](docs/performance.md).

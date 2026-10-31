@@ -463,8 +463,8 @@ read never searches.
   irregular, its points are dropped and every later search starts at the area's first sector:
   exactly the sequential scan, only slower.
 - **Cost.** A cold seek (an empty index) costs 3.0 to 5.6 calls to the image on average on
-  real discs (3.0 for plain DSD), including reading the frames it was looking for, about a
-  millisecond from a local disk; on a network share each call is a round trip, and on a NAS
+  real discs (3.0 for plain DSD), including reading the frames it was looking for, a millisecond
+  or two from a local disk; on a network share each call is a round trip, and on a NAS
   with hard disks often a disk seek too. `Disc::sector_reads` and `Disc::sector_bytes` count
   them.
 
