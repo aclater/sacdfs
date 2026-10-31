@@ -136,9 +136,18 @@ takes 1.1 to 1.4 times as long as reading the same track's DSF file (the WAV fil
 times the bytes), and a seek in it returns in about 2 ms. See
 [docs/performance.md](docs/performance.md).
 
+## Running it on a NAS
+
+The container image in this repository runs sacdfs next to the images and shares its mount
+over SMB and NFS, so that any client (Windows, macOS, phones, network players) sees the DSF
+and WAV files, and seeks stay fast because sacdfs's reads of the images stay on the NAS. See
+[docs/deployment.md](docs/deployment.md) for Docker, Podman, Compose and TrueNAS SCALE, and
+for mounting the shares.
+
 ## Limits
 
-- Linux only for now, and read-only.
+- Linux only for now, and read-only; other systems can read the files over SMB or NFS from
+  [the container](docs/deployment.md).
 - DSF and WAV output only: no DSDIFF (DFF), no FLAC, no 44.1/48 kHz or 16-bit PCM. The converter is measured in
   [docs/pcm-quality.md](docs/pcm-quality.md).
 - The directory tree is read once, at mount time. Images added to or removed from `SOURCE`

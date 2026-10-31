@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A container image for a NAS (`Containerfile`): sacdfs with Samba and NFS-Ganesha, sharing
+  the mount read-only over SMB and NFSv4, configured with environment variables, with a
+  health check and logs on standard output. Compose file in `deploy/`, guide in
+  `docs/deployment.md` (Docker, Podman, Compose, TrueNAS SCALE, client mounts). NFS clients
+  still see stale file handles after the container restarts, until #18.
+
 ### Documentation
 
 - Credit Sebastian Gesemann's dsd2pcm (BSD-3-Clause) for the byte-lookup-table technique in the PCM converter's first stage.

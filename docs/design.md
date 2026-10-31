@@ -570,6 +570,46 @@ at 16 threads; plain DSD areas need no decoding.
 A straight read through the mount should therefore be limited by the copy and FUSE
 overheads, not by decoding. Measured figures are in [performance.md](performance.md).
 
+## Deployment on a NAS (the container)
+
+The container image (`Containerfile`, [deployment.md](deployment.md)) runs sacdfs and the
+servers that share its mount, Samba (SMB) and NFS-Ganesha (NFSv4), in one container. The
+decisions, each with its reason:
+
+- **The servers run inside the container.** An appliance NAS shares only its own datasets,
+  and cannot see a FUSE mount inside an app container (no mount propagation to the host on
+  TrueNAS). Serving from inside depends on nothing in the host but its container runtime.
+- **Build on UBI 10, run on Fedora.** Red Hat first: sacdfs is compiled with RHEL 10's Rust
+  from UBI's AppStream. UBI's repositories have no Samba and no NFS server, RHEL's full
+  repositories need a subscription (so the image couldn't be published or built in CI), and
+  NFS-Ganesha isn't in RHEL at all. Fedora has all three. CentOS was not needed.
+- **NFS-Ganesha rather than the kernel's NFS server.** The kernel server needs its module
+  loaded on the host (a container can't load one), a rootful and in practice privileged
+  container, and shares kernel state with the host's own NFS service. NFS-Ganesha needs only
+  `CAP_DAC_READ_SEARCH`, for `open_by_handle_at(2)`. sacdfs's decoding (about 500 MB/s for
+  DSF), not the server, sets the speed. Both servers depend on #18 for file handles that
+  survive a restart.
+- **Privileges:** `/dev/fuse` and `CAP_SYS_ADMIN` for FUSE, `CAP_DAC_READ_SEARCH` for NFS
+  only (`NFS=0` drops the need), and on AppArmor hosts `apparmor=unconfined`, since Docker's
+  default profile forbids `mount(2)`. No `--privileged`.
+- **NFSv4 only** (4.0 for macOS, 4.1 and 4.2 for Linux), TCP, port 2049: no rpcbind, no
+  mountd, no lock manager, so one port to publish. **Graceless:** a read-only export has no
+  locks or opens worth recovering, so a restarted server answers at once instead of
+  waiting out a 90 s grace period.
+- **`all_squash` to `nobody`, and `--allow-other`:** the mount is read-only and world-
+  readable, so who a client claims to be doesn't matter; smbd and Ganesha read the mount
+  as other users than the one that mounted it, which FUSE allows only with `allow_other`.
+- **Windows-forbidden characters in titles** (`" * : < > ? \ |`) are sent over SMB as the
+  private-use characters that macOS and the Linux kernel client map back (Samba's `catia`
+  module, the SFM mapping), not as mangled 8.3 names. A full-width mapping (`：`) reads better
+  on Windows, but breaks titles that already contain a full-width character: the corpus has
+  one, and real Japanese titles often do. It is an option, not the default.
+- **Samba does no extended-attribute or DOS-attribute lookups** (`ea support = no`,
+  `store dos attributes = no`): sacdfs has neither, and each lookup would be one more FUSE
+  round trip per file.
+- **If one process stops, the container stops**, so the runtime's restart policy restarts
+  all three together instead of leaving a server sharing an empty directory.
+
 ## Testing
 
 - Unit tests: DSF header and tag layout, offset-to-frame mapping (including the padded
@@ -614,6 +654,10 @@ overheads, not by decoding. Measured figures are in [performance.md](performance
   file's. `tests/mount.rs` reads every WAV file through the kernel and compares it with the
   library, and checks `--format` and `--pcm-*`. An ignored test, `real_discs`, runs the stream
   check on local real discs (`SACDFS_REAL_IMAGES`).
+- *Container:* the `container` workflow builds the image, serves the corpus, mounts it over
+  SMB and NFS with the kernel clients from a client container, and checks every track's
+  per-channel hashes and every WAV header (`deploy/check-share.py`); a second run checks user
+  access (guests refused), `--format dsf` and `--flatten`.
 
 ## Prior art
 
