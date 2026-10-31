@@ -157,12 +157,17 @@ read never searches.
 at L first yields a frame numbered at most n, and frame n starts at or after L, so starting at
 L never misses frame n or any later frame. Points come from two places. A *probe* of the
 search starts a demultiplexer at L and records the first frame it yields (reading at most 80
-sectors). A sequential scan records, at most once a second of audio, the second frame popped
-after pushing a sector: every frame delivered by a push except the first started in that
-sector. A search for frame f starts from the nearest point numbered below f (scanning
-forward directly when it is at most 48 frames back), else it searches, between the nearest
-points around f (the area's first sector and its play time when there are none), for the
-last sector where a probe yields a frame numbered below f, until 8 sectors are left. It
+sectors). A sequential scan records, at most once every 40 frames (about half a second), the
+second frame popped after pushing a sector: every frame delivered by a push except the first
+started in that sector; it skips points within 10 frames of a known one, which a stretch read
+again from another start would otherwise pile up, but still checks them against the others.
+A search for frame f starts from the nearest point numbered below f (scanning forward
+directly when it is at most 48 frames back; the 40-frame spacing makes that true anywhere in
+a stretch already read), else it searches, between the nearest points around f (the area's
+first sector and its play time when there are none), for the last sector where a probe
+yields a frame numbered below f, until 8 sectors are left, or about two of the area's
+average frames if that is more (at most 32 sectors: scanning them costs no extra call to the
+image, a probe does). It
 never starts at a point numbered f itself: a hostile disc can store a second frame with an
 earlier frame's timecode, which a scan from the area start discards because it has seen the
 original, but which a demultiplexer started between the two takes for frame f (corpus cases
@@ -170,16 +175,70 @@ original, but which a demultiplexer started between the two takes for frame f (c
 original first. The probes interpolate on frame numbers between the tightest of the known
 bounds and the track starts of the area TOC that lie inside them (the TOC is only a hint:
 every probe is checked, and TOC starts that are out of order are ignored), aimed half the
-8-sector stop distance past the estimate, towards the farther bound, so that a good estimate
-closes the interval from both sides; when an interpolated probe does not halve the
-interval, the next one bisects. A read 375 frames or fewer ahead of the
+stop distance past the estimate, towards the farther bound, so that a good estimate closes
+the interval from both sides. When an interpolated probe does not halve the interval, the
+next one bisects, unless the probe found a frame within about twice the stop distance of f:
+then the estimate was good and only its near bound moved, so the next interpolation, aimed
+at the other side, usually closes the interval. At least every third probe bisects, so a
+hostile disc cannot make the search linear. A read 375 frames or fewer ahead of the
 open file's demultiplexer continues it instead. If two points ever contradict each other
 (frame numbers that decrease as the LSN grows; a well-formed disc never does this, a hostile
 one can), the area is marked irregular, its points are dropped and every later search
 starts at the area's first sector: exactly the sequential scan, only slower. A cold seek
-(a fresh mount, so an empty index) costs 4.6 to 6.1 calls to the image on average on real
-discs, including reading the frames it was looking for, a millisecond or two from a local
-disk; on a network share each call is a round trip. `Disc::sector_reads` counts them.
+(a fresh mount, so an empty index) costs 3.0 to 5.7 calls to the image on average on real
+discs (3.0 for plain DSD), including reading the frames it was looking for, a millisecond or
+two from a local disk; on a network share each call is a round trip, and on a NAS with hard
+disks often a disk seek too. `Disc::sector_reads` and `Disc::sector_bytes` count them.
+
+*Sizes of the reads.* Each read of the image is sized to what it is for, from the area's
+average frame size (its sectors over its play time). A probe reads about two average frames
+and a sector per call (5 to 7 sectors for DST stereo, 11 for plain DSD stereo, 29 for
+6-channel DSD; it was 16 sectors for all), which usually finds a whole frame in one call. The
+first read of a cursor after a search covers the frames of a 128 KiB read of the DSF file
+(the common size of a player's or the kernel's random read), two more frames and the stop
+distance; later reads are 64 sectors as before. The cursor also starts with the sectors the
+last probe at its starting point already read. *Why:* a cold read used to fetch about twice
+the bytes it needed (293 KiB on average for a 128 KiB read; now 139 KiB). On a local disk
+that hardly shows; over a network the bytes are transfer time on top of each round trip.
+
+**Persistent seek index.** The points of each image's areas are kept across mounts in a
+cache directory (`$XDG_CACHE_HOME/sacdfs`, `--index-cache DIR`, off with
+`--no-index-cache`), so that a seek after a remount or a reboot starts from a point instead of
+searching: one call to the image instead of four or five. *Why:* client-side mounts (images on
+NFS or SMB, issue #20) pay a round trip for every call, plus a disk seek on a NAS whose cache
+does not hold that part of the image; a remount used to start every seek cold.
+
+- *Format* (`index_cache.rs`): one file per image, named by the first 128 bits of a SHA-256 of
+  the image's canonical path, so that no path appears in the cache; it holds the full hash,
+  the image's size and modification time (seconds and nanoseconds), each area's first and
+  end LSN and channel count, and the points, delta-coded as LEB128 (about 2 to 3 bytes a
+  point; a disc played through takes a few tens of KB, a library of a hundred discs a few
+  MB). A format version and a truncated SHA-256 of the contents guard it. A file that does
+  not match in every field, or fails any check while being read (points out of order or
+  outside their area, more than 65 536 an area, a file over 4 MiB, a symbolic link), is
+  ignored and replaced by the next save. *Why the key:* size and mtime change when an image
+  is replaced or edited, and checking them costs nothing; hashing the content would read the
+  whole image, which is what the cache exists to avoid.
+- *Never trusted.* Loaded points are kept apart from the checked ones. They aim the search's
+  probes (with the TOC's track starts, whichever is closer), and a cursor may start at one
+  within 48 frames before its frame, but it checks the first frame it reads there exactly as
+  a probe would (found within 80 sectors, and numbered below the frame wanted) before it
+  returns anything. A start that passes is recorded as a checked point; one that fails makes
+  the cursor fall back to an ordinary search, and drops every loaded point of the disc. So a
+  stale, damaged or hostile cache costs only speed: the audio is always what a scan from the
+  area start gives. *Why not check every point at load:* that would cost a probe per point,
+  more than the search it saves.
+- *Writing.* Lazily: every 30 seconds for discs whose points changed, and at unmount; a
+  disc whose points did not change is only touched (its mtime set) so that it counts as
+  used. Atomically: a new temporary file (`O_EXCL`, mode 0600, not following links), then a
+  rename over the old one. Not synced: a crash can at worst lose or damage an entry, which
+  then costs speed. The directory is created on the first write (mode 0700), and bounded to
+  32 MiB in all: after a write, the least recently used files are removed until it fits.
+  Points that would make the loaded and checked points of an area contradict each other are
+  not saved.
+- *Why not more:* precomputing the index of a whole library in the background
+  (`--index-ahead`) would read every image completely, which on a network share is the cost
+  this work avoids; it is a possible follow-up as a sparse, low-priority probe pass.
 
 **Why not scarletbook's frame ranges.** scarletbook 0.3.0 can decode any frame range of an
 area (`Disc::range_audio`, `range_audio_cursor`, `continue_range_audio`,
@@ -374,6 +433,18 @@ overheads, not by decoding. Measured figures are in [performance.md](performance
   on fresh opens; it also checks background mode, read-only refusal and unmounting by
   SIGTERM and SIGINT. Locally, the same per-channel hashes were compared on real discs
   (see [performance.md](performance.md)).
+- *Persistent seek index:* unit tests of the file format (round trip; another size, mtime,
+  path or area shape misses; every single damaged byte and every truncation is rejected;
+  proptest of random and damaged files, with the checksum recomputed after the damage so that
+  the parser itself is fuzzed), of the directory (private mode, LRU trimming, symbolic links
+  and oversized files not read). `tests/index_cache.rs` saves the index of a straight read of
+  every corpus case, then reads every frame alone and random ranges with it loaded, each
+  frame also from a fresh tree so that only the loaded points are known, and requires the
+  bytes of a straight read; the same with hostile entries (proptest of points in order but
+  anywhere, and every point too late), which must fail their checks and still give the same
+  bytes; and a changed size or mtime misses. `tests/mount_index.rs` mounts, seeks, unmounts,
+  remounts and seeks again through the kernel: the same bytes, with fewer calls to the image
+  and fewer bytes read.
 
 ## Prior art
 

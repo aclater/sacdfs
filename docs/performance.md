@@ -19,6 +19,93 @@ the guest's.
 | First bytes of a read at a random offset, fresh mount | under 100 ms | **3.4 ms** (image in the page cache), **3.7 ms** (image evicted) | met |
 | DSD-to-PCM conversion, stereo, 176.4 kHz, default filter, one core (#6; no WAV files yet) | at least 100x real time | **209x** generic x86-64, **264x** x86-64-v3 ([below](#pcm-conversion)) | met |
 
+## Client-side seek latency (issue #20)
+
+Measured on 2026-10-31 on the same machine, under the benchmark lock, with the virtual
+machine on the host nearly idle this time (0.4 and 0.1 of a hardware thread busy during the
+two runs, from its CPU time). "Before" is sacdfs as on `main` before this change; "after" is
+the persistent seek index and the smaller cold reads.
+
+**Method.** Every seek is on a fresh mount: open the file, read 128 KiB at an offset inside a
+track with one `pread`, close; the time of those three calls (unlike the `dd` figures below,
+it leaves out starting a process, about 1 ms). *Cold:* an empty seek index (for "before",
+always). *Warm:* a remount whose seek index cache was saved by a previous mount that made
+the same seek ("resume where I stopped"). Each figure is the mean of 3 rounds, each the mean
+of 3 seeks: locally, tracks 5, 9 and 12 at 37 %, 81 % and 55 % of their length; on NFS, three
+images, one seek each, at a different position in each round.
+
+**Images over NFS.** The share is NFS 4.2 from a NAS on gigabit Ethernet (ping 0.38 ms), its
+pool on hard disks. The client mounts it with FS-Cache, which keeps data read once on a local
+disk, so dropping the page cache does not make reads cold. For these runs sacdfs was started
+with a small `LD_PRELOAD` shim (not part of sacdfs) that adds `O_DIRECT` to opens on the
+share: every read of the image then goes to the server, bypassing both the page cache and
+FS-Cache, which the per-mount NFS READ counts in `/proc/self/mountstats` confirmed (each
+mount also makes 6 to 8 READs for the TOCs). *First touch:* a part of the image not read
+before in these runs, so the NAS most likely reads it from disk; *repeat:* the same seeks
+again, with the NAS's cache warm.
+
+| Time to the first 128 KiB, ms | before | after, cold | after, warm |
+|---|---|---|---|
+| local, DST stereo disc, page cache | 1.60 | 1.41 | 1.40 |
+| local, DST stereo disc, evicted | 1.97 | 1.78 | 1.47 |
+| local, plain DSD disc, page cache | 1.57 | 0.51 | 0.40 |
+| local, plain DSD disc, evicted | 1.36 | 1.32 | 0.81 |
+| NFS, plain DSD, first touch | 27.8 | 18.6 | 2.7 * |
+| NFS, plain DSD, repeat | 5.18 | 3.57 | 2.76 |
+| NFS, DST, first touch | 36.9 | 26.8 | 2.7 * |
+| NFS, DST, repeat | 5.94 | 4.53 | 2.72 |
+
+\* The warm seek follows the cold one at the same position, so the NAS has those sectors
+cached; a warm seek into a part of the image the NAS must read from disk costs its one read's
+disk seek (a single 170 KiB read there took about 25 ms).
+
+Calls to the image per seek (from the exit log of `-v`, and on NFS from the READ counts less
+the TOC reads): locally 4.0 cold for the DST disc and 3.0 for the plain DSD one; on NFS 5 →
+3 (plain DSD) and 6.0 → 5.7 (DST) cold, and 1 warm. Locally the times are mostly FUSE,
+opening the file and decoding; on NFS each call is a round trip, and on first touch usually
+a disk seek on the NAS too, which is why single first-touch seeks vary from 9 to 37 ms
+after (19 to 49 ms before). A warm seek
+on NFS is the open of the image (0.6 to 0.9 ms over NFS) plus one read (about 1.4 ms for
+170 KiB).
+
+**Calls and bytes per cold seek**, without FUSE (`examples/seek_latency`): 200 seeks of
+128 KiB spread over each area of five real discs, each on a fresh disc (an empty index):
+
+| Disc | calls before | calls after | KiB before | KiB after |
+|---|---|---|---|---|
+| plain DSD stereo | 4.78 | **3.04** | 345 | **193** |
+| DST stereo | 5.36 | **5.04** | 268 | **106** |
+| DST 6 channels (same disc) | 5.67 | **4.90** | 277 | **159** |
+| DSD stereo (hybrid disc) | 4.67 | **3.00** | 342 | **192** |
+| DST 5 channels (same disc) | 5.92 | **5.58** | 285 | **118** |
+| DST stereo, 2064-byte sectors | 5.46 | **5.11** | 271 | **104** |
+| DST stereo, 2064-byte sectors (another disc) | 5.14 | **4.84** | 261 | **101** |
+| **all** | 5.29 | **4.50** | 293 | **139** |
+| first 128 KiB of every track (93 tracks) | 3.71 | **2.90** | 246 | **119** |
+| warm: the same seek after a remount | | **1.06** | | **109** |
+| warm: a seek into a track played through before a remount | | **1.05** | | **108** |
+
+The bytes halve because probes and the first read are sized to the area's frames; the calls
+drop most on discs with large frames (plain DSD), where the search now stops at about two
+frames and keeps aiming after a probe that lands next to its frame. On DST discs, whose frame
+sizes vary with the music, interpolation from the track starts is less accurate, and a cold
+seek still needs four to five probes. The seek index cache of these five discs, after every
+track of each was played and 1 400 cold seeks, took about 130 KB.
+
+### Against the targets of issue #6
+
+| Deployment | Target | Measured | |
+|---|---|---|---|
+| Local images (page cache) | < 20 ms | 0.4 to 1.6 ms | met |
+| Client-side, images on NFS, cold | < 50 ms | 18.6 / 26.8 ms (plain DSD / DST, first touch, mean; worst single seek 37 ms); 3.6 / 4.5 ms with the NAS's cache warm | met |
+| Client-side, warm seek index | within 2x local + one round trip | 2.7 ms against 2 x 1.4 + 0.4 = 3.2 ms (DST); against 2 x 0.5 + 0.4 = 1.4 ms for plain DSD it is not met, because opening the image over NFS (0.6 to 0.9 ms) and moving 170 KiB (1.4 ms) take longer than the local seek itself | met for DST |
+| Client-side, images on SMB, cold | < 80 ms | not measured (see below) | |
+
+**SMB** was not measured: mounting an SMB share needs root (`mount.cifs`), and there is no
+user-space SMB client in the build image. Each call to the image is one SMB read request, so a
+cold seek costs about its 3 to 5.7 calls times the share's per-request latency, plus the
+transfer, and a warm one a single request.
+
 ## Straight read
 
 One DST stereo disc of about 50 minutes: 14 tracks, 2.12 GB of DSF files. Each round ran
@@ -163,4 +250,6 @@ time cat /mnt/x/*/Stereo/*.dsf > /dev/null
 # seek
 fusermount3 -u /mnt/x; sacdfs -f IMAGE /mnt/x &
 time dd if=/mnt/x/<disc>/Stereo/05*.dsf of=/dev/null bs=128K count=1 skip=$OFFSET iflag=skip_bytes
+# calls, bytes and time per seek without FUSE, cold and with a warm seek index
+cargo run --release --example seek_latency -- --seeks 200 --cache /tmp/idx IMAGE...
 ```
