@@ -33,13 +33,17 @@
 //! f64. Each output is a fixed sequence of operations (Rust never fuses a multiply and an
 //! add, nor reorders float sums), so the result is the same, bit for bit, whatever SIMD
 //! width the compiler picked (SSE2 on generic x86-64, AVX2 on x86-64-v3) and on any
-//! machine.
+//! machine. The hot code is compiled for the baseline, x86-64-v3 and x86-64-v4 and chosen
+//! at run time ([`Simd`]); all three give the same bytes.
 
 mod filters;
+mod simd;
 
 use std::ops::{Add, Mul};
 
 use filters::{Filters, HB_PAIRS, S1_BEFORE, S1_BYTES};
+use simd::Kernel;
+pub use simd::Simd;
 
 /// DSD bytes per channel in one SACD frame (1/75 s).
 pub const FRAME_BYTES: usize = 4704;
@@ -244,6 +248,9 @@ impl Pipeline {
     }
 
     /// Runs every stage on `self.bytes`; the result is read with [`Pipeline::sample`].
+    /// This and everything it calls is `#[inline(always)]`, so that it is compiled into
+    /// each instruction set's copy (see [`simd`]).
+    #[inline(always)]
     fn run(&mut self) {
         if self.cfg.cutoff == Cutoff::Wide80 {
             self.run_wide();
@@ -288,6 +295,7 @@ impl Pipeline {
 
     /// The wide filter: stage 1 with 18 tables, then one filter at 352.8 kHz, decimating by
     /// 2 for 176.4 kHz output.
+    #[inline(always)]
     fn run_wide(&mut self) {
         if let Some(lut) = self.filters.lut.first_chunk::<{ filters::S1W_BYTES }>() {
             stage1::<{ filters::S1W_BYTES }>(lut, &self.bytes, &mut self.s1e, &mut self.s1o);
@@ -322,6 +330,7 @@ impl Pipeline {
     }
 
     /// Stage 3 as a half-band with `N` non-zero tap pairs, at odd offsets up to 2N - 1.
+    #[inline(always)]
     fn stage3_half_band<const N: usize>(&mut self) {
         let h3 = &self.filters.s3;
         let Some(taps) = h3.get(1..).and_then(|t| t.first_chunk::<N>()) else {
@@ -350,6 +359,7 @@ impl Pipeline {
     }
 
     /// Stage 3 with `K` taps on each side of the centre.
+    #[inline(always)]
     fn stage3<const K: usize>(&mut self) {
         let h3 = &self.filters.s3;
         let Some(taps) = h3.get(1..).and_then(|t| t.first_chunk::<K>()) else {
@@ -396,6 +406,7 @@ impl Pipeline {
 
     /// Writes the channel just run into `out` as interleaved 24-bit little-endian samples
     /// (`channels` per sample frame, this one at `c`); returns the clipped count.
+    #[inline(always)]
     fn write24(&self, out: &mut [u8], channels: usize, c: usize) -> u32 {
         let mut clips = 0u32;
         let stride = 3 * channels;
@@ -418,6 +429,7 @@ impl Pipeline {
     }
 
     /// Writes the channel just run into `out` as interleaved f32 samples, gain applied.
+    #[inline(always)]
     fn write_f32(&self, out: &mut [f32], channels: usize, c: usize) {
         for (i, slot) in out.chunks_exact_mut(channels).take(self.out_len()).enumerate() {
             slot[c] = (self.sample(i) * self.gain) as f32;
@@ -430,6 +442,7 @@ impl Pipeline {
 /// Each output is `lut[0][w[0]] + lut[1][w[1]] + ... + lut[B-1][w[B-1]]`, in integers, so
 /// exact (and the same in any order). The `B` bytes (12, or 18 for the wide filter) are read
 /// as words and taken apart with shifts, which halves the loads.
+#[inline(always)]
 fn stage1<const B: usize>(lut: &[[i32; 256]; B], bytes: &[u8], e: &mut [i32], o: &mut [i32]) {
     #[inline(always)]
     fn one<const B: usize>(lut: &[[i32; 256]; B], w: &[u8; B]) -> i32 {
@@ -637,6 +650,77 @@ fn dec_lanes<I: Copy + PairAdd, const K: usize, const W: usize>(
 pub struct Converter {
     channels: usize,
     p: Pipeline,
+    simd: Simd,
+}
+
+/// [`Converter::convert`] as a [`Kernel`].
+struct Frame24<'a, 'b> {
+    conv: &'a mut Converter,
+    prev: Option<&'b [u8]>,
+    cur: &'b [u8],
+    next: Option<&'b [u8]>,
+    out: &'b mut [u8],
+}
+
+impl Kernel for Frame24<'_, '_> {
+    type Out = u32;
+    #[inline(always)]
+    fn run(self) -> u32 {
+        let Frame24 { conv, prev, cur, next, out } = self;
+        let mut clips = 0u32;
+        for c in 0..conv.channels {
+            conv.fill(prev, cur, next, c);
+            conv.p.run();
+            clips = clips.saturating_add(conv.p.write24(out, conv.channels, c));
+        }
+        clips
+    }
+}
+
+/// [`Converter::convert_f32`] as a [`Kernel`].
+struct FrameF32<'a, 'b> {
+    conv: &'a mut Converter,
+    prev: Option<&'b [u8]>,
+    cur: &'b [u8],
+    next: Option<&'b [u8]>,
+    out: &'b mut [f32],
+}
+
+impl Kernel for FrameF32<'_, '_> {
+    type Out = ();
+    #[inline(always)]
+    fn run(self) {
+        let FrameF32 { conv, prev, cur, next, out } = self;
+        for c in 0..conv.channels {
+            conv.fill(prev, cur, next, c);
+            conv.p.run();
+            conv.p.write_f32(out, conv.channels, c);
+        }
+    }
+}
+
+/// One channel of [`convert_area`] as a [`Kernel`].
+struct AreaChannel<'a> {
+    p: &'a mut Pipeline,
+    dsd: &'a [u8],
+    channels: usize,
+    c: usize,
+    out: &'a mut [u8],
+}
+
+impl Kernel for AreaChannel<'_> {
+    type Out = u32;
+    #[inline(always)]
+    fn run(self) -> u32 {
+        let AreaChannel { p, dsd, channels, c, out } = self;
+        let e0 = p.ext.e0;
+        let n = p.frames * FRAME_BYTES;
+        for (i, b) in p.bytes[e0..e0 + n].iter_mut().enumerate() {
+            *b = dsd[i * channels + c];
+        }
+        p.run();
+        p.write24(out, channels, c)
+    }
 }
 
 impl Converter {
@@ -645,7 +729,20 @@ impl Converter {
     /// converted with [`PcmConfig::effective`] instead, which [`config`](Self::config)
     /// reports. Designing the filters takes well under a millisecond.
     pub fn new(channels: u8, cfg: &PcmConfig) -> Converter {
-        Converter { channels: usize::from(channels.max(1)), p: Pipeline::new(cfg, 1) }
+        Converter::with_simd(channels, cfg, Simd::selected())
+    }
+
+    /// As [`new`](Self::new), with the code for `simd` (or the best the CPU has, if that is
+    /// less) instead of [`Simd::selected`]. Every choice gives the same output; this is for
+    /// tests and measurements.
+    pub fn with_simd(channels: u8, cfg: &PcmConfig, simd: Simd) -> Converter {
+        let simd = simd.min(Simd::detected());
+        Converter { channels: usize::from(channels.max(1)), p: Pipeline::new(cfg, 1), simd }
+    }
+
+    /// The instruction set this converter's code uses.
+    pub fn simd(&self) -> Simd {
+        self.simd
     }
 
     /// The configuration.
@@ -661,6 +758,7 @@ impl Converter {
     /// Fills the channel `c` window from the three frames: the last `e0` bytes of `prev`,
     /// `cur`, the first `e0` bytes of `next`, with DSD silence where a frame is missing or
     /// short.
+    #[inline(always)]
     fn fill(&mut self, prev: Option<&[u8]>, cur: &[u8], next: Option<&[u8]>, c: usize) {
         let ch = self.channels;
         let e0 = self.p.ext.e0;
@@ -687,23 +785,15 @@ impl Converter {
     /// short frame count as silence, and only whole sample frames that fit in `out` are
     /// written. Returns the number of clipped samples.
     pub fn convert(&mut self, prev: Option<&[u8]>, cur: &[u8], next: Option<&[u8]>, out: &mut [u8]) -> u32 {
-        let mut clips = 0u32;
-        for c in 0..self.channels {
-            self.fill(prev, cur, next, c);
-            self.p.run();
-            clips = clips.saturating_add(self.p.write24(out, self.channels, c));
-        }
-        clips
+        let simd = self.simd;
+        simd::dispatch(simd, Frame24 { conv: self, prev, cur, next, out })
     }
 
     /// As [`convert`](Self::convert), but writes interleaved f32 samples (1.0 is full
     /// scale, gain applied, not clamped): `samples_per_frame × channels` of them.
     pub fn convert_f32(&mut self, prev: Option<&[u8]>, cur: &[u8], next: Option<&[u8]>, out: &mut [f32]) {
-        for c in 0..self.channels {
-            self.fill(prev, cur, next, c);
-            self.p.run();
-            self.p.write_f32(out, self.channels, c);
-        }
+        let simd = self.simd;
+        simd::dispatch(simd, FrameF32 { conv: self, prev, cur, next, out });
     }
 }
 
@@ -718,13 +808,10 @@ pub fn convert_area(channels: u8, cfg: &PcmConfig, dsd: &[u8]) -> (Vec<u8>, u32)
     let mut p = Pipeline::new(cfg, frames);
     let mut out = vec![0u8; p.out_len() * ch * 3];
     let mut clips = 0u32;
-    let e0 = p.ext.e0;
+    let simd = Simd::selected();
     for c in 0..ch {
-        for (i, b) in p.bytes[e0..e0 + frames * FRAME_BYTES].iter_mut().enumerate() {
-            *b = dsd[i * ch + c];
-        }
-        p.run();
-        clips = clips.saturating_add(p.write24(&mut out, ch, c));
+        let job = AreaChannel { p: &mut p, dsd, channels: ch, c, out: &mut out };
+        clips = clips.saturating_add(simd::dispatch(simd, job));
     }
     (out, clips)
 }

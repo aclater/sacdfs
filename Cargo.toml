@@ -23,7 +23,13 @@ env_logger = { version = "0.11", default-features = false, features = ["auto-col
 libc = "0.2"
 log = "0.4"
 lru = "0.19"
+# Runtime CPU feature dispatch for the converter (#23): compiles its hot code for x86-64-v3
+# and v4 too, and keeps the `unsafe` of calling `#[target_feature]` code inside the crate.
+# 0.8, not 0.9: 0.9 needs Rust 1.86, sacdfs builds with 1.85.
+multiversion = "0.8.1"
 rayon = "1.10"
+# Gates the AVX-512 (x86-64-v4) copy on Rust 1.89, where its target features became stable.
+rustversion = "1"
 signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 # Names and checksums of the persistent seek index's files.
 sha2 = "0.11"
