@@ -39,6 +39,10 @@ struct Args {
     /// Size of the cache of decoded frames, in MiB.
     #[arg(long, default_value_t = 256, value_name = "N")]
     cache_mb: usize,
+    /// Collapse each chain of folders below the top level that holds a single image into
+    /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
+    #[arg(long)]
+    flatten: bool,
     /// Let other users see the mount (needs `user_allow_other` in /etc/fuse.conf).
     #[arg(long)]
     allow_other: bool,
@@ -88,7 +92,7 @@ fn run(args: Args) -> io::Result<()> {
         .thread_name(|i| format!("sacdfs-toc-{i}"))
         .build_global();
     let engine = Arc::new(Engine::new(threads, args.cache_mb.saturating_mul(1 << 20))?);
-    let tree = Arc::new(Tree::new(root));
+    let tree = Arc::new(Tree::new(root).with_flatten(args.flatten));
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;

@@ -63,6 +63,48 @@ MOUNT/
 - Every inode number is stable for a mount's lifetime. Sizes are exact and known from the
   TOC alone.
 
+**Hybrid discs.** sacdfs shows only the SACD audio areas of an image. The CD (Red Book)
+layer of a hybrid disc is not in SACD images at all, because SACD rippers read only the
+high-density layer; CD rips are ordinary files outside sacdfs. The disc's hybrid flag is not
+shown either: no consumer needs it, and it would add a tag no player uses. Images without an
+SACD master TOC are skipped, as above.
+
+### Flattening (`--flatten`)
+
+Libraries often keep an image in a rip folder inside a release folder, so a disc sits
+several folders below its artist. With `--flatten` (off by default, so existing mounts keep
+their paths), a chain of source directories whose only content is one image is shown as
+its outermost directory, which then holds the image's `Stereo` and `Multichannel` folders:
+
+```
+Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
+  -> Artist/Year - Album/Stereo/01 - Title.dsf      (was .../Album/disc/Stereo/...)
+```
+
+- "Only content" means after the usual hiding: other files, and folders with no `*.iso`
+  below them, don't count. A folder that holds an image and another folder with images, or
+  two images, is kept; a chain inside it can still collapse.
+- The top-level directories of SOURCE (usually artists) are never collapsed, so an artist
+  with one album keeps both folders. A single image file as SOURCE is unaffected.
+- Collisions get ` (2)` as before (the collapsed folder keeps its own name, so it can
+  collide only where an image of the same stem sits next to it, exactly as without the
+  option). Inode numbers stay stable for the mount's lifetime.
+- *Implementation:* the decision is made from the names walked at mount time
+  (`SourceDir::single_image`, a walk down the chain already in memory), when the parent
+  directory is listed. No image is opened for it, so mounting costs the same with and
+  without the option, and listing a folder of collapsed albums opens nothing: the
+  collapsed folder (`DirKind::Flat`) opens its image when it is first looked into, exactly
+  when the image's own folder would have been, and is then listed as that folder. The
+  price: an `*.iso` that turns out not to be an SACD image still counts as the chain's
+  image, so its collapsed folder shows up empty, as a folder of such files does without
+  the option.
+- *Why these rules* (issue #13): always flattening would change paths for existing users;
+  collapsing the top level too would drop the album name of a single-album artist; naming
+  folders from the TOC's text is a separate option if ever wanted, since disc titles are
+  often less descriptive than the owner's folder names. Deciding from the TOCs (for
+  example, not counting files that are not SACD images) would mean opening every image at
+  mount, which is the cost the lazy tree exists to avoid.
+
 ## DSF files
 
 A DSF file is the DSD chunk (28 bytes), the fmt chunk (52 bytes), the data chunk (12-byte
