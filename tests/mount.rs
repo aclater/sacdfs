@@ -370,6 +370,14 @@ fn format_and_rate_options() {
     assert_eq!(lib[..w.data.start], data[..w.data.start]);
     mount.stop("TERM");
 
+    // The wide cutoff at 352.8 kHz mounts and reads.
+    let mount =
+        Mount::foreground(&images, &["--format", "wav", "--pcm-rate", "352800", "--pcm-cutoff", "wide"]);
+    let area = mount.path().join("dsd-stereo-mch-2048/Stereo");
+    let f = std::fs::read_dir(&area).unwrap().next().unwrap().unwrap().path();
+    assert_eq!(parse_wav(&std::fs::read(&f).unwrap()).rate, 352_800);
+    mount.stop("TERM");
+
     let mount = Mount::foreground(&images, &["--format", "dsf"]);
     let area = mount.path().join("dsd-stereo-mch-2048/Stereo");
     assert!(
@@ -399,6 +407,7 @@ fn bad_arguments_fail_cleanly() {
         ["--format", ""],
         ["--pcm-rate", "44100"],
         ["--pcm-cutoff", "50"],
+        ["--pcm-cutoff", "80"],
         ["--pcm-gain", "30"],
         ["--pcm-gain", "NaN"],
     ] {
@@ -410,6 +419,15 @@ fn bad_arguments_fail_cleanly() {
             .unwrap();
         assert!(!out.status.success(), "{bad:?} accepted");
     }
+    // The wide cutoff needs 176.4 or 352.8 kHz, and says so.
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .args(["--pcm-cutoff", "wide", "--pcm-rate", "88200"])
+        .arg(corpus().join("images"))
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--pcm-cutoff wide needs --pcm-rate"));
     // A negative gain is a value, not an option.
     let out =
         Command::new(env!("CARGO_BIN_EXE_sacdfs")).args(["--pcm-gain", "-6", "--help"]).output().unwrap();

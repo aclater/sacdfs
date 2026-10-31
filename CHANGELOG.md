@@ -29,7 +29,8 @@ All notable changes to sacdfs are recorded here. The format follows
   convert.
   Gapless: a track's edge frames are converted with the neighbouring audio of the area.
 - Options `--format dsf|wav|dsf,wav` (default both), `--pcm-rate 88200|176400|352800`
-  (default 176400), `--pcm-cutoff 40|30` (default 40), `--pcm-gain DB` (default 0, -60 to
+  (default 176400), `--pcm-cutoff 40|30|wide` (default 40; `wide`, about 80 kHz, only at
+  176.4 and 352.8 kHz), `--pcm-gain DB` (default 0, -60 to
   +24; clipped samples are clamped and logged once per file).
 - Random access to WAV files: frame mapping with neighbour frames, converted frames in the
   shared `--cache-mb` cache, sequential reads that decode every DSD frame once, read-ahead that

@@ -35,7 +35,7 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 | `--cache-mb N` | Size of the cache of decoded and converted frames, in MiB (default 256). DSF and WAV reads share it. |
 | `--format LIST` | Which files to show: `dsf`, `wav`, or both, `dsf,wav` (the default). |
 | `--pcm-rate HZ` | Sample rate of the WAV files: `88200`, `176400` (the default) or `352800`. Always 24-bit. |
-| `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz. |
+| `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz, with `--pcm-rate 176400` or `352800` only; refused with `88200`). |
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default 0). Samples that would clip are clamped, and the log says so once per file. |
 | `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder (see below). Top-level folders of `SOURCE` are never collapsed. |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
@@ -90,7 +90,8 @@ frames as the TOC gives them, bit-identical to what the reference extractors (py
 included.
 
 Each WAV file is the same track converted to 24-bit PCM at `--pcm-rate` (176.4 kHz by
-default), band-limited to 40 kHz (or 30 kHz with `--pcm-cutoff 30`), at 0 dB unless
+default), band-limited to 40 kHz (or 30 kHz with `--pcm-cutoff 30`, or about 80 kHz with
+`--pcm-cutoff wide`, which lets more of DSD's ultrasonic noise through), at 0 dB unless
 `--pcm-gain` says otherwise:
 - RIFF/WAVE with `WAVE_FORMAT_EXTENSIBLE`; a file over 4 GiB (a long multichannel track) is
   RF64 instead, which most current software reads.

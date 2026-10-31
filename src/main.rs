@@ -48,9 +48,10 @@ struct Args {
     /// Sample rate of the WAV files, in Hz: 88200, 176400 or 352800.
     #[arg(long, default_value_t = 176_400, value_name = "HZ", value_parser = parse_rate)]
     pcm_rate: u32,
-    /// Low-pass cutoff of the PCM conversion, in kHz: 40 or 30.
-    #[arg(long, default_value_t = 40, value_name = "KHZ", value_parser = parse_cutoff)]
-    pcm_cutoff: u32,
+    /// Low-pass cutoff of the PCM conversion: 40 or 30 (kHz), or wide (about 80 kHz; needs a
+    /// --pcm-rate of 176400 or 352800).
+    #[arg(long, default_value = "40", value_name = "KHZ", value_parser = parse_cutoff)]
+    pcm_cutoff: Cutoff,
     /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
     #[arg(long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
     pcm_gain: f32,
@@ -101,8 +102,13 @@ fn parse_rate(s: &str) -> Result<u32, String> {
         .ok_or_else(|| "use 88200, 176400 or 352800".to_owned())
 }
 
-fn parse_cutoff(s: &str) -> Result<u32, String> {
-    s.parse().ok().filter(|k| [30, 40].contains(k)).ok_or_else(|| "use 40 or 30".to_owned())
+fn parse_cutoff(s: &str) -> Result<Cutoff, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "40" => Ok(Cutoff::Khz40),
+        "30" => Ok(Cutoff::Khz30),
+        "wide" => Ok(Cutoff::Wide80),
+        _ => Err("use 40, 30 or wide".to_owned()),
+    }
 }
 
 fn parse_gain(s: &str) -> Result<f32, String> {
@@ -131,6 +137,14 @@ fn main() -> ExitCode {
 }
 
 fn run(args: Args) -> io::Result<()> {
+    // The wide filter passes up to about 80 kHz, which 88.2 kHz PCM cannot hold (its Nyquist
+    // frequency is 44.1 kHz): refuse the combination before mounting.
+    if args.pcm_cutoff == Cutoff::Wide80 && args.pcm_rate == 88_200 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--pcm-cutoff wide needs --pcm-rate 176400 or 352800 (88.2 kHz PCM holds only up to 44.1 kHz)",
+        ));
+    }
     let source = args.source.canonicalize().map_err(|e| with_path(e, &args.source))?;
     let mountpoint = args.mountpoint.canonicalize().map_err(|e| with_path(e, &args.mountpoint))?;
     if !mountpoint.is_dir() {
@@ -153,7 +167,7 @@ fn run(args: Args) -> io::Result<()> {
         .thread_name(|i| format!("sacdfs-toc-{i}"))
         .build_global();
     let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
-    let cutoff = if args.pcm_cutoff == 30 { Cutoff::Khz30 } else { Cutoff::Khz40 };
+    let cutoff = args.pcm_cutoff;
     let pcm = PcmConfig { rate, cutoff, gain_db: args.pcm_gain };
     let output = Output {
         dsf: args.format.dsf,

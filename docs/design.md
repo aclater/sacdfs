@@ -163,7 +163,16 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   output stays deterministic and seekable (a frame's PCM never depends on what was converted
   before it). 44.1 kHz/16-bit would need both.
 - **Filter and level** (owner decisions, #11; the converter is #5): band-limited to 40 kHz by
-  default, 30 kHz with `--pcm-cutoff 30`, following Daniel Weiss; `--pcm-gain` from -60 to
+  default, 30 kHz with `--pcm-cutoff 30`, following Daniel Weiss.
+  `--pcm-cutoff wide` (about 80 kHz) is offered at 176.4 and 352.8 kHz only. **Why the option:**
+  Philips listening tests (Nuijten and Reefman, AES paper 5399, 2001) found wideband filters at
+  80 or 100 kHz undetected where 50 kHz was detected, and other sources (Reefman and Janssen,
+  Stuart, Craven, JAES 2004) favour a wider channel. **Why not the default:** the owner keeps
+  Weiss's 40 kHz, which keeps DSD's ultrasonic noise out of unknown playback chains; the
+  listening tests don't answer that concern. **Why refused at 88.2 kHz:** that rate holds
+  only up to 44.1 kHz, so sacdfs refuses `wide` with `--pcm-rate 88200` at startup, with a
+  message, instead of mounting a filter that cannot be what was asked for. The wide filter is
+  not longer, so it costs nothing in speed. `--pcm-gain` from -60 to
   +24 dB, 0 by default, because 100 % DSD modulation is PCM full scale, so 0 dB never clips.
   A sample that would clip with a gain is clamped, and the log says once per file how many
   samples were clipped. *The range* guards against typos: +24 dB clips almost any disc, and

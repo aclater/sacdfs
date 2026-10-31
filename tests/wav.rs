@@ -345,6 +345,7 @@ fn settings_keep_layout() {
     let files = wav_files(&tree);
     for cfg in [
         PcmConfig { cutoff: Cutoff::Khz30, ..PcmConfig::default() },
+        PcmConfig { cutoff: Cutoff::Wide80, ..PcmConfig::default() },
         PcmConfig { gain_db: 24.0, ..PcmConfig::default() },
         PcmConfig { gain_db: -60.0, ..PcmConfig::default() },
     ] {
