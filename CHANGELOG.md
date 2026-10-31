@@ -14,6 +14,21 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- WAV files next to the DSF files (#7, #8, plan #11): each track also appears as
+  `NN - title.wav`, 24-bit PCM converted from the DSD on demand. RIFF/WAVE with
+  `WAVE_FORMAT_EXTENSIBLE` and a channel mask (from the channel count, provisionally), RF64 for
+  files over 4 GiB; the DSF file's ID3v2.4 tag in an `id3 ` chunk and a `LIST`/`INFO` chunk,
+  after the audio. Exact sizes from the TOC; listing, `stat` and tag reads never convert.
+  Gapless: a track's edge frames are converted with the neighbouring audio of the area.
+- Options `--format dsf|wav|dsf,wav` (default both), `--pcm-rate 88200|176400|352800`
+  (default 176400), `--pcm-cutoff 40|30` (default 40), `--pcm-gain DB` (default 0, -60 to
+  +24; clipped samples are clamped and logged once per file).
+- Random access to WAV files: frame mapping with neighbour frames, converted frames in the
+  shared `--cache-mb` cache, sequential reads that decode every DSD frame once, read-ahead that
+  converts on the decoder pool.
+- Tests for the WAV files: structure, sizes, tags, the area-stream (gapless) reference at every
+  rate, random and per-frame reads, no decoding while listing, mounts with `--format` and
+  `--pcm-*`.
 - `sacdfs SOURCE MOUNTPOINT`: a read-only FUSE filesystem showing SACD images (one file, or a
   directory searched recursively for `*.iso`) as DSF files with ID3v2.4 tags, decoded on
   demand by scarletbook 0.3.0. Options `-f`, `--threads`, `--cache-mb`, `--allow-other`,

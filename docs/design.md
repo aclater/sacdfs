@@ -1,7 +1,8 @@
 # sacdfs design
 
 sacdfs is a read-only FUSE filesystem that shows the audio of Super Audio CD disc images
-as ordinary DSF files, decoded on demand. Point a player, a tagger or a file manager at
+as ordinary DSF files, and as WAV files (24-bit PCM) next to them, decoded and converted on
+demand. Point a player, a tagger or a file manager at
 the mount point and every track of every disc is there, with tags, without extracting
 anything first.
 
@@ -9,7 +10,9 @@ anything first.
 
 1. **Correct audio.** A track read through the mount is bit-identical to the same track
    extracted with a reference extractor (pysacd's `pysacd-extract`, or scarletbook's
-   `bench decode --sink raw`), checked by per-channel SHA-256 of the DSD stream.
+   `bench decode --sink raw`), checked by per-channel SHA-256 of the DSD stream. A WAV
+   file's audio is exactly what the converter makes of the track's frames, each with its
+   neighbours in the area, whichever reads asked for it.
 2. **Fast.** Reading a track straight through runs close to the decoder's own speed:
    within 1.5x of `bench decode` wall time at the same thread count. A seek (a read at an
    arbitrary offset) returns its first bytes in under 100 ms on a desktop machine.
@@ -20,8 +23,10 @@ anything first.
 5. **Safe on hostile images.** Every image is untrusted input. A bad image shows up as a
    missing directory or an I/O error on one file, never as a crash of the mount.
 
-Not goals for 0.1: writing, DSDIFF (DFF) output, PCM output (WAV/FLAC, which needs DSD to
-PCM conversion), PS3 network sources, macOS/FreeBSD (Linux first; fuser supports both later).
+Not goals: writing, DSDIFF (DFF) output, FLAC output (deferred, #10), DoP, the 48 kHz PCM
+family, PS3 network sources, macOS/FreeBSD (Linux first; fuser supports both later). WAV
+output was added after 0.1 (see [WAV files](#wav-files)); the plan and every decision behind
+it are in issue #11.
 
 ## Engine
 
@@ -39,9 +44,12 @@ MOUNT/
   <relative dir of the image>/<image file stem>/
     Stereo/
       01 - <title>.dsf
+      01 - <title>.wav
       02 - <title>.dsf
+      02 - <title>.wav
     Multichannel/
       01 - <title>.dsf
+      01 - <title>.wav
 ```
 
 - SOURCE is one image file or a directory, scanned recursively for `*.iso` files (any
@@ -60,6 +68,15 @@ MOUNT/
 - `Stereo` and `Multichannel` appear only for areas the disc has.
 - File names come from the track text (title), with `/`, NUL and control characters
   replaced; a track without a title is `NN.dsf`. Duplicates get ` (2)`, ` (3)`.
+- DSF and WAV files side by side in the same folder (owner decision, #11): `--format dsf`,
+  `wav` or `dsf,wav` (the default) selects which appear. **Why:** one mount and one tree, no
+  duplicate folders to browse or configure; players and taggers handle two files with the same
+  name and different extensions. Listing, `stat` and tag reads cost nothing for the extra
+  files (below), and `--format` is there for library scanners that would otherwise convert
+  every WAV file.
+- *Implementation:* a track's files are made one after the other, DSF first, through the same
+  de-duplicator, so a track's two names always differ only in the extension, ` (2)` suffixes
+  included.
 - Every inode number is stable for a mount's lifetime. Sizes are exact and known from the
   TOC alone.
 
@@ -88,7 +105,91 @@ header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
   zero metadata pointer. Channel types: 1 mono, 2 stereo, 3 three channels, 4 quad, 5
   five channels, 6 5.1.
 
-## Reading a range of a file
+## WAV files
+
+A WAV file is a RIFF/WAVE file with a `WAVE_FORMAT_EXTENSIBLE` fmt chunk (24-bit PCM, the
+channel mask below, the PCM subformat), the data chunk, and then the tags:
+
+```text
+RIFF <size> WAVE   fmt <40>   data <frames x S x C x 3>   LIST <INFO ...>   id3 <ID3v2.4>
+```
+
+- **Rate and depth** (owner decisions, #11): `--pcm-rate` 176 400 Hz by default, or 88 200 or
+  352 800; always 24-bit. **Why 176.4 kHz:** it is DSD64 divided by exactly 16, so the
+  conversion needs no fractional resampling (cheapest and cleanest), and it holds the 40 kHz
+  band with room for the filter's transition. **Why 24-bit only:** it needs no dither, so the
+  output stays deterministic and seekable (a frame's PCM never depends on what was converted
+  before it). 44.1 kHz/16-bit would need both.
+- **Filter and level** (owner decisions, #11; the converter is #5): band-limited to 40 kHz by
+  default, 30 kHz with `--pcm-cutoff 30`, following Daniel Weiss; `--pcm-gain` from -60 to
+  +24 dB, 0 by default, because 100 % DSD modulation is PCM full scale, so 0 dB never clips.
+  A sample that would clip with a gain is clamped, and the log says once per file how many
+  samples were clipped. *The range* guards against typos: +24 dB clips almost any disc, and
+  below -60 dB the music is gone.
+- **Samples per frame** S: an SACD frame is 1/75 s, so S = 1176, 2352 or 4704 at the three
+  rates. Data byte `d` lies in frame `d / (S x C x 3)`; frames are stored one after the other,
+  each as the converter writes it (interleaved samples, little-endian). The data length is
+  `frames x S x C x 3`, so every size is known from the TOC alone.
+- **RF64:** when the file does not fit RIFF's 32-bit sizes (over 4 GiB), it starts `RF64`,
+  with a `ds64` chunk after `WAVE` holding the 64-bit RIFF size, data size and sample count,
+  and both 32-bit sizes set to 0xFFFFFFFF. **Why only then:** plain RIFF is what every program
+  reads; RF64 (EBU Tech 3306) is read by FFmpeg, sox, libsndfile and most current software but
+  not by everything (Python's `wave`, for one). Stereo at 176.4 kHz reaches 4 GiB after about
+  67 minutes, six channels after about 22, so long multichannel tracks need it. The decision is
+  made per file, from its size. *Implementation:* no `JUNK` placeholder is written, since the
+  size is known before the file is made.
+- **Channel mask and order:** 1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR FC BL BR; 6 FL
+  FR FC LFE BL BR. This is the order of the DSF files' channel types, and also the order of the
+  mask bits, so the samples need no reordering. **Provisional:** it comes from the channel
+  count alone. scarletbook 0.3.0 exposes the area's loudspeaker configuration only as the raw
+  `area_config` byte, and sacdfs keeps no SACD format knowledge of its own (see
+  [Engine](#engine)), so it does not decode that byte; a typed channel assignment is requested
+  from scarletbook (scarletbook-rs#75), and the code carries a `TODO(scarletbook#75)`.
+- **Tags:** the same ID3v2.4 tag as the DSF file, in an `id3 ` chunk (FFmpeg, TagLib, mutagen,
+  foobar2000 and mp3tag read it), and a `LIST`/`INFO` chunk for software that reads only that:
+  INAM (title), IART (performer), IPRD (album), ITRK (the track number alone), ICRD (date),
+  IGNR (genre), from the same values as the ID3 frames, UTF-8 and NUL-terminated. A chunk with
+  nothing to hold is left out. **Why after the audio:** so that the header, and with it the
+  offset of every audio byte, does not depend on the text, as in the DSF files. FFmpeg and
+  libsndfile read chunks after the data.
+- Header and tag bytes are built when the area directory is listed, like the DSF files', so
+  `stat`, `ls -l` and tag reads never decode or convert.
+
+## Reading a range of a WAV file
+
+1. Header and tag bytes come from the per-file buffers.
+2. Audio bytes map to frames: data byte `d` → frame `d / (S x C x 3)`. A read of 128 KiB of
+   stereo at 176.4 kHz covers about 10 frames.
+3. **Neighbours.** The converter (#5) is stateless per frame: the PCM of timeline position `t`
+   is computed from DSD positions `t - 1`, `t` and `t + 1` (its filters span less than half a
+   frame). At a track's first and last frames the neighbours are the area's positions next to
+   it, from the previous or next track or the pause between them, so tracks join exactly as
+   they would in one stream of the whole area (gapless). Only at the area's edges is a
+   neighbour silence: before position 0, and at or after the *area end*, the later of the
+   area's play time and the end of its last track. *Why the later:* the play time is the area's
+   play range, but a TOC whose last track runs past it is still shown, and inside a track every
+   frame has its real neighbours.
+4. **Cache.** Converted frames go into the same byte-bounded LRU as the decoded DSD frames,
+   keyed by (disc, area, position, kind), so `--cache-mb` is one budget for both. **Why one
+   budget:** a mount that serves only WAV files spends all of it on PCM, and memory stays
+   bounded whatever the number of open files. The DSD frames a conversion reads are not
+   cached (the PCM frame is what is served again).
+5. **Random reads.** A read of k frames that are not cached decodes k + 2 DSD frames (or
+   fewer at the area's edges) and converts the k frames in parallel on the decoder pool.
+6. **Sequential reads.** Each open file keeps, next to its demultiplexer, the last two DSD
+   frames it decoded (*carry*): the previous neighbour and the first frame of the next read.
+   A read that continues the file therefore decodes every DSD frame once. Read-ahead (2 s of
+   audio, as for DSF) decodes and converts ahead on the pool and keeps the carry up to date.
+7. **Converters.** One `Converter` per pool thread and channel count, made on first use and
+   kept in a thread-local, keyed by engine as well so that two engines in one process (tests)
+   never share one. Conversion always runs on the pool, never on a request thread.
+
+*Why convert per frame, with neighbours, rather than as a stream:* any byte of any file can be
+produced from three DSD frames, with no state carried from earlier reads, so a seek costs the
+same as for DSF plus two frames, and a frame's PCM is the same whichever read or file asked for
+it. That is what makes the results cacheable and testable byte for byte.
+
+## Reading a range of a DSF file
 
 A read of `[offset, offset + len)`:
 
@@ -197,7 +298,8 @@ not.
 *Implementation:* fuser 0.18 can run several dispatch threads; sacdfs uses 4, so that a
 directory listing that opens many images does not hold up other requests. Reads go to a
 plain pool of request threads (as many as decoder threads, at least 4 and at most 16), and
-DST frames are decoded on a separate rayon pool (`--threads`), one `DstDecoder` per thread.
+DST frames are decoded, and frames converted to PCM, on a separate rayon pool (`--threads`),
+one `DstDecoder` and one `Converter` per channel count per thread.
 The request pool is deliberately not a rayon pool: a rayon worker that waits for another
 pool runs other jobs of its own pool meanwhile, and a second read of the same file would
 then wait, on the same thread, for the demultiplexer lock the first one holds. The image
@@ -232,6 +334,19 @@ overheads, not by decoding. Measured figures are in [performance.md](performance
   on fresh opens; it also checks background mode, read-only refusal and unmounting by
   SIGTERM and SIGINT. Locally, the same per-channel hashes were compared on real discs
   (see [performance.md](performance.md)).
+- *WAV files:* `tests/wav.rs`, every check written against the converter's API only, so that it
+  holds for any converter whose output for a frame depends only on that frame and its two
+  neighbours. At every rate, every WAV file of every corpus case parses (RIFF, fmt, data,
+  INFO, ID3), has the exact size, channel mask and sample count, carries the DSF file's tag, reads
+  the same in odd chunk sizes, and holds exactly its positions of a reference stream of the whole
+  area (scanned from the area's first sector and converted frame by frame with a fresh
+  converter); the area's files concatenated equal the same positions of that stream (gapless).
+  Random ranges (proptest) and every frame on its own, with the exhaustive search and no cache,
+  equal the straight read. Listing and reading the header and tags of every file reads no audio
+  sector and fills no cache; a sequential read makes about as many calls to the image as the DSF
+  file's. `tests/mount.rs` reads every WAV file through the kernel and compares it with the
+  library, and checks `--format` and `--pcm-*`. An ignored test, `real_discs`, runs the stream
+  check on local real discs (`SACDFS_REAL_IMAGES`).
 
 ## Prior art
 

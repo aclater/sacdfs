@@ -39,7 +39,7 @@ in both scarletbook versions for a single frame. Grouping frames for scarletbook
 lockstep `DstDecoder::decode_many` was also measured. In a separate loaded run of 3 rounds,
 the means were 7.93 s with lockstep always on, 7.86 s with it only when there are frames
 enough for every thread, and 7.99 s without it, against 5.83 s for `bench decode`. That is
-no measurable gain, so it was not kept (see the [design](design.md#reading-a-range-of-a-file)).
+no measurable gain, so it was not kept (see the [design](design.md#reading-a-range-of-a-dsf-file)).
 
 ## Seek
 
