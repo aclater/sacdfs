@@ -41,6 +41,7 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
 | `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where sacdfs found frames in each image, so that seeks after a remount or reboot skip most of their search: on a network share that saves round trips (see below). |
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
+| `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default 64). An image stays open after its directory is listed and between reads, so that a seek does not have to open it again (a round trip or two on a network share); the least recently used one is closed when the limit is reached, and any image unused for 5 minutes is closed. |
 | `-v` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 
 Unmount with `fusermount3 -u MOUNTPOINT`. SIGINT (Ctrl-C) and SIGTERM unmount and stop sacdfs
@@ -107,9 +108,12 @@ default), band-limited to 40 kHz (or 30 kHz with `--pcm-cutoff 30`, or about 80 
 `--pcm-gain` says otherwise:
 - RIFF/WAVE with `WAVE_FORMAT_EXTENSIBLE`; a file over 4 GiB (a long multichannel track) is
   RF64 instead, which most current software reads.
-- Channel order and mask: 1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR FC BL BR; 6 FL FR
-  FC LFE BL BR, as the DSF files' channel types. For now this comes from the channel count
-  alone, not from the disc's loudspeaker configuration.
+- Channel order and mask: from the area's loudspeaker layout on the disc, as the DSF files'
+  channel types. Stereo is FL FR, 5-channel (3/2) FL FR FC BL BR (5.0) and 5.1 FL FR FC LFE
+  BL BR, in the disc's channel order. An area with any other combination of channel count and
+  speaker configuration (rare: not defined by the format) gets the layout of its channel
+  count (1 FC; 3 FL FR FC; 4 FL FR BL BR; 5 and 6 as above), and sacdfs logs this once per
+  disc at `-v`.
 - Tags: the same ID3v2.4 tag as the DSF file in an `id3 ` chunk, and a `LIST`/`INFO` chunk
   (title, artist, album, track number, date, genre) for software that reads only that. Both
   come after the audio.
@@ -120,8 +124,10 @@ default), band-limited to 40 kHz (or 30 kHz with `--pcm-cutoff 30`, or about 80 
   neighbouring tracks' audio, so the WAV files of an area played one after the other are one
   continuous stream.
 
-Sizes are exact, and listing a directory, `stat` or reading the tags never decodes or
-converts anything. A WAV file is converted when its audio is read; a player reading it in real
+Sizes are exact, and listing a directory, `stat` or reading a WAV file's header or tags never
+decodes or converts anything. Reading a DSF file's header decodes the track's first quarter
+second or so: DSF audio starts at byte 92, and the kernel reads 256 KiB from the start of a
+file whatever was asked for (see [docs/performance.md](docs/performance.md#dsf-header-reads-32)). A WAV file is converted when its audio is read; a player reading it in real
 time, or `cp`, is kept ahead by read-ahead on all cores. A program that reads every audio file
 of a library (fingerprinting, loudness scans) converts every WAV file too: use `--format dsf`
 for those.
@@ -174,7 +180,10 @@ times the bytes), and a seek in it returns in about 2 ms. See
 - The directory tree is read once, at mount time. Images added to or removed from `SOURCE`
   later need a remount.
 - Each image is read through one file handle; reads of one disc's sectors are serialised.
-  Decoding runs in parallel.
+  Decoding runs in parallel. At most `--max-open-images` images are open at once.
+- An image file that changes while mounted (another size, modification time or file) is
+  opened again, at most a second after the change; an image whose size changed gives I/O
+  errors until the next mount, since its directory still shows the old tracks.
 - A damaged disc image shows up as missing directories or files, filled audio (missing frames as
   0x69, invalid DST frames as 0x55, as the reference extractors do, with a warning in the log)
   or an I/O error on one file. It never stops the mount.

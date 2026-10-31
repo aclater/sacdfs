@@ -101,13 +101,46 @@ track of each was played and 1 400 cold seeks, took about 130 KB.
 |---|---|---|---|
 | Local images (page cache) | < 20 ms | 0.4 to 1.6 ms | met |
 | Client-side, images on NFS, cold | < 50 ms | 18.6 / 26.8 ms (plain DSD / DST, first touch, mean; worst single seek 37 ms); 3.6 / 4.5 ms with the NAS's cache warm | met |
-| Client-side, warm seek index | within 2x local + one round trip | 2.7 ms against 2 x 1.4 + 0.4 = 3.2 ms (DST); against 2 x 0.5 + 0.4 = 1.4 ms for plain DSD it is not met, because opening the image over NFS (0.6 to 0.9 ms) and moving 170 KiB (1.4 ms) take longer than the local seek itself | met for DST |
+| Client-side, warm seek index | within 2x local + one round trip | 2.7 ms against 2 x 1.4 + 0.4 = 3.2 ms (DST); plain DSD 2.0 ms with images kept open (#26, [below](#keeping-images-open-26); 2.7 ms before) against 2 x 0.5 + 0.4 = 1.4 ms: not met, since moving the 170 KiB it reads takes about 1.45 ms on gigabit Ethernet, and even 128 KiB take 1.1 ms | met for DST |
 | Client-side, images on SMB, cold | < 80 ms | not measured (see below) | |
 
 **SMB** was not measured: mounting an SMB share needs root (`mount.cifs`), and there is no
 user-space SMB client in the build image. Each call to the image is one SMB read request, so a
 cold seek costs about its 3 to 5.7 calls times the share's per-request latency, plus the
 transfer, and a warm one a single request.
+
+### Keeping images open (#26)
+
+Measured on 2026-10-31 as above (fresh mount, `O_DIRECT` shim, the NFS READ counts), on the
+same three plain DSD stereo images on the NAS, 3 rounds of one seek per image, each round at
+another position; the virtual machine on the host used 5 s of CPU over the 40 s run (about
+0.1 hardware thread). "Warm" is a remount whose seek index cache a cold seek at the same
+position just saved, so the NAS has those sectors cached. "Before" is `main`, "after" keeps
+the handle the TOC was read through (the listing just before the seek) instead of opening
+the image again on the first audio read.
+
+| Time to the first 128 KiB, ms (mean; min to max) | before | after |
+|---|---|---|
+| NFS, plain DSD, warm seek index | 3.05 (2.50 to 3.65) | **2.02** (1.82 to 2.29) |
+| the same, 2 s between the listing and the seek | 4.59 (3.96 to 5.19) | **3.38** (3.06 to 3.99) |
+
+Both make one call to the image (170 KiB) and the same 7 NFS READs (6 of them the TOCs);
+the gain is the open, about 1.0 to 1.2 ms. A warm seek is now the one read: 170 KiB take
+about 1.45 ms on gigabit Ethernet, plus a round trip (0.35 to 0.45 ms by ping), which is
+what remains. The pause costs both builds the same 1.3 ms; locally (the plain
+DSD disc, page cache, 3 seeks each) a 2 s pause adds 0.2 to 0.4 ms (mean 0.43 to 0.84 ms
+before, 0.47 to 0.65 ms after), so most of it is the network and the NAS waking up, not
+sacdfs: the handle check once a second is a `stat` that this share (mounted `nocto`,
+attributes cached 600 s) answers locally.
+
+**Against #6** (warm seek index within 2x local plus one round trip, 2 x 0.5 + 0.4 = 1.4 ms
+for plain DSD): **not met, and not reachable on gigabit Ethernet.** The 128 KiB the read
+returns are plain DSD, so at least 128 KiB of the image must cross the network: 1.1 ms of
+wire time at about 117 MB/s, plus the round trip, is 1.5 ms before sacdfs, FUSE or the NAS
+do anything. The target's formula leaves out transfer time, which on a local disk is
+negligible and over a network is not. The read could be about 30 KiB smaller (it covers two
+frames and the search's stop distance more than a 128 KiB read needs, which a cursor started
+at a known point does not need; a possible follow-up), which would save about 0.25 ms.
 
 ## Straight read
 
@@ -304,7 +337,7 @@ frames more than the DSF one (its neighbours) and converts about 10 frames.
 discs (93 DSF, 93 WAV) in 10 ms; then, for every file, a chunk walk like mutagen's (header,
 chunk headers, the bodies of `LIST` and `id3 `) or the DSF tag: 84 ms in all, 0.16 s of sacdfs
 CPU, and 20.5 MB of image reads, all from DSF files (a DSF header read still decodes its first
-frames, since its audio starts at byte 92). Before the padding and read-ahead fixes in this
+frames, since its audio starts at byte 92; see [below](#dsf-header-reads-32)). Before the padding and read-ahead fixes in this
 change, the same walk read 388 MB of the images and took 28 s of CPU.
 
 **Concurrency.** For 30 s, four players on four different areas (DST stereo, plain DSD
@@ -348,6 +381,41 @@ lock.
   images' TOCs, and the hash-map node table and the generation (one SHA-256 per file lookup)
   cost well under a microsecond each.
 - The DSF gate on the five real discs is 93/93 with the change.
+
+## DSF header reads (#32)
+
+Measured on 2026-10-31, the five discs mounted from a local disk (`--format dsf`,
+`--no-index-cache`), under the benchmark lock, the virtual machine on the host about idle
+(0.1 to 0.4 hardware threads). A tag walk over the 93 DSF files on a fresh mount, as a
+tagger does it: open, read the first 4 KiB, seek to the ID3 tag the header points to, read
+it, close. The kernel's requests come from fuser's debug log; the image reads from
+`-v`'s exit line.
+
+| | before | after |
+|---|---|---|
+| kernel requests | 279: per file 128 KiB at 0, 128 KiB at 128 KiB, the tag's page | the same |
+| calls to the image | 1 022 (11.0 a file) | **342** (3.7 a file) |
+| bytes of the image | 109.5 MB (1.18 MB a file) | **20.7 MB** (222 KB a file) |
+| time for the walk | 0.26 s | **0.07 s** |
+
+The first 4 KiB alone cost nearly all of it (1 016 calls, 108.7 MB before; 341, 20.6 MB
+after): the tag's page holds only the last 92 bytes of the last channel's last block, which
+are padding unless that block is nearly full. Before, the kernel's second request (its read-ahead of the first) counted as a
+sequential read and started sacdfs's 2 s read-ahead: about 950 KB a file. The 222 KB left
+are the frames in the kernel's 256 KiB, read at the track's start; on a network share that
+is about 3.7 round trips a file with an empty seek index. Why that rest stays: [design](design.md#reading-a-range-of-a-dsf-file),
+read-ahead. With `max_readahead` at 4, 16 or 64 KiB the kernel's requests did not change
+(the same 279 requests, 24 180 KiB); at 0 it sent 3 069 requests of 4 KiB.
+
+The guarantees, with the same scenarios as [above](#wav-files-6-7-8) (before / after, 3
+rounds): seek on a fresh mount, DSF 1.4 / 1.6 ms, WAV 1.8 / 1.9 ms (within the run-to-run
+noise); header and tag walk of all 186 files with the files closed in between, as there,
+20.5 MB of image reads both (the kernel's background request dies with the closed file);
+four players and a tagger, players' worst read 23.0, 18.3, 17.9 / 25.0, 24.7, 27.4 ms
+(target 50 ms), the tagger's 8.8 to 9.6 / 10.6 to 13.2 ms. Straight read, `cat` of an area's DSF
+files on a fresh mount: plain DSD stereo 1.98, 1.57, 1.59 / 1.61, 1.70, 1.57 s (mean 1.71 /
+1.63 s), DST stereo 4.19, 4.18, 4.60 / 4.35, 4.56, 4.39 s (mean 4.32 / 4.43 s), within the
+noise. The DSF gate: 93 of 93 tracks identical.
 
 ## Earlier figures (scarletbook 0.2.0, idle machine)
 

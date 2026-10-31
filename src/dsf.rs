@@ -9,6 +9,8 @@
 //! of each byte in the least significant bit. The last block of each channel is padded with
 //! zeros.
 
+use scarletbook::LoudspeakerLayout;
+
 /// DSD bytes per channel in one SACD frame (1/75 s at 2.8224 MHz).
 pub const FRAME_BYTES: u64 = 4704;
 
@@ -86,18 +88,6 @@ impl Layout {
         self.bytes_per_channel() * 8
     }
 
-    /// The DSF channel type for this channel count.
-    pub fn channel_type(&self) -> u32 {
-        match self.channels {
-            1 => 1, // mono
-            2 => 2, // stereo
-            3 => 3, // 3 channels
-            4 => 4, // quad
-            5 => 6, // 5 channels
-            _ => 7, // 5.1 channels
-        }
-    }
-
     /// The source of data byte `d` (counted from the first audio byte) and how many of the
     /// following bytes, at most `max`, come from the same run. `None` past the end of the
     /// data.
@@ -167,8 +157,41 @@ impl Iterator for Pieces {
     }
 }
 
-/// The three header chunks of a file with `layout` and a tag of `tag_len` bytes.
-pub fn header(layout: &Layout, tag_len: u64) -> [u8; HEADER_LEN as usize] {
+/// The DSF channel type of an area with loudspeaker layout `layout`.
+///
+/// The three layouts the specification defines map to the DSF types with the same speakers
+/// in the same order, which is scarletbook's decoded-frame order
+/// ([`LoudspeakerLayout::speakers`]), so the channels need no reordering: stereo (FL FR) is
+/// type 2, 5-channel 3/2 (FL FR C SL SR) type 6 and 5.1 (FL FR C LFE SL SR) type 7. Any other
+/// combination ([`Unspecified`]) has no defined layout and keeps the type of its channel
+/// count ([`count_channel_type`]).
+///
+/// [`Unspecified`]: LoudspeakerLayout::Unspecified
+pub fn channel_type(layout: LoudspeakerLayout) -> u32 {
+    match layout {
+        LoudspeakerLayout::Stereo => 2,
+        LoudspeakerLayout::ThreeTwo => 6,
+        LoudspeakerLayout::FivePointOne => 7,
+        LoudspeakerLayout::Unspecified { channels, .. } => count_channel_type(channels),
+    }
+}
+
+/// The DSF channel type for a channel count, for areas without a defined loudspeaker
+/// layout.
+pub fn count_channel_type(channels: u8) -> u32 {
+    match channels {
+        1 => 1, // mono
+        2 => 2, // stereo
+        3 => 3, // 3 channels
+        4 => 4, // quad
+        5 => 6, // 5 channels
+        _ => 7, // 5.1 channels
+    }
+}
+
+/// The three header chunks of a file with `layout`, of an area with loudspeaker layout
+/// `speakers` (for the channel type), and a tag of `tag_len` bytes.
+pub fn header(layout: &Layout, speakers: LoudspeakerLayout, tag_len: u64) -> [u8; HEADER_LEN as usize] {
     let data_len = layout.data_len();
     let total = HEADER_LEN + data_len + tag_len;
     let metadata = if tag_len > 0 { HEADER_LEN + data_len } else { 0 };
@@ -181,7 +204,7 @@ pub fn header(layout: &Layout, tag_len: u64) -> [u8; HEADER_LEN as usize] {
     h.extend_from_slice(&FMT_CHUNK_LEN.to_le_bytes());
     h.extend_from_slice(&1u32.to_le_bytes()); // format version
     h.extend_from_slice(&0u32.to_le_bytes()); // format id: DSD raw
-    h.extend_from_slice(&layout.channel_type().to_le_bytes());
+    h.extend_from_slice(&channel_type(speakers).to_le_bytes());
     h.extend_from_slice(&u32::from(layout.channels).to_le_bytes());
     h.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
     h.extend_from_slice(&1u32.to_le_bytes()); // bits per sample: 1, LSB first
@@ -303,7 +326,7 @@ mod tests {
     fn header_fields() {
         let layout = Layout { channels: 2, frames: 75 };
         let tag_len = 100;
-        let h = header(&layout, tag_len);
+        let h = header(&layout, LoudspeakerLayout::Stereo, tag_len);
         assert_eq!(&h[0..4], b"DSD ");
         assert_eq!(u64_at(&h, 4), 28);
         let data_len = layout.data_len();
@@ -329,7 +352,7 @@ mod tests {
 
     #[test]
     fn no_tag_no_pointer() {
-        let h = header(&Layout { channels: 6, frames: 1 }, 0);
+        let h = header(&Layout { channels: 6, frames: 1 }, LoudspeakerLayout::FivePointOne, 0);
         assert_eq!(u64_at(&h, 20), 0);
         assert_eq!(u32_at(&h, 48), 7);
         assert_eq!(u32_at(&h, 52), 6);
@@ -337,8 +360,33 @@ mod tests {
 
     #[test]
     fn channel_types() {
-        let t: Vec<u32> = (1..=6).map(|c| Layout { channels: c, frames: 1 }.channel_type()).collect();
+        let t: Vec<u32> = (1..=6).map(count_channel_type).collect();
         assert_eq!(t, [1, 2, 3, 4, 6, 7]);
+        // The defined layouts, with their speakers in DSF's order for the type.
+        use scarletbook::Speaker::*;
+        let defined = [
+            (LoudspeakerLayout::Stereo, 2, &[FrontLeft, FrontRight][..]),
+            (LoudspeakerLayout::ThreeTwo, 6, &[FrontLeft, FrontRight, Centre, SurroundLeft, SurroundRight]),
+            (
+                LoudspeakerLayout::FivePointOne,
+                7,
+                &[FrontLeft, FrontRight, Centre, LowFrequencyEffects, SurroundLeft, SurroundRight],
+            ),
+        ];
+        for (l, ty, speakers) in defined {
+            assert_eq!(channel_type(l), ty, "{l:?}");
+            assert_eq!(l.speakers(), Some(speakers), "{l:?}");
+        }
+        // Without a defined layout, the type of the channel count, whatever the
+        // configuration byte holds.
+        for channels in 1..=6u8 {
+            for config in [0, 1, 2, 3, 4, 7, 0x83, 0xFF] {
+                let l = LoudspeakerLayout::new(channels, config);
+                if let LoudspeakerLayout::Unspecified { .. } = l {
+                    assert_eq!(channel_type(l), count_channel_type(channels), "{l:?}");
+                }
+            }
+        }
     }
 
     #[test]
