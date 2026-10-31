@@ -29,9 +29,9 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use scarletbook::audio::audio_sector_range;
-use scarletbook::{AreaFrame, Demuxer, FrameContent, FrameKind, Image, SECTOR_SIZE, Slot, Toc};
+use scarletbook::{AreaFrame, Demuxer, FrameContent, FrameKind, SECTOR_SIZE, Slot, Toc};
 
-use crate::handles::Stamp;
+use crate::handles::{ImageFile, Stamp};
 use crate::index_cache::{AreaShape, ImageKey, IndexCache};
 
 /// Sectors read per call to the image by a sequential scan.
@@ -425,7 +425,7 @@ impl Disc {
         // Keep the handle the TOC was read through, so that the first audio read does not
         // open the image again (a round trip or two on a network share, #26).
         if let Some(meta) = meta {
-            match Image::with_format(file, disc.toc.sector_format) {
+            match crate::handles::image_file(file, disc.toc.sector_format) {
                 Ok(image) if image.sector_count() == disc.toc.sectors => {
                     crate::handles::global().insert(disc.handle, image, Stamp::of(&meta));
                 }
@@ -437,10 +437,10 @@ impl Disc {
     }
 
     /// Opens the image for audio reads; refused if its size changed since the TOC was read.
-    fn open_image(&self) -> Result<(Image<File>, Stamp), ReadError> {
+    fn open_image(&self) -> Result<(ImageFile, Stamp), ReadError> {
         let file = File::open(&self.path)?;
         let stamp = Stamp::of(&file.metadata()?);
-        let image = Image::with_format(file, self.toc.sector_format)?;
+        let image = crate::handles::image_file(file, self.toc.sector_format)?;
         if image.sector_count() != self.toc.sectors {
             return Err(ReadError::Io(io::Error::other("image file changed size since it was mounted")));
         }
@@ -486,8 +486,11 @@ impl Disc {
         self.bytes.fetch_add(buf.len() as u64, Ordering::Relaxed);
         TOTAL_READS.fetch_add(1, Ordering::Relaxed);
         TOTAL_BYTES.fetch_add(buf.len() as u64, Ordering::Relaxed);
-        let image = crate::handles::global().get(self.handle, &self.path, || self.open_image())?;
-        let mut image = image.lock().unwrap_or_else(|p| p.into_inner());
+        // A clone of the shared image: a reader of the same file with a position of its
+        // own, so reads of this disc on other threads do not wait for this one (#28).
+        let shared = crate::handles::global().get(self.handle, &self.path, || self.open_image())?;
+        let mut image = ImageFile::clone(&shared);
+        drop(shared);
         Ok(image.read_sectors(lsn, buf)?)
     }
 
