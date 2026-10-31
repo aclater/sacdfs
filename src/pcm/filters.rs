@@ -76,11 +76,20 @@ fn half_band(n: usize, atten_db: f64) -> Vec<f64> {
 pub(crate) const S1_BYTES: usize = 12;
 /// The byte offset of the first byte stage 1 reads, relative to the output's byte.
 pub(crate) const S1_BEFORE: usize = 6;
-/// Stage 1 taps (one more zero tap makes 96 bits = 12 bytes).
-const S1_TAPS: usize = S1_BYTES * 8 - 1;
 /// Stage 1 design: pass to 48 kHz, stop from 352.8 - 48 = 304.8 kHz (what folds onto
 /// 0-48 kHz at 352.8 kHz). Centre 176.4 kHz = fs/16.
 const S1_ATTEN: f64 = 120.0;
+
+/// The wide (80 kHz) filter's stage 1: 18 bytes (143 taps), pass to 80 kHz, stop from
+/// 352.8 - 100 = 252.8 kHz (what folds onto 0-100 kHz at 352.8 kHz), centre 166.4 kHz.
+pub(crate) const S1W_BYTES: usize = 18;
+const S1W_ATTEN: f64 = 115.0;
+/// The wide filter's second stage at 176.4 kHz output: 337 taps at 352.8 kHz, ÷2, pass to
+/// 80 kHz, stop from 88.2 kHz (nothing folds back below the Nyquist frequency).
+pub(crate) const W176_HALF: usize = 168;
+/// ... and at 352.8 kHz output: 141 taps at 352.8 kHz, pass to 80 kHz, stop from 100 kHz.
+pub(crate) const W352_HALF: usize = 70;
+const W_ATTEN: f64 = 115.0;
 
 /// Stage 1's fixed point: table entries are multiples of 2^-28. The largest sum of 12
 /// entries (all bits matching the signs of the taps) is the sum of the taps' magnitudes,
@@ -102,7 +111,8 @@ pub(crate) struct Filters {
     /// Stage 1 tables: `lut[j][v]` is the contribution of byte value `v` at position `j` of
     /// the 12-byte window (earliest first); bits most significant first, 1 is +1, 0 is -1;
     /// in units of 2^-[`S1_SHIFT`] (fixed point), so that the 12 lookups add exactly.
-    pub lut: Box<[[i32; 256]; S1_BYTES]>,
+    /// 12 tables, or 18 for the wide filter.
+    pub lut: Vec<[i32; 256]>,
     /// Stage 2 (half-band ÷2): the centre tap (0.5), then the taps at odd offsets 1, 3, ...;
     /// scaled by 2^-[`S1_SHIFT`] to take stage 1's fixed point back to 1.0 = full scale
     /// (exact: a power of two).
@@ -116,6 +126,54 @@ pub(crate) struct Filters {
     /// Stage 4 (half-band ×2, 352.8 kHz output only): taps at odd offsets, doubled for the
     /// interpolation gain. f64, as it accumulates.
     pub s4: [f64; HB_PAIRS],
+    /// The wide filter's second (and last) stage, straight from stage 1: the centre tap,
+    /// then the taps at offsets 1, 2, ... at 352.8 kHz, scaled by 2^-[`S1_SHIFT`] like
+    /// stage 2. Empty for the other cutoffs.
+    pub wide: Vec<f64>,
+}
+
+/// Stage 1 lookup tables for a 8 x `bytes` - 1 tap Kaiser low-pass centred on the first
+/// bit of byte `bytes / 2` of the window.
+fn stage1_tables(bytes: usize, fc: f64, atten: f64) -> Vec<[i32; 256]> {
+    let mut h1 = kaiser_lowpass(bytes * 8 - 1, fc, atten);
+    // Window bit p (0..8 bytes) has coefficient h1[p - 1], bit 0 none. Make the eight
+    // polyphase sums equal (1/8 each): the response then has exact zeros at every
+    // multiple of 352.8 kHz, so any byte-periodic balanced pattern, DSD silence (0x69)
+    // included, converts to zero. Symmetry is kept: bit p and bit 8 bytes - p are in
+    // phases p mod 8 and -p mod 8, whose sums are equal by symmetry already.
+    let mut phase = [0.0f64; 8];
+    for (i, v) in h1.iter().enumerate() {
+        phase[(i + 1) % 8] += v;
+    }
+    for (i, v) in h1.iter_mut().enumerate() {
+        *v *= 0.125 / phase[(i + 1) % 8];
+    }
+    let mut lut = vec![[0i32; 256]; bytes];
+    for (j, table) in lut.iter_mut().enumerate() {
+        for (v, entry) in table.iter_mut().enumerate() {
+            let mut acc = 0.0f64;
+            for bit in 0..8 {
+                let p = j * 8 + bit;
+                if p == 0 {
+                    continue;
+                }
+                let sign = if (v >> (7 - bit)) & 1 == 1 { 1.0 } else { -1.0 };
+                acc += h1[p - 1] * sign;
+            }
+            *entry = (acc * S1_ONE).round() as i32;
+        }
+    }
+    // Exact zero for silence after rounding the entries too: make the last entry for
+    // the silence byte cancel the others (a change of at most a few units of 2^-28).
+    let silence = usize::from(super::DSD_SILENCE);
+    let partial: i32 = lut[..bytes - 1].iter().map(|t| t[silence]).sum();
+    lut[bytes - 1][silence] = -partial;
+    // The largest sum (every byte at its largest entry) stays far below 2^31, also for
+    // the pairwise sums of the next stage.
+    debug_assert!(
+        lut.iter().map(|t| t.iter().map(|v| v.abs()).max().unwrap_or(0)).sum::<i32>() < i32::MAX / 4
+    );
+    lut
 }
 
 /// Stage 3 for 40 kHz: a half-band of 175 taps (pass to 40.2 kHz, stop from 48 kHz, the
@@ -130,50 +188,34 @@ pub(crate) const S3_HALF_30: usize = 113;
 const S3_ATTEN: f64 = 115.0;
 
 impl Filters {
-    /// Designs every stage for a cutoff (the stages do not depend on the output rate: 88.2
-    /// and 352.8 kHz output only change which stages run, see the module above).
-    pub fn new(cutoff: Cutoff, _rate: PcmRate) -> Filters {
-        // Stage 1.
-        let mut h1 = kaiser_lowpass(S1_TAPS, 1.0 / 16.0, S1_ATTEN);
-        // Window bit p (0..96) has coefficient h1[p - 1], bit 0 none. Make the eight
-        // polyphase sums equal (1/8 each): the response then has exact zeros at every
-        // multiple of 352.8 kHz, so any byte-periodic balanced pattern, DSD silence (0x69)
-        // included, converts to zero. Symmetry is kept: bit p and bit 96 - p are in phases
-        // p mod 8 and -p mod 8, whose sums are equal by symmetry already.
-        let mut phase = [0.0f64; 8];
-        for (i, v) in h1.iter().enumerate() {
-            phase[(i + 1) % 8] += v;
+    /// Designs every stage for a cutoff. For 40 and 30 kHz the stages do not depend on the
+    /// output rate (88.2 and 352.8 kHz output only change which stages run); the wide
+    /// filter has one design per rate. `Wide80` at 88.2 kHz is not valid (see
+    /// `PcmConfig::validate`); here it gets the 176.4 kHz design.
+    pub fn new(cutoff: Cutoff, rate: PcmRate) -> Filters {
+        if cutoff == Cutoff::Wide80 {
+            let lut = stage1_tables(S1W_BYTES, 166_400.0 / 2_822_400.0, S1W_ATTEN);
+            let (half, fc) = if rate == PcmRate::R352800 {
+                (W352_HALF, 90_000.0 / 352_800.0)
+            } else {
+                (W176_HALF, 84_100.0 / 352_800.0)
+            };
+            let h = kaiser_lowpass(2 * half + 1, fc, W_ATTEN);
+            let wide = h[half..].iter().map(|v| v / S1_ONE).collect();
+            return Filters {
+                lut,
+                s2: [0.0; HB_PAIRS + 1],
+                s3: Vec::new(),
+                s3_half: 0,
+                s4: [0.0; HB_PAIRS],
+                wide,
+            };
         }
-        for (i, v) in h1.iter_mut().enumerate() {
-            *v *= 0.125 / phase[(i + 1) % 8];
-        }
-        let mut lut = Box::new([[0i32; 256]; S1_BYTES]);
-        for (j, table) in lut.iter_mut().enumerate() {
-            for (v, entry) in table.iter_mut().enumerate() {
-                let mut acc = 0.0f64;
-                for bit in 0..8 {
-                    let p = j * 8 + bit;
-                    if p == 0 {
-                        continue;
-                    }
-                    let sign = if (v >> (7 - bit)) & 1 == 1 { 1.0 } else { -1.0 };
-                    acc += h1[p - 1] * sign;
-                }
-                *entry = (acc * S1_ONE).round() as i32;
-            }
-        }
-        // Exact zero for silence after rounding the entries too: make the last entry for
-        // the silence byte cancel the others (a change of at most a few units of 2^-28).
-        let silence = usize::from(super::DSD_SILENCE);
-        let partial: i32 = lut[..S1_BYTES - 1].iter().map(|t| t[silence]).sum();
-        lut[S1_BYTES - 1][silence] = -partial;
+        let lut = stage1_tables(S1_BYTES, 1.0 / 16.0, S1_ATTEN);
 
         let hb = half_band(HB_TAPS, HB_ATTEN);
         let s2: [f64; HB_PAIRS + 1] = std::array::from_fn(|i| if i == 0 { 0.5 } else { hb[i - 1] } / S1_ONE);
         let s4: [f64; HB_PAIRS] = std::array::from_fn(|i| 2.0 * hb[i]);
-        debug_assert!(
-            lut.iter().map(|t| t.iter().map(|v| v.abs()).max().unwrap_or(0)).sum::<i32>() < i32::MAX / 2
-        );
 
         let (s3, s3_half) = match cutoff {
             Cutoff::Khz40 => {
@@ -181,13 +223,13 @@ impl Filters {
                 v.extend(half_band(S3_TAPS_40, S3_ATTEN));
                 (v, 2 * S3_PAIRS_40 - 1)
             }
-            Cutoff::Khz30 => {
+            Cutoff::Khz30 | Cutoff::Wide80 => {
                 let n = 2 * S3_HALF_30 + 1;
                 let h3 = kaiser_lowpass(n, 33_000.0 / 176_400.0, S3_ATTEN);
                 (h3[S3_HALF_30..].to_vec(), S3_HALF_30)
             }
         };
-        Filters { lut, s2, s3, s3_half, s4 }
+        Filters { lut, s2, s3, s3_half, s4, wide: Vec::new() }
     }
 
     /// Stage 3's taps by offset from the centre, 0 to `s3_half`, zeros included.

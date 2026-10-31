@@ -15,17 +15,24 @@ use std::f64::consts::PI;
 
 const FS: f64 = 2_822_400.0;
 const RATES: [PcmRate; 3] = [PcmRate::R88200, PcmRate::R176400, PcmRate::R352800];
-const CUTOFFS: [Cutoff; 2] = [Cutoff::Khz40, Cutoff::Khz30];
+const CUTOFFS: [Cutoff; 3] = [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80];
+
+/// Whether a rate and cutoff go together (the wide filter needs 176.4 or 352.8 kHz).
+fn valid(rate: PcmRate, cutoff: Cutoff) -> bool {
+    PcmConfig { rate, cutoff, gain_db: 0.0 }.validate().is_ok()
+}
 
 fn cfg(rate: PcmRate, cutoff: Cutoff) -> PcmConfig {
     PcmConfig { rate, cutoff, gain_db: 0.0 }
 }
 
 /// Pass band edge and stop band start of a cutoff, in Hz.
-fn band(cutoff: Cutoff) -> (f64, f64) {
+fn band(rate: PcmRate, cutoff: Cutoff) -> (f64, f64) {
     match cutoff {
         Cutoff::Khz40 => (40_000.0, 48_000.0),
         Cutoff::Khz30 => (30_000.0, 36_000.0),
+        Cutoff::Wide80 if rate == PcmRate::R352800 => (80_000.0, 100_000.0),
+        Cutoff::Wide80 => (80_000.0, 88_200.0),
     }
 }
 
@@ -300,8 +307,11 @@ fn magnitude(h: &[f64], f: f64) -> f64 {
 #[test]
 fn response_ripple_and_stopband() {
     for cutoff in CUTOFFS {
-        let (pass, stop) = band(cutoff);
         for rate in RATES {
+            if !valid(rate, cutoff) {
+                continue;
+            }
+            let (pass, stop) = band(rate, cutoff);
             let cfg = cfg(rate, cutoff);
             let h = impulse_response(&cfg);
             let sum: f64 = h.iter().sum();
@@ -367,6 +377,9 @@ fn tone_1k_level_dc_thdn_alignment() {
     let src_thdn = thd_n(&src, FS, f, 20.0, 20_000.0);
     for cutoff in CUTOFFS {
         for rate in RATES {
+            if !valid(rate, cutoff) {
+                continue;
+            }
             let cfg = cfg(rate, cutoff);
             let d = rate.decimation();
             let pcm = frames_f32(&cfg, 1, &dsd, 0);
@@ -418,10 +431,23 @@ fn out_of_band_tones_are_rejected() {
                 .collect()
         })
         .collect();
-    for tone in [60_000.0, 100_000.0, 200_000.0] {
+    for tone in [60_000.0, 100_000.0, 120_000.0, 200_000.0] {
         let dsd = mono(32, sine(amp, tone, 0.0));
+        // The DSD itself, as +-1 at 2.8224 MHz, over the same 2^20 samples: what the
+        // modulator really put at each frequency (its own spurs included).
+        let start_bit = 2 * FRAME_BYTES * 8;
+        let src: Vec<f64> = (start_bit..start_bit + (1 << 20))
+            .map(|n| if dsd[n / 8] & (0x80 >> (n % 8)) != 0 { 1.0 } else { -1.0 })
+            .collect();
+        let src_p = spectrum(&src);
         for cutoff in CUTOFFS {
             for rate in RATES {
+                if !valid(rate, cutoff) {
+                    continue;
+                }
+                if tone < band(rate, cutoff).1 + 5_000.0 {
+                    continue; // in or next to this filter's pass band
+                }
                 let cfg = cfg(rate, cutoff);
                 let d = rate.decimation();
                 let fs = FS / d as f64;
@@ -441,16 +467,31 @@ fn out_of_band_tones_are_rejected() {
                 let rejection = db(amp * amp / 2.0 / got);
                 let fl: f64 = floor[rate as usize][cutoff as usize][lo..=hi].iter().sum();
                 let floor_db = db(amp * amp / 2.0 / fl);
+                // The source's own content where the alias lands (same bin width: same
+                // duration).
+                let src_db = db(amp * amp / 2.0 / src_p[lo..=hi].iter().sum::<f64>());
                 println!(
                     "{:>6} Hz {cutoff:?}: {:.0} kHz tone (at {:.1} kHz): {rejection:.1} dB down \
-                     (modulator noise alone in those bins: {floor_db:.1} dB down)",
+                     (modulator noise alone in those bins: {floor_db:.1} dB down; the DSD itself \
+                     there: {src_db:.1} dB down)",
                     rate.hz(),
                     tone / 1000.0,
                     alias / 1000.0
                 );
+                if floor_db < 110.0 {
+                    // The modulator's own noise in those bins (DSD's shaped noise rises
+                    // steeply above 40 kHz, and the wide filter passes it) hides anything
+                    // below it: nothing to measure here. The exact stopband is asserted in
+                    // `response_ripple_and_stopband`.
+                    continue;
+                }
                 // The exact stopband is asserted in `response_ripple_and_stopband`; here the bins
-                // also hold the modulator's own noise, so allow for it.
-                assert!(rejection >= 100.0, "{cfg:?} {tone}: {rejection} dB");
+                // also hold the modulator's own noise and spurs, so allow for them: what the
+                // DSD itself carries at the alias frequency passes, as it should.
+                assert!(
+                    rejection >= 105.0 || rejection >= src_db - 1.0,
+                    "{cfg:?} {tone}: {rejection} dB, source {src_db} dB"
+                );
             }
         }
     }
@@ -464,6 +505,9 @@ fn out_of_band_tones_are_rejected() {
 fn full_scale_step() {
     for cutoff in CUTOFFS {
         for rate in RATES {
+            if !valid(rate, cutoff) {
+                continue;
+            }
             let cfg = cfg(rate, cutoff);
             let d = rate.decimation();
             let mut dsd = vec![0x00u8; 2 * FRAME_BYTES];
@@ -591,6 +635,9 @@ fn every_frame_alone_equals_the_area() {
         let dsd = interleave(&chans);
         for cutoff in CUTOFFS {
             for rate in RATES {
+                if !valid(rate, cutoff) {
+                    continue;
+                }
                 for gain_db in [0.0, 9.0] {
                     check_frames(&PcmConfig { rate, cutoff, gain_db }, ch, &dsd);
                 }
@@ -622,7 +669,7 @@ proptest! {
         frames in 1usize..6,
         ch in 1u8..=6,
         rate in 0usize..3,
-        cutoff in 0usize..2,
+        cutoff in 0usize..3,
         gain in -6.0f32..12.0,
         seed in any::<u64>(),
         pick in any::<usize>(),
@@ -652,6 +699,9 @@ fn golden_output() {
     let mut got = Vec::new();
     for cutoff in CUTOFFS {
         for rate in RATES {
+            if !valid(rate, cutoff) {
+                continue;
+            }
             let (pcm, _) = convert_area(2, &cfg(rate, cutoff), &dsd);
             let h = Sha256::digest(&pcm);
             let hex: String = h.iter().take(8).map(|b| format!("{b:02x}")).collect();
@@ -664,12 +714,14 @@ fn golden_output() {
 }
 
 /// First 8 bytes of the SHA-256 of each configuration's output, in the order of the loops:
-/// 40 kHz at 88.2, 176.4, 352.8 kHz, then 30 kHz.
-const GOLDEN: [&str; 6] = [
+/// 40 kHz at 88.2, 176.4, 352.8 kHz, then 30 kHz, then the wide filter at 176.4 and 352.8.
+const GOLDEN: [&str; 8] = [
     "d6e861426fc1aa34",
     "ea76e7ad5d5b882c",
     "b3c2ed2efe125e9b",
     "340644957016eca3",
     "5e895cf126369dc8",
     "1ba48df1680595c8",
+    "925945e4adf87fe2",
+    "8107d10a0c565065",
 ];

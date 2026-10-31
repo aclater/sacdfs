@@ -96,6 +96,9 @@ pub enum Cutoff {
     Khz40,
     /// Pass to 30 kHz, fully attenuated from 36 kHz.
     Khz30,
+    /// Wide: pass to 80 kHz, fully attenuated from 88.2 kHz (176.4 kHz output) or from
+    /// 100 kHz (352.8 kHz output). Not for 88.2 kHz output, whose band ends at 44.1 kHz.
+    Wide80,
 }
 
 /// What a [`Converter`] produces.
@@ -113,6 +116,26 @@ pub struct PcmConfig {
 impl Default for PcmConfig {
     fn default() -> Self {
         PcmConfig { rate: PcmRate::default(), cutoff: Cutoff::default(), gain_db: 0.0 }
+    }
+}
+
+impl PcmConfig {
+    /// Checks that the cutoff fits the rate: [`Cutoff::Wide80`] needs 176.4 or 352.8 kHz.
+    /// [`Converter::new`] does not fail on an invalid configuration: it uses
+    /// [`Cutoff::Khz40`] instead (see [`PcmConfig::effective`]), so check options with this
+    /// first.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.cutoff == Cutoff::Wide80 && self.rate == PcmRate::R88200 {
+            Err("the wide (80 kHz) filter needs 176.4 or 352.8 kHz output")
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The configuration a [`Converter`] uses: this one, or with [`Cutoff::Khz40`] if
+    /// [`validate`](Self::validate) refuses it.
+    pub fn effective(&self) -> PcmConfig {
+        if self.validate().is_ok() { *self } else { PcmConfig { cutoff: Cutoff::Khz40, ..*self } }
     }
 }
 
@@ -139,6 +162,12 @@ struct Extents {
 
 impl Extents {
     fn new(cfg: &PcmConfig, filters: &Filters) -> Extents {
+        if cfg.cutoff == Cutoff::Wide80 {
+            // One stage after stage 1, reaching `half` stage 1 samples each way.
+            let half = filters.wide.len().saturating_sub(1);
+            let e1 = half.div_ceil(2) + 1;
+            return Extents { e3: 0, e2: 0, e1, e0: 2 * e1 + filters::S1W_BYTES / 2 };
+        }
         let e3 = if cfg.rate == PcmRate::R352800 { HB_PAIRS } else { 0 };
         let e2 = e3 + filters.s3_half;
         let e1 = e2 + HB_PAIRS;
@@ -176,15 +205,20 @@ struct Pipeline {
 
 impl Pipeline {
     fn new(cfg: &PcmConfig, frames: usize) -> Pipeline {
+        let cfg = &cfg.effective();
         let filters = Filters::new(cfg.cutoff, cfg.rate);
         let ext = Extents::new(cfg, &filters);
         let n3 = S3_PER_FRAME * frames;
         let gain_db = if cfg.gain_db.is_finite() { f64::from(cfg.gain_db) } else { 0.0 };
         let gain = 10f64.powf(gain_db / 20.0);
-        let (s2_split, s3_len, s4_len) = match cfg.rate {
-            PcmRate::R88200 => (n3 / 2 + filters.s3_half + 2, n3 / 2, 0),
-            PcmRate::R176400 => (0, n3, 0),
-            PcmRate::R352800 => (0, n3 + 2 * ext.e3, n3),
+        let wide = cfg.cutoff == Cutoff::Wide80;
+        let (s2_len, s2_split, s3_len, s4_len) = match (wide, cfg.rate) {
+            // Wide at 352.8 kHz: s2 holds stage 1 interleaved again, in f64.
+            (true, PcmRate::R352800) => (2 * (n3 + 2 * ext.e1), 0, 2 * n3, 0),
+            (true, _) => (0, 0, n3, 0),
+            (false, PcmRate::R88200) => (n3 + 2 * ext.e2, n3 / 2 + filters.s3_half + 2, n3 / 2, 0),
+            (false, PcmRate::R176400) => (n3 + 2 * ext.e2, 0, n3, 0),
+            (false, PcmRate::R352800) => (n3 + 2 * ext.e2, 0, n3 + 2 * ext.e3, n3),
         };
         Pipeline {
             cfg: *cfg,
@@ -193,7 +227,7 @@ impl Pipeline {
             bytes: vec![DSD_SILENCE; FRAME_BYTES * frames + 2 * ext.e0],
             s1e: vec![0; n3 + 2 * ext.e1],
             s1o: vec![0; n3 + 2 * ext.e1],
-            s2: vec![0.0; n3 + 2 * ext.e2],
+            s2: vec![0.0; s2_len],
             s2e: vec![0.0; s2_split],
             s2o: vec![0.0; s2_split],
             s3: vec![0.0; s3_len],
@@ -211,7 +245,13 @@ impl Pipeline {
 
     /// Runs every stage on `self.bytes`; the result is read with [`Pipeline::sample`].
     fn run(&mut self) {
-        stage1(&self.filters.lut, &self.bytes, &mut self.s1e, &mut self.s1o);
+        if self.cfg.cutoff == Cutoff::Wide80 {
+            self.run_wide();
+            return;
+        }
+        if let Some(lut) = self.filters.lut.first_chunk::<S1_BYTES>() {
+            stage1::<S1_BYTES>(lut, &self.bytes, &mut self.s1e, &mut self.s1o);
+        }
         // Stage 2: s2[r] = 0.5 s1[2j] + sum_i h_i (s1[2j + 2i + 1] + s1[2j - 2i - 1]),
         // j = r - e2; in pair indices s1e[r + HB], s1o[r + HB + i], s1o[r + HB - 1 - i].
         let h2 = &self.filters.s2;
@@ -228,7 +268,7 @@ impl Pipeline {
         }
         match self.cfg.cutoff {
             Cutoff::Khz40 => self.stage3_half_band::<{ filters::S3_PAIRS_40 }>(),
-            Cutoff::Khz30 => self.stage3::<{ filters::S3_HALF_30 }>(),
+            Cutoff::Khz30 | Cutoff::Wide80 => self.stage3::<{ filters::S3_HALF_30 }>(),
         }
         if self.cfg.rate == PcmRate::R352800 {
             // Odd outputs between s3[n] and s3[n + 1] (n counted from e3):
@@ -243,6 +283,41 @@ impl Pipeline {
                 &s3[e3 + 1..],
                 &s3[e3 + 1 - HB_PAIRS..],
             );
+        }
+    }
+
+    /// The wide filter: stage 1 with 18 tables, then one filter at 352.8 kHz, decimating by
+    /// 2 for 176.4 kHz output.
+    fn run_wide(&mut self) {
+        if let Some(lut) = self.filters.lut.first_chunk::<{ filters::S1W_BYTES }>() {
+            stage1::<{ filters::S1W_BYTES }>(lut, &self.bytes, &mut self.s1e, &mut self.s1o);
+        }
+        let e1 = self.ext.e1;
+        let h = &self.filters.wide;
+        match self.cfg.rate {
+            PcmRate::R352800 => {
+                const K: usize = filters::W352_HALF;
+                let Some(taps) = h.get(1..).and_then(|t| t.first_chunk::<K>()) else {
+                    return;
+                };
+                // Stage 1 at full rate (exact in f64), then out[i] centred on s1[i + 2 e1].
+                for (q, pair) in self.s2.chunks_exact_mut(2).enumerate() {
+                    pair[0] = f64::from(self.s1e[q]);
+                    pair[1] = f64::from(self.s1o[q]);
+                }
+                let x = &self.s2[2 * e1 - K..];
+                sym_fir::<f64, f64, K, 1>(&mut self.s3, h[0], taps, &x[K..], &x[K + 1..], x);
+            }
+            PcmRate::R176400 | PcmRate::R88200 => {
+                const K: usize = filters::W176_HALF;
+                let Some(taps) = h.get(1..).and_then(|t| t.first_chunk::<K>()) else {
+                    return;
+                };
+                // out[j] centred on s1[2j + 2 e1] = s1e[j + e1]: tap k even reads s1e,
+                // odd reads s1o (see dec_lanes).
+                let (p, q) = (&self.s1e[e1 - K / 2..], &self.s1o[e1 - K.div_ceil(2)..]);
+                dec_fir::<i32, K>(&mut self.s3, h[0], taps, p, q);
+            }
         }
     }
 
@@ -296,7 +371,7 @@ impl Pipeline {
                 for (j, v) in self.s2o.iter_mut().enumerate() {
                     *v = s2.get((K + 1 + 2 * j).wrapping_sub(2 * K.div_ceil(2))).copied().unwrap_or(0.0);
                 }
-                dec_fir::<K>(&mut self.s3, h3[0], taps, &self.s2e, &self.s2o);
+                dec_fir::<f64, K>(&mut self.s3, h3[0], taps, &self.s2e, &self.s2o);
             }
         }
     }
@@ -304,6 +379,9 @@ impl Pipeline {
     /// Output sample `i` of the channel just run, at full scale 1.0, before the gain.
     #[inline]
     fn sample(&self, i: usize) -> f64 {
+        if self.cfg.cutoff == Cutoff::Wide80 {
+            return self.s3[i];
+        }
         match self.cfg.rate {
             PcmRate::R88200 | PcmRate::R176400 => self.s3[i],
             PcmRate::R352800 => {
@@ -352,26 +430,36 @@ impl Pipeline {
 /// Each output is `lut[0][w[0]] + lut[1][w[1]] + ... + lut[11][w[11]]`, in integers, so
 /// exact (and the same in any order). The 12 bytes are read as two words and taken apart
 /// with shifts, which halves the loads.
-fn stage1(lut: &[[i32; 256]; S1_BYTES], bytes: &[u8], e: &mut [i32], o: &mut [i32]) {
+fn stage1<const B: usize>(lut: &[[i32; 256]; B], bytes: &[u8], e: &mut [i32], o: &mut [i32]) {
     #[inline(always)]
-    fn one(lut: &[[i32; 256]; S1_BYTES], w: &[u8; S1_BYTES]) -> i32 {
-        let (lo, hi) = w.split_at(8);
-        let lo = lo.first_chunk::<8>().map_or(0, |b| u64::from_le_bytes(*b));
-        let hi = hi.first_chunk::<4>().map_or(0, |b| u32::from_le_bytes(*b));
+    fn one<const B: usize>(lut: &[[i32; 256]; B], w: &[u8; B]) -> i32 {
         let mut acc = 0i32;
-        for (j, t) in lut[..8].iter().enumerate() {
-            acc = acc.wrapping_add(t[usize::from((lo >> (8 * j)) as u8)]);
+        let mut j = 0;
+        while j + 8 <= B {
+            let x = w[j..].first_chunk::<8>().map_or(0, |b| u64::from_le_bytes(*b));
+            for k in 0..8 {
+                acc = acc.wrapping_add(lut[j + k][usize::from((x >> (8 * k)) as u8)]);
+            }
+            j += 8;
         }
-        for (j, t) in lut[8..].iter().enumerate() {
-            acc = acc.wrapping_add(t[usize::from((hi >> (8 * j)) as u8)]);
+        if j + 4 <= B {
+            let x = w[j..].first_chunk::<4>().map_or(0, |b| u32::from_le_bytes(*b));
+            for k in 0..4 {
+                acc = acc.wrapping_add(lut[j + k][usize::from((x >> (8 * k)) as u8)]);
+            }
+            j += 4;
+        }
+        while j < B {
+            acc = acc.wrapping_add(lut[j][usize::from(w[j])]);
+            j += 1;
         }
         acc
     }
     for (q, (e, o)) in e.iter_mut().zip(o.iter_mut()).enumerate() {
-        let Some(w) = bytes.get(2 * q..).and_then(|s| s.first_chunk::<{ S1_BYTES + 1 }>()) else {
+        let Some(w) = bytes.get(2 * q..2 * q + B + 1) else {
             break;
         };
-        let (Some(we), Some(wo)) = (w.first_chunk::<S1_BYTES>(), w.last_chunk::<S1_BYTES>()) else {
+        let (Some(we), Some(wo)) = (w.first_chunk::<B>(), w[1..].first_chunk::<B>()) else {
             break;
         };
         *e = one(lut, we);
@@ -484,15 +572,18 @@ fn sym_lanes<I, T, const N: usize, const S: usize, const W: usize>(
 /// in order, from the two phases of s2 (see [`Pipeline::stage3`]): even k read `p`, odd k
 /// read `q`.
 #[inline(always)]
-fn dec_fir<const K: usize>(out: &mut [f64], h0: f64, h: &[f64; K], p: &[f64], q: &[f64]) {
+fn dec_fir<I: Copy + PairAdd, const K: usize>(out: &mut [f64], h0: f64, h: &[f64; K], p: &[I], q: &[I])
+where
+    f64: From<I>,
+{
     let n = out.len();
     let mut t = 0;
     while t + BLOCK <= n {
-        dec_lanes::<K, BLOCK>(&mut out[t..], h0, h, &p[t.min(p.len())..], &q[t.min(q.len())..]);
+        dec_lanes::<I, K, BLOCK>(&mut out[t..], h0, h, &p[t.min(p.len())..], &q[t.min(q.len())..]);
         t += BLOCK;
     }
     while t < n {
-        dec_lanes::<K, 1>(&mut out[t..], h0, h, &p[t.min(p.len())..], &q[t.min(q.len())..]);
+        dec_lanes::<I, K, 1>(&mut out[t..], h0, h, &p[t.min(p.len())..], &q[t.min(q.len())..]);
         t += 1;
     }
 }
@@ -501,7 +592,15 @@ fn dec_fir<const K: usize>(out: &mut [f64], h0: f64, h: &[f64; K], p: &[f64], q:
 /// `p[rp + l]`; tap k = 2m reads `p[rp + l ± m]`, tap k = 2m + 1 reads `q[rq + l + m]` and
 /// `q[rq + l - m - 1]`.
 #[inline(always)]
-fn dec_lanes<const K: usize, const W: usize>(out: &mut [f64], h0: f64, h: &[f64; K], p: &[f64], q: &[f64]) {
+fn dec_lanes<I: Copy + PairAdd, const K: usize, const W: usize>(
+    out: &mut [f64],
+    h0: f64,
+    h: &[f64; K],
+    p: &[I],
+    q: &[I],
+) where
+    f64: From<I>,
+{
     let rp = K / 2;
     let rq = K.div_ceil(2);
     let (Some(out), Some(p), Some(q)) =
@@ -511,22 +610,22 @@ fn dec_lanes<const K: usize, const W: usize>(out: &mut [f64], h0: f64, h: &[f64;
     };
     let mut acc = [0.0f64; W];
     for l in 0..W {
-        acc[l] = h0 * p[rp + l];
+        acc[l] = h0 * f64::from(p[rp + l]);
     }
     // Taps in order k = 1, 2, 3, ...: odd k = 2m + 1, then even k = 2m + 2.
     for m in 0..K / 2 {
         let (ho, he) = (h[2 * m], h[2 * m + 1]);
         for l in 0..W {
-            acc[l] += ho * (q[rq + l + m] + q[rq + l - m - 1]);
+            acc[l] += ho * f64::from(q[rq + l + m].pair_add(q[rq + l - m - 1]));
         }
         for l in 0..W {
-            acc[l] += he * (p[rp + l + m + 1] + p[rp + l - m - 1]);
+            acc[l] += he * f64::from(p[rp + l + m + 1].pair_add(p[rp + l - m - 1]));
         }
     }
     if K % 2 == 1 {
         let m = K / 2;
         for l in 0..W {
-            acc[l] += h[K - 1] * (q[rq + l + m] + q[rq + l - m - 1]);
+            acc[l] += h[K - 1] * f64::from(q[rq + l + m].pair_add(q[rq + l - m - 1]));
         }
     }
     *out = acc;
@@ -541,8 +640,10 @@ pub struct Converter {
 }
 
 impl Converter {
-    /// A converter for frames of `channels` channels (0 counts as 1). Designing the
-    /// filters takes well under a millisecond.
+    /// A converter for frames of `channels` channels (0 counts as 1). It never fails: a
+    /// configuration that [`PcmConfig::validate`] refuses (the wide filter at 88.2 kHz) is
+    /// converted with [`PcmConfig::effective`] instead, which [`config`](Self::config)
+    /// reports. Designing the filters takes well under a millisecond.
     pub fn new(channels: u8, cfg: &PcmConfig) -> Converter {
         Converter { channels: usize::from(channels.max(1)), p: Pipeline::new(cfg, 1) }
     }
@@ -642,9 +743,22 @@ mod tests {
     }
 
     #[test]
+    fn wide_needs_176_or_352() {
+        let bad = PcmConfig { rate: PcmRate::R88200, cutoff: Cutoff::Wide80, gain_db: 0.0 };
+        assert!(bad.validate().is_err());
+        assert_eq!(bad.effective().cutoff, Cutoff::Khz40);
+        assert_eq!(Converter::new(2, &bad).config().cutoff, Cutoff::Khz40);
+        for rate in [PcmRate::R176400, PcmRate::R352800] {
+            let ok = PcmConfig { rate, ..bad };
+            assert!(ok.validate().is_ok());
+            assert_eq!(Converter::new(2, &ok).config(), &ok);
+        }
+    }
+
+    #[test]
     fn extents_fit_in_a_neighbour_frame() {
         for rate in [PcmRate::R88200, PcmRate::R176400, PcmRate::R352800] {
-            for cutoff in [Cutoff::Khz40, Cutoff::Khz30] {
+            for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
                 let cfg = PcmConfig { rate, cutoff, gain_db: 0.0 };
                 let p = Pipeline::new(&cfg, 1);
                 assert!(p.ext.e0 < FRAME_BYTES, "{cfg:?}: {}", p.ext.e0);
@@ -655,7 +769,7 @@ mod tests {
     #[test]
     fn silence_is_zero() {
         for rate in [PcmRate::R88200, PcmRate::R176400, PcmRate::R352800] {
-            for cutoff in [Cutoff::Khz40, Cutoff::Khz30] {
+            for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
                 let cfg = PcmConfig { rate, cutoff, gain_db: 6.0 };
                 let mut c = Converter::new(2, &cfg);
                 let mut out = vec![1u8; c.frame_bytes()];
@@ -672,11 +786,23 @@ mod tests {
         let f = &p.filters;
         let n1 = p.s1e.len();
         let s1 = |m: usize| -> f64 {
-            (0..S1_BYTES).map(|j| f64::from(f.lut[j][usize::from(p.bytes[m + j])])).sum::<f64>()
+            (0..f.lut.len()).map(|j| f64::from(f.lut[j][usize::from(p.bytes[m + j])])).sum::<f64>()
                 / f64::from(1u32 << filters::S1_SHIFT)
         };
         let s1e: Vec<f64> = (0..n1).map(|q| s1(2 * q)).collect();
         let s1o: Vec<f64> = (0..n1).map(|q| s1(2 * q + 1)).collect();
+        if p.cfg.cutoff == Cutoff::Wide80 {
+            let one = f64::from(1u32 << filters::S1_SHIFT);
+            let h = &f.wide;
+            let k = h.len() - 1;
+            let at = |m: usize| if m % 2 == 0 { s1e[m / 2] } else { s1o[m / 2] };
+            let y = |c: usize| -> f64 {
+                one * (h[0] * at(c) + (1..=k).map(|i| h[i] * (at(c + i) + at(c - i))).sum::<f64>())
+            };
+            let e1 = p.ext.e1;
+            let step = if p.cfg.rate == PcmRate::R352800 { 1 } else { 2 };
+            return (0..p.out_len()).map(|i| y(step * i + 2 * e1)).collect();
+        }
         let s2r: Vec<f64> = (0..p.s2.len())
             .map(|r| {
                 0.5 * s1e[r + HB_PAIRS]
@@ -719,7 +845,7 @@ mod tests {
     fn arithmetic_is_far_below_the_24_bit_step() {
         let mut x = 0x1234_5678_9abc_def1u64;
         for rate in [PcmRate::R88200, PcmRate::R176400, PcmRate::R352800] {
-            for cutoff in [Cutoff::Khz40, Cutoff::Khz30] {
+            for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
                 let cfg = PcmConfig { rate, cutoff, gain_db: 0.0 };
                 let mut p = Pipeline::new(&cfg, 1);
                 // Random bytes: the hardest case for rounding (large intermediate values).
