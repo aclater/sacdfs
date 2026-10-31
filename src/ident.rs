@@ -122,7 +122,7 @@ pub fn pcm_flavour(pcm: &PcmConfig) -> u64 {
 
 /// Seconds added to a WAV file's mtime for the PCM options that change its bytes but not its
 /// size (issue #64): 0 for the default options, else a different number below
-/// [`PCM_OFFSETS`] for every cutoff and gain in steps of 0.01 dB from -60 to +24 dB (at most
+/// `PCM_OFFSETS` for every cutoff and gain in steps of 0.01 dB from -60 to +24 dB (at most
 /// 25,202 s, 7 hours). The rate is not included: it changes the file's size.
 pub fn pcm_mtime_offset(pcm: &PcmConfig) -> u64 {
     let cutoff: u64 = match pcm.cutoff {
@@ -136,7 +136,7 @@ pub fn pcm_mtime_offset(pcm: &PcmConfig) -> u64 {
 }
 
 /// The modification time shown for a track file (issue #64): its image's, moved forward by
-/// [`VERSION_STEP`] per output version after the first and, for WAV, by the PCM options'
+/// `VERSION_STEP` per output version after the first and, for WAV, by the PCM options'
 /// offset ([`pcm_mtime_offset`]). The same on every mount with the same options; anything
 /// that changes it also changes the file's [`generation`].
 pub fn mtime(file: &TrackFile, pcm_offset: u64) -> SystemTime {
