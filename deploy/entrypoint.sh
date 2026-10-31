@@ -152,15 +152,29 @@ CONF
 
 # --- start ------------------------------------------------------------------------------
 pids=()
+# Stop in order: the servers first (NFS-Ganesha drops its exports and file handles, smbd
+# its open files), then sacdfs, so that no server is left serving an unmounting or empty
+# directory. Startup is the reverse: sacdfs mounts first, the servers start after (below).
 stop_all() {
     trap - TERM INT
-    log "stopping"
-    for p in "${pids[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
-    for _ in $(seq 50); do
+    log "stopping the servers"
+    local p
+    for p in "${pids[@]:1}"; do kill -TERM "$p" 2>/dev/null || true; done
+    # Until no process but sacdfs uses the mount (NFS-Ganesha keeps the export's root open
+    # until it has exited), at most 10 s.
+    for _ in $(seq 100); do
+        users=$(fuser -m "$MNT" 2>/dev/null | tr -s ' ' '\n' | grep -vx -e '' -e "${pids[0]}" || true)
+        [ -z "$users" ] && break
+        sleep 0.1
+    done
+    for p in "${pids[@]:1}"; do kill -KILL "$p" 2>/dev/null || true; done
+    log "stopping sacdfs"
+    kill -TERM "${pids[0]}" 2>/dev/null || true
+    for _ in $(seq 100); do
         mountpoint -q "$MNT" || break
         sleep 0.1
     done
-    mountpoint -q "$MNT" && fusermount3 -u -z "$MNT" 2>/dev/null
+    if mountpoint -q "$MNT"; then fusermount3 -u -z "$MNT" 2>/dev/null || true; fi
     wait 2>/dev/null || true
 }
 trap 'stop_all; exit 0' TERM INT

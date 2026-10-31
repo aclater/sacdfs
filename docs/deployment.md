@@ -34,8 +34,16 @@ shares.
 - A health check (`/usr/local/bin/healthcheck.sh`) passes while the mount answers and every
   server is running and listening. If sacdfs, smbd or NFS-Ganesha stops, the container stops
   the others and exits, so the runtime's restart policy brings it back.
-- `SIGTERM` (`docker stop`) stops the servers and unmounts cleanly. The seek index cache is
-  written at unmount.
+- **Order of start and stop:**
+  - On start, sacdfs mounts first, and only then do Samba and NFS-Ganesha start.
+  - On `SIGTERM` (`docker stop`), the servers stop first. The entry point waits until no
+    process but sacdfs uses the mount (NFS-Ganesha keeps the export's root open until it
+    has exited), then stops sacdfs, which unmounts and writes the seek index cache.
+  - *Why:* a server is never left serving an empty directory or a mount that is going
+    away, and the unmount isn't refused as busy.
+  - The NFS export has the same fixed filesystem id (`Filesystem_Id = 101.1`) on every
+    start, because FUSE has no stable device number. A changing id would also invalidate
+    every client's handles.
 
 ## Building the image
 

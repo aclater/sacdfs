@@ -607,6 +607,11 @@ decisions, each with its reason:
 - **Samba does no extended-attribute or DOS-attribute lookups** (`ea support = no`,
   `store dos attributes = no`): sacdfs has neither, and each lookup would be one more FUSE
   round trip per file.
+- **Servers stop before sacdfs, and start after it,** with the same NFS filesystem id
+  every time. A server must not serve an unmounting or empty directory, and NFS-Ganesha
+  holds the export root open until it exits, so stopping sacdfs first fails as busy. The
+  order follows #18's restart sequence for the kernel server (stop NFS, then sacdfs; mount,
+  then export with a fixed `fsid`), applied to NFS-Ganesha.
 - **If one process stops, the container stops**, so the runtime's restart policy restarts
   all three together instead of leaving a server sharing an empty directory.
 
