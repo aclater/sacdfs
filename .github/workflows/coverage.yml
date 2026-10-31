@@ -1,0 +1,56 @@
+# Coverage: the whole test suite, FUSE tests included, under cargo-llvm-cov. The report
+# goes to the job summary and to Codecov, authenticated with the job's OIDC token (no
+# stored secret). Pull requests from forks get no token, so they skip the upload, and an
+# upload failure only fails CI on main, so a Codecov outage can't block pull requests.
+name: coverage
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+
+jobs:
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Codecov upload with GitHub's OIDC token
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal -c llvm-tools-preview && rustup default "$RUST_STABLE"
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8  # v2.87.28
+        with:
+          tool: cargo-llvm-cov
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - name: Tests under coverage
+        env:
+          SACDFS_FUSE_TESTS: "1"
+        run: |
+          cargo llvm-cov --locked --lcov --output-path lcov.info
+          {
+            echo "## Coverage"
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage to Codecov
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
+        with:
+          use_oidc: true
+          files: lcov.info
+          disable_search: true
+          fail_ci_if_error: ${{ github.event_name == 'push' }}

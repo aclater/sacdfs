@@ -1,0 +1,54 @@
+[package]
+name = "sacdfs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Read-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aclater/sacdfs"
+readme = "README.md"
+keywords = ["sacd", "dsd", "dsf", "fuse", "filesystem"]
+categories = ["filesystem", "multimedia::audio", "command-line-utilities"]
+publish = false
+exclude = ["tests/corpus/images"]
+
+[dependencies]
+# The engine: SACD parsing, demultiplexing and DST decoding. Not on crates.io yet; pinned
+# to a release tag.
+scarletbook = { git = "https://github.com/aclater/scarletbook-rs", tag = "v0.2.0" }
+# Pure-Rust FUSE: no libfuse needed, mounts through fusermount3.
+fuser = { version = "0.18", default-features = false }
+clap = { version = "4.5", features = ["derive"] }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+libc = "0.2"
+log = "0.4"
+lru = "0.19"
+rayon = "1.10"
+signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unsafe_code = "deny"
+
+[lints.clippy]
+# Panics on hostile input are bugs; these catch the common sources.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+[profile.release]
+overflow-checks = true
+
+# DST decoding in unoptimised test builds is slow.
+[profile.test]
+opt-level = 2
+
+[profile.dev.package.scarletbook]
+opt-level = 2

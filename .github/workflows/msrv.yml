@@ -1,0 +1,25 @@
+# The minimum supported Rust version (rust-version in Cargo.toml) still builds sacdfs.
+name: msrv
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_MSRV: 1.85.0
+
+jobs:
+  msrv:
+    name: msrv (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_MSRV" --profile minimal
+      - run: cargo +"$RUST_MSRV" check --all-targets --locked

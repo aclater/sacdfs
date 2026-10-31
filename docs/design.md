@@ -44,9 +44,19 @@ MOUNT/
       01 - <title>.dsf
 ```
 
-- SOURCE is one image file or a directory, scanned recursively for `*.iso` files. A file
-  that is not an SACD image (no master TOC) is left out; its directory still appears if
-  it holds other images.
+- SOURCE is one image file or a directory, scanned recursively for `*.iso` files (any
+  case). A file that is not an SACD image (no master TOC) is left out; its directory still
+  appears if it holds other images.
+- *Implementation:* at mount time only the names of the source tree are walked (no file is
+  opened), and directories with no `*.iso` anywhere below them are left out. A source
+  directory's images are opened, and their master and area TOCs read, when that directory
+  is first looked up or listed (in parallel, a few small reads per image); an image that
+  fails is left out then. An area's files and tags are made when the area directory is
+  first looked into. Symbolic links to files are followed, links to directories are not.
+  A directory whose `*.iso` files all turn out not to be SACD images shows up empty.
+- *Implementation:* an image directory whose name collides with a source subdirectory gets
+  ` (2)`. A track that fails scarletbook's `check_track` (empty, too many channels, or past
+  the area's capacity) is left out. Names are cut to fit 255 bytes.
 - `Stereo` and `Multichannel` appear only for areas the disc has.
 - File names come from the track text (title), with `/`, NUL and control characters
   replaced; a track without a title is `NN.dsf`. Duplicates get ` (2)`, ` (3)`.
@@ -70,6 +80,13 @@ header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
   track performer (else album artist), TPE2 album artist, TALB album title, TRCK n/N,
   TPOS disc sequence/set size (when the set size > 1), TCOM composer, TDRC date, TSRC ISRC,
   TCON genre name, TPUB publisher, TCOP copyright. Text is UTF-8 (ID3v2.4 encoding 3).
+- *Implementation:* album fields fall back from the album text to the disc text (artist,
+  title, publisher, copyright). TCON is the track's genre, else the first album genre, and
+  only names of the general genre table (not "not used"/"not defined"). TDRC is `YYYY`,
+  `YYYY-MM` or `YYYY-MM-DD` as far as the stored date is set. NUL characters are dropped
+  and empty values leave their frame out; a track with no text at all has no tag and a
+  zero metadata pointer. Channel types: 1 mono, 2 stereo, 3 three channels, 4 quad, 5
+  five channels, 6 5.1.
 
 ## Reading a range of a file
 
@@ -93,13 +110,39 @@ starting from the nearest known point at or before it, else by binary search ove
 area's sectors (each probe reads a handful of sectors). Sequential reads continue the
 open file's demultiplexer state, so a straight read never searches.
 
+*Implementation of the locator.* An index point (n, L) means: a fresh demultiplexer started
+at L first yields a frame numbered at most n, and frame n starts at or after L, so starting at
+L never misses frame n or any later frame. Points come from two places. A *probe* of the
+search starts a demultiplexer at L and records the first frame it yields (reading at most 80
+sectors). A sequential scan records, at most once a second of audio, the second frame popped
+after pushing a sector: every frame delivered by a push except the first started in that
+sector. A search starts from the nearest point at or before the frame (scanning forward
+directly when it is at most 48 frames back), else it searches between the nearest points
+around the frame (the area's first sector and its play time when there are none), by
+interpolation on frame numbers, falling back to bisection when an interpolated probe does
+not halve the interval, until 8 sectors are left. A read 375 frames or fewer ahead of the
+open file's demultiplexer continues it instead. If two points ever contradict each other
+(frame numbers that decrease as the LSN grows; a well-formed disc never does this, a hostile
+one can), the area is marked irregular, its points are dropped and every later search
+starts at the area's first sector: exactly the sequential scan, only slower. A search costs
+about 20 probes on a full disc, a few milliseconds from a local disk.
+
 **Read-ahead.** When reads on a file are sequential, sacdfs decodes the next window of
 frames (default 2 s of audio) on the worker pool while the current read is answered, so
 a player reading in real time, or `cp`, never waits for the decoder after the first read.
+*Implementation:* a read counts as sequential when it starts at most 1 MiB after, or 8 MiB
+before, the furthest byte read so far (the kernel sends its read-ahead requests
+concurrently, slightly out of order). The next window (150 frames) is queued when the read
+reaches the middle of the current one; it runs on a request thread and holds the open
+file's demultiplexer, so a read that needs those frames waits for them instead of decoding
+them twice.
 
 **Kernel caching.** The filesystem is read-only, so entries and attributes are cached for
 a long time, files are opened with `keep_cache`, and the kernel's page cache serves
 repeated reads. Large reads (`max_read` 1 MiB) and kernel read-ahead are enabled.
+*Implementation:* entry and attribute TTLs are 24 hours; the kernel read-ahead is set to
+1 MiB and up to 64 background requests are allowed. The filesystem is mounted `ro`,
+`nodev`, `nosuid`, `noexec`.
 
 ## Concurrency
 
@@ -109,12 +152,23 @@ reads on one file don't block `lookup`/`readdir` or reads of other files. Each i
 one open handle; sector reads are serialised per image (a `Mutex<Image>`), decoding is
 not.
 
+*Implementation:* fuser 0.18 can run several dispatch threads; sacdfs uses 4, so that a
+directory listing that opens many images does not hold up other requests. Reads go to a
+plain pool of request threads (as many as decoder threads, at least 4 and at most 16), and
+DST frames are decoded on a separate rayon pool (`--threads`), one `DstDecoder` per thread.
+The request pool is deliberately not a rayon pool: a rayon worker that waits for another
+pool runs other jobs of its own pool meanwhile, and a second read of the same file would
+then wait, on the same thread, for the demultiplexer lock the first one holds. The image
+file is opened on its first audio read, and refused if its size changed since the TOC was
+read. Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O
+error on that read.
+
 ## Performance basis
 
 scarletbook 0.2.0 decodes a stereo DST frame in about 0.215 ms on one core (about 65x real
 time per core) and scales to about 13.7x at 16 threads; plain DSD areas need no decoding.
 A straight read through the mount should therefore be limited by the copy and FUSE
-overheads, not by decoding. Measured figures will go in `docs/performance.md`.
+overheads, not by decoding. Measured figures are in [performance.md](performance.md).
 
 ## Testing
 
@@ -126,6 +180,14 @@ overheads, not by decoding. Measured figures will go in `docs/performance.md`.
   manifest; random-offset reads equal the same slice of a straight read.
 - Fuzzing the image layer is scarletbook's job; sacdfs fuzzes its own offset mapping with
   proptest.
+- *Implementation:* `tests/corpus.rs` reads every case through the tree and readers without
+  mounting, twice: with the default search, and with a search that runs on every read down
+  to one sector and no frame cache, so that the locator is exercised on the small corpus
+  images too (hostile timelines included). `tests/mount.rs` mounts the corpus with the
+  binary, reads every file through the kernel, then remounts and compares scattered reads
+  on fresh opens; it also checks background mode, read-only refusal and unmounting by
+  SIGTERM and SIGINT. Locally, the same per-channel hashes were compared on real discs
+  (see [performance.md](performance.md)).
 
 ## Prior art
 
