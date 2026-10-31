@@ -113,21 +113,11 @@ impl SourceSize {
     }
 }
 
-/// The total size of the filesystem holding `path`, in blocks of the returned size. The
-/// library's only `unsafe`: std has no `statvfs`, and it is one plain call.
-#[allow(unsafe_code)]
+/// The total size of the filesystem holding `path`, in blocks of the returned size.
 fn statvfs(path: &std::path::Path) -> io::Result<(u64, u32)> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes())?;
-    let mut st = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
-    // SAFETY: `c` is a NUL-terminated path, `st` is a writable statvfs buffer.
-    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: statvfs succeeded and filled it.
-    let st = unsafe { st.assume_init() };
-    let frsize = if st.f_frsize > 0 { st.f_frsize } else { st.f_bsize };
-    Ok((st.f_blocks, u32::try_from(frsize).unwrap_or(1 << 16).max(1)))
+    let st = nix::sys::statvfs::statvfs(path).map_err(io::Error::from)?;
+    let frsize = if st.fragment_size() > 0 { st.fragment_size() } else { st.block_size() };
+    Ok((st.blocks(), u32::try_from(frsize).unwrap_or(1 << 16).max(1)))
 }
 
 /// The attributes of a negative entry: only the inode number 0 counts.

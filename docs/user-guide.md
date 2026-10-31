@@ -189,6 +189,8 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   re-analyse it. The same options always show the same times, across remounts and restarts.
   `--pcm-rate` changes the files' size instead. With the default options, the times are the
   images' own.
+  With non-default options, a file whose image changed in the last few hours can show a
+  time slightly in the future (up to 7 hours ahead); tools such as `tar` may warn about it.
 - **`df` and free space.** The mount reports the size of the filesystem that holds SOURCE,
   all of it used: `df` shows that size with 0 available, and SMB clients (Explorer, Finder)
   see a full drive of that size. Nothing can be written to the mount anyway.

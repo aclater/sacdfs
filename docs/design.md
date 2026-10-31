@@ -771,8 +771,8 @@ says truthfully where the bytes live. *Why 0 free:* the mount is read-only; a fu
 filesystem is what copy dialogs understand as "nothing can be written here". The size is read
 at mount (the source was just walked, so this does not wait) and again at most once a minute,
 on a request thread, so a stalled source never holds up a `statfs` reply: it gets the last
-size read. This adds the library's one `unsafe` block (`libc::statvfs`; std has no
-`statvfs`), allowed on that function only.
+size read. `statvfs` comes from `nix` (MIT, already a dependency of fuser, with the same
+`fs` feature), not `libc`: sacdfs keeps `unsafe` to its daemonising code.
 
 ## Concurrency
 

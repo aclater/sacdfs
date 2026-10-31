@@ -915,6 +915,7 @@ dependencies = [
  "log",
  "lru",
  "multiversion",
+ "nix",
  "proptest",
  "rayon",
  "rustversion",
