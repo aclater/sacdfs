@@ -68,8 +68,9 @@ included.
 ## Performance
 
 A straight read of a DST stereo disc runs at 1.2x the time scarletbook's own `bench decode`
-takes for the same area, about 500 MB/s; a read at a random offset returns in about 4 ms on a
-fresh mount. See [docs/performance.md](docs/performance.md).
+takes for the same area on an idle machine (about 500 MB/s), and at 1.4x on a heavily loaded
+one; a read at a random offset returns in about 4 ms on a fresh mount, with about five reads of
+the image. See [docs/performance.md](docs/performance.md).
 
 ## Limits
 
