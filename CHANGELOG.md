@@ -12,6 +12,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- SIGINT and SIGTERM detach a busy mount (open files, an NFS export) instead of logging an
+  error and serving on: sacdfs stops when the last open file is closed. fuser already
+  unmounted lazily for users other than root; now root behaves the same.
 - Read-ahead starts only after reads of audio, and not on a file's first one: reading a
   file's header, or walking its chunks (as taggers do), no longer decodes its first seconds in
   the background.

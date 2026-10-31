@@ -197,6 +197,13 @@ mount, which then cannot be unmounted; and with the export removed, a client is 
 So the server is stopped around a restart of sacdfs, and its clients wait as for a server
 reboot. NFSv3 is stateless and reads on; NFSv4 reclaims its open state in the grace period.
 
+**Stopping a busy mount.** On SIGINT or SIGTERM, a mount that cannot be unmounted (files open,
+or held by an NFS server) is detached (`MNT_DETACH`, or `fusermount3 -u -z`) with a warning;
+sacdfs serves the files still open and exits when the last is closed. *Why:* before, as root, the
+unmount failed with `EBUSY`, sacdfs logged it and kept serving, and a container or service
+manager waiting for it to stop hung until it killed it, leaving a dead mount behind; for users
+other than root, fuser already unmounted lazily, so this makes the two behave the same.
+
 **Cost.** Mounting now hashes every source directory and image name once and keeps one map
 entry per directory and image (tens of bytes each). The node table is a hash map by inode
 number instead of a vector. Lookups of files compute their generation (one SHA-256 of about
