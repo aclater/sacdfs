@@ -45,3 +45,5 @@ jobs:
         env:
           SACDFS_FUSE_TESTS: "1"
         run: cargo test --locked
+      - name: Converter benchmark (smoke test, each case once)
+        run: cargo bench --locked --bench pcm -- --test

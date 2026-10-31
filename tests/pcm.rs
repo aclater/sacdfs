@@ -42,14 +42,23 @@ fn band(rate: PcmRate, cutoff: Cutoff) -> (f64, f64) {
 
 /// A 5th-order, 1-bit sigma-delta modulator in error-feedback form.
 ///
-/// Noise transfer function NTF(z) = N(z)/D(z): N has one zero at DC and two complex pairs
-/// at 0.5385 and 0.9062 of 20 kHz (the optimal spread for order 5, which lowers the noise
-/// in 0-20 kHz); D's poles are those of a 5th-order Butterworth high-pass whose cutoff was
-/// chosen so that the largest gain of the NTF is 1.5 (Lee's rule for a stable 1-bit loop).
-/// Designed with scipy (`signal.butter(5, wc, 'high')`, wc found by bisection,
-/// wc = 0.0795 of Nyquist). The signal transfer function is 1, so the DSD carries the
-/// input exactly plus shaped noise. Simulated at -6 dBFS 1 kHz: SNR about 101 dB in
-/// 20 Hz-20 kHz, 73 dB in 20 Hz-40 kHz; stable to an input of about 0.6.
+/// Why this one: it is the class of modulator SACD is made with. E. Janssen's thesis (*Look-
+/// ahead sigma-delta modulation and its application to Super Audio CD*, TU Eindhoven, 2010,
+/// doi:10.6100/IR691188; chapter 2 and appendix B) uses as its standard example a 5th-order
+/// loop filter from a Butterworth prototype with a corner near 100 kHz at 2.8224 MHz and
+/// resonators at 12 and 20 kHz. This one has the same order and the same ingredients, designed
+/// directly as a noise transfer function: NTF(z) = N(z)/D(z), N with one zero at DC and two
+/// complex pairs at 0.5385 and 0.9062 of 20 kHz (10.8 and 18.1 kHz: the optimal spread of
+/// zeros for order 5, doing the resonators' job), D with the poles of a 5th-order Butterworth
+/// high-pass whose cutoff (112 kHz) was chosen so that the largest gain of the NTF is 1.5
+/// (Lee's rule for a stable 1-bit loop). Designed with scipy (`signal.butter(5, wc, 'high')`,
+/// wc found by bisection, wc = 0.0795 of Nyquist). The error-feedback form makes the signal
+/// transfer function exactly 1, so the DSD carries the input plus shaped noise, with no
+/// filtering of the signal to account for in the measurements. It is plain, not look-ahead
+/// (the thesis's subject), so its in-band noise and distortion are higher than a mastering
+/// modulator's: THD+N of a -6 dBFS 1 kHz tone, measured in 20 Hz-20 kHz, is -91.5 dB. That
+/// is what makes "limited by the source" testable: the converter's THD+N must equal it.
+/// Stable at 0.5 (-6 dBFS); 0.6 is not.
 ///
 /// The loop: `x = u + w`, the bit `v = sign(x)`, the error `e = v - x`, and
 /// `w = ((N - D)/D) e` (strictly causal), so that `V = U + NTF E`.
