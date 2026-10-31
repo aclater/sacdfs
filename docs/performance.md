@@ -244,6 +244,58 @@ negligible and over a network is not. The read could be about 30 KiB smaller (it
 frames and the search's stop distance more than a 128 KiB read needs, which a cursor started
 at a known point does not need; a possible follow-up), which would save about 0.25 ms.
 
+## Concurrent reads (#28)
+
+Measured on 2026-10-31 under the benchmark lock, the virtual machine on the host about idle
+(0.1 to 0.5 hardware threads, once 6.2), release builds. "Before" is `main` with one
+`Mutex<Image>` per open image; "after" reads through positional reads, an `Image` clone per
+read ([design](design.md#concurrent-reads-of-one-image)). The scenario of #6: for 30 s, four
+players each reading 128 KiB at a time in real time with a 2 s buffer from a random position,
+and a tagger walking the whole mount over and over (stat, the first 4 KiB, the tags), on a
+fresh mount with `--no-index-cache`; 3 rounds each, worst read / 99th percentile in ms. Peak
+memory is the sacdfs process's peak resident set (`VmHWM`) at the end of the round.
+
+**Local images** (page cache), the five discs; "different": players on four areas of three
+discs; "same": four players on four tracks of the DST stereo area.
+
+| | Players, before | Players, after | Tagger worst, before / after | Peak RSS before / after |
+|---|---|---|---|---|
+| different discs, WAV | 16.0 / 0.71, 17.8 / 0.25, 28.8 / 0.58 | 24.8 / 0.22, 23.0 / 0.21, 27.0 / 0.49 | 5.8 to 11.7 / 7.2 to 14.5 | 339 to 343 / 340 to 342 MiB |
+| same disc, WAV | 21.5 / 2.71, 19.7 / 1.51, 14.3 / 1.84 | 16.3 / 2.90, 15.1 / 2.19, 21.0 / 1.61 | 6.7 to 16.5 / 7.9 to 13.3 | 218 to 219 / 218 MiB |
+| same disc, DSF | 11.5 / 5.62, 12.5 / 4.00, 16.6 / 3.55 | 14.8 / 4.98, 10.7 / 4.77, 9.8 / 2.82 | 5.8 to 10.4 / 4.7 to 5.4 | 168 to 169 / 168 to 169 MiB |
+
+Locally both meet the #6 target (no read over 50 ms) and are equal within the noise: a read
+from the page cache held the lock only for a copy of up to 128 KiB.
+
+**Images on NFS** (the share of [client-side seek latency](#client-side-seek-latency-issue-20),
+with the `O_DIRECT` shim, so every read goes to the server), DSF files of plain DSD stereo
+images: "same": four players on four tracks of one image; "different": four players on four
+images. Each set ran twice, before then after (A), and after then before at other positions
+(B), since the NAS caches what the first build read.
+
+| | Players worst / p99, before | after | Tagger worst, before | after |
+|---|---|---|---|---|
+| same image, A | 155 / 118, 135 / 35, 110 / 38 | 103 / 3.4, 39 / 2.1, 21 / 3.2 | 163, 85, 134 | 7.2, 10.8, 12.0 |
+| same image, B | 76 / 12.8, 88 / 34.9, 55 / 20.3 | 21 / 3.2, 49 / 10.2, 87 / 4.8 | 120, 89, 46 | 12.1, 7.2, 8.6 |
+| different images, A | 133 / 21.5, 133 / 3.7, 87 / 13.1 | 24 / 10.2, 20 / 3.4, 120 / 10.7 | 64, 38, 104 | 10.0, 11.6, 9.2 |
+| different images, B | 154 / 9.8, 41 / 2.5, 20 / 2.7 | 103 / 31.7, 84 / 3.2, 19 / 3.7 | 61, 66, 51 | 9.0, 12.7, 11.9 |
+
+- **The tagger:** its worst file went from 38 to 163 ms to 7 to 13 ms in every round. Its
+  reads of a disc a player was reading waited for the player's round trips; now they run
+  beside them.
+- **Players on one image:** the 99th percentile went from 12.8 to 118 ms to 2.1 to 10.2 ms.
+  The worst reads after (up to 103 ms) are each player's first reads at a part of the image
+  the NAS must read from its disks (a single such read took up to 104 ms in both builds); before,
+  every player also queued behind those.
+- **Players on different images** did not share a lock before either, and are the same within
+  the noise; the worst reads are first touches on the NAS.
+- **Memory:** unchanged (144 to 146 MiB on NFS, figures above locally). Decoding stays on
+  sacdfs's own pool and scarletbook is built without its `parallel` feature, so no library
+  cursor holds a read-ahead window of its own (up to about 48 MB with it, scarletbook 0.4.0).
+
+The players and the tagger are those of the WAV benchmarks' concurrency scenario
+[below](#wav-files-6-7-8), with the four players on one area for "same".
+
 ## Seeking through scarletbook (#28)
 
 Measured on 2026-10-31 with scarletbook 0.4.1, release build, under the benchmark lock,
