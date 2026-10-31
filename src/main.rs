@@ -138,11 +138,14 @@ fn main() -> ExitCode {
 
 fn run(args: Args) -> io::Result<()> {
     // The wide filter passes up to about 80 kHz, which 88.2 kHz PCM cannot hold (its Nyquist
-    // frequency is 44.1 kHz): refuse the combination before mounting.
-    if args.pcm_cutoff == Cutoff::Wide80 && args.pcm_rate == 88_200 {
+    // frequency is 44.1 kHz). The converter would quietly use 40 kHz instead: refuse the
+    // combination before mounting.
+    let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
+    let pcm = PcmConfig { rate, cutoff: args.pcm_cutoff, gain_db: args.pcm_gain };
+    if let Err(e) = pcm.validate() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "--pcm-cutoff wide needs --pcm-rate 176400 or 352800 (88.2 kHz PCM holds only up to 44.1 kHz)",
+            format!("--pcm-cutoff wide needs --pcm-rate 176400 or 352800 ({e})"),
         ));
     }
     let source = args.source.canonicalize().map_err(|e| with_path(e, &args.source))?;
@@ -166,9 +169,6 @@ fn run(args: Args) -> io::Result<()> {
         .num_threads(threads.min(8))
         .thread_name(|i| format!("sacdfs-toc-{i}"))
         .build_global();
-    let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
-    let cutoff = args.pcm_cutoff;
-    let pcm = PcmConfig { rate, cutoff, gain_db: args.pcm_gain };
     let output = Output {
         dsf: args.format.dsf,
         wav: args.format.wav,

@@ -124,7 +124,8 @@ the image. See [docs/performance.md](docs/performance.md).
 ## Limits
 
 - Linux only for now, and read-only.
-- DSF and WAV output only: no DSDIFF (DFF), no FLAC, no 44.1/48 kHz or 16-bit PCM.
+- DSF and WAV output only: no DSDIFF (DFF), no FLAC, no 44.1/48 kHz or 16-bit PCM. The converter is measured in
+  [docs/pcm-quality.md](docs/pcm-quality.md).
 - The directory tree is read once, at mount time. Images added to or removed from `SOURCE`
   later need a remount.
 - Each image is read through one file handle; reads of one disc's sectors are serialised.

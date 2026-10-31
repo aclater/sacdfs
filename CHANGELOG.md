@@ -17,6 +17,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- PCM output, phase 1 (#11): the DSD-to-PCM converter, `sacdfs::pcm`, behind the WAV
+  files below. 24-bit PCM at 176.4 kHz (default), 88.2 or 352.8 kHz; pass band to 40 kHz (default,
+  at least 105 dB down from 48 kHz), 30 kHz, or 80 kHz (176.4/352.8 kHz only); a gain with
+  clamping and clip counting. Stateless per frame (frame f from frames f-1, f, f+1, equal bit
+  for bit to a whole-area conversion), aligned to the DSD sample, the same bytes on every
+  CPU. Ported from pysacd's converter. Tests with a 5th-order sigma-delta modulator (ripple,
+  stopband, aliasing, level, DC, THD+N, alignment, steps, clipping, determinism), a criterion
+  benchmark (smoke-tested in CI) and `examples/pcm_track.rs` for comparisons. See
+  docs/pcm-quality.md and the PCM sections of docs/design.md and docs/performance.md.
 - `--flatten`: a chain of folders below the top level that holds a single image collapses
   into its outermost folder, which then holds the image's `Stereo`/`Multichannel` folders
   (#13). Decided from the names walked at mount, so mounting is as fast as without it.

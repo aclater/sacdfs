@@ -14,6 +14,7 @@ pub mod dsf;
 pub mod engine;
 pub mod fs;
 pub mod names;
+pub mod pcm;
 pub mod track;
 pub mod tree;
 pub mod wav;
