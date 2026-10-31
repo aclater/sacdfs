@@ -125,7 +125,7 @@ fn check_case(case: &Value, rate: PcmRate, tuning: Tuning, cache: usize) -> usiz
         assert_eq!(w.data.end as u64 % wav::PAGE, 0);
         assert_eq!(u32::from(w.channels), u32::from(f.layout.channels));
         assert_eq!(w.rate, rate.hz());
-        assert_eq!(w.mask, wav::channel_mask(f.layout.channels));
+        assert_eq!(w.mask, wav::channel_mask(f.disc.toc.areas[f.area].loudspeaker_layout()));
         assert_eq!(w.mask.count_ones(), u32::from(w.channels));
         assert_eq!(w.samples, u64::from(f.layout.frames) * spf);
         // The same ID3v2.4 tag as the DSF file, and INFO fields that agree with it.
@@ -182,6 +182,70 @@ fn check_case(case: &Value, rate: PcmRate, tuning: Tuning, cache: usize) -> usiz
         assert!(joined == want, "{id} area {area}: concatenated WAV files differ from the area stream");
     }
     wavs.len()
+}
+
+/// The speaker assignment of every file of every corpus case follows its area's channel
+/// count and loudspeaker configuration in the manifest (specification 3, 3.4.1): stereo,
+/// 5-channel 3/2 and 5.1 have their own WAV channel mask and DSF channel type, and every
+/// other combination keeps the mask and type of its channel count.
+#[test]
+fn corpus_channel_layouts() {
+    // (WAV channel mask, DSF channel type) by channel count and configuration, written out
+    // here rather than taken from sacdfs or scarletbook.
+    fn want(channels: u64, config: u64) -> (u32, u32) {
+        match (channels, config & 7) {
+            (2, 0) => (0x3, 2),
+            (5, 3) => (0x37, 6),
+            (6, 4) => (0x3F, 7),
+            (1, _) => (0x4, 1),
+            (2, _) => (0x3, 2),
+            (3, _) => (0x7, 3),
+            (4, _) => (0x33, 4),
+            (5, _) => (0x37, 6),
+            (6, _) => (0x3F, 7),
+            _ => panic!("no files expected for {channels} channels"),
+        }
+    }
+    let rate = PcmRate::R88200;
+    let engine = Engine::with_pcm(1, 0, config(rate)).unwrap();
+    let mut seen = BTreeMap::new();
+    for case in ok_cases() {
+        let id = case["id"].as_str().unwrap();
+        let areas: BTreeMap<&str, (u64, u64)> = case["expected"]["toc"]["areas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                let slot = area_dir(a["slot"].as_str().unwrap());
+                (slot, (a["channel_count"].as_u64().unwrap(), a["area_config"].as_u64().unwrap()))
+            })
+            .collect();
+        let tree = Tree::with_options(
+            SourceDir::scan(&image(&case)).unwrap(),
+            Tuning::default(),
+            output(rate, true),
+        );
+        for (path, f) in tree.all_files() {
+            let dir = path.parent().unwrap().file_name().unwrap().to_str().unwrap();
+            let (channels, cfg) = areas[dir];
+            let (mask, channel_type) = want(channels, cfg);
+            // The header alone: no audio is converted.
+            let (h, _) = Reader::new(f.clone()).read(&engine, 0, f.header_len()).unwrap();
+            let u32_at = |at: usize| u32::from_le_bytes(h[at..at + 4].try_into().unwrap());
+            match f.format() {
+                // fmt chunk body at 20; dwChannelMask at 20 of it.
+                Format::Wav => assert_eq!(u32_at(40), mask, "{id} {path:?}"),
+                // DSD chunk (28), fmt chunk header (12), version, format id, channel type.
+                Format::Dsf => assert_eq!(u32_at(48), channel_type, "{id} {path:?}"),
+            }
+            *seen.entry((channels, cfg & 7)).or_insert(0usize) += 1;
+        }
+    }
+    eprintln!("files by (channels, configuration): {seen:?}");
+    for defined in [(2, 0), (5, 3), (6, 4)] {
+        assert!(seen.contains_key(&defined), "{defined:?} not in the corpus: {seen:?}");
+    }
+    assert!(seen.keys().filter(|k| ![(2, 0), (5, 3), (6, 4)].contains(*k)).count() >= 4, "{seen:?}");
 }
 
 #[test]
@@ -501,7 +565,7 @@ fn rf64_file() {
     tags.set(b"TALB", Some("Album"));
     tags.set(b"TRCK", Some("1/1"));
     let t = wav::trailer(&tags);
-    let h = wav::header(&layout, t.bytes.len() as u64);
+    let h = wav::header(&layout, scarletbook::LoudspeakerLayout::FivePointOne, t.bytes.len() as u64);
     assert!(wav::needs_rf64(&layout, t.bytes.len() as u64));
     let mut f = std::fs::File::create(&path).unwrap();
     f.write_all(&h).unwrap();

@@ -27,6 +27,8 @@
 
 use std::ops::Range;
 
+use scarletbook::{LoudspeakerLayout, Speaker};
+
 use crate::dsf::Tags;
 
 /// Bits per sample of the PCM output.
@@ -79,16 +81,43 @@ pub mod speaker {
     pub const BR: u32 = 0x20;
 }
 
-/// The channel mask for a channel count.
+/// The channel mask of an area with loudspeaker layout `layout`.
 ///
-/// Provisional: derived from the channel count only, in the order of sacdfs's DSF channel
-/// types (1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR FC BL BR; 6 FL FR FC LFE BL BR),
-/// which is also the order of the mask bits, so the samples need no reordering. scarletbook
-/// 0.3.0 exposes the area's loudspeaker configuration only as the raw `area_config` byte,
-/// and sacdfs keeps no SACD format knowledge of its own, so a typed channel assignment has
-/// been requested upstream.
-// TODO(scarletbook#75): take the channel assignment from scarletbook's typed API.
-pub fn channel_mask(channels: u8) -> u32 {
+/// For the three layouts the specification defines, the mask holds the speakers that
+/// scarletbook's [`LoudspeakerLayout::speakers`] gives for the channels: stereo FL FR
+/// (0x3), 5-channel 3/2 FL FR FC BL BR (0x37) and 5.1 FL FR FC LFE BL BR (0x3F). The
+/// surround channels take the back bits, as most players expect of 5.0 and 5.1. The
+/// speakers come in decoded-frame order, which is also the order of their bits, so the
+/// samples need no reordering (a WAV file's channels must follow the mask bits).
+///
+/// Any other combination of channel count and configuration ([`Unspecified`]) has no
+/// defined layout and keeps the mask of its channel count ([`count_mask`]).
+///
+/// [`Unspecified`]: LoudspeakerLayout::Unspecified
+pub fn channel_mask(layout: LoudspeakerLayout) -> u32 {
+    match layout {
+        LoudspeakerLayout::Unspecified { channels, .. } => count_mask(channels),
+        defined => defined.speakers().unwrap_or(&[]).iter().fold(0, |m, s| m | speaker_bit(*s)),
+    }
+}
+
+/// The mask bit of a speaker.
+fn speaker_bit(s: Speaker) -> u32 {
+    use speaker::*;
+    match s {
+        Speaker::FrontLeft => FL,
+        Speaker::FrontRight => FR,
+        Speaker::Centre => FC,
+        Speaker::LowFrequencyEffects => LFE,
+        Speaker::SurroundLeft => BL,
+        Speaker::SurroundRight => BR,
+    }
+}
+
+/// The channel mask for a channel count, for areas without a defined loudspeaker layout:
+/// 1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR FC BL BR; 6 FL FR FC LFE BL BR, in
+/// the order of sacdfs's DSF channel types for the same counts.
+pub fn count_mask(channels: u8) -> u32 {
     use speaker::*;
     match channels {
         1 => FC,
@@ -210,9 +239,10 @@ pub fn needs_rf64(layout: &Layout, trailer_len: u64) -> bool {
     header_len(layout) - 8 + layout.data_len() + trailer_len > u64::from(u32::MAX)
 }
 
-/// The header of a file with `layout` and a trailer of `trailer_len` bytes: everything
-/// before the first audio byte ([`header_len`] bytes).
-pub fn header(layout: &Layout, trailer_len: u64) -> Vec<u8> {
+/// The header of a file with `layout`, of an area with loudspeaker layout `speakers` (for
+/// the channel mask), and a trailer of `trailer_len` bytes: everything before the first
+/// audio byte ([`header_len`] bytes).
+pub fn header(layout: &Layout, speakers: LoudspeakerLayout, trailer_len: u64) -> Vec<u8> {
     let rf64 = needs_rf64(layout, trailer_len);
     let header_len = header_len(layout);
     let data_len = layout.data_len();
@@ -243,7 +273,7 @@ pub fn header(layout: &Layout, trailer_len: u64) -> Vec<u8> {
     fmt.extend_from_slice(&BITS.to_le_bytes());
     fmt.extend_from_slice(&22u16.to_le_bytes()); // extension size
     fmt.extend_from_slice(&BITS.to_le_bytes()); // valid bits per sample
-    fmt.extend_from_slice(&channel_mask(layout.channels).to_le_bytes());
+    fmt.extend_from_slice(&channel_mask(speakers).to_le_bytes());
     fmt.extend_from_slice(&SUBTYPE_PCM);
     chunk(&mut h, b"fmt ", &fmt);
     // Padding up to the data chunk header; even, since the data length is.
@@ -278,7 +308,7 @@ mod tests {
     #[test]
     fn riff_header_fields() {
         let l = layout(2, 75);
-        let h = header(&l, 100);
+        let h = header(&l, LoudspeakerLayout::Stereo, 100);
         let hl = h.len() as u64;
         assert_eq!(hl, header_len(&l));
         // The audio starts past AUDIO_START_MIN and ends on a page boundary.
@@ -309,7 +339,7 @@ mod tests {
             for c in 1..=6 {
                 let l = layout(c, frames);
                 assert_eq!((header_len(&l) + l.data_len()) % PAGE, 0);
-                assert_eq!(header(&l, 0).len() as u64, header_len(&l));
+                assert_eq!(header(&l, LoudspeakerLayout::new(c, 0), 0).len() as u64, header_len(&l));
             }
         }
     }
@@ -325,7 +355,7 @@ mod tests {
         assert!(!needs_rf64(&l, edge));
         assert!(needs_rf64(&l, edge + 1));
 
-        let h = header(&big, 10);
+        let h = header(&big, LoudspeakerLayout::FivePointOne, 10);
         let hl = header_len(&big);
         assert_eq!(h.len() as u64, hl);
         assert_eq!(&h[0..4], b"RF64");
@@ -347,11 +377,31 @@ mod tests {
 
     #[test]
     fn channel_masks() {
-        let m: Vec<u32> = (1..=6).map(channel_mask).collect();
+        let m: Vec<u32> = (1..=6).map(count_mask).collect();
         assert_eq!(m, [0x4, 0x3, 0x7, 0x33, 0x37, 0x3F]);
         // As many speakers as channels.
         for c in 1..=6u8 {
-            assert_eq!(channel_mask(c).count_ones(), u32::from(c));
+            assert_eq!(count_mask(c).count_ones(), u32::from(c));
+        }
+        // The defined layouts: stereo, 5.0 (back) and 5.1.
+        assert_eq!(channel_mask(LoudspeakerLayout::Stereo), 0x3);
+        assert_eq!(channel_mask(LoudspeakerLayout::ThreeTwo), 0x37);
+        assert_eq!(channel_mask(LoudspeakerLayout::FivePointOne), 0x3F);
+        for l in [LoudspeakerLayout::Stereo, LoudspeakerLayout::ThreeTwo, LoudspeakerLayout::FivePointOne] {
+            // The decoded-frame order of the speakers is the order of their mask bits, which
+            // is the order a WAV file's channels must have: no reordering needed.
+            let bits: Vec<u32> = l.speakers().unwrap().iter().map(|s| speaker_bit(*s)).collect();
+            assert!(bits.windows(2).all(|w| w[0] < w[1]), "{l:?}: {bits:x?}");
+        }
+        // Without a defined layout, the mask of the channel count, whatever the
+        // configuration byte holds.
+        for channels in 1..=6u8 {
+            for config in [0, 1, 2, 3, 4, 7, 0x83, 0xFF] {
+                let l = LoudspeakerLayout::new(channels, config);
+                if let LoudspeakerLayout::Unspecified { .. } = l {
+                    assert_eq!(channel_mask(l), count_mask(channels), "{l:?}");
+                }
+            }
         }
     }
 
