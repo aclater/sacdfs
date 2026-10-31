@@ -304,7 +304,7 @@ frames more than the DSF one (its neighbours) and converts about 10 frames.
 discs (93 DSF, 93 WAV) in 10 ms; then, for every file, a chunk walk like mutagen's (header,
 chunk headers, the bodies of `LIST` and `id3 `) or the DSF tag: 84 ms in all, 0.16 s of sacdfs
 CPU, and 20.5 MB of image reads, all from DSF files (a DSF header read still decodes its first
-frames, since its audio starts at byte 92). Before the padding and read-ahead fixes in this
+frames, since its audio starts at byte 92; see [below](#dsf-header-reads-32)). Before the padding and read-ahead fixes in this
 change, the same walk read 388 MB of the images and took 28 s of CPU.
 
 **Concurrency.** For 30 s, four players on four different areas (DST stereo, plain DSD
@@ -326,6 +326,41 @@ long window only when it reads far faster than real time.
 **Reproducing.** The same scenarios as the DSF ones above, with the `.wav` files:
 `cat MOUNT/<disc>/Stereo/*.wav > /dev/null` on a fresh mount; one `pread` of 128 KiB on a
 fresh mount for the seek; under `benchlock`, with `--no-index-cache`.
+
+## DSF header reads (#32)
+
+Measured on 2026-10-31, the five discs mounted from a local disk (`--format dsf`,
+`--no-index-cache`), under the benchmark lock, the virtual machine on the host about idle
+(0.1 to 0.4 hardware threads). A tag walk over the 93 DSF files on a fresh mount, as a
+tagger does it: open, read the first 4 KiB, seek to the ID3 tag the header points to, read
+it, close. The kernel's requests come from fuser's debug log; the image reads from
+`-v`'s exit line.
+
+| | before | after |
+|---|---|---|
+| kernel requests | 279: per file 128 KiB at 0, 128 KiB at 128 KiB, the tag's page | the same |
+| calls to the image | 1 022 (11.0 a file) | **342** (3.7 a file) |
+| bytes of the image | 109.5 MB (1.18 MB a file) | **20.7 MB** (222 KB a file) |
+| time for the walk | 0.26 s | **0.07 s** |
+
+The first 4 KiB alone cost nearly all of it (1 016 calls, 108.7 MB before; 341, 20.6 MB
+after): the tag's page holds only the last 92 bytes of the last channel's last block, which
+are padding unless that block is nearly full. Before, the kernel's second request (its read-ahead of the first) counted as a
+sequential read and started sacdfs's 2 s read-ahead: about 950 KB a file. The 222 KB left
+are the frames in the kernel's 256 KiB, read at the track's start; on a network share that
+is about 3.7 round trips a file with an empty seek index. Why that rest stays: [design](design.md#reading-a-range-of-a-dsf-file),
+read-ahead. With `max_readahead` at 4, 16 or 64 KiB the kernel's requests did not change
+(the same 279 requests, 24 180 KiB); at 0 it sent 3 069 requests of 4 KiB.
+
+The guarantees, with the same scenarios as [above](#wav-files-6-7-8) (before / after, 3
+rounds): seek on a fresh mount, DSF 1.4 / 1.6 ms, WAV 1.8 / 1.9 ms (within the run-to-run
+noise); header and tag walk of all 186 files with the files closed in between, as there,
+20.5 MB of image reads both (the kernel's background request dies with the closed file);
+four players and a tagger, players' worst read 23.0, 18.3, 17.9 / 25.0, 24.7, 27.4 ms
+(target 50 ms), the tagger's 8.8 to 9.6 / 10.6 to 13.2 ms. Straight read, `cat` of an area's DSF
+files on a fresh mount: plain DSD stereo 1.98, 1.57, 1.59 / 1.61, 1.70, 1.57 s (mean 1.71 /
+1.63 s), DST stereo 4.19, 4.18, 4.60 / 4.35, 4.56, 4.39 s (mean 4.32 / 4.43 s), within the
+noise. The DSF gate: 93 of 93 tracks identical.
 
 ## Earlier figures (scarletbook 0.2.0, idle machine)
 

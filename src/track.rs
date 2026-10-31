@@ -38,6 +38,12 @@ const SEQ_GAP_AHEAD: u64 = 1 << 20;
 /// sequential (the kernel sends read-ahead requests concurrently, slightly out of order).
 const SEQ_GAP_BEHIND: u64 = 8 << 20;
 
+/// Reads that end within this many bytes of where a file's first read of audio started
+/// start no read-ahead: that is the kernel's own read-ahead of a first read (128 KiB, then
+/// 128 KiB more in the background, whatever `max_readahead` says), which a tagger reading a
+/// DSF file's header causes as much as a player does (#32).
+pub const KERNEL_FIRST_WINDOW: u64 = 256 << 10;
+
 /// The file format of a track file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
@@ -470,6 +476,12 @@ impl Reader {
         s.max_end = s.max_end.max(end);
         if !sequential {
             s.ahead_until = 0;
+            return None;
+        }
+        // Nor does the kernel's read-ahead of the first read: a DSF file's audio starts at
+        // byte 92, so a tagger's read of the header is a read of audio, and the kernel
+        // follows it with a second one at once. A player's next read goes past it.
+        if s.started.is_some_and(|(_, at)| s.max_end <= at.saturating_add(KERNEL_FIRST_WINDOW)) {
             return None;
         }
         let frames = self.file.layout.frames;
