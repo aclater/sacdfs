@@ -13,8 +13,16 @@ use crate::dsf::{self, Layout, Piece, Tags};
 use crate::engine::{Engine, Fill, Frame, Stream};
 use crate::wav;
 
-/// Frames decoded ahead of a sequential reader: 2 s of audio.
+/// Frames decoded ahead of a sequential reader of a DSF file, and the fewest for a WAV file:
+/// 2 s of audio.
 pub const READ_AHEAD_FRAMES: u32 = 150;
+
+/// PCM converted ahead of a sequential reader of a WAV file, in bytes, within
+/// [`READ_AHEAD_FRAMES`] and [`READ_AHEAD_FRAMES_MAX`] frames.
+pub const READ_AHEAD_PCM_BYTES: u64 = 8 << 20;
+
+/// Most frames converted ahead of a WAV reader: 8 s of audio.
+pub const READ_AHEAD_FRAMES_MAX: u32 = 600;
 
 /// A read starting this close after the furthest byte read so far still counts as
 /// sequential.
@@ -140,6 +148,18 @@ impl TrackFile {
             warned: AtomicBool::new(false),
             warned_clips: AtomicBool::new(false),
         })
+    }
+
+    /// Frames read ahead of a sequential reader. For a WAV file, about 8 MiB of PCM: a
+    /// longer window than DSF's keeps the pipeline of demultiplexing and conversion busy for
+    /// a fast reader (`cp`) of a plain DSD area, where conversion is the only cost.
+    pub fn read_ahead_frames(&self) -> u32 {
+        match self.audio {
+            Audio::Dsf(_) => READ_AHEAD_FRAMES,
+            Audio::Wav(l) => (READ_AHEAD_PCM_BYTES / l.frame_bytes().max(1))
+                .clamp(u64::from(READ_AHEAD_FRAMES), u64::from(READ_AHEAD_FRAMES_MAX))
+                as u32,
+        }
     }
 
     /// The file format.
@@ -415,11 +435,12 @@ impl Reader {
             return None;
         }
         let frames = self.file.layout.frames;
-        if k1 >= frames || s.ahead_until >= frames.min(k1 + READ_AHEAD_FRAMES / 2) {
+        let window = self.file.read_ahead_frames();
+        if k1 >= frames || s.ahead_until >= frames.min(k1 + window / 2) {
             return None;
         }
         let start = s.ahead_until.max(k1);
-        let stop = frames.min(k1 + READ_AHEAD_FRAMES);
+        let stop = frames.min(k1 + window);
         s.ahead_until = stop;
         (start < stop).then_some(ReadAhead { first: start, end: stop })
     }

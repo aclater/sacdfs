@@ -358,6 +358,11 @@ fn settings_keep_layout() {
             assert_eq!(a[f.data_end() as usize..], b[f.data_end() as usize..], "{path:?}");
         }
     }
+    // WAV files read about 8 MiB of PCM ahead, within 2 to 8 s of audio.
+    for (_, f) in &files {
+        let fb = f.layout.channels as u32 * 2352 * 3;
+        assert_eq!(f.read_ahead_frames(), ((8u32 << 20) / fb).clamp(150, 600));
+    }
     // A file made for one rate refuses an engine with another, instead of serving wrong
     // bytes.
     let engine = Engine::with_pcm(2, 0, config(PcmRate::R88200)).unwrap();

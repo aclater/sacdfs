@@ -141,6 +141,10 @@ pub struct Carry {
 /// previous neighbour and the first frame of the next sequential read.
 const CARRY: usize = 2;
 
+/// DSD frames demultiplexed and decoded per step of the PCM pipeline: small enough that
+/// conversion starts early, large enough that DST frames still decode in parallel.
+const PIPELINE_CHUNK: u32 = 16;
+
 /// One decoded DSD frame in scarletbook's interleaved layout, the converter's input.
 #[derive(Debug)]
 struct Dsd {
@@ -266,36 +270,82 @@ impl Engine {
         // The DSD positions those frames need: [d0, d1).
         let d0 = t0.saturating_sub(1);
         let d1 = (t1 + 1).min(area_end);
-        let dsd = self.dsd_frames(disc, area, stream, d0, d1)?;
-        let get = |t: u32| dsd.get((t - d0) as usize).map(|d| d.data.as_slice());
-        let jobs: Vec<u32> = (t0..t1).filter(|&t| out[(t - first) as usize].is_none()).collect();
         let channels = disc.areas.get(area).map_or(0, |a| a.channels);
         let frame_bytes = self.pcm_frame_bytes(channels);
-        let convert = |t: u32| -> Result<(u32, Frame), ReadError> {
-            let cur = get(t).ok_or_else(|| ReadError::Io(io::Error::other("frame not decoded")))?;
-            let prev = if t > 0 { get(t - 1) } else { None };
-            let next = if t + 1 < area_end { get(t + 1) } else { None };
-            let mut data = vec![0u8; frame_bytes].into_boxed_slice();
-            let clips = self.with_converter(channels, |c| {
-                if c.frame_bytes() != frame_bytes {
-                    return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
+        let wanted: Vec<bool> = (t0..t1).map(|t| out[(t - first) as usize].is_none()).collect();
+        let converted: Mutex<Vec<(u32, Result<Frame, ReadError>)>> = Mutex::new(Vec::new());
+        // A pipeline: this pool thread demultiplexes and decodes the DSD frames in chunks,
+        // and each PCM frame is converted on the other pool threads as soon as its next
+        // neighbour is decoded, so that demultiplexing (serial) and conversion overlap.
+        self.pool.scope(|s| -> Result<(), ReadError> {
+            let mut dsd: Vec<Arc<Dsd>> = Vec::with_capacity((d1 - d0) as usize);
+            let mut next_job = t0;
+            let spawn_ready = |dsd: &Vec<Arc<Dsd>>, next_job: &mut u32| {
+                let have = d0 + dsd.len() as u32;
+                // Frame t can be converted once t + 1 is decoded, or is past the area.
+                while *next_job < t1
+                    && (*next_job + 1 < have || (*next_job < have && *next_job + 1 >= area_end))
+                {
+                    let t = *next_job;
+                    *next_job += 1;
+                    if !wanted[(t - t0) as usize] {
+                        continue;
+                    }
+                    let at = |u: u32| dsd.get((u - d0) as usize).cloned();
+                    let prev = if t > 0 { at(t - 1) } else { None };
+                    let (cur, next) = (at(t), if t + 1 < area_end { at(t + 1) } else { None });
+                    let converted = &converted;
+                    s.spawn(move |_| {
+                        let r = match &cur {
+                            Some(cur) => {
+                                self.convert_one(channels, frame_bytes, prev.as_deref(), cur, next.as_deref())
+                            }
+                            None => Err(ReadError::Io(io::Error::other("frame not decoded"))),
+                        };
+                        converted.lock().unwrap_or_else(|p| p.into_inner()).push((t, r));
+                    });
                 }
-                Ok(c.convert(prev, cur, next, &mut data))
+            };
+            self.dsd_frames(disc, area, stream, d0, d1, |chunk| {
+                dsd.extend(chunk);
+                spawn_ready(&dsd, &mut next_job);
             })?;
-            let fill = dsd.get((t - d0) as usize).map_or(Fill::Audio, |d| d.fill);
-            Ok((t, Frame { data, fill, clips }))
-        };
-        let converted: Vec<Result<(u32, Frame), ReadError>> =
-            self.pool.install(|| jobs.into_par_iter().map(convert).collect());
-        for r in converted {
-            let (t, frame) = r?;
-            let frame = Arc::new(frame);
+            spawn_ready(&dsd, &mut next_job);
+            Ok(())
+        })?;
+        let converted = converted.into_inner().unwrap_or_else(|p| p.into_inner());
+        for (t, r) in converted {
+            let frame = Arc::new(r?);
             self.cache.insert(Self::pcm_key(disc, area, t), frame.clone());
             out[(t - first) as usize] = Some(frame);
         }
         out.into_iter()
             .map(|f| f.ok_or_else(|| ReadError::Io(io::Error::other("frame not converted"))))
             .collect()
+    }
+
+    /// Converts one frame with this thread's converter.
+    fn convert_one(
+        &self,
+        channels: u8,
+        frame_bytes: usize,
+        prev: Option<&Dsd>,
+        cur: &Dsd,
+        next: Option<&Dsd>,
+    ) -> Result<Frame, ReadError> {
+        let mut data = vec![0u8; frame_bytes].into_boxed_slice();
+        let clips = self.with_converter(channels, |c| {
+            if c.frame_bytes() != frame_bytes {
+                return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
+            }
+            Ok(c.convert(
+                prev.map(|d| d.data.as_slice()),
+                &cur.data,
+                next.map(|d| d.data.as_slice()),
+                &mut data,
+            ))
+        })?;
+        Ok(Frame { data, fill: cur.fill, clips })
     }
 
     /// Runs `f` with this thread's converter for `channels` channels, made on first use.
@@ -313,9 +363,10 @@ impl Engine {
         })
     }
 
-    /// Decoded DSD frames, interleaved, of positions `[d0, d1)`: from the stream's carry,
-    /// or demultiplexed with its cursor and decoded in parallel. Keeps the last ones in the
-    /// carry.
+    /// Decoded DSD frames, interleaved, of positions `[d0, d1)`, handed to `sink` in order,
+    /// a chunk at a time: first those the stream carries from its last read, then frames
+    /// demultiplexed with its cursor and decoded (DST frames in parallel). Keeps the last
+    /// ones in the carry. Runs on a pool thread.
     fn dsd_frames(
         &self,
         disc: &Disc,
@@ -323,57 +374,76 @@ impl Engine {
         stream: &mut Stream,
         d0: u32,
         d1: u32,
-    ) -> Result<Vec<Arc<Dsd>>, ReadError> {
-        let carried = |t: u32| stream.carry.frames.iter().find(|(n, _)| *n == t).map(|(_, d)| d.clone());
-        let mut got: Vec<Option<Arc<Dsd>>> = (d0..d1).map(carried).collect();
-        if let Some(m0) = got.iter().position(Option::is_none) {
-            let m1 = got.iter().rposition(Option::is_none).map_or(m0, |i| i + 1);
-            let (e0, e1) = (d0 + m0 as u32, d0 + m1 as u32);
+        mut sink: impl FnMut(Vec<Arc<Dsd>>),
+    ) -> Result<(), ReadError> {
+        let mut last: VecDeque<(u32, Arc<Dsd>)> = VecDeque::with_capacity(CARRY + 1);
+        let mut keep = |t: u32, d: &Arc<Dsd>| {
+            last.push_back((t, d.clone()));
+            if last.len() > CARRY {
+                last.pop_front();
+            }
+        };
+        // The carried frames that start the range.
+        let mut t = d0;
+        let mut carried = Vec::new();
+        while t < d1 {
+            match stream.carry.frames.iter().find(|(n, _)| *n == t) {
+                Some((_, d)) => {
+                    keep(t, d);
+                    carried.push(d.clone());
+                    t += 1;
+                }
+                None => break,
+            }
+        }
+        if !carried.is_empty() {
+            sink(carried);
+        }
+        if t < d1 {
             let cursor = &mut stream.cursor;
             let reusable = cursor.as_ref().is_some_and(|c| {
                 c.reads(disc, area)
-                    && c.next_position() <= e0
-                    && e0 - c.next_position() <= disc.tuning.reuse_slack
+                    && c.next_position() <= t
+                    && t - c.next_position() <= disc.tuning.reuse_slack
             });
             if !reusable {
-                *cursor = Some(disc.locate(area, e0)?);
+                *cursor = Some(disc.locate(area, t)?);
             }
             let Some(cur) = cursor.as_mut() else {
                 return Err(ReadError::Io(io::Error::other("no cursor")));
             };
             let channels = cur.channels();
-            let mut jobs = Vec::with_capacity((e1 - e0) as usize);
-            for t in e0..e1 {
-                match cur.content(disc, t) {
-                    Ok(content) => jobs.push(TrackFrame { number: t, content }),
-                    Err(e) => {
-                        *cursor = None;
-                        return Err(e);
+            while t < d1 {
+                let chunk_end = (t + PIPELINE_CHUNK).min(d1);
+                let mut jobs = Vec::with_capacity((chunk_end - t) as usize);
+                for n in t..chunk_end {
+                    match cur.content(disc, n) {
+                        Ok(content) => jobs.push(TrackFrame { number: n, content }),
+                        Err(e) => {
+                            *cursor = None;
+                            return Err(e);
+                        }
                     }
                 }
-            }
-            let decoded: Vec<Result<(u32, Dsd), ReadError>> =
-                if jobs.iter().any(|j| matches!(j.content, FrameContent::Dst(_))) {
-                    self.pool
-                        .install(|| jobs.into_par_iter().map(|j| decode_interleaved(j, channels)).collect())
-                } else {
-                    jobs.into_iter().map(|j| decode_interleaved(j, channels)).collect()
-                };
-            for r in decoded {
-                let (t, d) = r?;
-                got[(t - d0) as usize] = Some(Arc::new(d));
+                let decoded: Vec<Result<(u32, Dsd), ReadError>> =
+                    if jobs.iter().any(|j| matches!(j.content, FrameContent::Dst(_))) {
+                        jobs.into_par_iter().map(|j| decode_interleaved(j, channels)).collect()
+                    } else {
+                        jobs.into_iter().map(|j| decode_interleaved(j, channels)).collect()
+                    };
+                let mut chunk = Vec::with_capacity(decoded.len());
+                for r in decoded {
+                    let (n, d) = r?;
+                    let d = Arc::new(d);
+                    keep(n, &d);
+                    chunk.push(d);
+                }
+                sink(chunk);
+                t = chunk_end;
             }
         }
-        let got: Vec<Arc<Dsd>> = got
-            .into_iter()
-            .map(|d| d.ok_or_else(|| ReadError::Io(io::Error::other("frame not decoded"))))
-            .collect::<Result<_, _>>()?;
-        stream.carry.frames.clear();
-        let keep = got.len().saturating_sub(CARRY);
-        for (i, d) in got.iter().enumerate().skip(keep) {
-            stream.carry.frames.push_back((d0 + i as u32, d.clone()));
-        }
-        Ok(got)
+        stream.carry.frames = last;
+        Ok(())
     }
 
     /// Timeline positions `[first, end)` of an area: from the cache, or demultiplexed with
