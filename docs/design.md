@@ -216,7 +216,7 @@ mount, which then cannot be unmounted; and with the export removed, a client is 
 So the server is stopped around a restart of sacdfs, and its clients wait as for a server
 reboot. NFSv3 is stateless and reads on; NFSv4 reclaims its open state in the grace period.
 
-**Stopping a busy mount.** On SIGINT or SIGTERM, a mount that cannot be unmounted (files open,
+**Stopping a busy mount.** On SIGINT, SIGTERM or SIGHUP, a mount that cannot be unmounted (files open,
 or held by an NFS server) is detached (`MNT_DETACH`, or `fusermount3 -u -z`) with a warning;
 sacdfs serves the files still open and exits when the last is closed. *Why:* otherwise a
 container or service manager waiting for sacdfs to stop would hang until it killed it,
@@ -240,13 +240,14 @@ mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a
   With the fix, 2 of about 5,000 fixed-binary restarts lost the new mount, both with a file
   open and the old mount detached from outside, and neither sacdfs logged an unmount: not
   explained yet, and not an unmount by sacdfs. This was the failure seen in #51.
-- On SIGINT or SIGTERM, sacdfs unmounts (or detaches, if busy) only if the mount on top at
+- On SIGINT, SIGTERM or SIGHUP, sacdfs unmounts (or detaches, if busy) only if the mount on top at
   its path still has its own device number, read from `/proc/self/mountinfo` right after
   mounting; otherwise it logs why and leaves the path alone. *Why:* the device number is
   unique while the mount exists, which is the only time it is compared; the mount table asks
   the file system nothing, so the check cannot wait on a stopping session.
-- A new sacdfs whose mount point is still a FUSE mount (the previous one has not unmounted
-  yet) waits for it to go, up to 10 s, then fails with "already a FUSE mount". *Why:* mounted
+- A new sacdfs whose mount point is still a live FUSE mount of its user's (the previous one
+  has not unmounted yet) waits for it to go, up to 10 s, then fails with "still mounted there
+  after 10 s"; a dead one is cleared at once (below, #57). *Why:* mounted
   over the old mount, the new one sat inside it. As root, the old one's unmount then removed
   the new mount instead (189 of 200 restarts started up to 20 ms before the old one was
   stopped failed); as a user, `fusermount3` refuses to mount over another user mount
@@ -262,6 +263,79 @@ Mounting through `Session::from_fd` with sacdfs's own `fusermount3` handshake wo
 but duplicates fuser's mount code. When fuser releases its fix, `serve` can go back to
 `Session::run`. The container is unaffected: sacdfs starts once per container, each start has
 a new mount namespace, and the entry point clears a stale mount first.
+
+**Mount safety (#55, #56, #57).** Three rules about the mount itself, from a review of
+other FUSE projects' changelogs for problems that recur (libfuse, fuser, rclone, mergerfs,
+gocryptfs, ratarmount and others):
+
+- **The mount is named `sacdfs`, not after SOURCE** (the source field of
+  `/proc/self/mountinfo`, `df` and `mount`). *Why:* fuser 0.18 passes the name to
+  `fusermount3` as `fsname=...` inside its `-o` list without escaping it, so a comma in the
+  path ended the name and the rest became options: `Bach, J.S.` failed with "unknown option
+  ' J.S.'", and a folder named `x,allow_other` would have applied the option (rclone 1.58.1
+  had the same bug; fuser fixed it in #424, not released). Escaping `\` and `,` as libfuse's
+  `fuse_opt_add_opt_escaped` does is right only on that path: as root, fuser calls mount(2)
+  itself with the name as the source argument, which nothing unescapes, so the mount table
+  would show the backslashes; and fuser picks the path inside `Session::new` (mount(2) first,
+  `fusermount3` on EPERM), so sacdfs cannot know which one it is escaping for. A fixed name
+  is right on both paths, keeps the library's path out of a table every user can read, and
+  identifies a dead mount as sacdfs's as root too, where the type is plain `fuse` (the
+  `sacdfs` subtype is a `fusermount3` option; mounted by a user, the type is `fuse.sacdfs`).
+  The own-mount check (#51) compares device numbers, never the name, so it is unaffected.
+  The source is in the log (`-v`) instead. Tested with SOURCE paths holding `,`, `\`, a space,
+  `,ro`, `,allow_other` and `\,rw`, as a directory and as the image file, as a user and as
+  root.
+- **Nothing sacdfs reads or writes may be inside its own mount.** It refuses to start, before
+  the scan, when the canonical SOURCE is the mount point or lies inside it (`sacdfs X X`,
+  `sacdfs X/sub X`), and when an `--index-cache` directory lies inside it; after the scan,
+  when the mount point lies inside SOURCE and holds images. *Why:* sacdfs reads images by
+  their source paths; inside the mount point those paths lead back into sacdfs, so each read
+  is a FUSE request to itself that waits for itself. `sacdfs -f X X` mounted, and the first
+  `ls X` (or anything else looking inside the new mount) hung in D state; even SIGKILL left
+  it a zombie, and only an abort through `/sys/fs/fuse/connections` freed it (ratarmount
+  0.14.2 and gocryptfs 1.4.2 fixed the same hang). Both paths are canonical, so a symbolic
+  link cannot hide it. The default cache directory inside the mount point (a mount point at
+  `$HOME`) is not an error: the cache is turned off with a warning, as for any cache that
+  cannot be used, since the cache is only ever a speed-up. An empty mount point inside SOURCE
+  is fine (`sacdfs ~/Music ~/Music/sacd`): sacdfs scans before mounting and never again.
+  Not covered: an image that is a symbolic link to a file inside the mount point (the scan,
+  in `tree.rs`, would have to resolve every link; a follow-up).
+- **A non-empty mount point is allowed, with a warning.** *Why:* libfuse 3 and `fusermount3`
+  allow it (libfuse 3.0 dropped the `nonempty` check), a service's mount point may hold a
+  placeholder, and refusing it would refuse setups that work; the cases that can hang are
+  refused precisely by the rule above. The warning says that the files there are hidden.
+- **A dead mount is cleared at start, quickly** (#57). After sacdfs is killed (SIGKILL, a
+  crash, the OOM killer), its mount stays, and every access fails with ENOTCONN. A new sacdfs
+  waited the full 10 s for it to go and then failed with "already a FUSE mount (another
+  sacdfs?)", so a service manager's restart loop never recovered. Now, while the mount point
+  is a FUSE mount, sacdfs probes it with `statfs`, at once and then every 250 ms, each probe
+  bounded to 500 ms. On ENOTCONN, a dead sacdfs mount (type `fuse.sacdfs`, or `fuse` named
+  `sacdfs`) of the same user (its `user_id=` option) is detached, while it is still the mount
+  on top at the path (by device number, as for the signal unmount), and sacdfs mounts; a dead
+  mount that isn't sacdfs's, or a FUSE mount of another user, fails at once with what is
+  there. A live mount of this user's is still waited for, up to 10 s (#51), and the message
+  then says whether it answered. Measured: the restart after SIGKILL mounts in about 10 ms
+  (as a user and as root), against 10 s and a failure before. *Why `statfs`, not `stat`:*
+  the kernel answers `stat` from its attribute cache (valid for a day) without asking the
+  server, so a dead mount can `stat` fine; a FUSE `statfs` always goes to the server. *Why
+  bounded, and in a child process:* on a live mount the probe waits for the server, which
+  may never answer (stopped, hung), and that wait cannot be interrupted; a thread would
+  break the single-threaded fork of `daemonize` that follows, so the probe runs in a forked
+  child that is killed and left behind if it takes too long. *Why only sacdfs's own:* #51's
+  guarantee is that sacdfs never unmounts a mount it doesn't own; a dead mount of another
+  file system is reported, not touched. libfuse's `auto_unmount` (a `fusermount3` that stays
+  and unmounts when the server dies) was considered: it needs the `fusermount3` path, which
+  root doesn't take, and an extra process per mount; clearing at the next start (as mergerfs
+  2.42 does) covers both.
+- **The signal handlers are set up before mounting** (#57). *Why:* they were set up after
+  mounting, so a SIGTERM in between (a service stopped right after starting) killed sacdfs
+  with its mount in place: a dead mount. Measured on `main`, SIGTERMs 0 to 30 ms after the
+  start left a dead mount in 7 of 100 starts; with the fix, 0 of 100 (and 0 of 60 in the
+  test). A signal from just before the mount on is held until the mount exists and then
+  unmounts it; one that arrived before sacdfs was about to mount stops it without mounting.
+  SIGHUP does what SIGTERM does: sacdfs has nothing to reload, and a foreground sacdfs whose
+  terminal closes should not leave a mount behind; the daemon is in its own session, so a
+  terminal closing doesn't reach it.
 
 **Cost.** Mounting hashes every source directory and image name once and keeps one map entry
 per directory and image (tens of bytes each). The node table is a hash map by inode number.
