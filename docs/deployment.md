@@ -6,10 +6,11 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
   container, and shares its mount over SMB and NFS. Every client (Linux, macOS, Windows,
   phones, network players) sees ordinary DSF and WAV files. A seek costs sacdfs's few
   milliseconds on the NAS plus about one network round trip, because sacdfs's own reads of
-  the image stay on the NAS.
+  the image stay on the NAS: about 5 ms for a cold seek over SMB on a gigabit LAN
+  ([performance](performance.md#nas-container-server-side)).
 - **On a Linux client (client-side).** sacdfs runs on the client and reads the images from a
-  network share, as in the [README](../README.md). Every read of an image is then a network
-  round trip.
+  network share, as in the [user guide](user-guide.md). Every read of an image is then a
+  network round trip.
 
 This guide covers the first: the container image in this repository (`Containerfile`), how
 to run it with Docker, Podman or Compose and on TrueNAS SCALE, and how clients mount its
@@ -66,10 +67,11 @@ podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
 ```
 
 `--format docker` keeps the health check, which the OCI image format has no field for. The
-build compiles sacdfs for generic x86-64. On a NAS with an AVX2 CPU (most Intel and AMD CPUs
-since about 2015, including the Intel N100 family), WAV conversion costs about 20 % less CPU with
-`--build-arg RUSTFLAGS="-C target-cpu=x86-64-v3"`; see [performance.md](performance.md).
-Don't use that build on an older CPU: it stops with an illegal-instruction error.
+build compiles sacdfs for generic x86-64, whose WAV converter already uses AVX2 where the CPU
+has it. On a NAS with an AVX2 CPU (most Intel and AMD CPUs since about 2015, including the
+Intel N100 family), `--build-arg RUSTFLAGS="-C target-cpu=x86-64-v3"` builds all of sacdfs
+for it ([performance.md](performance.md#converter-throughput)). Don't use that build on an
+older CPU: it stops with an illegal-instruction error.
 
 To install the image on a NAS that cannot build, push it to a registry the NAS can pull from,
 or move it as a file: `podman save sacdfs | gzip > sacdfs.tar.gz`, then
@@ -103,7 +105,7 @@ Samba is the only choice for SMB. For NFS there are two servers:
 | Privileges | rootful container, `CAP_SYS_ADMIN` to mount `/proc/fs/nfsd`, in practice `--privileged` | `CAP_DAC_READ_SEARCH` only |
 | Coexists with the host's own NFS service | kernel state per network namespace; fragile on appliances that manage `nfsd` themselves | fully independent |
 | Stops with the container | kernel threads must be shut down explicitly, or they outlive it | an ordinary process |
-| Speed | faster in general | ample here: sacdfs's decoding, not the server, sets the pace (about 500 MB/s for DSF) |
+| Speed | faster in general | ample here: sacdfs's decoding, not the server, sets the pace (about 490 MB/s for the DSF files of a DST stereo disc) |
 
 **NFS-Ganesha is used**, because it asks nothing of the host, needs one capability instead
 of a privileged container, and stops with the container. Both servers reopen files by NFS
