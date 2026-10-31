@@ -16,6 +16,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- Seek latency over SMB (#27), client-side and server-side, in `docs/performance.md`.
+
+### Documentation
+
 - Credit Sebastian Gesemann's dsd2pcm (BSD-3-Clause) for the byte-lookup-table technique in the PCM converter's first stage.
 
 ### Changed

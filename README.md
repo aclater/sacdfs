@@ -133,7 +133,8 @@ with four to five reads of the image (three for plain DSD discs), or one read wh
 index cache already knows that part of the disc. With images on a network share, each read of
 the image is a round trip, so these counts matter most there. Reading a WAV file straight through
 takes 1.1 to 1.4 times as long as reading the same track's DSF file (the WAV file holds 1.5
-times the bytes), and a seek in it returns in about 2 ms. See
+times the bytes), and a seek in it returns in about 2 ms. Over SMB on a gigabit LAN, a seek
+returns in about 5 ms with sacdfs on the server, or with the images on the share. See
 [docs/performance.md](docs/performance.md).
 
 ## Running it on a NAS
