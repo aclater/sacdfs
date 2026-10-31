@@ -32,6 +32,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- Open image files are kept in a bounded cache (#26): an image stays open from the listing
+  of its directory and between reads, so that a seek no longer opens it again (0.6 to 0.9 ms
+  on an NFS share). `--max-open-images N` (default 64) bounds them, least recently used
+  closed first; an image unused for 5 minutes is closed; an image whose size, modification
+  time or file changed is opened again.
 - Persistent seek index (#20): the frame positions sacdfs learns in each image are kept in
   `$XDG_CACHE_HOME/sacdfs` (`--index-cache DIR`, `--no-index-cache`), so that a seek after a
   remount needs about one read of the image instead of four to five; on a network share each
