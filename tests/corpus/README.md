@@ -2,7 +2,9 @@
 
 This directory holds synthetic SACD disc images and, in `manifest.json`, what a conforming
 reader must produce from each: the TOC, the warnings, and a hash of every track's decoded DSD
-per channel, or the error that rejects the image.
+per channel, or the error that rejects the image. For readers that offer them, it also gives
+the audio of each area's play range and of its tracks with pauses, and the stored bytes of
+every accepted frame.
 
 The images are synthetic. They contain generated test signals, never audio from a real disc.
 The corpus is dedicated to the public domain under CC0 1.0 (see [LICENSE](LICENSE)).
@@ -16,16 +18,18 @@ The corpus is dedicated to the public domain under CC0 1.0 (see [LICENSE](LICENS
 
 There are two categories:
 
-- **valid** (27 cases): discs a reader accepts in full, some with deliberate oddities (text
+- **valid** (33 cases): discs a reader accepts in full, some with deliberate oddities (text
   that decodes to U+FFFD, a TOC-2 fallback with its warning), covering the three sector formats, stereo and
-  multichannel areas, DST and plain DSD, every optional DST syntax feature at 2, 5 and 6
-  channels, every character set code (0 to 7), the positions where published CJK mappings
+  multichannel areas, DST and plain DSD at every channel count from 1 to 6, every optional DST
+  syntax feature at 1 to 6 channels (at 1 channel, four features that need more than 2 tables
+  at other counts use at most 2), invalid and missing frames at 1, 3 and 4 channels, every character set code (0 to 7), the positions where published CJK mappings
   disagree, multi-disc set fields, a disc with no text, a disc with every text field, an area
   without ISRCs and genres, frame format 3, and a TOC-2 fallback.
-- **malformed** (102 cases): mostly one broken thing each (a few cases combine several, as their
+- **malformed** (103 cases): mostly one broken thing each (a few cases combine several, as their
   purpose says), mostly starting from the same small base disc (case `hostile-base`): overlapping, inverted and out-of-image ranges, absurd counts
   and durations, truncated areas and images, garbage, truncated, oversized and invalid DST
-  frames, sector-layout confusion, and invalid text encodings.
+  frames, sector-layout confusion, invalid text encodings, and a channel count that disagrees
+  with the size of the frames.
 
 Each case's `purpose` says what it exercises and why its outcome is what it is.
 
@@ -155,6 +159,27 @@ Track audio object ([specification 4](../spec/04-audio-multiplexing.md)):
 | `invalid_dst_frames` | for `ok`, how many frames of the range were invalid DST frames (filled with 0x55) |
 | `sha256` | for `ok`, one SHA-256 (lower-case hex) per channel, in channel order, of that channel's track audio (4.7 item 2): `(end_frame - first_frame) x 4704` bytes, DSD bytes with the earliest sample in the MSB |
 
+Each area object also has these keys, for readers that offer frame ranges and undecoded
+positions ([specification 4](../spec/04-audio-multiplexing.md), 4.6.1 and 4.7.1):
+
+| Key | Meaning |
+|---|---|
+| `play_range` | a range object for the area's play range `[0, P)` (4.7.1 item 1) |
+| `tracks_with_pauses` | one range object per track, in track order, with its `number`, for its track with pause (4.7.1 item 5) |
+| `stored_frames` | left out when the area's channel count is not 1 to 6; otherwise the area's stored frame list (4.6.1 item 2): one object per accepted frame, in frame number order, including frames numbered `P` or more. A position with no object is missing. |
+
+A range object has the keys of a track audio object other than `number`, with the same
+meanings, for the range `[first_frame, end_frame)`, checked as 4.7.1 item 4 says.
+
+A stored frame object:
+
+| Key | Meaning |
+|---|---|
+| `frame` | the frame number (timeline position) |
+| `stored` | `dst` or `plain` |
+| `bytes` | the number of stored bytes |
+| `sha256` | SHA-256 (lower-case hex) of the stored bytes |
+
 ## How to check a reader
 
 For each case:
@@ -179,6 +204,13 @@ For each case:
    must produce no audio and report that code; if `ok`, the reader's audio for each channel must
    hash to the given value. The frame counts are a diagnostic aid: a reader that reports them
    must report these values.
+6. A reader that offers frame ranges (4.7.1) compares `play_range` and `tracks_with_pauses`
+   the same way as tracks in item 5.
+7. A reader that offers the stored frame list (4.6.1 item 2) compares, for each area, its list
+   (frame numbers, kinds, lengths and hashes) with `stored_frames`. A reader that offers only
+   the stored content of tracks or ranges compares the positions inside each track's range
+   with the entries of `stored_frames` in that range (every other position of the range must
+   be missing), for the tracks and ranges whose outcome is `ok`.
 
 ## How the corpus was made
 
@@ -190,6 +222,12 @@ per-track capacity check, zero-length tracks skipped). One expected value was se
 the specification because pysacd does not apply the rule: track 2 of `dst-code-all-ones` (DST
 rule 17). The DST feature cases were also checked
 against the encoder's input signal: their decoded DSD equals the signal that was encoded.
+The range values and the stored frames were added later. They were computed by a
+checker written from these specifications alone, which first reproduced every track value of
+the manifest, including every DST track. The range hashes were then checked against pysacd's
+engine, which agrees on every range except the two that contain the frame of
+`dst-code-all-ones` breaking DST rule 17. The cases with 1, 3 and 4 channels were made in the
+same way as the others, and their DST tracks decode to the signal that was encoded.
 [PROVENANCE.md](../PROVENANCE.md) records the details.
 
 Implementations must not depend on how the corpus was made: the specifications define every
@@ -223,5 +261,5 @@ authority for them:
 
 ## Size
 
-About 177 MB (169 MiB) uncompressed, 129 files of 1.0 to 2.0 MB. Most of each image is the 510 empty
+About 186 MB (177 MiB) uncompressed, 136 files of 1.0 to 2.0 MB. Most of each image is the 510 empty
 sectors before the master TOC, which compress well, so the repository stays far smaller.

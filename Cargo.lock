@@ -795,8 +795,8 @@ dependencies = [
 
 [[package]]
 name = "scarletbook"
-version = "0.2.0"
-source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.2.0#fce832565d87d73eb8680c92ba82d1147e754cca"
+version = "0.3.0"
+source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.3.0#e776f68a8da0d231b6db6c2dd9795146dd32c899"
 dependencies = [
  "thiserror",
 ]
