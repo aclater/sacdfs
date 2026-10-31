@@ -97,6 +97,10 @@ or move it as a file: `podman save sacdfs | gzip > sacdfs.tar.gz`, then
   - Fedora carries all three; CentOS was not needed.
 - sacdfs links only glibc and libgcc_s, so the binary built on UBI 10 (glibc 2.39) runs on
   Fedora's newer glibc.
+- The image brings its own `fusermount3` (Fedora 44's); only the FUSE side of the kernel
+  is the host's. The release binary was tested on kernels back to 4.18 (RHEL 8's and Fedora
+  29's) with their own old `fusermount3` ([design.md](design.md#oldest-distributions-58));
+  the container itself was tested on current kernels only.
 - Both bases are pinned by digest in `Containerfile`, so a rebuild gets the same base until
   the pin is updated (Dependabot proposes updates).
 
