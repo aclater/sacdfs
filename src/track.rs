@@ -354,6 +354,8 @@ struct Seq {
     max_end: u64,
     /// Frames up to here (file index, exclusive) are decoded or being decoded ahead.
     ahead_until: u32,
+    /// Reads of audio so far.
+    audio_reads: u64,
 }
 
 /// An open file: the file and its own demultiplexer state (and, for a WAV file, its last
@@ -392,9 +394,19 @@ impl Reader {
     }
 
     /// Decodes the frames of `ahead` into the cache, if they are not there already.
+    ///
+    /// A long window is decoded in steps of [`READ_AHEAD_FRAMES`], each holding the file's
+    /// demultiplexer on its own, so that a read of this file that needs frames the read-ahead
+    /// has not reached yet waits for one step, not for the whole window.
     pub fn read_ahead(&self, engine: &Engine, ahead: ReadAhead) {
-        if let Err(e) = self.decoded(engine, ahead.first, ahead.end) {
-            log::debug!("read-ahead of {}: {e}", self.file.disc.path.display());
+        let mut k = ahead.first;
+        while k < ahead.end {
+            let e = ahead.end.min(k + READ_AHEAD_FRAMES);
+            if let Err(err) = self.decoded(engine, k, e) {
+                log::debug!("read-ahead of {}: {err}", self.file.disc.path.display());
+                return;
+            }
+            k = e;
         }
     }
 
@@ -426,8 +438,13 @@ impl Reader {
 
     fn plan_read_ahead(&self, offset: u64, end: u64, k1: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
-        let sequential = offset == 0
-            || (offset <= s.max_end.saturating_add(SEQ_GAP_AHEAD)
+        // The first read of audio never starts read-ahead: a tagger walking a WAV file's
+        // chunks touches the audio once, at the data chunk's header, 256 KiB after the
+        // header it read, and must not make the file convert seconds of audio. A player or
+        // `cp` sends its next read at once, and that one starts it.
+        s.audio_reads += 1;
+        let sequential = s.audio_reads > 1
+            && (offset <= s.max_end.saturating_add(SEQ_GAP_AHEAD)
                 && offset.saturating_add(SEQ_GAP_BEHIND) >= s.max_end);
         s.max_end = s.max_end.max(end);
         if !sequential {

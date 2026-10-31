@@ -512,3 +512,30 @@ fn rf64_file() {
     assert_eq!(size, h.len() as u64 + layout.data_len() + t.bytes.len() as u64);
     eprintln!("{size} bytes, {} samples per channel", layout.samples());
 }
+
+/// A tagger that walks the chunks reads the data chunk's header, which touches the first
+/// audio frame: that converts the frames it needs and starts no read-ahead. A second read
+/// that continues it does.
+#[test]
+fn first_audio_read_starts_no_read_ahead() {
+    let engine = Engine::new(2, 64 << 20).unwrap();
+    let case = ok_cases().into_iter().find(|c| c["id"] == "dsd-stereo-mch-2048").unwrap();
+    let tree = Tree::with_options(
+        SourceDir::scan(&image(&case)).unwrap(),
+        Tuning::default(),
+        output(PcmRate::R176400, false),
+    );
+    for (path, f) in wav_files(&tree) {
+        let reader = Reader::new(f.clone());
+        let (_, ahead) = reader.read(&engine, 0, 4096).unwrap();
+        assert!(ahead.is_none(), "{path:?}");
+        // The 8 bytes before the audio, and the first audio bytes after them.
+        let at = f.header_len() - 8;
+        let (_, ahead) = reader.read(&engine, at, 16).unwrap();
+        assert!(ahead.is_none(), "{path:?}: read-ahead after the first audio read");
+        let (_, ahead) = reader.read(&engine, at + 16, 128 << 10).unwrap();
+        if f.layout.frames > 20 {
+            assert!(ahead.is_some(), "{path:?}: no read-ahead after a continuing read");
+        }
+    }
+}
