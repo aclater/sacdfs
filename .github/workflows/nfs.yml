@@ -22,6 +22,7 @@ jobs:
   nfs:
     name: nfs export
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -36,8 +37,10 @@ jobs:
       # open_by_handle_at of files needs CAP_DAC_READ_SEARCH in the initial user namespace,
       # as the NFS server has: run the file handle tests as root.
       - name: File handles across a restart (as root)
+        timeout-minutes: 5
         run: sudo --preserve-env=HOME,PATH,CARGO_TERM_COLOR env SACDFS_FUSE_TESTS=1 SACDFS_EXPORT_TESTS=1 cargo test --locked --test export
       - name: NFS export over loopback
+        timeout-minutes: 10
         run: |
           sudo modprobe nfsd
           sudo docker run --rm --privileged -v "$PWD:/src" -w /src "$FEDORA" \

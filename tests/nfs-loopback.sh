@@ -38,9 +38,18 @@ start_sacdfs() {
 }
 
 stop_sacdfs() {
-    kill -TERM "$pid"
+    # Unmount (retried while the kernel still holds the mount busy); sacdfs then exits.
+    for _ in $(seq 200); do
+        mountpoint -q "$mnt" || break
+        umount "$mnt" 2>/dev/null && break
+        sleep 0.1
+    done
+    if mountpoint -q "$mnt"; then
+        echo "the mount stays busy" >&2
+        grep -r . /proc/fs/nfsd/filecache 2>/dev/null | head -5 >&2
+        return 1
+    fi
     wait "$pid"
-    ! mountpoint -q "$mnt"
 }
 
 cleanup() {

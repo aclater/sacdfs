@@ -77,12 +77,32 @@ impl Mount {
         m
     }
 
-    /// Stops sacdfs (SIGTERM unmounts) and waits for it to exit.
+    /// Unmounts and waits for sacdfs to exit. The unmount is retried: right after files
+    /// opened by handle are closed, the kernel can still hold the mount busy for a moment
+    /// (a signal would make sacdfs try only once, and then keep serving).
     fn stop(mut self) {
         let mut child = self.child.take().unwrap();
-        let st = Command::new("kill").arg("-TERM").arg(child.id().to_string()).status().unwrap();
-        assert!(st.success());
-        assert!(child.wait().unwrap().success());
+        let start = Instant::now();
+        while is_mounted(&self.at) {
+            let ok =
+                Command::new("fusermount3").arg("-u").arg(&self.at).stderr(Stdio::null()).status().unwrap();
+            if ok.success() {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(20), "the mount stays busy");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "sacdfs exited with {status}");
+                break;
+            }
+            if start.elapsed() > Duration::from_secs(30) {
+                let _ = child.kill();
+                panic!("sacdfs did not exit after the unmount");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
         assert!(!is_mounted(&self.at));
     }
 }
