@@ -19,6 +19,7 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use scarletbook::audio::audio_sector_range;
@@ -45,11 +46,14 @@ pub struct Tuning {
     /// A cursor this many frames or fewer behind a read's first missing frame is moved
     /// forward rather than replaced by a search.
     pub reuse_slack: u32,
+    /// Aim the first probes of a search with the track start LSNs of the area TOC. They
+    /// are only hints: every probe is checked like any other.
+    pub toc_hints: bool,
 }
 
 impl Default for Tuning {
     fn default() -> Self {
-        Tuning { search_close: 8, scan_from_point: 48, reuse_slack: 375 }
+        Tuning { search_close: 8, scan_from_point: 48, reuse_slack: 375, toc_hints: true }
     }
 }
 
@@ -57,7 +61,7 @@ impl Tuning {
     /// Search as much as possible: every read that does not continue a cursor exactly
     /// searches down to a single sector.
     pub fn exhaustive() -> Self {
-        Tuning { search_close: 1, scan_from_point: 0, reuse_slack: 0 }
+        Tuning { search_close: 1, scan_from_point: 0, reuse_slack: 0, toc_hints: true }
     }
 }
 
@@ -118,6 +122,8 @@ pub struct Disc {
     /// Search thresholds.
     pub tuning: Tuning,
     image: Mutex<Option<Image<File>>>,
+    /// Calls to the image for audio sectors so far.
+    reads: AtomicU64,
 }
 
 /// The reading state of one audio area.
@@ -133,7 +139,33 @@ pub struct AreaState {
     pub end_lsn: u64,
     /// The area's play time in frames, a hint for the search.
     playtime: u32,
+    /// (start frame, start LSN) of the tracks in the area TOC, increasing in both, as
+    /// hints for the search; empty if the TOC's track starts are not in order.
+    hints: Vec<Point>,
     index: Mutex<Index>,
+}
+
+impl AreaState {
+    /// The TOC hints around `frame`: the last track start at or before it and the first
+    /// one after it.
+    fn hints_around(&self, frame: u32) -> (Option<Point>, Option<Point>) {
+        let i = self.hints.partition_point(|&(f, _)| f <= frame);
+        (i.checked_sub(1).and_then(|j| self.hints.get(j)).copied(), self.hints.get(i).copied())
+    }
+}
+
+/// A frame number and an LSN.
+type Point = (u32, u64);
+
+/// The track starts of an area TOC as search hints (see [`AreaState::hints`]).
+fn toc_hints(starts: impl Iterator<Item = Point>, start_lsn: u64, end_lsn: u64) -> Vec<Point> {
+    let mut hints: Vec<Point> = starts.filter(|&(_, l)| (start_lsn..end_lsn).contains(&l)).collect();
+    hints.sort_unstable();
+    hints.dedup_by_key(|h| h.0);
+    if hints.windows(2).any(|w| w[1].1 <= w[0].1) {
+        hints.clear();
+    }
+    hints
 }
 
 #[derive(Debug, Default)]
@@ -189,16 +221,31 @@ impl Disc {
                     start_lsn,
                     end_lsn,
                     playtime: a.playtime_frames(),
+                    hints: toc_hints(
+                        a.tracks.iter().map(|t| (t.start_frame, u64::from(t.start_lsn))),
+                        start_lsn,
+                        end_lsn,
+                    ),
                     index: Mutex::new(Index::default()),
                 }
             })
             .collect();
-        Ok(Disc { id, path: path.to_owned(), mtime, toc, areas, tuning, image: Mutex::new(None) })
+        Ok(Disc {
+            id,
+            path: path.to_owned(),
+            mtime,
+            toc,
+            areas,
+            tuning,
+            image: Mutex::new(None),
+            reads: AtomicU64::new(0),
+        })
     }
 
     /// Reads `buf.len() / 2048` sectors at `lsn`. `Ok(false)` if they are not all in the
     /// image.
     pub fn read_sectors(&self, lsn: u64, buf: &mut [u8]) -> Result<bool, ReadError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
         let mut guard = self.image.lock().unwrap_or_else(|p| p.into_inner());
         if guard.is_none() {
             let file = File::open(&self.path)?;
@@ -216,15 +263,21 @@ impl Disc {
 
     /// A cursor positioned so that its next timeline position can be `frame`, found with
     /// the area's index and, if needed, a search.
+    ///
+    /// The cursor starts where a fresh demultiplexer first yields a frame numbered *below*
+    /// `frame`, never at a frame numbered `frame`: a frame that repeats an earlier frame's
+    /// number (a hostile timecode) is discarded by a scan that has seen the original, but
+    /// a demultiplexer started between the two would take the copy for the original.
     pub fn locate(&self, area: usize, frame: u32) -> Result<Cursor, ReadError> {
         let st = self.area(area)?;
         let (mut lo, mut lo_frame, mut hi, mut hi_frame) = {
             let index = st.index.lock().unwrap_or_else(|p| p.into_inner());
-            if index.irregular {
+            if index.irregular || frame == 0 {
                 return Ok(Cursor::new(self, area, st.start_lsn, frame));
             }
-            let below = index.points.range(..=frame).next_back().map(|(&f, &l)| (f, l));
-            let above = index.points.range(frame + 1..).next().map(|(&f, &l)| (f, l));
+            // Start before an earlier frame, never at `frame` itself: see `Disc::locate`.
+            let below = index.points.range(..frame).next_back().map(|(&f, &l)| (f, l));
+            let above = index.points.range(frame..).next().map(|(&f, &l)| (f, l));
             if let Some((f, l)) = below {
                 if frame - f <= self.tuning.scan_from_point {
                     return Ok(Cursor::new(self, area, l, frame));
@@ -237,21 +290,37 @@ impl Disc {
             (lo, lo_frame, hi, hi_frame)
         };
         // Invariant: starting at `lo` finds `frame` (it is the area start, or a point whose
-        // first frame is at most `frame`). Frames at `hi` or later all come after `frame`.
+        // first frame comes before `frame`). Frames at `hi` or later are `frame` or later.
+        let (hint_lo, hint_hi) = if self.tuning.toc_hints { st.hints_around(frame) } else { (None, None) };
         let mut bisect_next = false;
         while hi > lo && hi - lo > self.tuning.search_close {
-            let mid = match (lo_frame, hi_frame, bisect_next) {
+            // Interpolate between the closest of the known bounds and the TOC's track
+            // starts inside them; the hints only aim the probe.
+            let (a, af) = match hint_lo {
+                Some((f, l)) if l > lo && l < hi && lo_frame.is_none_or(|lf| f >= lf) => (l, Some(f)),
+                _ => (lo, lo_frame),
+            };
+            let (b, bf) = match hint_hi {
+                Some((f, l)) if l > a && l < hi && hi_frame.is_none_or(|hf| f <= hf) => (l, Some(f)),
+                _ => (hi, hi_frame),
+            };
+            let mid = match (af, bf, bisect_next) {
                 (Some(lf), Some(hf), false) if hf > lf => {
-                    // Interpolate: frames are spread fairly evenly over the sectors.
-                    let span = (hi - lo) as u128;
+                    // Frames are spread fairly evenly over the sectors. Aim a little past
+                    // the estimate, towards the farther bound, so that a good estimate
+                    // closes the interval from both sides.
+                    let span = (b - a) as u128;
                     let at = u128::from(frame.saturating_sub(lf)) * span / u128::from(hf - lf);
-                    (lo + at as u64).clamp(lo + 1, hi - 1)
+                    let est = a + at as u64;
+                    let margin = self.tuning.search_close / 2;
+                    let est = if est - lo < hi - est { est + margin } else { est.saturating_sub(margin) };
+                    est.clamp(lo + 1, hi - 1)
                 }
                 _ => lo + (hi - lo) / 2,
             };
             let before = hi - lo;
             match self.probe(area, mid)? {
-                Some(n) if n <= frame => {
+                Some(n) if n < frame => {
                     lo = mid;
                     lo_frame = Some(n);
                 }
@@ -314,6 +383,12 @@ impl Disc {
     /// Whether the area's frame index has been found inconsistent.
     pub fn is_irregular(&self, area: usize) -> bool {
         self.areas.get(area).is_some_and(|st| st.index.lock().unwrap_or_else(|p| p.into_inner()).irregular)
+    }
+
+    /// Calls to the image for audio sectors so far (for tests and diagnostics): on a
+    /// network share each is a round trip.
+    pub fn sector_reads(&self) -> u64 {
+        self.reads.load(Ordering::Relaxed)
     }
 
     /// The number of index points of an area (for tests and diagnostics).
@@ -494,6 +569,25 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+
+    #[test]
+    fn toc_hints_in_order_only() {
+        let h = toc_hints([(300, 40), (0, 10), (150, 25), (150, 26), (900, 99)].into_iter(), 10, 50);
+        assert_eq!(h, [(0, 10), (150, 25), (300, 40)]);
+        assert!(toc_hints([(0, 10), (150, 30), (300, 20)].into_iter(), 0, 50).is_empty());
+        let st = AreaState {
+            slot: scarletbook::Slot::TwoChannel,
+            channels: 2,
+            start_lsn: 10,
+            end_lsn: 50,
+            playtime: 400,
+            hints: h,
+            index: Mutex::new(Index::default()),
+        };
+        assert_eq!(st.hints_around(0), (Some((0, 10)), Some((150, 25))));
+        assert_eq!(st.hints_around(200), (Some((150, 25)), Some((300, 40))));
+        assert_eq!(st.hints_around(399), (Some((300, 40)), None));
+    }
 
     #[test]
     fn index_detects_contradictions() {
