@@ -121,7 +121,7 @@ impl TrackFile {
         let (audio, header, trailer, tag) = match format {
             Format::Dsf => {
                 let tag = tags.to_id3();
-                let header = dsf::header(&layout, tag.len() as u64).to_vec();
+                let header = dsf::header(&layout, a.loudspeaker_layout(), tag.len() as u64).to_vec();
                 let range = 0..tag.len();
                 (Audio::Dsf(layout), header, tag, range)
             }
@@ -134,7 +134,7 @@ impl TrackFile {
                 let wl =
                     wav::Layout { channels: layout.channels, frames: layout.frames, samples_per_frame, rate };
                 let t = wav::trailer(&tags);
-                let header = wav::header(&wl, t.bytes.len() as u64);
+                let header = wav::header(&wl, a.loudspeaker_layout(), t.bytes.len() as u64);
                 (Audio::Wav(wl), header, t.bytes, t.tag)
             }
         };

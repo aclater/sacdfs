@@ -37,6 +37,15 @@ published on crates.io. sacdfs adds no SACD format knowledge of its own beyond w
 API exposes: sector reading (`Image`), frame reassembly (`Demuxer`), TOCs and text
 (`Toc`), and decoding (`DstDecoder`, `audio::decode_frame`).
 
+The pin is tag v0.4.1. 0.4.0 and 0.4.1 changed no decoded output (the corpus hashes and the
+real-disc gates are unchanged) and needed no code change to build. Of what they add, sacdfs
+uses only the loudspeaker layouts so far ([Speaker layouts](#speaker-layouts)). The seek
+indexes, cold seeks (`SeekPolicy::Speculative`) and per-thread disc clones are for sacdfs#28,
+which first measures them against sacdfs's own frame locator. sacdfs builds scarletbook
+without its `parallel` feature and decodes on its own worker pool, so the larger window of a
+parallel library cursor (512 positions, about 48 MB) does not apply; **why:** memory stays
+bounded by `--cache-mb` however many files are open.
+
 ## Layout
 
 ```
@@ -132,7 +141,8 @@ header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
   channel in 4096-byte blocks, channel after channel, earliest sample in the least
   significant bit (bits per sample = 1). The last block of each channel is padded with
   zeros. Sample count per channel = frames x 4704 x 8.
-- Channel type in fmt: from the channel count (2: stereo; 5: 5 channels; 6: 5.1).
+- Channel type in fmt: from the area's loudspeaker layout (stereo: 2; 5-channel 3/2: 6, "5
+  channels"; 5.1: 7), else from the channel count; see [Speaker layouts](#speaker-layouts).
 - A position with no frame, or with an invalid DST frame, is filled as scarletbook fills
   it (0x69 / 0x55); a warning is logged once per file.
 - Tag (built when the directory is listed, so the file size is known): TIT2 title, TPE1
@@ -144,8 +154,8 @@ header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
   only names of the general genre table (not "not used"/"not defined"). TDRC is `YYYY`,
   `YYYY-MM` or `YYYY-MM-DD` as far as the stored date is set. NUL characters are dropped
   and empty values leave their frame out; a track with no text at all has no tag and a
-  zero metadata pointer. Channel types: 1 mono, 2 stereo, 3 three channels, 4 quad, 5
-  five channels, 6 5.1.
+  zero metadata pointer. Channel types by channel count, for an area without a defined
+  layout: 1 mono, 2 stereo, 3 three channels, 4 quad, 5 five channels, 6 5.1.
 
 ## WAV files
 
@@ -189,13 +199,10 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   67 minutes, six channels after about 22, so long multichannel tracks need it. The decision is
   made per file, from its size. *Implementation:* no `JUNK` placeholder is written, since the
   size is known before the file is made.
-- **Channel mask and order:** 1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR FC BL BR; 6 FL
-  FR FC LFE BL BR. This is the order of the DSF files' channel types, and also the order of the
-  mask bits, so the samples need no reordering. **Provisional:** it comes from the channel
-  count alone. scarletbook 0.3.0 exposes the area's loudspeaker configuration only as the raw
-  `area_config` byte, and sacdfs keeps no SACD format knowledge of its own (see
-  [Engine](#engine)), so it does not decode that byte; a typed channel assignment is requested
-  from scarletbook (scarletbook-rs#75), and the code carries a `TODO(scarletbook#75)`.
+- **Channel mask and order:** from the area's loudspeaker layout, like the DSF channel type;
+  see [Speaker layouts](#speaker-layouts). Stereo 0x3 (FL FR), 5-channel 3/2 0x37 (FL FR FC BL
+  BR, which FFmpeg reads as "5.0") and 5.1 0x3F (FL FR FC LFE BL BR); without a defined layout,
+  the mask of the channel count.
 - **Tags:** the same ID3v2.4 tag as the DSF file, in an `id3 ` chunk (FFmpeg, TagLib, mutagen,
   foobar2000 and mp3tag read it), and a `LIST`/`INFO` chunk for software that reads only that:
   INAM (title), IART (performer), IPRD (album), ITRK (the track number alone), ICRD (date),
@@ -224,6 +231,48 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
 - Header and tag bytes are built when the area directory is listed, like the DSF files', so
   `stat` and `ls -l` never read the image, and reading the first 256 KiB or the tags of a WAV
   file decodes and converts nothing.
+
+
+## Speaker layouts
+
+The WAV channel mask (`dwChannelMask`) and the DSF channel type come from the area's
+loudspeaker layout, which scarletbook (0.4.0 and later) gives as `Area::loudspeaker_layout`
+(from the channel count and the low 3 bits of the area configuration byte, specification 3,
+3.4.1) with the speaker of each channel in decoded-frame order (`Area::channel_speakers`):
+
+| Layout | Speakers, in decoded order | WAV mask | DSF channel type |
+|---|---|---|---|
+| Stereo (2 channels, configuration 0) | FL FR | 0x3 | 2, stereo |
+| 5-channel 3/2 (5, configuration 3) | FL FR C SL SR | 0x37 (FL FR FC BL BR) | 6, 5 channels |
+| 5.1 (6, configuration 4) | FL FR C LFE SL SR | 0x3F (FL FR FC LFE BL BR) | 7, 5.1 channels |
+| Anything else (`Unspecified`) | not defined | by channel count | by channel count |
+
+- **Why from the disc, not the count:** the count only guesses which speakers a disc meant;
+  the layout is what the disc states. sacdfs keeps no SACD format knowledge of its own (see
+  [Engine](#engine)), so it reads the layout through scarletbook's typed API instead of
+  decoding the configuration byte itself. Before 0.4.0 scarletbook gave only the raw byte, and
+  sacdfs used the count alone (requested upstream as scarletbook-rs#75).
+- **No reordering:** a WAV file's channels must follow the order of their mask bits, and the
+  DSF types fix the order FL FR C (LFE) SL SR. scarletbook's decoded-frame order is that
+  order for all three layouts (its order is informative, the order existing tools label
+  extracted channels in), so the samples are written as decoded. A unit test checks that the
+  speakers' mask bits rise in decoded order, so a change upstream would fail it.
+- **Surround on the back bits (BL BR), not the side bits:** what 5.0 and 5.1 mean to most
+  players and to FFmpeg (0x37 is its "5.0", 0x3F its "5.1"; the side bits give "5.0(side)"
+  and "5.1(side)"), and what sacdfs wrote before. The DSF types have one surround pair, so
+  they do not distinguish.
+- **`Unspecified`** (any other combination: 1, 3 or 4 channels, or a stereo or 5-channel
+  count with another configuration; seen only on synthetic test images so far) keeps the
+  layout of the channel count, as before: 1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR
+  FC BL BR; 6 FL FR FC LFE BL BR (DSF types 1, 2, 3, 4, 6, 7). **Why:** the disc does not say
+  which speakers it means, the count gives players a usable default, and a file is always
+  shown. sacdfs logs it at Info once per disc, when the image is opened, naming the areas
+  and their stored fields, so that a surprising mask can be traced to the disc.
+- **Checked:** a test reads the header of every file of every corpus case and compares the
+  mask and type with the manifest's channel count and configuration (written out in the
+  test, not taken from sacdfs or scarletbook): stereo, 3/2 and 5.1, and six unspecified
+  combinations. On the real discs, FFmpeg's `ffprobe` reads the stereo, 5-channel and 5.1
+  areas as "stereo", "5.0" and "5.1" in both formats.
 
 ## Reading a range of a WAV file
 

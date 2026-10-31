@@ -106,9 +106,12 @@ default), band-limited to 40 kHz (or 30 kHz with `--pcm-cutoff 30`, or about 80 
 `--pcm-gain` says otherwise:
 - RIFF/WAVE with `WAVE_FORMAT_EXTENSIBLE`; a file over 4 GiB (a long multichannel track) is
   RF64 instead, which most current software reads.
-- Channel order and mask: 1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR FC BL BR; 6 FL FR
-  FC LFE BL BR, as the DSF files' channel types. For now this comes from the channel count
-  alone, not from the disc's loudspeaker configuration.
+- Channel order and mask: from the area's loudspeaker layout on the disc, as the DSF files'
+  channel types. Stereo is FL FR, 5-channel (3/2) FL FR FC BL BR (5.0) and 5.1 FL FR FC LFE
+  BL BR, in the disc's channel order. An area with any other combination of channel count and
+  speaker configuration (rare: not defined by the format) gets the layout of its channel
+  count (1 FC; 3 FL FR FC; 4 FL FR BL BR; 5 and 6 as above), and sacdfs logs this once per
+  disc at `-v`.
 - Tags: the same ID3v2.4 tag as the DSF file in an `id3 ` chunk, and a `LIST`/`INFO` chunk
   (title, artist, album, track number, date, genre) for software that reads only that. Both
   come after the audio.
