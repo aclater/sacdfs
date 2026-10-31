@@ -343,8 +343,8 @@ fn background_mount_and_unmount() {
     assert!(files.iter().any(|n| n.ends_with(".dsf")) && files.iter().any(|n| n.ends_with(".wav")));
     // Read-only.
     assert!(std::fs::write(mp.join("x"), b"x").is_err());
-    let st = Command::new("fusermount3").arg("-u").arg(&mp).status().unwrap();
-    assert!(st.success());
+    // Retried: the kernel can hold the mount busy for a moment after `read_dir` closes (#41).
+    unmount_retrying(&mp);
     wait_for("the unmount", || !is_mounted(&mp));
 }
 

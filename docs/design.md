@@ -41,9 +41,10 @@ The pin is tag v0.4.1. 0.4.0 and 0.4.1 changed no decoded output (the corpus has
 real-disc gates are unchanged) and needed no code change to build. Of what they add, sacdfs
 uses the loudspeaker layouts ([Speaker layouts](#speaker-layouts)) and positional reads
 (`ReadAtReader` over an `Arc<File>`, cloned per read, so that reads of one image run at once;
-see [Concurrent reads of one image](#concurrent-reads-of-one-image)). The seek indexes and
-cold seeks (`SeekPolicy::Speculative`) are measured against sacdfs's own frame locator in
-sacdfs#28. sacdfs builds scarletbook
+see [Concurrent reads of one image](#concurrent-reads-of-one-image)). Its seek indexes and
+cold seeks (`SeekPolicy::Speculative`) were measured against sacdfs's own frame locator (#28)
+and are not used for reading: see [Why not scarletbook's
+seeking](#reading-a-range-of-a-dsf-file). The tests use its seek index as an exact reference. sacdfs builds scarletbook
 without its `parallel` feature and decodes on its own worker pool, so the larger window of a
 parallel library cursor (512 positions, about 48 MB) does not apply; **why:** memory stays
 bounded by `--cache-mb` however many files are open.
@@ -538,28 +539,80 @@ does not hold that part of the image; a remount used to start every seek cold.
   (`--index-ahead`) would read every image completely, which on a network share is the cost
   this work avoids; it is a possible follow-up as a sparse, low-priority probe pass.
 
-**Why not scarletbook's frame ranges.** scarletbook 0.3.0 can decode any frame range of an
-area (`Disc::range_audio`, `range_audio_cursor`, `continue_range_audio`,
-`TrackCursor::for_range`), with exactly the frames, fills and timeline of a scan from the
-area start, because that is what it does: a range cursor always starts at the area's first
-audio sector and demultiplexes forward to the range, and it exposes no LSNs. Measured on a
-50-minute DST stereo disc (page cache; see [performance.md](performance.md)):
+**Why not scarletbook's seeking** (#28). scarletbook 0.4 can seek within an area itself, two
+ways, and sacdfs measured both against its locator before deciding. It keeps its locator for
+cold and warm seeks, and its own persistent seek index.
+
+- *A seek index* (`AreaIndex`, opt-in per area): the exact reading state every K sectors
+  (default 64), so that a range starts at the last checkpoint before it with results exactly
+  those of a scan from the area's first sector (specification 4, 4.2 item 7). But its
+  checkpoints run without gaps from the area's first sector: it covers a seek only once the
+  area has been read up to it, by playing from the start or by a full pass (about 9 s per GB
+  over a network share). A seek after a remount into a part of the area read only by an
+  earlier seek, which sacdfs answers with one call to the image from its saved points,
+  finds no checkpoint there.
+- *Provisional reading* (`SeekPolicy::Speculative`, the cold seek): a search of the frame
+  records' timecodes, then a scan from a checkpoint boundary at least 32 sectors before the
+  target with the range's first frame as the next acceptable frame number. Its positions are
+  provisional: exact on well-formed discs, but on a hostile image they can differ, and a
+  reader learns that only when a pass from the area's first sector reaches them (a
+  `Refuted` verdict).
+
+*Measured* (performance.md, [Seeking through scarletbook](performance.md#seeking-through-scarletbook-28)),
+the frames of a 128 KiB DSF read at 200 positions per area of the five real discs, each on a
+freshly opened disc, without FUSE:
+
+| Calls to the image / KiB read per seek | cold | warm |
+|---|---|---|
+| sacdfs's locator (warm: after a remount, from the saved points of the same seek) | **4.31 / 136** | **1.01 / 103** |
+| scarletbook provisional reading, default options | 8.84 / 373 | |
+| the same, tuned (exact scan only within 64 sectors, checkpoints every 16) | 7.22 / 260 | |
+| scarletbook, from a complete exact index (K = 64; K = 16) | | 2.68 / 172; 1.99 / 128 |
+
+On a network share (NFS, every read to the server) a cold seek took 21 to 29 ms through
+scarletbook against 7 to 15 ms with sacdfs's locator, and a warm one 1.5 to 1.8 ms against
+0.6 to 1.2 ms.
+
+- *Why the cold path costs more:* the library's search makes 3.0 to 5.3 reads of 8 sectors
+  before it reads any frame; sacdfs's whole cold seek, frames included, takes 3.0 to 5.6
+  calls, its probes sized to two of the area's average frames and aimed with the TOC's track
+  starts. The library then starts 32 to 96 sectors before the target (a checkpoint boundary
+  at least 32 sectors back) and reads in fixed calls of 32 sectors, where sacdfs's first read
+  is one call sized to the frames wanted.
+- *Why the warm path costs more:* a start from a checkpoint replays up to 32 sectors and reads
+  up to K more before the range, again 32 sectors a call; sacdfs starts within 40 frames of
+  the target in one call sized to the read. And the index must have been built first.
+- *Why not provisional positions at all:* on corpus case `area-audio-past-end` provisional
+  readings return other frames than the exact ones, and are refuted only once a pass reaches
+  them (`tests/library_index.rs`). Served through FUSE, those bytes would sit in the kernel's
+  page cache and in players' buffers until then; sacdfs's locator gives the exact frames
+  there from the first read. Handling refutation (dropping cached frames,
+  `notify_inval_inode`) would only repair what was already played.
+- *What sacdfs takes from 0.4 instead:* the seek index as an oracle. `tests/library_index.rs`
+  reads every frame and random ranges of every corpus case (hostile ones included, default
+  and exhaustive search) located by sacdfs, and compares them with reads through a complete
+  library index and with a straight library read; on the real discs, straight reads and 300
+  random ranges per area. They are equal everywhere, so the locator's frame-number rule, which
+  the specification's 4.2 note does not guarantee in general, is checked against an exact
+  reader on every image the tests have.
+- *Memory:* sacdfs keeps no library index or cursor, so the index's inline budget (1 MiB per
+  index by default) and the `parallel` window (up to about 48 MB per cursor) do not apply.
+- *What would change this* (requested upstream): cold-search probes sized by the caller or
+  the area's frame size, aimed with the TOC's track starts; a start closer than a checkpoint
+  boundary 32 sectors back; read calls sized by the caller (a first read covering the frames
+  wanted); a warm start that does not need the area read from its first sector, for example
+  confirmed provisional checkpoints that can be saved and checked on load. Until then sacdfs
+  keeps its locator, the hardest code it has, and the tests above keep it honest.
+
+Before 0.4, scarletbook's only random access was a range cursor that always starts at the
+area's first audio sector (`TrackCursor::for_range`, `Disc::range_audio`), measured on a
+50-minute DST stereo disc (page cache):
 
 | | scarletbook range cursor | sacdfs locator |
 |---|---|---|
 | first 14 frames at 16 % / 42 % / 72 % of the area | 21-35 / 45-78 / 90-132 ms | 0.9 to 1.8 ms |
 | image sectors read for that seek | every audio sector before the target | 5 to 6 calls of 16 to 64 sectors |
 | straight read, one fresh range cursor per track (scan part only) | 0.58 s (7.2 times the area's sectors) | 0.08 s (each sector once) |
-
-A range seek grows with its position in the area and on a network share would read up to the
-whole area (more than 1 GB) before its first byte, far past the 100 ms target. It also cannot
-seed or replace the learned index, since it reports no sector positions. For straight reads
-a range cursor per open file would rescan everything before its track, and sacdfs's own
-cursor already continues across reads; a hybrid would add code for no gain. So sacdfs keeps
-its locator, which is what made the duplicate-timecode case above visible, and keeps checking
-it against the corpus, where the range API's results are the reference. A range cursor that
-could start from a caller-supplied (frame, LSN) point would let sacdfs drop its own cursor;
-that is a possible request to scarletbook, not something sacdfs needs.
 
 *Lockstep DST decoding.* scarletbook 0.3.0 also added `DstDecoder::decode_many`, which
 decodes two to four frames together on one thread. Grouping the pool's frames that way (always,
@@ -902,6 +955,12 @@ decisions, each with its reason:
   bytes; and a changed size or mtime misses. `tests/mount_index.rs` mounts, seeks, unmounts,
   remounts and seeks again through the kernel: the same bytes, with fewer calls to the image
   and fewer bytes read.
+- *Against scarletbook's seek index:* `tests/library_index.rs` (see [Why not scarletbook's
+  seeking](#reading-a-range-of-a-dsf-file)): every frame and random ranges of every corpus
+  case located by sacdfs equal reads through a complete library index and a straight library
+  read; a provisional library reading of a hostile case is refuted and differs, where the
+  locator is exact; an ignored test, `real_discs`, does the same on local real discs
+  (`SACDFS_REAL_IMAGES`).
 - *DSF header reads:* `tests/dsf_header.rs` reads every DSF file of the corpus as the
   kernel does for a tagger (128 KiB at 0, 128 KiB at 128 KiB, the tag's page): none of the
   reads starts read-ahead, and a player reading on starts it exactly at 256 KiB.
