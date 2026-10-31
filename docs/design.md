@@ -106,9 +106,10 @@ A read of `[offset, offset + len)`:
 a fresh `Demuxer` fed sectors from any LSN yields correctly numbered frames from the
 first frame that starts there. sacdfs keeps, per area, a sorted index of (frame number,
 LSN of a sector where reading can start) learned from every read, and locates a frame by
-starting from the nearest known point at or before it, else by binary search over the
-area's sectors (each probe reads a handful of sectors). Sequential reads continue the
-open file's demultiplexer state, so a straight read never searches.
+starting from the nearest known point before it, else by binary search over the
+area's sectors (each probe reads a handful of sectors), aimed with the track start LSNs of
+the area TOC. Sequential reads continue the open file's demultiplexer state, so a straight
+read never searches.
 
 *Implementation of the locator.* An index point (n, L) means: a fresh demultiplexer started
 at L first yields a frame numbered at most n, and frame n starts at or after L, so starting at
@@ -116,16 +117,57 @@ L never misses frame n or any later frame. Points come from two places. A *probe
 search starts a demultiplexer at L and records the first frame it yields (reading at most 80
 sectors). A sequential scan records, at most once a second of audio, the second frame popped
 after pushing a sector: every frame delivered by a push except the first started in that
-sector. A search starts from the nearest point at or before the frame (scanning forward
-directly when it is at most 48 frames back), else it searches between the nearest points
-around the frame (the area's first sector and its play time when there are none), by
-interpolation on frame numbers, falling back to bisection when an interpolated probe does
-not halve the interval, until 8 sectors are left. A read 375 frames or fewer ahead of the
+sector. A search for frame f starts from the nearest point numbered below f (scanning
+forward directly when it is at most 48 frames back), else it searches, between the nearest
+points around f (the area's first sector and its play time when there are none), for the
+last sector where a probe yields a frame numbered below f, until 8 sectors are left. It
+never starts at a point numbered f itself: a hostile disc can store a second frame with an
+earlier frame's timecode, which a scan from the area start discards because it has seen the
+original, but which a demultiplexer started between the two takes for frame f (corpus cases
+`dst-features-*`, where the frame stored for position 36 repeats timecode 35). Starting one frame earlier lets the demultiplexer see the
+original first. The probes interpolate on frame numbers between the tightest of the known
+bounds and the track starts of the area TOC that lie inside them (the TOC is only a hint:
+every probe is checked, and TOC starts that are out of order are ignored), aimed half the
+8-sector stop distance past the estimate, towards the farther bound, so that a good estimate
+closes the interval from both sides; when an interpolated probe does not halve the
+interval, the next one bisects. A read 375 frames or fewer ahead of the
 open file's demultiplexer continues it instead. If two points ever contradict each other
 (frame numbers that decrease as the LSN grows; a well-formed disc never does this, a hostile
 one can), the area is marked irregular, its points are dropped and every later search
-starts at the area's first sector: exactly the sequential scan, only slower. A search costs
-about 20 probes on a full disc, a few milliseconds from a local disk.
+starts at the area's first sector: exactly the sequential scan, only slower. A cold seek
+(a fresh mount, so an empty index) costs 4.6 to 6.1 calls to the image on average on real
+discs, including reading the frames it was looking for, a millisecond or two from a local
+disk; on a network share each call is a round trip. `Disc::sector_reads` counts them.
+
+**Why not scarletbook's frame ranges.** scarletbook 0.3.0 can decode any frame range of an
+area (`Disc::range_audio`, `range_audio_cursor`, `continue_range_audio`,
+`TrackCursor::for_range`), with exactly the frames, fills and timeline of a scan from the
+area start, because that is what it does: a range cursor always starts at the area's first
+audio sector and demultiplexes forward to the range, and it exposes no LSNs. Measured on a
+50-minute DST stereo disc (page cache; see [performance.md](performance.md)):
+
+| | scarletbook range cursor | sacdfs locator |
+|---|---|---|
+| first 14 frames at 16 % / 42 % / 72 % of the area | 21-35 / 45-78 / 90-132 ms | 0.9 to 1.8 ms |
+| image sectors read for that seek | every audio sector before the target | 5 to 6 calls of 16 to 64 sectors |
+| straight read, one fresh range cursor per track (scan part only) | 0.58 s (7.2 times the area's sectors) | 0.08 s (each sector once) |
+
+A range seek grows with its position in the area and on a network share would read up to the
+whole area (more than 1 GB) before its first byte, far past the 100 ms target. It also cannot
+seed or replace the learned index, since it reports no sector positions. For straight reads
+a range cursor per open file would rescan everything before its track, and sacdfs's own
+cursor already continues across reads; a hybrid would add code for no gain. So sacdfs keeps
+its locator, which is what made the duplicate-timecode case above visible, and keeps checking
+it against the corpus, where the range API's results are the reference. A range cursor that
+could start from a caller-supplied (frame, LSN) point would let sacdfs drop its own cursor;
+that is a possible request to scarletbook, not something sacdfs needs.
+
+*Lockstep DST decoding.* scarletbook 0.3.0 also added `DstDecoder::decode_many`, which
+decodes two to four frames together on one thread. Grouping the pool's frames that way (always,
+or only when there are enough frames for every thread) made no measurable difference to a
+straight read through the mount (within the run-to-run noise of about 5 %): a FUSE read needs
+only a few dozen frames at a time, so longer jobs mostly delay the reply. sacdfs keeps one
+frame per job.
 
 **Read-ahead.** When reads on a file are sequential, sacdfs decodes the next window of
 frames (default 2 s of audio) on the worker pool while the current read is answered, so
@@ -165,8 +207,9 @@ error on that read.
 
 ## Performance basis
 
-scarletbook 0.2.0 decodes a stereo DST frame in about 0.215 ms on one core (about 65x real
-time per core) and scales to about 13.7x at 16 threads; plain DSD areas need no decoding.
+scarletbook 0.3.0 decodes a stereo DST frame in about 0.17 ms on one core with its lockstep
+decoder (about 80x real time per core; 0.2.0 took about 0.215 ms) and scales to about 13.7x
+at 16 threads; plain DSD areas need no decoding.
 A straight read through the mount should therefore be limited by the copy and FUSE
 overheads, not by decoding. Measured figures are in [performance.md](performance.md).
 
@@ -183,7 +226,8 @@ overheads, not by decoding. Measured figures are in [performance.md](performance
 - *Implementation:* `tests/corpus.rs` reads every case through the tree and readers without
   mounting, twice: with the default search, and with a search that runs on every read down
   to one sector and no frame cache, so that the locator is exercised on the small corpus
-  images too (hostile timelines included). `tests/mount.rs` mounts the corpus with the
+  images too (hostile timelines included), and reads every frame of every file alone from a
+  fresh reader. `tests/mount.rs` mounts the corpus with the
   binary, reads every file through the kernel, then remounts and compares scattered reads
   on fresh opens; it also checks background mode, read-only refusal and unmounting by
   SIGTERM and SIGINT. Locally, the same per-channel hashes were compared on real discs
