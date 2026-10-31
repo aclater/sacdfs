@@ -31,6 +31,7 @@ use std::time::SystemTime;
 use scarletbook::audio::audio_sector_range;
 use scarletbook::{AreaFrame, Demuxer, FrameContent, FrameKind, Image, SECTOR_SIZE, Slot, Toc};
 
+use crate::handles::Stamp;
 use crate::index_cache::{AreaShape, ImageKey, IndexCache};
 
 /// Sectors read per call to the image by a sequential scan.
@@ -162,7 +163,9 @@ impl From<io::Error> for ReadError {
     }
 }
 
-/// A disc image with its parsed TOC. The image file is opened on first audio read.
+/// A disc image with its parsed TOC. The handle its TOC was read through is kept for its
+/// audio reads, in the process's bounded cache of open images ([`crate::handles`]); the
+/// image is opened again when that handle was closed.
 #[derive(Debug)]
 pub struct Disc {
     /// Process-unique id, part of the frame cache key.
@@ -177,7 +180,8 @@ pub struct Disc {
     pub areas: Vec<AreaState>,
     /// Search thresholds.
     pub tuning: Tuning,
-    image: Mutex<Option<Image<File>>>,
+    /// The key of the image's handle in [`crate::handles::global`].
+    handle: u64,
     /// Calls to the image for audio sectors so far.
     reads: AtomicU64,
     /// Bytes of audio sectors read from the image so far.
@@ -348,8 +352,8 @@ impl Index {
 
 impl Disc {
     /// Opens an image and reads its TOC, with the persistent seek index installed for the
-    /// process ([`crate::index_cache::install`]), if any. The file is closed again until
-    /// audio is read.
+    /// process ([`crate::index_cache::install`]), if any. The file stays open for audio
+    /// reads, as long as the cache of open images ([`crate::handles`]) keeps it.
     pub fn open(path: &Path, id: u32, tuning: Tuning) -> Result<Disc, scarletbook::Error> {
         Self::open_with(path, id, tuning, crate::index_cache::global().map(Arc::as_ref))
     }
@@ -371,6 +375,7 @@ impl Disc {
             log::debug!("{}: {w}", path.display());
         }
         let toc = disc.toc().clone();
+        let file = disc.into_inner().into_inner();
         let areas = toc
             .areas
             .iter()
@@ -408,15 +413,37 @@ impl Disc {
             toc,
             areas,
             tuning,
-            image: Mutex::new(None),
+            handle: crate::handles::next_key(),
             reads: AtomicU64::new(0),
             bytes: AtomicU64::new(0),
             checks: [AtomicU64::new(0), AtomicU64::new(0)],
         };
-        if let (Some(cache), Some(meta)) = (cache, meta) {
-            disc.attach(cache, &meta);
+        if let (Some(cache), Some(meta)) = (cache, meta.as_ref()) {
+            disc.attach(cache, meta);
+        }
+        // Keep the handle the TOC was read through, so that the first audio read does not
+        // open the image again (a round trip or two on a network share, #26).
+        if let Some(meta) = meta {
+            match Image::with_format(file, disc.toc.sector_format) {
+                Ok(image) if image.sector_count() == disc.toc.sectors => {
+                    crate::handles::global().insert(disc.handle, image, Stamp::of(&meta));
+                }
+                Ok(_) => {}
+                Err(e) => log::debug!("{}: {e}", path.display()),
+            }
         }
         Ok(disc)
+    }
+
+    /// Opens the image for audio reads; refused if its size changed since the TOC was read.
+    fn open_image(&self) -> Result<(Image<File>, Stamp), ReadError> {
+        let file = File::open(&self.path)?;
+        let stamp = Stamp::of(&file.metadata()?);
+        let image = Image::with_format(file, self.toc.sector_format)?;
+        if image.sector_count() != self.toc.sectors {
+            return Err(ReadError::Io(io::Error::other("image file changed size since it was mounted")));
+        }
+        Ok((image, stamp))
     }
 
     /// Loads the image's saved points from `cache` and registers the disc's for saving.
@@ -458,19 +485,9 @@ impl Disc {
         self.bytes.fetch_add(buf.len() as u64, Ordering::Relaxed);
         TOTAL_READS.fetch_add(1, Ordering::Relaxed);
         TOTAL_BYTES.fetch_add(buf.len() as u64, Ordering::Relaxed);
-        let mut guard = self.image.lock().unwrap_or_else(|p| p.into_inner());
-        if guard.is_none() {
-            let file = File::open(&self.path)?;
-            let image = Image::with_format(file, self.toc.sector_format)?;
-            if image.sector_count() != self.toc.sectors {
-                return Err(ReadError::Io(io::Error::other("image file changed size since it was mounted")));
-            }
-            *guard = Some(image);
-        }
-        match guard.as_mut() {
-            Some(image) => Ok(image.read_sectors(lsn, buf)?),
-            None => Err(ReadError::Io(io::Error::other("image not open"))),
-        }
+        let image = crate::handles::global().get(self.handle, &self.path, || self.open_image())?;
+        let mut image = image.lock().unwrap_or_else(|p| p.into_inner());
+        Ok(image.read_sectors(lsn, buf)?)
     }
 
     /// A cursor positioned so that its next timeline position can be `frame`, found with
@@ -665,6 +682,13 @@ impl Disc {
     /// dropped (for tests and diagnostics).
     pub fn loaded_points(&self, area: usize) -> usize {
         self.areas.get(area).map_or(0, |st| st.index.lock().unwrap_or_else(|p| p.into_inner()).pending.len())
+    }
+}
+
+impl Drop for Disc {
+    /// Closes the image's handle.
+    fn drop(&mut self) {
+        crate::handles::global().remove(self.handle);
     }
 }
 
