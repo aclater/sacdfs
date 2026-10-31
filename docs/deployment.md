@@ -307,14 +307,20 @@ Over NFS the names are exactly sacdfs's. Over SMB, `SMB_NAME_MAPPING` chooses ho
 
 ## NFS and restarts (pending #18)
 
-NFS clients keep file handles across server restarts. sacdfs's inode numbers are stable only
-for one mount's lifetime today, so **after the container restarts (a NAS reboot, an update),
-NFS clients get "stale file handle" errors** on files and directories they had open or
-cached, and must remount. A file whose kernel inode the container evicts under memory
-pressure can also go stale while it runs. SMB is path-based and reconnects by itself.
+NFS clients keep file handles across server restarts. Today sacdfs's inode numbers are
+stable for one mount's lifetime only. So **after the container restarts (a NAS reboot, an
+update), NFS clients get "stale file handle" errors** on files and directories they had open
+or cached, and must remount. A file whose kernel inode the container evicts under memory
+pressure can also go stale while the container runs.
+
+SMB is path-based and reconnects by itself. CI checks this: a client keeps reading a file it
+opened before a restart.
+
 Persistent file identity and FUSE export support
-([#18](https://github.com/aclater/sacdfs/issues/18)) fix this; until then, prefer SMB, or
-remount NFS clients after a restart.
+([#18](https://github.com/aclater/sacdfs/issues/18)) fix this. In CI, with that change merged
+in, an NFSv4.2 client kept reading through the same open file across a container restart,
+as the SMB client does. Until it is merged, prefer SMB, or remount NFS clients after a
+restart.
 
 ## Troubleshooting
 
@@ -333,4 +339,7 @@ CI (`.github/workflows/container.yml`) builds the image, starts it on the test c
 mounts the shares with the kernel's SMB and NFS clients from a client container. It reads
 every track the corpus manifest expects and checks each DSF file's per-channel SHA-256 and
 each WAV file's header (`deploy/check-share.py`), over SMB and over NFS. A second run checks
-user access (guests refused), `SACDFS_FORMATS=dsf` and `SACDFS_FLATTEN=1`.
+user access (guests refused), `SACDFS_FORMATS=dsf` and `SACDFS_FLATTEN=1`. In between, a
+client opens a file over SMB and over NFS, reads half of it, and reads the rest after the
+container restarts. Until #18 is in, the NFS half is expected to fail, so that step reports
+the result without failing the job.
