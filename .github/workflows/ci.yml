@@ -1,4 +1,5 @@
-# CI: formatting, clippy, and the tests, including the FUSE tests that mount the corpus.
+# CI: formatting, clippy, the tests (including the FUSE tests that mount the corpus), and a
+# check that the README's options table matches `sacdfs --help`.
 name: ci
 
 on:
@@ -53,3 +54,15 @@ jobs:
           done
       - name: Converter benchmark (smoke test, each case once)
         run: cargo bench --locked --bench pcm -- --test
+
+  readme-options:
+    name: readme options
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - run: cargo build --locked --quiet
+      - name: The README's options table matches sacdfs --help
+        run: target/debug/sacdfs --help | python3 -I .github/scripts/check-readme-options.py README.md

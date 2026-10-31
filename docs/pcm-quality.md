@@ -1,10 +1,10 @@
 # PCM quality
 
-How good sacdfs's DSD-to-PCM converter (`sacdfs::pcm`, phase 1 of #11) is, how that was
+How good sacdfs's DSD-to-PCM converter (`sacdfs::pcm`, behind the WAV files) is, how that was
 measured, and why the filters are what they are. The decisions about the output (rates,
 cutoffs, gain) were made by the owner, with their reasons, in #11 and #5; this page records
-how they were met. Throughput is in [performance.md](performance.md#pcm-conversion), the
-design of the converter in [design.md](design.md#pcm-conversion-phase-1-the-converter).
+how they were met. Throughput is in [performance.md](performance.md#converter-throughput), the
+design of the converter in [design.md](design.md#pcm-conversion).
 
 ## Targets and results
 
