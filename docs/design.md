@@ -479,7 +479,34 @@ offset 0 counted as the start of a sequential read, so every tagger opening a fi
 decode (and, for WAV, convert) its first 2 s in the background.
 *Implementation:* a read counts as sequential when it starts at most 1 MiB after, or 8 MiB
 before, the furthest byte read so far (the kernel sends its read-ahead requests
-concurrently, slightly out of order). The next window (150 frames) is queued when the read
+concurrently, slightly out of order). The first read of audio starts none (see the WAV
+files), and neither does a read that ends within 256 KiB of where the first read of audio
+started (#32). *Why:* that is the kernel's own read-ahead. On a first read at the start of
+a file, the kernel asks for 128 KiB, then for 128 KiB more in the background, whatever the
+reader asked for: a tagger reading a DSF file's first 4 KiB gets two "sequential" reads of
+audio, and the second started 2 s of decoding. It made a DSF tag walk read 1.17 MB of the
+image per file; now 221 KB. A player's next read goes past 256 KiB and starts read-ahead
+there, one read later than before, which the measured straight reads and concurrency do not
+show.
+- *What a DSF header read still costs, and why it stays:* the 256 KiB the kernel reads hold
+  the track's first frames (about 28 in stereo), and the first page itself holds 4004 bytes
+  of the first frame, so a DSF tag walk reads audio sectors: 3.7 calls to the image per
+  file on average, all at the track's start. The options of #32 were measured:
+  - *Answer the header from a cache of track-start audio:* the kernel never asks for the
+    header alone. With `max_readahead` at 4, 16 or 64 KiB or the default 128 KiB, it still
+    asked for 128 + 128 KiB on a 4 KiB read at offset 0; only 0 changed it (4 KiB requests,
+    11 times as many for the walk), which would also take read-ahead from every player and
+    `cp`. A cache would therefore need about 28 decoded frames per track, about 256 KiB: some
+    3 GB for a thousand discs, against the seek index's 32 MiB, and it would not help the
+    first walk of a library anyway.
+  - *Detect header-only reads and serve the audio part lazily:* the request is the same
+    128 KiB whether a tagger asked for 4 KiB or a player for 128 KiB, so there is nothing to
+    detect; and a page must be answered whole, since a short reply tells the kernel the file
+    ends there. `direct_io` would pass the reader's own size, but turns off the page cache
+    and the kernel's read-ahead for every reader.
+  - *Accept the rest:* kept, with the read-ahead fix above, which removed four fifths of
+    the bytes. The WAV files hold no audio in their first 256 KiB (the `JUNK` chunk), so
+    their header and tags still read nothing. The next window (150 frames) is queued when the read
 reaches the middle of the current one; it runs on a request thread and holds the open
 file's demultiplexer, so a read that needs those frames waits for them instead of decoding
 them twice.
@@ -487,8 +514,9 @@ them twice.
 **Kernel caching.** The filesystem is read-only, so entries and attributes are cached for
 a long time, files are opened with `keep_cache`, and the kernel's page cache serves
 repeated reads. Large reads (`max_read` 1 MiB) and kernel read-ahead are enabled.
-*Implementation:* entry and attribute TTLs are 24 hours; the kernel read-ahead is set to
-1 MiB and up to 64 background requests are allowed. The filesystem is mounted `ro`,
+*Implementation:* entry and attribute TTLs are 24 hours; the kernel read-ahead is asked for
+1 MiB (the kernel grants at most its own default, 128 KiB on the test machine, as fuser's
+`INIT` log shows) and up to 64 background requests are allowed. The filesystem is mounted `ro`,
 `nodev`, `nosuid`, `noexec`.
 
 ## Concurrency
@@ -679,6 +707,9 @@ overheads, not by decoding. Measured figures are in [performance.md](performance
   bytes; and a changed size or mtime misses. `tests/mount_index.rs` mounts, seeks, unmounts,
   remounts and seeks again through the kernel: the same bytes, with fewer calls to the image
   and fewer bytes read.
+- *DSF header reads:* `tests/dsf_header.rs` reads every DSF file of the corpus as the
+  kernel does for a tagger (128 KiB at 0, 128 KiB at 128 KiB, the tag's page): none of the
+  reads starts read-ahead, and a player reading on starts it exactly at 256 KiB.
 - *Open images:* unit tests of the handle cache (reuse, the bound, idle closing, a new
   handle after a change of size, of modification time or of the file, and none within the
   check interval). `tests/handles.rs` walks the whole corpus with at most 3 images open,
