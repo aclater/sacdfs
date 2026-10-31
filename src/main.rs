@@ -8,6 +8,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::Parser;
@@ -194,7 +195,9 @@ fn run(args: Args) -> io::Result<()> {
         samples_per_frame: rate.samples_per_frame() as u32,
     };
     let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
-    let tree = Arc::new(Tree::with_options(root, Tuning::default(), output).with_flatten(args.flatten));
+    let tree = Arc::new(
+        Tree::with_options(root, Tuning::default(), output).with_flatten(args.flatten).with_pcm(&pcm),
+    );
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;
@@ -225,11 +228,23 @@ fn run(args: Args) -> io::Result<()> {
     };
     let mut unmounter = session.unmount_callable();
     let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
+    let at = mountpoint.clone();
+    let detached = Arc::new(AtomicBool::new(false));
+    let detached_by_signal = detached.clone();
     std::thread::Builder::new().name("sacdfs-signals".to_owned()).spawn(move || {
         if let Some(sig) = signals.forever().next() {
             log::info!("signal {sig}: unmounting");
+            detached_by_signal.store(true, Ordering::Relaxed);
             if let Err(e) = unmounter.unmount() {
-                log::error!("unmount: {e}");
+                // Busy (open files, or an NFS server exporting the mount): detach it, as
+                // fuser already does for users other than root. sacdfs then serves the
+                // files still open and exits when the last is closed.
+                match lazy_unmount(&at) {
+                    Ok(()) => log::warn!(
+                        "unmount: {e}; detached instead: sacdfs stops when its open files are closed"
+                    ),
+                    Err(e2) => log::error!("unmount: {e}; detaching: {e2}"),
+                }
             }
         }
     })?;
@@ -261,8 +276,15 @@ fn run(args: Args) -> io::Result<()> {
     }
     let (calls, bytes) = sacdfs::disc::total_reads();
     log::info!("image reads for audio: {calls} calls, {bytes} bytes");
-    result?;
-    Ok(())
+    match result {
+        // After a detach, the kernel can end the connection as aborted rather than
+        // unmounted once the last open file is closed: the stop that was asked for.
+        Err(e) if e.raw_os_error() == Some(libc::ECONNABORTED) && detached.load(Ordering::Relaxed) => {
+            log::debug!("connection ended after the unmount: {e}");
+            Ok(())
+        }
+        r => r,
+    }
 }
 
 /// How often the persistent seek index is saved, if it changed.
@@ -290,6 +312,25 @@ fn open_index_cache(args: &Args) {
 
 fn with_path(e: io::Error, path: &std::path::Path) -> io::Error {
     io::Error::new(e.kind(), format!("{}: {e}", path.display()))
+}
+
+/// Detaches the mount at `at` (`umount -l`).
+#[allow(unsafe_code)]
+fn lazy_unmount(at: &std::path::Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(at.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mount point holds a NUL byte"))?;
+    // SAFETY: a valid NUL-terminated path that outlives the call.
+    if unsafe { libc::umount2(c.as_ptr(), libc::MNT_DETACH) } == 0 {
+        return Ok(());
+    }
+    let e = io::Error::last_os_error();
+    // Not root: the setuid helper, lazily.
+    let st = std::process::Command::new("fusermount3").args(["-u", "-z", "--"]).arg(at).status();
+    match st {
+        Ok(s) if s.success() => Ok(()),
+        _ => Err(e),
+    }
 }
 
 #[allow(unsafe_code)]

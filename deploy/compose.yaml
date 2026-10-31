@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# sacdfs on a NAS or any Linux host, with Docker Compose or Podman Compose (rootful):
+#
+#   SACD_IMAGES=/path/to/images docker compose -f deploy/compose.yaml up -d --build
+#
+# See docs/deployment.md for every setting and for client mounts.
+services:
+  sacdfs:
+    build:
+      context: ..
+      dockerfile: Containerfile
+    image: localhost/sacdfs:latest
+    container_name: sacdfs
+    restart: unless-stopped
+    # FUSE: the device and CAP_SYS_ADMIN (mounting). NFS-Ganesha: CAP_DAC_READ_SEARCH
+    # (open_by_handle_at, how it reopens files by NFS file handle). Nothing else.
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    security_opt:
+      # Docker's default AppArmor profile forbids mount(2), even with CAP_SYS_ADMIN, on
+      # hosts that use AppArmor (Ubuntu, Debian, TrueNAS SCALE). Not needed under SELinux.
+      - apparmor=unconfined
+    ports:
+      - "445:445"
+      - "2049:2049"
+    volumes:
+      - ${SACD_IMAGES:?set SACD_IMAGES to the directory of your images}:/images:ro
+      - sacdfs-cache:/cache
+    environment:
+      SACDFS_FORMATS: dsf,wav
+      SACDFS_CACHE_MB: "256"
+      SACDFS_FLATTEN: "0"
+      # SACDFS_PCM_RATE: "176400"
+      # SACDFS_PCM_CUTOFF: "40"
+      # SACDFS_PCM_GAIN: "0"
+      # SMB_USER: music
+      # SMB_PASSWORD_FILE: /run/secrets/smb_password
+      # NFS_CLIENTS: 192.0.2.0/24
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    stop_grace_period: 20s
+
+volumes:
+  sacdfs-cache:

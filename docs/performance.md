@@ -102,12 +102,113 @@ track of each was played and 1 400 cold seeks, took about 130 KB.
 | Local images (page cache) | < 20 ms | 0.4 to 1.6 ms | met |
 | Client-side, images on NFS, cold | < 50 ms | 18.6 / 26.8 ms (plain DSD / DST, first touch, mean; worst single seek 37 ms); 3.6 / 4.5 ms with the NAS's cache warm | met |
 | Client-side, warm seek index | within 2x local + one round trip | 2.7 ms against 2 x 1.4 + 0.4 = 3.2 ms (DST); plain DSD 2.0 ms with images kept open (#26, [below](#keeping-images-open-26); 2.7 ms before) against 2 x 0.5 + 0.4 = 1.4 ms: not met, since moving the 170 KiB it reads takes about 1.45 ms on gigabit Ethernet, and even 128 KiB take 1.1 ms | met for DST |
-| Client-side, images on SMB, cold | < 80 ms | not measured (see below) | |
+| Client-side, images on SMB, cold | < 80 ms | 5.2 / 6.1 ms (plain DSD / DST, emulated gigabit LAN, server's disk an NVMe SSD; [below](#seeks-over-smb-issue-27)) | met, but not yet on a NAS's hard disks |
 
-**SMB** was not measured: mounting an SMB share needs root (`mount.cifs`), and there is no
-user-space SMB client in the build image. Each call to the image is one SMB read request, so a
-cold seek costs about its 3 to 5.7 calls times the share's per-request latency, plus the
-transfer, and a warm one a single request.
+**SMB** is measured [below](#seeks-over-smb-issue-27).
+
+## Seeks over SMB (issue #27)
+
+Measured on 2026-10-31 on the same machine, under the benchmark lock, with the virtual machine
+on the host nearly idle (0.2 of a hardware thread busy during the client-side run, 1.3 during
+the server-side run, from its CPU time). Same five real discs as above; the figures use the
+plain DSD stereo disc and the DST stereo disc.
+
+**Setup.** Both ends run in containers on this machine (rootless Podman, one bridge network):
+- *Server:* the image of [deployment.md](deployment.md) (Samba 4.24, SMB 3.1.1), sharing
+  either the image files themselves (client-side runs) or its sacdfs mount (server-side runs).
+  The images are on a local NVMe SSD.
+- *Network:* `tc netem` on both containers' interfaces, 0.19 ms each way at 1 Gbit/s,
+  emulates a gigabit LAN. A TCP connect then takes 0.67 ms (0.03 ms without netem), a little
+  slower than the LAN of the NFS figures above (ping 0.38 ms). "Loopback" is the same without
+  netem.
+- *Client:* sacdfs (client-side) or a player-like reader (server-side).
+
+**Why no `mount.cifs`.** A kernel SMB mount needs real root, which this machine's test account
+doesn't have (rootless Podman can't mount CIFS). Client-side, sacdfs reads the images instead
+through a small `LD_PRELOAD` shim, used only for this measurement and not part of sacdfs:
+- it sends sacdfs's `open`, `read`, `lseek` and `close` on the image files to libsmbclient;
+- `stat` sees a local sparse file of the same size;
+- each `read` sacdfs makes is one SMB READ request, with no client cache.
+
+That is what a kernel mount with `cache=none` does, and what #25 forced on NFS with `O_DIRECT`.
+The CI job (`container` workflow) shows that kernel CIFS and NFS mounts of the share work.
+
+**Method,** as for NFS above: every seek is on a fresh mount, timing `open`, one 128 KiB
+`pread` and `close`.
+- *Cold:* an empty seek index. *Warm:* a remount whose seek index the previous mount saved
+  after the same seek.
+- 3 rounds of 3 seeks per disc, tracks 5, 9 and 12, at a different position in each round
+  (37/81/55 %, 21/63/44 %, 72/15/90 %). Each figure is the mean of the round means.
+- *Server cache evicted:* the image files dropped from the server's page cache
+  (`posix_fadvise(POSIX_FADV_DONTNEED)`) before the cold seek, so its reads come from the SSD.
+  *Warm:* a repeat of the same seek with nothing evicted.
+
+### Client-side: sacdfs on the client, images on the SMB share
+
+| Time to the first 128 KiB, ms | cold, server cache evicted | cold, server cache warm | warm index | calls to the image, cold / warm | SMB READs per mount, cold / warm |
+|---|---|---|---|---|---|
+| local, plain DSD (reference, same harness) | 1.12 | 0.36 | 0.33 to 0.39 | 3 / 1 | |
+| local, DST (reference) | 2.01 | 1.76 | 1.47 to 1.83 | 5 / 1 | |
+| SMB loopback, plain DSD | 1.69 | 1.67 | 0.98 to 1.00 | 3 / 1 | 9 / 7 |
+| SMB loopback, DST | 2.03 | 1.66 | 1.43 to 1.53 | 5 / 1 | 13 / 9 |
+| **SMB gigabit LAN, plain DSD** | **5.21** (worst 5.55) | 4.48 | **3.34 to 3.41** | 3 / 1 | 9 / 7 |
+| **SMB gigabit LAN, DST** | **6.10** (worst 7.44) | 5.52 | **3.52 to 3.71** | 5 / 1 | 13 / 9 |
+
+- "Calls" are sacdfs's reads of the image for the seek, from its exit log. The SMB READs
+  include the 6 to 8 reads of each mount's TOCs, which come before the seek.
+- Calls are the same as over NFS (#25: 3 for plain DSD, 5.7 for DST cold, 1 warm): each
+  call is one request, whatever the protocol.
+- On the emulated LAN a cold seek costs about 1.0 to 1.4 ms per call over the local seek: one
+  round trip plus moving the call's bytes (35 to 64 KiB at gigabit speed).
+- A warm seek is opening the image over SMB (one round trip) plus one read of about 170 KiB
+  (1.4 ms at gigabit speed), as on NFS.
+- An earlier full run gave the same LAN figures within 0.1 ms (5.32 / 6.12 cold, evicted;
+  3.36 to 3.61 warm).
+
+These figures predate keeping image files open between reads (#26, `--max-open-images`):
+the warm seeks include opening the image over SMB, about one round trip (0.7 ms here),
+which a mount that already has the image open no longer pays.
+
+**Not measured: a NAS with hard disks.** On the NFS NAS above, a cold seek into a part of a disc
+it had not read recently ("first touch") cost 18.6 / 26.8 ms, mostly the NAS's disk seeks:
+about one per call. Over SMB the same disk seeks come on top of the figures here. With 3 to 5
+calls at roughly 5 to 10 ms each, that is about 20 to 55 ms, still within the < 80 ms target,
+but only an estimate until it is measured on such a NAS (#21).
+
+### Server-side: sacdfs on the server, a client reads the DSF and WAV files over SMB
+
+The client (libsmbclient, as a player would) connects and stats the file first, as a player
+listing the folder does. Then it times `open`, a seek, one 128 KiB read and `close`. Each
+seek is on a freshly started container, so sacdfs's mount, frame cache and seek index
+(`SACDFS_INDEX_CACHE=off`) are all cold.
+
+| Time to the first 128 KiB, ms | DSF, cache evicted | DSF, cache warm | WAV, cache evicted | WAV, cache warm |
+|---|---|---|---|---|
+| loopback, plain DSD | 1.58 | 0.79 | 2.03 | 1.24 |
+| loopback, DST | 2.17 | 1.74 | 2.36 | 2.00 |
+| **gigabit LAN, plain DSD** | **4.68** (worst 5.33) | 3.17 | **5.14** (worst 5.53) | 3.95 |
+| **gigabit LAN, DST** | **5.35** (worst 6.07) | 4.96 | **5.48** (worst 6.20) | 5.06 |
+
+- On the LAN, the open takes 0.6 ms (one round trip) and the read 2 to 4.4 ms.
+- The read is sacdfs's cold seek on the server's own disk (the loopback figures, 0.8 to
+  2.4 ms) plus a round trip and moving 128 KiB at gigabit speed (about 1.1 ms).
+- The image reads stay on the server, so a NAS with hard disks adds its disk seeks to the
+  server's time only. That is about 3 to 5 seeks for a cold seek, which client-side SMB pays
+  the same way, plus one round trip each.
+
+### Against the targets of issue #6
+
+| Deployment | Target | Measured (emulated gigabit LAN, server disk an SSD) | |
+|---|---|---|---|
+| Server-side, client over SMB | < 25 ms | 4.7 to 5.5 ms cold (DSF and WAV); worst 6.2 ms | met |
+| Client-side, images on SMB, cold | < 80 ms | 5.2 / 6.1 ms (plain DSD / DST); worst 7.4 ms | met here; on hard disks, an estimated 20 to 55 ms |
+| Client-side, warm seek index | within 2x local + one round trip | DST: 3.6 ms against 2 x 1.65 + 0.67 = 4.0 ms. Plain DSD: 3.4 ms against 2 x 0.36 + 0.67 = 1.4 ms | met for DST, not for plain DSD, as on NFS: the open and one 170 KiB transfer take longer than a local seek |
+
+**Reproducing.** Build the image ([deployment.md](deployment.md)). Then run a Samba container
+on the image directory, and a client container with `--cap-add NET_ADMIN` that applies
+`tc qdisc add dev eth0 root netem delay 0.19ms rate 1gbit`, as the server does. The rest is
+as above. With root, a kernel mount
+(`mount -t cifs //server/share /mnt -o ro,guest,cache=none`) replaces the shim.
 
 ### Keeping images open (#26)
 
@@ -359,6 +460,28 @@ long window only when it reads far faster than real time.
 **Reproducing.** The same scenarios as the DSF ones above, with the `.wav` files:
 `cat MOUNT/<disc>/Stereo/*.wav > /dev/null` on a fresh mount; one `pread` of 128 KiB on a
 fresh mount for the seek; under `benchlock`, with `--no-index-cache`.
+
+## Persistent file identity (#18)
+
+The cost of computing inode numbers from paths, against `main` before the change. Measured on
+a library on an NFS share (138 images in 216 directories), release builds, under the bench
+lock.
+
+| | before | after |
+|---|---|---|
+| Mount (`sacdfs` returns once mounted, warm NFS cache), median of 6, alternating | 95 ms | 101 ms |
+| of which: building the index of keys (`Ids::new`, measured alone) | - | 0.15 ms (354 entries, about 0.4 µs each) |
+| Fresh mount of five real discs, walk and `stat` of all 198 entries (first lookups, which open the images), median of 15, two rounds | 10.4 / 10.9 ms | 10.8 / 11.0 ms |
+
+- The index itself costs 0.15 ms for the whole library: 0.15 % of the 100 ms that walking the
+  names over NFS takes. The 6 ms between the two mount medians is not in the index; it is
+  within the run-to-run spread of the mount (the first, cold run took 4.9 s and 0.9 s).
+  Extrapolated, a library of 10,000 images adds a few milliseconds to a mount that walks
+  their names in seconds.
+- First lookups are as fast as before within the noise: they are dominated by reading the
+  images' TOCs, and the hash-map node table and the generation (one SHA-256 per file lookup)
+  cost well under a microsecond each.
+- The DSF gate on the five real discs is 93/93 with the change.
 
 ## DSF header reads (#32)
 
