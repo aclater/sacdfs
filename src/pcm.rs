@@ -218,35 +218,54 @@ impl Pipeline {
         let cfg = &cfg.effective();
         let filters = Filters::new(cfg.cutoff, cfg.rate);
         let ext = Extents::new(cfg, &filters);
-        let n3 = S3_PER_FRAME * frames;
         let gain_db = if cfg.gain_db.is_finite() { f64::from(cfg.gain_db) } else { 0.0 };
         let gain = 10f64.powf(gain_db / 20.0);
-        let wide = cfg.cutoff == Cutoff::Wide80;
-        let (s2_len, s2_split, s3_len, s4_len) = match (wide, cfg.rate) {
-            // Wide at 352.8 kHz: s2 holds stage 1 interleaved again, in f64.
-            (true, PcmRate::R352800) => (2 * (n3 + 2 * ext.e1), 0, 2 * n3, 0),
-            (true, _) => (0, 0, n3, 0),
-            (false, PcmRate::R88200) => (n3 + 2 * ext.e2, n3 / 2 + filters.s3_half + 2, n3 / 2, 0),
-            (false, PcmRate::R176400) => (n3 + 2 * ext.e2, 0, n3, 0),
-            (false, PcmRate::R352800) => (n3 + 2 * ext.e2, 0, n3 + 2 * ext.e3, n3),
-        };
-        Pipeline {
+        let mut p = Pipeline {
             cfg: *cfg,
             ext,
-            frames,
-            bytes: vec![DSD_SILENCE; FRAME_BYTES * frames + 2 * ext.e0],
-            s1e: vec![0; n3 + 2 * ext.e1],
-            s1o: vec![0; n3 + 2 * ext.e1],
-            s2: vec![0.0; s2_len],
-            s2e: vec![0.0; s2_split],
-            s2o: vec![0.0; s2_split],
-            s3: vec![0.0; s3_len],
-            s4: vec![0.0; s4_len],
+            frames: 0,
+            bytes: Vec::new(),
+            s1e: Vec::new(),
+            s1o: Vec::new(),
+            s2: Vec::new(),
+            s2e: Vec::new(),
+            s2o: Vec::new(),
+            s3: Vec::new(),
+            s4: Vec::new(),
             filters,
             gain,
             scale24: gain * 8_388_608.0,
             simd: Simd::selected(),
+        };
+        p.set_frames(frames);
+        p
+    }
+
+    /// Sizes the buffers for converting `frames` frames at once (the filters are kept).
+    fn set_frames(&mut self, frames: usize) {
+        if frames == self.frames && !self.bytes.is_empty() {
+            return;
         }
+        let ext = self.ext;
+        let n3 = S3_PER_FRAME * frames;
+        let wide = self.cfg.cutoff == Cutoff::Wide80;
+        let (s2_len, s2_split, s3_len, s4_len) = match (wide, self.cfg.rate) {
+            // Wide at 352.8 kHz: s2 holds stage 1 interleaved again, in f64.
+            (true, PcmRate::R352800) => (2 * (n3 + 2 * ext.e1), 0, 2 * n3, 0),
+            (true, _) => (0, 0, n3, 0),
+            (false, PcmRate::R88200) => (n3 + 2 * ext.e2, n3 / 2 + self.filters.s3_half + 2, n3 / 2, 0),
+            (false, PcmRate::R176400) => (n3 + 2 * ext.e2, 0, n3, 0),
+            (false, PcmRate::R352800) => (n3 + 2 * ext.e2, 0, n3 + 2 * ext.e3, n3),
+        };
+        self.frames = frames;
+        self.bytes.resize(FRAME_BYTES * frames + 2 * ext.e0, DSD_SILENCE);
+        self.s1e.resize(n3 + 2 * ext.e1, 0);
+        self.s1o.resize(n3 + 2 * ext.e1, 0);
+        self.s2.resize(s2_len, 0.0);
+        self.s2e.resize(s2_split, 0.0);
+        self.s2o.resize(s2_split, 0.0);
+        self.s3.resize(s3_len, 0.0);
+        self.s4.resize(s4_len, 0.0);
     }
 
     /// Output samples per channel.
@@ -410,10 +429,17 @@ impl Pipeline {
     /// Writes the channel just run into `out` as interleaved 24-bit little-endian samples
     /// (`channels` per sample frame, this one at `c`); returns the clipped count.
     fn write24(&self, out: &mut [u8], channels: usize, c: usize) -> u32 {
+        self.write24_from(out, channels, c, 0, self.out_len())
+    }
+
+    /// As [`write24`](Self::write24), for the `count` samples from output sample `first`
+    /// (written from the start of `out`).
+    fn write24_from(&self, out: &mut [u8], channels: usize, c: usize, first: usize, count: usize) -> u32 {
         let mut clips = 0u32;
         let stride = 3 * channels;
-        for (i, slot) in out.chunks_exact_mut(stride).take(self.out_len()).enumerate() {
-            let v = self.sample(i) * self.scale24;
+        let count = count.min(self.out_len().saturating_sub(first));
+        for (i, slot) in out.chunks_exact_mut(stride).take(count).enumerate() {
+            let v = self.sample(first + i) * self.scale24;
             let r = (v + ROUND_MAGIC) - ROUND_MAGIC;
             let r = if r > MAX24 {
                 clips = clips.saturating_add(1);
@@ -756,6 +782,42 @@ fn dec_lanes<I: Copy + PairAdd, const K: usize, const W: usize>(
 pub struct Converter {
     channels: usize,
     p: Pipeline,
+    /// The pipeline of [`convert_run`](Self::convert_run), sized for the last run; made on
+    /// first use from `p` (same filters and instruction set).
+    run: Option<Box<Pipeline>>,
+}
+
+/// Fills one channel's window: the last `e0` bytes of `prev`, the `frames`
+/// ([`FRAME_BYTES`] each), the first `e0` bytes of `next`, with DSD silence where a frame is
+/// missing or short. `window` is `e0 + frames.len() × FRAME_BYTES + e0` long.
+fn fill_window(
+    window: &mut [u8],
+    e0: usize,
+    ch: usize,
+    c: usize,
+    prev: Option<&[u8]>,
+    frames: &[&[u8]],
+    next: Option<&[u8]>,
+) {
+    let at = |frame: Option<&[u8]>, i: usize| -> u8 {
+        frame.and_then(|f| f.get(i * ch + c)).copied().unwrap_or(DSD_SILENCE)
+    };
+    let (head, rest) = window.split_at_mut(e0.min(window.len()));
+    for (i, b) in head.iter_mut().enumerate() {
+        *b = at(prev, FRAME_BYTES - e0 + i);
+    }
+    let mut chunks = rest.chunks_mut(FRAME_BYTES);
+    for (&cur, body) in frames.iter().zip(chunks.by_ref()) {
+        for (i, b) in body.iter_mut().enumerate() {
+            *b = at(Some(cur), i);
+        }
+    }
+    // The tail (e0 < FRAME_BYTES, so one chunk).
+    for tail in chunks {
+        for (i, b) in tail.iter_mut().enumerate() {
+            *b = at(next, i);
+        }
+    }
 }
 
 impl Converter {
@@ -773,7 +835,7 @@ impl Converter {
     pub fn with_simd(channels: u8, cfg: &PcmConfig, simd: Simd) -> Converter {
         let mut p = Pipeline::new(cfg, 1);
         p.simd = simd.min(Simd::detected());
-        Converter { channels: usize::from(channels.max(1)), p }
+        Converter { channels: usize::from(channels.max(1)), p, run: None }
     }
 
     /// The instruction set this converter's kernels use.
@@ -795,22 +857,7 @@ impl Converter {
     /// `cur`, the first `e0` bytes of `next`, with DSD silence where a frame is missing or
     /// short.
     fn fill(&mut self, prev: Option<&[u8]>, cur: &[u8], next: Option<&[u8]>, c: usize) {
-        let ch = self.channels;
-        let e0 = self.p.ext.e0;
-        let at = |frame: Option<&[u8]>, i: usize| -> u8 {
-            frame.and_then(|f| f.get(i * ch + c)).copied().unwrap_or(DSD_SILENCE)
-        };
-        let (head, rest) = self.p.bytes.split_at_mut(e0);
-        let (body, tail) = rest.split_at_mut(FRAME_BYTES);
-        for (i, b) in head.iter_mut().enumerate() {
-            *b = at(prev, FRAME_BYTES - e0 + i);
-        }
-        for (i, b) in body.iter_mut().enumerate() {
-            *b = at(Some(cur), i);
-        }
-        for (i, b) in tail.iter_mut().enumerate() {
-            *b = at(next, i);
-        }
+        fill_window(&mut self.p.bytes, self.p.ext.e0, self.channels, c, prev, &[cur], next);
     }
 
     /// Converts DSD frame `cur` (`channels × 4704` interleaved MSB-first bytes, as
@@ -827,6 +874,54 @@ impl Converter {
             clips = clips.saturating_add(self.p.write24(out, self.channels, c));
         }
         clips
+    }
+
+    /// Converts a run of consecutive DSD frames at once (#24): the same bytes as
+    /// [`convert`](Self::convert) on each frame in turn (with its neighbours in the run, and
+    /// `prev` before the first and `next` after the last), concatenated, but the neighbour
+    /// margins each frame needs (up to about 270 bytes each side, some 8 % of a frame's
+    /// work) are converted once per run instead of once per frame. `out` is
+    /// `frames.len() × frame_bytes()` long; only whole sample frames that fit are written.
+    /// Returns the number of clipped samples, and puts each frame's in `clips` (as far as it
+    /// is long), as [`convert`](Self::convert) would return them.
+    ///
+    /// The working buffers grow with the run, about 75 KiB per frame, and are kept for the
+    /// next run: bound run lengths (sacdfs uses a few frames).
+    pub fn convert_run(
+        &mut self,
+        prev: Option<&[u8]>,
+        frames: &[&[u8]],
+        next: Option<&[u8]>,
+        out: &mut [u8],
+        clips: &mut [u32],
+    ) -> u32 {
+        clips.iter_mut().for_each(|k| *k = 0);
+        if let [cur] = frames {
+            let n = self.convert(prev, cur, next, out);
+            if let Some(k) = clips.first_mut() {
+                *k = n;
+            }
+            return n;
+        }
+        let ch = self.channels;
+        let p = self.run.get_or_insert_with(|| Box::new(self.p.clone()));
+        p.set_frames(frames.len());
+        let spf = p.cfg.rate.samples_per_frame();
+        let fb = spf * ch * 3;
+        let mut total = 0u32;
+        for c in 0..ch {
+            fill_window(&mut p.bytes, p.ext.e0, ch, c, prev, frames, next);
+            p.run();
+            for f in 0..frames.len() {
+                let Some(out) = out.get_mut(f * fb..) else { break };
+                let n = p.write24_from(out, ch, c, f * spf, spf);
+                total = total.saturating_add(n);
+                if let Some(k) = clips.get_mut(f) {
+                    *k = k.saturating_add(n);
+                }
+            }
+        }
+        total
     }
 
     /// As [`convert`](Self::convert), but writes interleaved f32 samples (1.0 is full

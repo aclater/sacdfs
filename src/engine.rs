@@ -127,6 +127,12 @@ thread_local! {
     static CONVERTERS: RefCell<Vec<(u64, u8, Converter)>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Most frames converted in one job (#24). TEMPORARY: `SACDFS_PCM_RUN` for measuring.
+fn pcm_run() -> u32 {
+    static RUN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *RUN.get_or_init(|| std::env::var("SACDFS_PCM_RUN").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1))
+}
+
 /// Engine ids, for the per-thread converters.
 static NEXT_ENGINE: AtomicU64 = AtomicU64::new(1);
 
@@ -284,26 +290,36 @@ impl Engine {
             let spawn_ready = |dsd: &Vec<Arc<Dsd>>, next_job: &mut u32| {
                 let have = d0 + dsd.len() as u32;
                 // Frame t can be converted once t + 1 is decoded, or is past the area.
-                while *next_job < t1
-                    && (*next_job + 1 < have || (*next_job < have && *next_job + 1 >= area_end))
-                {
+                let ready = |t: u32| t < t1 && (t + 1 < have || (t < have && t + 1 >= area_end));
+                while ready(*next_job) {
                     let t = *next_job;
                     *next_job += 1;
                     if !wanted[(t - t0) as usize] {
                         continue;
                     }
+                    // A run of consecutive wanted frames, converted in one job (#24).
+                    let mut u = t + 1;
+                    while u - t < pcm_run() && ready(u) && wanted[(u - t0) as usize] {
+                        u += 1;
+                    }
+                    *next_job = u;
                     let at = |u: u32| dsd.get((u - d0) as usize).cloned();
                     let prev = if t > 0 { at(t - 1) } else { None };
-                    let (cur, next) = (at(t), if t + 1 < area_end { at(t + 1) } else { None });
+                    let next = if u < area_end { at(u) } else { None };
+                    let cur: Option<Vec<Arc<Dsd>>> = (t..u).map(at).collect();
                     let converted = &converted;
                     s.spawn(move |_| {
                         let r = match &cur {
                             Some(cur) => {
-                                self.convert_one(channels, frame_bytes, prev.as_deref(), cur, next.as_deref())
+                                self.convert_run(channels, frame_bytes, prev.as_deref(), cur, next.as_deref())
                             }
                             None => Err(ReadError::Io(io::Error::other("frame not decoded"))),
                         };
-                        converted.lock().unwrap_or_else(|p| p.into_inner()).push((t, r));
+                        let mut done = converted.lock().unwrap_or_else(|p| p.into_inner());
+                        match r {
+                            Ok(frames) => done.extend((t..).zip(frames.into_iter().map(Ok))),
+                            Err(e) => done.push((t, Err(e))),
+                        }
                     });
                 }
             };
@@ -323,6 +339,37 @@ impl Engine {
         out.into_iter()
             .map(|f| f.ok_or_else(|| ReadError::Io(io::Error::other("frame not converted"))))
             .collect()
+    }
+
+    /// Converts a run of consecutive frames with this thread's converter.
+    fn convert_run(
+        &self,
+        channels: u8,
+        frame_bytes: usize,
+        prev: Option<&Dsd>,
+        cur: &[Arc<Dsd>],
+        next: Option<&Dsd>,
+    ) -> Result<Vec<Frame>, ReadError> {
+        if let [one] = cur {
+            return Ok(vec![self.convert_one(channels, frame_bytes, prev, one, next)?]);
+        }
+        let mut data = vec![0u8; frame_bytes * cur.len()];
+        let frames: Vec<&[u8]> = cur.iter().map(|d| d.data.as_slice()).collect();
+        let mut clips = vec![0u32; cur.len()];
+        self.with_converter(channels, |c| {
+            if c.frame_bytes() != frame_bytes {
+                return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
+            }
+            let (p, n) = (prev.map(|d| d.data.as_slice()), next.map(|d| d.data.as_slice()));
+            c.convert_run(p, &frames, n, &mut data, &mut clips);
+            Ok(())
+        })?;
+        Ok(cur
+            .iter()
+            .zip(data.chunks_exact(frame_bytes))
+            .zip(clips)
+            .map(|((d, pcm), clips)| Frame { data: pcm.into(), fill: d.fill, clips })
+            .collect())
     }
 
     /// Converts one frame with this thread's converter.
