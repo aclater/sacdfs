@@ -94,7 +94,8 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 ```
 
 `SOURCE` is an SACD image file, or a directory searched recursively for `*.iso` files (any
-case). `MOUNTPOINT` is an existing, empty directory.
+case). `MOUNTPOINT` is an existing directory, normally empty, and not `SOURCE` or a directory
+above it.
 
 | Option | Meaning |
 |---|---|
@@ -114,7 +115,7 @@ case). `MOUNTPOINT` is an existing, empty directory.
 | `-h`, `--help` | Print help (`-h` for a summary). |
 | `-V`, `--version` | Print the version. |
 
-Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C) and SIGTERM unmount too. If files are
+Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
 still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
 each option does in detail, and the seek index cache, are in the
 [user guide](docs/user-guide.md#options).

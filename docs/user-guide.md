@@ -12,8 +12,24 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 
 `SOURCE` is one image file, or a directory that is searched recursively for `*.iso` files
 (any case); symbolic links to files are followed, links to directories are not.
-`MOUNTPOINT` is an existing, empty directory. The [README](../README.md#options) lists every
+`MOUNTPOINT` is an existing directory. The [README](../README.md#options) lists every
 option; this is what they do.
+
+**Where it can mount.** sacdfs reads the images through their paths, so none of them may be
+inside its own mount: reading one would send sacdfs a request it waits for itself, and the
+mount would hang beyond what even `kill -9` can stop. So sacdfs refuses, before mounting:
+- a `SOURCE` that is `MOUNTPOINT` or inside it (`sacdfs X X`, `sacdfs X/sub X`), symbolic
+  links resolved;
+- a `MOUNTPOINT` inside `SOURCE` that holds images (an empty one is fine:
+  `sacdfs ~/Music ~/Music/sacd`);
+- an `--index-cache` directory inside `MOUNTPOINT`. If the default cache directory is inside
+  it (a mount point at your home directory), sacdfs mounts without the cache and warns.
+
+A `MOUNTPOINT` that is not empty is allowed, as FUSE 3 allows it, with a warning: its files are
+hidden while sacdfs is mounted.
+
+The mount is listed as `sacdfs` (in `df`, `mount` and `/proc/mounts`), not under the source
+path: any character in the path, a comma included, is then safe. `-v` logs the source.
 
 **Running.**
 - Without `-f` (`--foreground`), sacdfs returns once the filesystem is mounted and keeps
@@ -63,15 +79,27 @@ where each read is a round trip.
   make a seek slower, never wrong. Deleting the directory is always safe.
 - `--no-index-cache` starts every mount with an empty index (used for measurements).
 
-**Unmounting.** `fusermount3 -u MOUNTPOINT`, or SIGINT (Ctrl-C) or SIGTERM to sacdfs. If files
-are still open, or an NFS server still exports the mount, the mount is detached instead, as
-`umount -l` would: it disappears at once, the open files still read, and sacdfs stops when the
-last one is closed.
+**Unmounting.** `fusermount3 -u MOUNTPOINT`, or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
+If files are still open, or an NFS server still exports the mount, the mount is detached
+instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
+stops when the last one is closed.
+
+**Signals.** SIGINT, SIGTERM and SIGHUP all unmount and stop sacdfs; SIGHUP does not reload
+anything (there is nothing to reload). A foreground sacdfs whose terminal closes gets SIGHUP and
+unmounts; a background one runs in its own session, which a closing terminal doesn't reach.
+A signal that arrives while sacdfs is starting is handled too: before it mounts, it stops
+without mounting; once it is mounting, it unmounts as soon as the mount exists. SIGKILL can't
+be handled, and leaves a dead mount (below).
 
 **Restarting on the same mount point.** A sacdfs started while the previous one is still on
 the mount point (it is stopping) waits up to 10 s for that mount to go, instead of mounting
-over it, then fails with "already a FUSE mount". A stopping sacdfs only ever unmounts its own
-mount, never one started on the same path since.
+over it, then fails with "still mounted there after 10 s". A stopping sacdfs only ever unmounts
+its own mount, never one started on the same path since.
+- If the previous sacdfs was killed or crashed, its mount is dead ("Transport endpoint is not
+  connected"). A new sacdfs of the same user detaches a dead sacdfs mount at once and mounts,
+  so a service manager's restart works.
+- A dead mount of another file system, or any FUSE mount of another user, is left alone:
+  sacdfs fails at once and says what is there.
 
 **CPU code paths.** The WAV converter picks its code when it starts: AVX2 (x86-64-v3) where the
 CPU has it, SSE2 otherwise, with the same output bit for bit. `SACDFS_SIMD=baseline`, `v3` or
@@ -198,8 +226,18 @@ Run in the foreground with logging to see what sacdfs does: `sacdfs -f -v SOURCE
   (package `fuse3`). In a container, pass `--device /dev/fuse --cap-add SYS_ADMIN`.
 - **`fusermount3: option allow_other only allowed if 'user_allow_other' is set in
   /etc/fuse.conf`:** add that line to `/etc/fuse.conf`, or drop `--allow-other`.
-- **`Transport endpoint is not connected`:** sacdfs stopped (or was killed) without
-  unmounting. `fusermount3 -u MOUNTPOINT`, then mount again.
+- **`Transport endpoint is not connected`:** sacdfs was killed (or crashed) without
+  unmounting. Starting sacdfs again on the same mount point, as the same user, clears it; or
+  `fusermount3 -u MOUNTPOINT` (`umount -l MOUNTPOINT` as root).
+- **"... is mounted there and its server has exited":** a dead mount that isn't sacdfs's, or
+  another user's. Unmount it as the message says, then start sacdfs again.
+- **"... is still mounted there after 10 s":** a live mount is on the mount point, usually a
+  sacdfs still running (`pgrep -a sacdfs`). Stop it, or mount somewhere else.
+- **"SOURCE ... is the mount point", "... is inside the mount point", "... holds images",
+  "... choose another --index-cache":** see [Where it can mount](#options); choose another
+  mount point.
+- **"... is not empty: its files are hidden while sacdfs is mounted":** only a warning; use an
+  empty directory to avoid it.
 - **`Illegal instruction` at start:** the x86-64-v3 build on a CPU without AVX2. Use the
   generic build; it converts with AVX2 where the CPU has it anyway.
 - **A directory or disc is missing:** files that are not SACD images, and folders with no

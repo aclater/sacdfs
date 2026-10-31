@@ -45,7 +45,8 @@ shares.
   - A restart never mounts over the old mount (#51): sacdfs is started only once per
     container, each container start has a new mount namespace, and the entry point clears a
     stale mount before starting sacdfs. sacdfs itself also waits for a FUSE mount still on
-    its mount point to go before mounting.
+    its mount point to go before mounting, and detaches a dead sacdfs mount there at once
+    (#57).
   - The NFS export has the same fixed filesystem id (`Filesystem_Id = 101.1`) on every
     start, because FUSE has no stable device number. A changing id would also invalidate
     every client's handles.

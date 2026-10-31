@@ -564,3 +564,213 @@ fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
     unmount_retrying(&at);
     assert!(wait_exit(&mut new, "the new sacdfs"));
 }
+
+/// The source field of the mount on `mountpoint` in `/proc/self/mountinfo` (escaped).
+fn mount_source(mountpoint: &Path) -> Option<String> {
+    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    let mp = mountpoint.to_str().unwrap().replace(' ', "\\040");
+    info.lines()
+        .filter(|l| l.split(' ').nth(4) == Some(mp.as_str()))
+        .filter_map(|l| l.split(" - ").nth(1)?.split(' ').nth(1).map(str::to_owned))
+        .next_back()
+}
+
+/// The first DSF track's channel hashes of the manifest's `id` case.
+fn first_track_hashes(id: &str) -> Vec<String> {
+    let case = cases().into_iter().find(|c| c["id"] == id).unwrap();
+    let t = &case["expected"]["audio"][0]["tracks"][0];
+    t["sha256"].as_array().unwrap().iter().map(|h| h.as_str().unwrap().to_owned()).collect()
+}
+
+/// A SOURCE whose path holds a comma, a backslash, a space or `,ro` mounts and reads, and
+/// no character of it becomes a mount option (#55): fuser 0.18 passed the path to
+/// fusermount3 as `fsname=` unescaped, so `Bach, J.S.` failed ("unknown option ' J.S.'") and
+/// `x,allow_other` would have applied the option. The mount is named `sacdfs` instead.
+#[test]
+fn a_source_path_with_commas_and_backslashes_mounts() {
+    if !fuse_available() {
+        return;
+    }
+    let id = "dsd-stereo-mch-2048";
+    let want = first_track_hashes(id);
+    let top = tempfile::tempdir().unwrap();
+    for name in ["Bach, J.S.", "back\\slash", "a space", "x,ro", "y,allow_other", "z\\,rw"] {
+        // As a directory, and as the image file itself.
+        let dir = top.path().join(name);
+        std::fs::create_dir(&dir).unwrap();
+        // A copy, not a link: SOURCE is made canonical, which would resolve a link.
+        let image = dir.join(format!("{name}.iso"));
+        std::fs::copy(corpus().join("images").join(format!("{id}.iso")), &image).unwrap();
+        for source in [&dir, &image] {
+            let mount = Mount::foreground(source, &[]);
+            let root = mount.path();
+            assert_eq!(mount_source(&root).as_deref(), Some("sacdfs"), "{name}");
+            let stereo = root.join(name).join("Stereo");
+            let first = std::fs::read_dir(&stereo)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.extension().is_some_and(|e| e == "dsf"))
+                .min()
+                .unwrap();
+            let hashes: Vec<String> =
+                dsf_channels(&std::fs::read(&first).unwrap()).iter().map(|c| sha256(c)).collect();
+            assert_eq!(hashes, want, "{name}");
+            mount.stop("TERM");
+        }
+    }
+}
+
+/// Aborts the FUSE connection of the mount on `mountpoint`, if any, through
+/// `/sys/fs/fuse/connections` (its number is the mount's minor device number).
+fn abort_connection(mountpoint: &Path) {
+    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    let mp = mountpoint.to_str().unwrap();
+    for l in info.lines().filter(|l| l.split(' ').nth(4) == Some(mp)) {
+        if let Some(minor) = l.split(' ').nth(2).and_then(|d| d.split(':').nth(1)) {
+            let _ = std::fs::write(format!("/sys/fs/fuse/connections/{minor}/abort"), "1");
+        }
+    }
+}
+
+/// Runs sacdfs in the foreground with `args`, expecting it to refuse before mounting:
+/// returns its standard error. A sacdfs that mounts instead (and would hang) is killed and
+/// its mount detached.
+fn refused(args: &[&Path], mountpoint: &Path) -> String {
+    let cache = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .env("XDG_CACHE_HOME", cache.path())
+        .arg("-f")
+        .args(args)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > Duration::from_secs(5) {
+            // Mounted on its own source, sacdfs hangs as soon as anything looks inside,
+            // beyond SIGKILL: abort the connection first.
+            abort_connection(mountpoint);
+            let _ = child.kill();
+            let _ = Command::new("fusermount3").arg("-u").arg("-z").arg(mountpoint).status();
+            panic!("sacdfs {args:?} did not refuse");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(!out.status.success(), "sacdfs {args:?} succeeded");
+    assert!(start.elapsed() < Duration::from_secs(2), "slow refusal");
+    assert!(!is_mounted(mountpoint));
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// A SOURCE at or below the mount point, images inside the mount point, and a seek index
+/// cache inside it are refused before mounting (#56): sacdfs would read (or write) them
+/// through its own mount and hang, beyond the reach of SIGKILL.
+#[test]
+fn a_source_or_cache_under_the_mount_point_is_refused() {
+    let top = tempfile::tempdir().unwrap();
+    let x = top.path().canonicalize().unwrap().join("X");
+    let sub = x.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    // A copy, not a link: SOURCE is made canonical, which would resolve a link.
+    let image = sub.join("disc.iso");
+    std::fs::copy(corpus().join("images/dsd-stereo-mch-2048.iso"), &image).unwrap();
+    let err = refused(&[&x, &x], &x);
+    assert!(err.contains("is the mount point"), "{err}");
+    let err = refused(&[&sub, &x], &x);
+    assert!(err.contains("is inside the mount point"), "{err}");
+    let err = refused(&[&image, &x], &x);
+    assert!(err.contains("is inside the mount point"), "{err}");
+    // Through a symbolic link to the mount point.
+    let link = top.path().join("link");
+    std::os::unix::fs::symlink(&x, &link).unwrap();
+    let err = refused(&[&link.join("sub"), &x], &x);
+    assert!(err.contains("is inside the mount point"), "{err}");
+    // The mount point inside SOURCE, holding images.
+    let err = refused(&[&x, &sub], &sub);
+    assert!(err.contains("holds images"), "{err}");
+    // An --index-cache inside the mount point.
+    let mnt = top.path().join("mnt");
+    std::fs::create_dir(&mnt).unwrap();
+    let cache = mnt.join("cache");
+    let err = refused(&[Path::new("--index-cache"), &cache, &image, &mnt], &mnt);
+    assert!(err.contains("choose another --index-cache"), "{err}");
+}
+
+/// After sacdfs is killed (SIGKILL: no unmount), its dead mount fails every access with
+/// ENOTCONN. A restart detaches it and mounts at once (#57); before, it waited 10 s and failed
+/// with "already a FUSE mount".
+#[test]
+fn a_restart_after_sigkill_clears_the_dead_mount() {
+    if !fuse_available() {
+        return;
+    }
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    let mut old = Mount::foreground(&image, &[]);
+    let at = old.path();
+    let file =
+        at.join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
+    let whole = std::fs::read(&file).unwrap();
+    let mut child = old.child.take().unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let e = std::fs::read_dir(&at).unwrap_err();
+    assert_eq!(e.raw_os_error(), Some(libc::ENOTCONN), "{e}");
+    let start = Instant::now();
+    let cache = tempfile::tempdir().unwrap();
+    let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .env("XDG_CACHE_HOME", cache.path())
+        .arg("-f")
+        .arg(&image)
+        .arg(&at)
+        .spawn()
+        .unwrap();
+    wait_for("the new mount", || std::fs::read(&file).is_ok_and(|d| d == whole));
+    assert!(start.elapsed() < Duration::from_secs(3), "the restart took {:?}", start.elapsed());
+    assert_eq!(fuse_mounts_on(&at), 1);
+    unmount_retrying(&at);
+    assert!(wait_exit(&mut new, "the new sacdfs"));
+    assert_eq!(fuse_mounts_on(&at), 0);
+}
+
+/// A SIGTERM at any moment of the start leaves no dead mount behind (#57): sacdfs either
+/// stops before mounting, or mounts and then unmounts. Before, the handlers were set up
+/// after mounting, and a SIGTERM in between killed it with the mount in place.
+#[test]
+fn a_sigterm_right_after_start_leaves_no_mount() {
+    if !fuse_available() {
+        return;
+    }
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    let dir = tempfile::tempdir().unwrap();
+    let at = dir.path().canonicalize().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    for i in 0..60u64 {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
+            .arg("-f")
+            .arg(&image)
+            .arg(&at)
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        // 0 to 29.5 ms after the start, spread over the start-up.
+        std::thread::sleep(Duration::from_micros(i * 500));
+        let st = Command::new("kill").arg("-TERM").arg(child.id().to_string()).status().unwrap();
+        assert!(st.success());
+        let start = Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            if start.elapsed() > Duration::from_secs(10) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = Command::new("fusermount3").arg("-u").arg("-z").arg(&at).status();
+                panic!("sacdfs did not stop after SIGTERM ({i})");
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if fuse_mounts_on(&at) != 0 {
+            let _ = Command::new("fusermount3").arg("-u").arg("-z").arg(&at).status();
+            panic!("a SIGTERM {} us after the start left a mount behind", i * 500);
+        }
+    }
+}
