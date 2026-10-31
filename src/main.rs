@@ -8,6 +8,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::Parser;
@@ -221,9 +222,12 @@ fn run(args: Args) -> io::Result<()> {
     let mut unmounter = session.unmount_callable();
     let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
     let at = mountpoint.clone();
+    let detached = Arc::new(AtomicBool::new(false));
+    let detached_by_signal = detached.clone();
     std::thread::Builder::new().name("sacdfs-signals".to_owned()).spawn(move || {
         if let Some(sig) = signals.forever().next() {
             log::info!("signal {sig}: unmounting");
+            detached_by_signal.store(true, Ordering::Relaxed);
             if let Err(e) = unmounter.unmount() {
                 // Busy (open files, or an NFS server exporting the mount): detach it, as
                 // fuser already does for users other than root. sacdfs then serves the
@@ -264,8 +268,15 @@ fn run(args: Args) -> io::Result<()> {
     }
     let (calls, bytes) = sacdfs::disc::total_reads();
     log::info!("image reads for audio: {calls} calls, {bytes} bytes");
-    result?;
-    Ok(())
+    match result {
+        // After a detach, the kernel can end the connection as aborted rather than
+        // unmounted once the last open file is closed: the stop that was asked for.
+        Err(e) if e.raw_os_error() == Some(libc::ECONNABORTED) && detached.load(Ordering::Relaxed) => {
+            log::debug!("connection ended after the unmount: {e}");
+            Ok(())
+        }
+        r => r,
+    }
 }
 
 /// How often the persistent seek index is saved, if it changed.
