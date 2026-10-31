@@ -131,7 +131,9 @@ takes for the same area on an idle machine (about 500 MB/s), and at 1.4x on a he
 one; a read at a random offset returns in about 1 to 4 ms on a fresh mount from a local disk,
 with four to five reads of the image (three for plain DSD discs), or one read when the seek
 index cache already knows that part of the disc. With images on a network share, each read of
-the image is a round trip, so these counts matter most there. See
+the image is a round trip, so these counts matter most there. Reading a WAV file straight through
+takes 1.1 to 1.4 times as long as reading the same track's DSF file (the WAV file holds 1.5
+times the bytes), and a seek in it returns in about 2 ms. See
 [docs/performance.md](docs/performance.md).
 
 ## Limits

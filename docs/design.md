@@ -257,12 +257,22 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
 6. **Sequential reads.** Each open file keeps, next to its demultiplexer, the last two DSD
    frames it decoded (*carry*): the previous neighbour and the first frame of the next read.
    A read that continues the file therefore decodes every DSD frame once. Read-ahead decodes
-   and converts ahead on the pool and keeps the carry up to date. Its window is about 8 MiB of
-   PCM, between 150 and 600 frames (2 to 8 s; 8 s for stereo at 176.4 kHz, 2 s for six
-   channels at 352.8 kHz), where DSF reads 150 frames ahead. **Why:** a fast reader (`cp`)
-   of a plain DSD area used up a 2 s window before the next was ready; with the longer window
-   the same read took 2.29 s instead of 2.90 s, within the 1.5x target of #6 (DSF: 1.65 s).
-   Bounded in bytes, so that six-channel files at 352.8 kHz don't take 50 MB per reader.
+   and converts ahead on the pool and keeps the carry up to date.
+   - *Window:* 2 s (150 frames), as for DSF; for a reader that has read at least 16 MiB at more
+     than 4 times the file's byte rate (`cp`, a scanner), about 8 MiB of PCM, between 150 and
+     600 frames (8 s of stereo at 176.4 kHz, 2 s of six channels at 352.8 kHz). **Why:** a fast
+     reader of a plain DSD area used up a 2 s window before the next was ready; the longer
+     window took the same read from 2.90 s to 2.29 s, within the 1.5x target of #6 (DSF:
+     1.65 s). **Why only for fast readers:** with it for every reader, four real-time players
+     and a tagger saw reads of up to 114 ms (target 50 ms), because players then convert in
+     long bursts on the shared pool. Bounded in bytes, so that six-channel files at 352.8 kHz
+     don't take 50 MB per reader.
+   - *Not on the first audio read:* the first read of an open file that covers audio starts no
+     read-ahead; the next one does. **Why:** a tagger walking a WAV file's chunks reads the
+     header, then the data chunk's header 256 KiB later, which touches the first frame and
+     looks like a continuing read; it made every tagged file convert seconds of audio (388 MB
+     of image reads and 28 s of CPU for 186 files; now 0.16 s). A player or `cp` sends its
+     next read at once.
 7. **Converters.** One `Converter` per pool thread and channel count, made on first use and
    kept in a thread-local, keyed by engine as well so that two engines in one process (tests)
    never share one. Conversion always runs on the pool, never on a request thread.

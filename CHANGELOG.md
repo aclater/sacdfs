@@ -8,8 +8,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
-- Read-ahead starts only after a read of audio: reading a file's header (as taggers do) no
-  longer decodes its first 2 s in the background.
+- Read-ahead starts only after reads of audio, and not on a file's first one: reading a
+  file's header, or walking its chunks (as taggers do), no longer decodes its first seconds in
+  the background.
 
 - Licence: GPL-3.0-or-later (was MIT OR Apache-2.0 before any release), so that code from
   GPL and LGPL projects can be adapted. SACD parsing and DST decoding still come only from
@@ -51,8 +52,10 @@ All notable changes to sacdfs are recorded here. The format follows
   176.4 and 352.8 kHz), `--pcm-gain DB` (default 0, -60 to
   +24; clipped samples are clamped and logged once per file).
 - Random access to WAV files: frame mapping with neighbour frames, converted frames in the
-  shared `--cache-mb` cache, sequential reads that decode every DSD frame once, read-ahead that
-  converts on the decoder pool.
+  shared `--cache-mb` cache, sequential reads that decode every DSD frame once, a pipeline that
+  converts frames on the decoder pool while the next ones are demultiplexed, and read-ahead
+  (2 s, or about 8 MiB for readers far faster than real time). A straight read takes 1.1 to
+  1.4 times the DSF read; a cold seek about 2 ms.
 - Tests for the WAV files: structure, sizes, tags, the area-stream (gapless) reference at every
   rate, random and per-frame reads, no decoding while listing, mounts with `--format` and
   `--pcm-*`.
