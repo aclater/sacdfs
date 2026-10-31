@@ -51,6 +51,9 @@ fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
 struct Mount {
     child: Option<Child>,
     dir: tempfile::TempDir,
+    /// The persistent seek index's directory (`XDG_CACHE_HOME`), so that tests never
+    /// write to the user's.
+    _cache: tempfile::TempDir,
 }
 
 impl Mount {
@@ -60,14 +63,16 @@ impl Mount {
 
     fn foreground(source: &Path, extra: &[&str]) -> Mount {
         let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
             .arg("-f")
             .args(extra)
             .arg(source)
             .arg(dir.path())
             .spawn()
             .unwrap();
-        let m = Mount { child: Some(child), dir };
+        let m = Mount { child: Some(child), dir, _cache: cache };
         let p = m.path();
         wait_for("the mount", || is_mounted(&p));
         m
