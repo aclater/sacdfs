@@ -24,6 +24,12 @@ pub const READ_AHEAD_PCM_BYTES: u64 = 8 << 20;
 /// Most frames converted ahead of a WAV reader: 8 s of audio.
 pub const READ_AHEAD_FRAMES_MAX: u32 = 600;
 
+/// A reader gets the long read-ahead window only after reading this much...
+const FAST_AFTER: u64 = 16 << 20;
+
+/// ...at more than this many times the file's byte rate.
+const FAST_FACTOR: f64 = 4.0;
+
 /// A read starting this close after the furthest byte read so far still counts as
 /// sequential.
 const SEQ_GAP_AHEAD: u64 = 1 << 20;
@@ -150,7 +156,7 @@ impl TrackFile {
         })
     }
 
-    /// Frames read ahead of a sequential reader. For a WAV file, about 8 MiB of PCM: a
+    /// Frames read ahead of a fast sequential reader. For a WAV file, about 8 MiB of PCM: a
     /// longer window than DSF's keeps the pipeline of demultiplexing and conversion busy for
     /// a fast reader (`cp`) of a plain DSD area, where conversion is the only cost.
     pub fn read_ahead_frames(&self) -> u32 {
@@ -160,6 +166,15 @@ impl TrackFile {
                 .clamp(u64::from(READ_AHEAD_FRAMES), u64::from(READ_AHEAD_FRAMES_MAX))
                 as u32,
         }
+    }
+
+    /// Bytes of the file's audio per second of playing.
+    pub fn byte_rate(&self) -> f64 {
+        let per_frame = match self.audio {
+            Audio::Dsf(l) => dsf::FRAME_BYTES * u64::from(l.channels),
+            Audio::Wav(l) => l.frame_bytes(),
+        };
+        per_frame as f64 * 75.0
     }
 
     /// The file format.
@@ -356,6 +371,8 @@ struct Seq {
     ahead_until: u32,
     /// Reads of audio so far.
     audio_reads: u64,
+    /// When the first read of audio came, and where it started.
+    started: Option<(std::time::Instant, u64)>,
 }
 
 /// An open file: the file and its own demultiplexer state (and, for a WAV file, its last
@@ -394,19 +411,9 @@ impl Reader {
     }
 
     /// Decodes the frames of `ahead` into the cache, if they are not there already.
-    ///
-    /// A long window is decoded in steps of [`READ_AHEAD_FRAMES`], each holding the file's
-    /// demultiplexer on its own, so that a read of this file that needs frames the read-ahead
-    /// has not reached yet waits for one step, not for the whole window.
     pub fn read_ahead(&self, engine: &Engine, ahead: ReadAhead) {
-        let mut k = ahead.first;
-        while k < ahead.end {
-            let e = ahead.end.min(k + READ_AHEAD_FRAMES);
-            if let Err(err) = self.decoded(engine, k, e) {
-                log::debug!("read-ahead of {}: {err}", self.file.disc.path.display());
-                return;
-            }
-            k = e;
+        if let Err(e) = self.decoded(engine, ahead.first, ahead.end) {
+            log::debug!("read-ahead of {}: {e}", self.file.disc.path.display());
         }
     }
 
@@ -436,6 +443,17 @@ impl Reader {
         }
     }
 
+    /// Whether the file is read far faster than it plays (`cp`, a scanner): at least
+    /// [`FAST_AFTER`] bytes at more than [`FAST_FACTOR`] times its byte rate. Such a reader
+    /// gets the file's long read-ahead window; a player keeps the 2 s one, so that its bursts
+    /// of conversion stay short and don't hold up the other readers' requests.
+    fn fast(&self, s: &Seq) -> bool {
+        let Some((t, off)) = s.started else { return false };
+        let read = s.max_end.saturating_sub(off);
+        let secs = t.elapsed().as_secs_f64();
+        read >= FAST_AFTER && read as f64 > FAST_FACTOR * self.file.byte_rate() * secs
+    }
+
     fn plan_read_ahead(&self, offset: u64, end: u64, k1: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
         // The first read of audio never starts read-ahead: a tagger walking a WAV file's
@@ -443,6 +461,9 @@ impl Reader {
         // header it read, and must not make the file convert seconds of audio. A player or
         // `cp` sends its next read at once, and that one starts it.
         s.audio_reads += 1;
+        if s.started.is_none() {
+            s.started = Some((std::time::Instant::now(), offset));
+        }
         let sequential = s.audio_reads > 1
             && (offset <= s.max_end.saturating_add(SEQ_GAP_AHEAD)
                 && offset.saturating_add(SEQ_GAP_BEHIND) >= s.max_end);
@@ -452,7 +473,7 @@ impl Reader {
             return None;
         }
         let frames = self.file.layout.frames;
-        let window = self.file.read_ahead_frames();
+        let window = if self.fast(&s) { self.file.read_ahead_frames() } else { READ_AHEAD_FRAMES };
         if k1 >= frames || s.ahead_until >= frames.min(k1 + window / 2) {
             return None;
         }
