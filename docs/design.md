@@ -150,10 +150,10 @@ header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
 ## WAV files
 
 A WAV file is a RIFF/WAVE file with a `WAVE_FORMAT_EXTENSIBLE` fmt chunk (24-bit PCM, the
-channel mask below, the PCM subformat), the data chunk, and then the tags:
+channel mask below, the PCM subformat), padding, the data chunk, and then the tags:
 
 ```text
-RIFF <size> WAVE   fmt <40>   data <frames x S x C x 3>   LIST <INFO ...>   id3 <ID3v2.4>
+RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <INFO ...>   id3 <ID3v2.4>
 ```
 
 - **Rate and depth** (owner decisions, #11): `--pcm-rate` 176 400 Hz by default, or 88 200 or
@@ -194,8 +194,22 @@ RIFF <size> WAVE   fmt <40>   data <frames x S x C x 3>   LIST <INFO ...>   id3 
   nothing to hold is left out. **Why after the audio:** so that the header, and with it the
   offset of every audio byte, does not depend on the text, as in the DSF files. FFmpeg and
   libsndfile read chunks after the data.
+- **Padding, so that tag reads never convert.** The `JUNK` chunk makes the audio start at
+  256 KiB or a little later (less than 4 KiB more) and end on a 4 KiB page boundary. **Why:**
+  the kernel reads a FUSE file in whole pages, and the first read of a file asks for up to twice
+  the request: 16 KiB for a small read, 256 KiB for the 128 KiB that Python 3.14's buffered
+  files read (mutagen, beets). Without padding, the first page holds audio (it would start at
+  byte 68), so a tagger reading the header made sacdfs locate, decode and convert the track's
+  first frames; and the page with the end of the audio held the start of the tags. Measured on
+  the five local discs, with a fresh mount: reading the first 200 bytes of each WAV file made
+  1.1 MB of image reads per file before, 0 after; reading the tags, about 240 KB per file
+  before, 0 after. The cost is 256 KiB of zeros per file, about 0.05 % of a typical track. The
+  padding takes up the ds64 chunk in RF64 files, so the audio offset is the same for both.
+  *Not for DSF:* a DSF file's chunk layout is fixed (the audio starts at byte 92), so reading a
+  DSF file's header still decodes its first frames. Reading its tag decodes almost nothing.
 - Header and tag bytes are built when the area directory is listed, like the DSF files', so
-  `stat`, `ls -l` and tag reads never decode or convert.
+  `stat` and `ls -l` never read the image, and reading the header or tags of a WAV file
+  decodes and converts nothing.
 
 ## Reading a range of a WAV file
 
@@ -315,6 +329,9 @@ frame per job.
 **Read-ahead.** When reads on a file are sequential, sacdfs decodes the next window of
 frames (default 2 s of audio) on the worker pool while the current read is answered, so
 a player reading in real time, or `cp`, never waits for the decoder after the first read.
+Only reads that cover audio start or extend it: before the WAV work, a read of the header at
+offset 0 counted as the start of a sequential read, so every tagger opening a file made it
+decode (and, for WAV, convert) its first 2 s in the background.
 *Implementation:* a read counts as sequential when it starts at most 1 MiB after, or 8 MiB
 before, the furthest byte read so far (the kernel sends its read-ahead requests
 concurrently, slightly out of order). The next window (150 frames) is queued when the read

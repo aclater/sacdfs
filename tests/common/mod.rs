@@ -199,6 +199,7 @@ pub fn parse_wav(file: &[u8]) -> Wav {
                 assert_eq!(p, end);
             }
             "id3 " => w.id3 = Some(file[body..end].to_vec()),
+            "JUNK" => assert!(file[body..end].iter().all(|&b| b == 0), "JUNK is zeros"),
             other => panic!("unexpected chunk {other:?}"),
         }
         w.chunks.push(id);

@@ -6,6 +6,7 @@
 //! ```text
 //! RIFF <size> WAVE                  (RF64 0xFFFFFFFF WAVE ds64 <28 bytes> when over 4 GiB)
 //! fmt  <40>   WAVE_FORMAT_EXTENSIBLE, 24-bit PCM, channel mask
+//! JUNK <size> zeros: the audio starts at 256 KiB or later and ends on a 4 KiB page boundary
 //! data <size> interleaved 24-bit little-endian samples, frame after frame
 //! LIST <size> INFO INAM IART IPRD ITRK ICRD IGNR      (if the track has any of them)
 //! id3  <size> the ID3v2.4 tag of the DSF file          (if the track has any text)
@@ -13,6 +14,16 @@
 //!
 //! The tags come after the audio so that the header, and with it the offset of every audio
 //! byte, does not depend on the text. Every size is known from the TOC alone.
+//!
+//! The `JUNK` padding keeps tag reads from converting anything. The kernel reads files of a
+//! FUSE mount in whole pages, and the first read of a file asks for a window of up to twice
+//! the request (16 KiB for a small read, 256 KiB for the 128 KiB that Python 3.14's buffered
+//! files read, as mutagen and beets do).
+//! Without the padding, the first page would hold audio, so a tagger reading the header
+//! would make sacdfs decode and convert the track's first frames; and the page holding the
+//! end of the audio would also hold the start of the tags. With the audio starting at
+//! [`AUDIO_START_MIN`] and the tags on pages of their own, reading the header and the tags
+//! needs no audio at all.
 
 use std::ops::Range;
 
@@ -30,11 +41,20 @@ pub const FMT_LEN: u32 = 40;
 /// Length of the ds64 chunk body (no table).
 pub const DS64_LEN: u32 = 28;
 
-/// Header length of a plain RIFF file: RIFF header, fmt chunk, data chunk header.
-pub const RIFF_HEADER_LEN: u64 = 12 + 8 + FMT_LEN as u64 + 8;
+/// The audio starts at this offset or later: past the window the kernel asks for when a
+/// tagger reads the header, even with a 128 KiB buffer (about 0.05 % of a typical track).
+pub const AUDIO_START_MIN: u64 = 256 << 10;
 
-/// Header length of an RF64 file: as RIFF, plus the ds64 chunk.
-pub const RF64_HEADER_LEN: u64 = RIFF_HEADER_LEN + 8 + DS64_LEN as u64;
+/// The audio ends on a multiple of this (the page size), so that the tags after it are on
+/// pages of their own.
+pub const PAGE: u64 = 4096;
+
+/// The header length of a file with `layout`: everything before the first audio byte, the
+/// `JUNK` padding included. Between [`AUDIO_START_MIN`] and `AUDIO_START_MIN + PAGE`, the
+/// same for RIFF and RF64 (the padding takes up the ds64 chunk).
+pub fn header_len(layout: &Layout) -> u64 {
+    AUDIO_START_MIN + (PAGE - layout.data_len() % PAGE) % PAGE
+}
 
 /// `WAVE_FORMAT_EXTENSIBLE`.
 const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
@@ -187,14 +207,14 @@ pub fn trailer(tags: &Tags) -> Trailer {
 /// Whether a file with `layout` and a trailer of `trailer_len` bytes needs RF64: its RIFF
 /// size (everything after the first 8 bytes) does not fit in 32 bits.
 pub fn needs_rf64(layout: &Layout, trailer_len: u64) -> bool {
-    RIFF_HEADER_LEN - 8 + layout.data_len() + trailer_len > u64::from(u32::MAX)
+    header_len(layout) - 8 + layout.data_len() + trailer_len > u64::from(u32::MAX)
 }
 
 /// The header of a file with `layout` and a trailer of `trailer_len` bytes: everything
-/// before the first audio byte ([`RIFF_HEADER_LEN`] or [`RF64_HEADER_LEN`] bytes).
+/// before the first audio byte ([`header_len`] bytes).
 pub fn header(layout: &Layout, trailer_len: u64) -> Vec<u8> {
     let rf64 = needs_rf64(layout, trailer_len);
-    let header_len = if rf64 { RF64_HEADER_LEN } else { RIFF_HEADER_LEN };
+    let header_len = header_len(layout);
     let data_len = layout.data_len();
     let riff_size = header_len - 8 + data_len + trailer_len;
     let mut h = Vec::with_capacity(header_len as usize);
@@ -226,6 +246,9 @@ pub fn header(layout: &Layout, trailer_len: u64) -> Vec<u8> {
     fmt.extend_from_slice(&channel_mask(layout.channels).to_le_bytes());
     fmt.extend_from_slice(&SUBTYPE_PCM);
     chunk(&mut h, b"fmt ", &fmt);
+    // Padding up to the data chunk header; even, since the data length is.
+    let junk = header_len as usize - h.len() - 8 - 8;
+    chunk(&mut h, b"JUNK", &vec![0u8; junk]);
     h.extend_from_slice(b"data");
     let data_size = if rf64 { u32::MAX } else { data_len as u32 };
     h.extend_from_slice(&data_size.to_le_bytes());
@@ -256,9 +279,13 @@ mod tests {
     fn riff_header_fields() {
         let l = layout(2, 75);
         let h = header(&l, 100);
-        assert_eq!(h.len() as u64, RIFF_HEADER_LEN);
+        let hl = h.len() as u64;
+        assert_eq!(hl, header_len(&l));
+        // The audio starts past AUDIO_START_MIN and ends on a page boundary.
+        assert!((AUDIO_START_MIN..AUDIO_START_MIN + PAGE).contains(&hl));
+        assert_eq!((hl + l.data_len()) % PAGE, 0);
         assert_eq!(&h[0..4], b"RIFF");
-        assert_eq!(u64::from(u32_at(&h, 4)), 68 - 8 + 75 * 2352 * 6 + 100);
+        assert_eq!(u64::from(u32_at(&h, 4)), hl - 8 + 75 * 2352 * 6 + 100);
         assert_eq!(&h[8..16], b"WAVEfmt ");
         assert_eq!(u32_at(&h, 16), 40);
         assert_eq!(u16_at(&h, 20), 0xFFFE);
@@ -271,9 +298,20 @@ mod tests {
         assert_eq!(u16_at(&h, 38), 24);
         assert_eq!(u32_at(&h, 40), 3);
         assert_eq!(h[44..60], SUBTYPE_PCM);
-        assert_eq!(&h[60..64], b"data");
-        assert_eq!(u64::from(u32_at(&h, 64)), l.data_len());
+        assert_eq!(&h[60..64], b"JUNK");
+        assert_eq!(u64::from(u32_at(&h, 64)), hl - 68 - 8);
+        assert!(h[68..h.len() - 8].iter().all(|&b| b == 0));
+        assert_eq!(&h[h.len() - 8..h.len() - 4], b"data");
+        assert_eq!(u64::from(u32_at(&h, h.len() - 4)), l.data_len());
         assert_eq!(l.data_len(), 75 * 14112);
+        // Every data length gives an aligned end.
+        for frames in [1, 2, 3, 7, 1000] {
+            for c in 1..=6 {
+                let l = layout(c, frames);
+                assert_eq!((header_len(&l) + l.data_len()) % PAGE, 0);
+                assert_eq!(header(&l, 0).len() as u64, header_len(&l));
+            }
+        }
     }
 
     #[test]
@@ -283,25 +321,28 @@ mod tests {
         assert!(!needs_rf64(&l, 0));
         let big = layout(6, 110_000); // 4.66 GB of data
         assert!(needs_rf64(&big, 0));
-        let edge = u64::from(u32::MAX) - (RIFF_HEADER_LEN - 8) - l.data_len();
+        let edge = u64::from(u32::MAX) - (header_len(&l) - 8) - l.data_len();
         assert!(!needs_rf64(&l, edge));
         assert!(needs_rf64(&l, edge + 1));
 
         let h = header(&big, 10);
-        assert_eq!(h.len() as u64, RF64_HEADER_LEN);
+        let hl = header_len(&big);
+        assert_eq!(h.len() as u64, hl);
         assert_eq!(&h[0..4], b"RF64");
         assert_eq!(u32_at(&h, 4), u32::MAX);
         assert_eq!(&h[8..16], b"WAVEds64");
         assert_eq!(u32_at(&h, 16), 28);
-        assert_eq!(u64_at(&h, 20), RF64_HEADER_LEN - 8 + big.data_len() + 10);
+        assert_eq!(u64_at(&h, 20), hl - 8 + big.data_len() + 10);
         assert_eq!(u64_at(&h, 28), big.data_len());
         assert_eq!(u64_at(&h, 36), 110_000 * 2352);
         assert_eq!(u32_at(&h, 44), 0);
         assert_eq!(&h[48..52], b"fmt ");
         assert_eq!(u16_at(&h, 58), 6);
         assert_eq!(u32_at(&h, 76), 0x3F);
-        assert_eq!(&h[96..100], b"data");
-        assert_eq!(u32_at(&h, 100), u32::MAX);
+        assert_eq!(&h[96..100], b"JUNK");
+        assert_eq!(u64::from(u32_at(&h, 100)), hl - 104 - 8);
+        assert_eq!(&h[h.len() - 8..h.len() - 4], b"data");
+        assert_eq!(u32_at(&h, h.len() - 4), u32::MAX);
     }
 
     #[test]

@@ -118,7 +118,11 @@ fn check_case(case: &Value, rate: PcmRate, tuning: Tuning, cache: usize) -> usiz
         let data_len = u64::from(f.layout.frames) * spf * c * 3;
         assert_eq!(w.data.len() as u64, data_len, "{id} {path:?}");
         assert!(!w.rf64);
-        assert_eq!(w.data.start as u64, wav::RIFF_HEADER_LEN);
+        // The audio starts past the read-ahead of a header read and ends on a page boundary,
+        // so that reading the tags never needs audio.
+        assert_eq!(w.data.start as u64, f.header_len());
+        assert!(w.data.start as u64 >= wav::AUDIO_START_MIN);
+        assert_eq!(w.data.end as u64 % wav::PAGE, 0);
         assert_eq!(u32::from(w.channels), u32::from(f.layout.channels));
         assert_eq!(w.rate, rate.hz());
         assert_eq!(w.mask, wav::channel_mask(f.layout.channels));
@@ -132,8 +136,12 @@ fn check_case(case: &Value, rate: PcmRate, tuning: Tuning, cache: usize) -> usiz
             assert!(["INAM", "IART", "IPRD", "ITRK", "ICRD", "IGNR"].contains(&field.as_str()));
             assert!(id3.contains(text.as_str()), "{id} {path:?}: {field} {text:?} not in the ID3 tag");
         }
-        let order: Vec<&str> =
-            w.chunks.iter().map(String::as_str).filter(|c| *c != "LIST" && *c != "id3 ").collect();
+        let order: Vec<&str> = w
+            .chunks
+            .iter()
+            .map(String::as_str)
+            .filter(|c| *c != "LIST" && *c != "id3 " && *c != "JUNK")
+            .collect();
         assert_eq!(order, ["fmt ", "data"]);
         // Odd chunk sizes cross every frame boundary differently.
         assert_eq!(read_all(&engine, f, 4099), whole, "{id} {path:?} in 4099-byte reads");
@@ -276,10 +284,12 @@ fn listing_and_tags_never_decode() {
     assert!(files.iter().any(|(_, f)| f.format() == Format::Dsf));
     for (path, f) in &files {
         let reader = Reader::new(f.clone());
-        let (head, _) = reader.read(&engine, 0, f.header_len()).unwrap();
+        let (head, ahead) = reader.read(&engine, 0, f.header_len()).unwrap();
         assert_eq!(head.len() as u64, f.header_len());
+        assert!(ahead.is_none(), "{path:?}: read-ahead after a header read");
         let tail = f.size - f.data_end();
-        let (t, _) = reader.read(&engine, f.data_end(), tail + 100).unwrap();
+        let (t, ahead) = reader.read(&engine, f.data_end(), tail + 100).unwrap();
+        assert!(ahead.is_none(), "{path:?}: read-ahead after a tag read");
         assert_eq!(t.len() as u64, tail, "{path:?}");
         if !f.tag().is_empty() {
             assert!(t.windows(f.tag().len()).any(|w| w == f.tag()), "{path:?}: tag in the trailer");

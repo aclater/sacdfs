@@ -365,7 +365,10 @@ impl Reader {
         let (k0, k1) = f.frames_for(offset, end);
         let frames = if k0 < k1 { self.decoded(engine, k0, k1)? } else { Vec::new() };
         let data = f.assemble(offset, len, k0, &frames);
-        Ok((data, self.plan_read_ahead(offset, end, k1)))
+        // Read ahead only after reads of audio: a tagger reading the header or the tags must
+        // not make the file decode (and convert) its first seconds in the background.
+        let ahead = if k0 < k1 { self.plan_read_ahead(offset, end, k1) } else { None };
+        Ok((data, ahead))
     }
 
     /// Decodes the frames of `ahead` into the cache, if they are not there already.

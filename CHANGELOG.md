@@ -8,6 +8,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- Read-ahead starts only after a read of audio: reading a file's header (as taggers do) no
+  longer decodes its first 2 s in the background.
+
 - Licence: GPL-3.0-or-later (was MIT OR Apache-2.0 before any release), so that code from
   GPL and LGPL projects can be adapted. SACD parsing and DST decoding still come only from
   scarletbook (MIT OR Apache-2.0).
@@ -21,7 +24,8 @@ All notable changes to sacdfs are recorded here. The format follows
   `NN - title.wav`, 24-bit PCM converted from the DSD on demand. RIFF/WAVE with
   `WAVE_FORMAT_EXTENSIBLE` and a channel mask (from the channel count, provisionally), RF64 for
   files over 4 GiB; the DSF file's ID3v2.4 tag in an `id3 ` chunk and a `LIST`/`INFO` chunk,
-  after the audio. Exact sizes from the TOC; listing, `stat` and tag reads never convert.
+  after the audio, which is padded (`JUNK`) to start at 256 KiB and end on a page boundary.
+  Exact sizes from the TOC; listing, `stat`, header and tag reads never convert.
   Gapless: a track's edge frames are converted with the neighbouring audio of the area.
 - Options `--format dsf|wav|dsf,wav` (default both), `--pcm-rate 88200|176400|352800`
   (default 176400), `--pcm-cutoff 40|30` (default 40), `--pcm-gain DB` (default 0, -60 to
