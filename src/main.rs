@@ -164,6 +164,11 @@ fn run(args: Args) -> io::Result<()> {
         ));
     }
     let source = args.source.canonicalize().map_err(|e| with_path(e, &args.source))?;
+    // A FUSE mount still on the mount point (an earlier sacdfs that is stopping): mounting
+    // over it would put this mount inside it, where its unmount takes this one along (#51).
+    // Waited for before the mount point itself is looked at: a stat of a mount that is
+    // going away can fail.
+    wait_for_earlier_mount(&outside_path(&args.mountpoint))?;
     let mountpoint = args.mountpoint.canonicalize().map_err(|e| with_path(e, &args.mountpoint))?;
     if !mountpoint.is_dir() {
         return Err(io::Error::new(
@@ -171,9 +176,6 @@ fn run(args: Args) -> io::Result<()> {
             format!("{}: not a directory", mountpoint.display()),
         ));
     }
-    // A FUSE mount still on the mount point (an earlier sacdfs that is stopping): mounting
-    // over it would put this mount inside it, where its unmount takes this one along (#51).
-    wait_for_earlier_mount(&mountpoint)?;
     // Only names are read here; images are opened when their directory is first listed.
     let root = SourceDir::scan(&source).map_err(|e| with_path(e, &source))?;
     log::info!("{}: {} image files", source.display(), root.image_count());
@@ -368,6 +370,16 @@ fn wait_for_earlier_mount(at: &std::path::Path) -> io::Result<()> {
         std::thread::sleep(Duration::from_millis(10));
     }
     Ok(())
+}
+
+/// `path` made absolute and canonical without looking at `path` itself (only at its parent,
+/// which is outside any mount on it). The mount point's own name is kept as given.
+fn outside_path(path: &std::path::Path) -> PathBuf {
+    let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+    match (abs.parent(), abs.file_name()) {
+        (Some(parent), Some(name)) => parent.canonicalize().map_or_else(|_| abs.clone(), |p| p.join(name)),
+        _ => abs,
+    }
 }
 
 /// Whether the mount on top at `at` is a FUSE file system (`at` is its mount point, not
