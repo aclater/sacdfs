@@ -168,7 +168,7 @@ one; a read at a random offset returns in about 1 to 4 ms on a fresh mount from 
 with four to five reads of the image (three for plain DSD discs), or one read when the seek
 index cache already knows that part of the disc. With images on a network share, each read of
 the image is a round trip, so these counts matter most there. Reading a WAV file straight through
-takes 1.1 to 1.4 times as long as reading the same track's DSF file (the WAV file holds 1.5
+takes 1.1 to 1.2 times as long as reading the same track's DSF file (the WAV file holds 1.5
 times the bytes), and a seek in it returns in about 2 ms. Over SMB on a gigabit LAN, a seek
 returns in about 5 ms with sacdfs on the server, or with the images on the share. See
 [docs/performance.md](docs/performance.md).
@@ -208,6 +208,12 @@ without linking libfuse.
 cargo build --release
 target/release/sacdfs --help
 ```
+
+The DSD-to-PCM converter chooses its code when it starts: AVX2 (x86-64-v3) where the CPU has
+it, SSE2 otherwise. A generic build therefore runs the converter at AVX2 speed on most
+current CPUs, with the same output bit for bit. `SACDFS_SIMD=baseline`, `v3` or `v4` picks
+another copy, for tests and measurements; the AVX-512 copy (`v4`) is not the default because
+it measured slower ([docs/design.md](docs/design.md#pcm-conversion-phase-1-the-converter)).
 
 Run the tests with `cargo test`. The mount tests need `/dev/fuse` and `fusermount3` and pass
 silently without them; set `SACDFS_FUSE_TESTS=1` to make their absence a failure. See

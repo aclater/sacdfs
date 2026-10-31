@@ -37,13 +37,17 @@
 //! f64. Each output is a fixed sequence of operations (Rust never fuses a multiply and an
 //! add, nor reorders float sums), so the result is the same, bit for bit, whatever SIMD
 //! width the compiler picked (SSE2 on generic x86-64, AVX2 on x86-64-v3) and on any
-//! machine.
+//! machine. The FIR kernels are compiled for the baseline, x86-64-v3 and x86-64-v4 and
+//! chosen at run time ([`Simd`]); all three give the same bytes.
 
 mod filters;
+mod simd;
 
 use std::ops::{Add, Mul};
 
 use filters::{Filters, HB_PAIRS, S1_BEFORE, S1_BYTES};
+use simd::Kernel;
+pub use simd::Simd;
 
 /// DSD bytes per channel in one SACD frame (1/75 s).
 pub const FRAME_BYTES: usize = 4704;
@@ -205,6 +209,8 @@ struct Pipeline {
     /// Gain as a multiplier of full scale, and of the 24-bit step.
     gain: f64,
     scale24: f64,
+    /// Which copy of the kernels runs.
+    simd: Simd,
 }
 
 impl Pipeline {
@@ -212,34 +218,54 @@ impl Pipeline {
         let cfg = &cfg.effective();
         let filters = Filters::new(cfg.cutoff, cfg.rate);
         let ext = Extents::new(cfg, &filters);
-        let n3 = S3_PER_FRAME * frames;
         let gain_db = if cfg.gain_db.is_finite() { f64::from(cfg.gain_db) } else { 0.0 };
         let gain = 10f64.powf(gain_db / 20.0);
-        let wide = cfg.cutoff == Cutoff::Wide80;
-        let (s2_len, s2_split, s3_len, s4_len) = match (wide, cfg.rate) {
-            // Wide at 352.8 kHz: s2 holds stage 1 interleaved again, in f64.
-            (true, PcmRate::R352800) => (2 * (n3 + 2 * ext.e1), 0, 2 * n3, 0),
-            (true, _) => (0, 0, n3, 0),
-            (false, PcmRate::R88200) => (n3 + 2 * ext.e2, n3 / 2 + filters.s3_half + 2, n3 / 2, 0),
-            (false, PcmRate::R176400) => (n3 + 2 * ext.e2, 0, n3, 0),
-            (false, PcmRate::R352800) => (n3 + 2 * ext.e2, 0, n3 + 2 * ext.e3, n3),
-        };
-        Pipeline {
+        let mut p = Pipeline {
             cfg: *cfg,
             ext,
-            frames,
-            bytes: vec![DSD_SILENCE; FRAME_BYTES * frames + 2 * ext.e0],
-            s1e: vec![0; n3 + 2 * ext.e1],
-            s1o: vec![0; n3 + 2 * ext.e1],
-            s2: vec![0.0; s2_len],
-            s2e: vec![0.0; s2_split],
-            s2o: vec![0.0; s2_split],
-            s3: vec![0.0; s3_len],
-            s4: vec![0.0; s4_len],
+            frames: 0,
+            bytes: Vec::new(),
+            s1e: Vec::new(),
+            s1o: Vec::new(),
+            s2: Vec::new(),
+            s2e: Vec::new(),
+            s2o: Vec::new(),
+            s3: Vec::new(),
+            s4: Vec::new(),
             filters,
             gain,
             scale24: gain * 8_388_608.0,
+            simd: Simd::selected(),
+        };
+        p.set_frames(frames);
+        p
+    }
+
+    /// Sizes the buffers for converting `frames` frames at once (the filters are kept).
+    fn set_frames(&mut self, frames: usize) {
+        if frames == self.frames && !self.bytes.is_empty() {
+            return;
         }
+        let ext = self.ext;
+        let n3 = S3_PER_FRAME * frames;
+        let wide = self.cfg.cutoff == Cutoff::Wide80;
+        let (s2_len, s2_split, s3_len, s4_len) = match (wide, self.cfg.rate) {
+            // Wide at 352.8 kHz: s2 holds stage 1 interleaved again, in f64.
+            (true, PcmRate::R352800) => (2 * (n3 + 2 * ext.e1), 0, 2 * n3, 0),
+            (true, _) => (0, 0, n3, 0),
+            (false, PcmRate::R88200) => (n3 + 2 * ext.e2, n3 / 2 + self.filters.s3_half + 2, n3 / 2, 0),
+            (false, PcmRate::R176400) => (n3 + 2 * ext.e2, 0, n3, 0),
+            (false, PcmRate::R352800) => (n3 + 2 * ext.e2, 0, n3 + 2 * ext.e3, n3),
+        };
+        self.frames = frames;
+        self.bytes.resize(FRAME_BYTES * frames + 2 * ext.e0, DSD_SILENCE);
+        self.s1e.resize(n3 + 2 * ext.e1, 0);
+        self.s1o.resize(n3 + 2 * ext.e1, 0);
+        self.s2.resize(s2_len, 0.0);
+        self.s2e.resize(s2_split, 0.0);
+        self.s2o.resize(s2_split, 0.0);
+        self.s3.resize(s3_len, 0.0);
+        self.s4.resize(s4_len, 0.0);
     }
 
     /// Output samples per channel.
@@ -254,7 +280,7 @@ impl Pipeline {
             return;
         }
         if let Some(lut) = self.filters.lut.first_chunk::<S1_BYTES>() {
-            stage1::<S1_BYTES>(lut, &self.bytes, &mut self.s1e, &mut self.s1o);
+            stage1::<S1_BYTES>(self.simd, lut, &self.bytes, &mut self.s1e, &mut self.s1o);
         }
         // Stage 2: s2[r] = 0.5 s1[2j] + sum_i h_i (s1[2j + 2i + 1] + s1[2j - 2i - 1]),
         // j = r - e2; in pair indices s1e[r + HB], s1o[r + HB + i], s1o[r + HB - 1 - i].
@@ -262,6 +288,7 @@ impl Pipeline {
         if let Some(taps) = h2[1..].first_chunk::<HB_PAIRS>() {
             let o = &self.s1o[..];
             sym_fir::<i32, f64, HB_PAIRS, 1>(
+                self.simd,
                 &mut self.s2,
                 h2[0],
                 taps,
@@ -280,6 +307,7 @@ impl Pipeline {
             let s3 = &self.s3[..];
             let e3 = self.ext.e3;
             sym_fir::<f64, f64, HB_PAIRS, 1>(
+                self.simd,
                 &mut self.s4,
                 0.0,
                 &self.filters.s4,
@@ -294,7 +322,7 @@ impl Pipeline {
     /// 2 for 176.4 kHz output.
     fn run_wide(&mut self) {
         if let Some(lut) = self.filters.lut.first_chunk::<{ filters::S1W_BYTES }>() {
-            stage1::<{ filters::S1W_BYTES }>(lut, &self.bytes, &mut self.s1e, &mut self.s1o);
+            stage1::<{ filters::S1W_BYTES }>(self.simd, lut, &self.bytes, &mut self.s1e, &mut self.s1o);
         }
         let e1 = self.ext.e1;
         let h = &self.filters.wide;
@@ -310,7 +338,7 @@ impl Pipeline {
                     pair[1] = f64::from(self.s1o[q]);
                 }
                 let x = &self.s2[2 * e1 - K..];
-                sym_fir::<f64, f64, K, 1>(&mut self.s3, h[0], taps, &x[K..], &x[K + 1..], x);
+                sym_fir::<f64, f64, K, 1>(self.simd, &mut self.s3, h[0], taps, &x[K..], &x[K + 1..], x);
             }
             PcmRate::R176400 | PcmRate::R88200 => {
                 const K: usize = filters::W176_HALF;
@@ -320,7 +348,7 @@ impl Pipeline {
                 // out[j] centred on s1[2j + 2 e1] = s1e[j + e1]: tap k even reads s1e,
                 // odd reads s1o (see dec_lanes).
                 let (p, q) = (&self.s1e[e1 - K / 2..], &self.s1o[e1 - K.div_ceil(2)..]);
-                dec_fir::<i32, K>(&mut self.s3, h[0], taps, p, q);
+                dec_fir::<i32, K>(self.simd, &mut self.s3, h[0], taps, p, q);
             }
         }
     }
@@ -336,7 +364,7 @@ impl Pipeline {
         match self.cfg.rate {
             PcmRate::R176400 | PcmRate::R352800 => {
                 // s3[t] = 0.5 s2[t + k] + sum_i h_i (s2[t + k + 1 + 2i] + s2[t + k - 1 - 2i]).
-                sym_fir::<f64, f64, N, 2>(&mut self.s3, h3[0], taps, &s2[k..], &s2[k + 1..], s2);
+                sym_fir::<f64, f64, N, 2>(self.simd, &mut self.s3, h3[0], taps, &s2[k..], &s2[k + 1..], s2);
             }
             PcmRate::R88200 => {
                 // s3[q] centred on s2[2q + k], k odd: every tap pair reads even samples
@@ -348,7 +376,7 @@ impl Pipeline {
                     *v = s2.get(2 * j + 1).copied().unwrap_or(0.0);
                 }
                 let (e, o) = (&self.s2e[..], &self.s2o[..]);
-                sym_fir::<f64, f64, N, 1>(&mut self.s3, h3[0], taps, &o[N - 1..], &e[N..], e);
+                sym_fir::<f64, f64, N, 1>(self.simd, &mut self.s3, h3[0], taps, &o[N - 1..], &e[N..], e);
             }
         }
     }
@@ -363,7 +391,7 @@ impl Pipeline {
         match self.cfg.rate {
             PcmRate::R176400 | PcmRate::R352800 => {
                 // s3[t] centred on s2[t + K]: pairs s2[t + K + 1 + i] and s2[t + K - 1 - i].
-                sym_fir::<f64, f64, K, 1>(&mut self.s3, h3[0], taps, &s2[K..], &s2[K + 1..], s2);
+                sym_fir::<f64, f64, K, 1>(self.simd, &mut self.s3, h3[0], taps, &s2[K..], &s2[K + 1..], s2);
             }
             PcmRate::R88200 => {
                 // s3[q] centred on s2[2q + K]. Split s2 into the samples of the centre's
@@ -375,7 +403,7 @@ impl Pipeline {
                 for (j, v) in self.s2o.iter_mut().enumerate() {
                     *v = s2.get((K + 1 + 2 * j).wrapping_sub(2 * K.div_ceil(2))).copied().unwrap_or(0.0);
                 }
-                dec_fir::<f64, K>(&mut self.s3, h3[0], taps, &self.s2e, &self.s2o);
+                dec_fir::<f64, K>(self.simd, &mut self.s3, h3[0], taps, &self.s2e, &self.s2o);
             }
         }
     }
@@ -401,10 +429,17 @@ impl Pipeline {
     /// Writes the channel just run into `out` as interleaved 24-bit little-endian samples
     /// (`channels` per sample frame, this one at `c`); returns the clipped count.
     fn write24(&self, out: &mut [u8], channels: usize, c: usize) -> u32 {
+        self.write24_from(out, channels, c, 0, self.out_len())
+    }
+
+    /// As [`write24`](Self::write24), for the `count` samples from output sample `first`
+    /// (written from the start of `out`).
+    fn write24_from(&self, out: &mut [u8], channels: usize, c: usize, first: usize, count: usize) -> u32 {
         let mut clips = 0u32;
         let stride = 3 * channels;
-        for (i, slot) in out.chunks_exact_mut(stride).take(self.out_len()).enumerate() {
-            let v = self.sample(i) * self.scale24;
+        let count = count.min(self.out_len().saturating_sub(first));
+        for (i, slot) in out.chunks_exact_mut(stride).take(count).enumerate() {
+            let v = self.sample(first + i) * self.scale24;
             let r = (v + ROUND_MAGIC) - ROUND_MAGIC;
             let r = if r > MAX24 {
                 clips = clips.saturating_add(1);
@@ -434,7 +469,21 @@ impl Pipeline {
 /// Each output is `lut[0][w[0]] + lut[1][w[1]] + ... + lut[B-1][w[B-1]]`, in integers, so
 /// exact (and the same in any order). The `B` bytes (12, or 18 for the wide filter) are read
 /// as words and taken apart with shifts, which halves the loads.
-fn stage1<const B: usize>(lut: &[[i32; 256]; B], bytes: &[u8], e: &mut [i32], o: &mut [i32]) {
+fn stage1<const B: usize>(simd: Simd, lut: &[[i32; 256]; B], bytes: &[u8], e: &mut [i32], o: &mut [i32]) {
+    struct Job<'a, const B: usize>(&'a [[i32; 256]; B], &'a [u8], &'a mut [i32], &'a mut [i32]);
+    impl<const B: usize> Kernel for Job<'_, B> {
+        type Out = ();
+        #[inline(always)]
+        fn run<const W: usize>(self) {
+            stage1_k(self.0, self.1, self.2, self.3);
+        }
+    }
+    simd::dispatch(simd, Job(lut, bytes, e, o));
+}
+
+/// [`stage1`]'s body, compiled into each instruction set's copy.
+#[inline(always)]
+fn stage1_k<const B: usize>(lut: &[[i32; 256]; B], bytes: &[u8], e: &mut [i32], o: &mut [i32]) {
     #[inline(always)]
     fn one<const B: usize>(lut: &[[i32; 256]; B], w: &[u8; B]) -> i32 {
         let mut acc = 0i32;
@@ -492,7 +541,8 @@ impl PairAdd for f64 {
     }
 }
 
-/// Outputs computed together, so that the accumulators stay in registers.
+/// Outputs computed together, so that the accumulators stay in registers: the least, used
+/// after the wider blocks of the AVX paths (see `simd`).
 const BLOCK: usize = 16;
 
 /// A symmetric FIR with `N` tap pairs `S` apart (2 for a half-band, whose other taps are
@@ -505,14 +555,69 @@ const BLOCK: usize = 16;
 /// and 4 do. Stage 3 sums 85 to 114 products: in f32 its rounding alone measured 0.34 of a
 /// 24-bit step RMS on random DSD, more than the 24-bit quantisation itself (0.29), and an
 /// f32 stage 2 added 0.15; in f64 both are negligible (see the arithmetic test).
+///
+/// Runs the copy for `simd` (see [`Simd`]).
+#[inline]
+fn sym_fir<I, T, const N: usize, const S: usize>(
+    simd: Simd,
+    out: &mut [T],
+    h0: T,
+    h: &[T; N],
+    c: &[I],
+    a: &[I],
+    b: &[I],
+) where
+    I: Copy + PairAdd,
+    T: Copy + Default + From<I> + Mul<Output = T> + Add<Output = T>,
+{
+    struct Job<'a, I, T, const N: usize, const S: usize>(
+        &'a mut [T],
+        T,
+        &'a [T; N],
+        &'a [I],
+        &'a [I],
+        &'a [I],
+    );
+    impl<I, T, const N: usize, const S: usize> Kernel for Job<'_, I, T, N, S>
+    where
+        I: Copy + PairAdd,
+        T: Copy + Default + From<I> + Mul<Output = T> + Add<Output = T>,
+    {
+        type Out = ();
+        #[inline(always)]
+        fn run<const W: usize>(self) {
+            sym_fir_k::<I, T, N, S, W>(self.0, self.1, self.2, self.3, self.4, self.5);
+        }
+    }
+    simd::dispatch(simd, Job::<I, T, N, S>(out, h0, h, c, a, b));
+}
+
+/// [`sym_fir`]'s body, compiled into each instruction set's copy.
 #[inline(always)]
-fn sym_fir<I, T, const N: usize, const S: usize>(out: &mut [T], h0: T, h: &[T; N], c: &[I], a: &[I], b: &[I])
-where
+fn sym_fir_k<I, T, const N: usize, const S: usize, const W: usize>(
+    out: &mut [T],
+    h0: T,
+    h: &[T; N],
+    c: &[I],
+    a: &[I],
+    b: &[I],
+) where
     I: Copy + PairAdd,
     T: Copy + Default + From<I> + Mul<Output = T> + Add<Output = T>,
 {
     let n = out.len();
     let mut t = 0;
+    while W > BLOCK && t + W <= n {
+        sym_lanes::<I, T, N, S, W>(
+            &mut out[t..],
+            h0,
+            h,
+            &c[t.min(c.len())..],
+            &a[t.min(a.len())..],
+            &b[t.min(b.len())..],
+        );
+        t += W;
+    }
     while t + BLOCK <= n {
         sym_lanes::<I, T, N, S, BLOCK>(
             &mut out[t..],
@@ -575,13 +680,49 @@ fn sym_lanes<I, T, const N: usize, const S: usize, const W: usize>(
 /// `out[q] = h0 s2[2q + K] + sum_k h[k - 1] (s2[2q + K + k] + s2[2q + K - k])`, k = 1..=K
 /// in order, from the two phases of s2 (see [`Pipeline::stage3`]): even k read `p`, odd k
 /// read `q`.
+/// Runs the copy for `simd` (see [`Simd`]).
+#[inline]
+fn dec_fir<I: Copy + PairAdd, const K: usize>(
+    simd: Simd,
+    out: &mut [f64],
+    h0: f64,
+    h: &[f64; K],
+    p: &[I],
+    q: &[I],
+) where
+    f64: From<I>,
+{
+    struct Job<'a, I, const K: usize>(&'a mut [f64], f64, &'a [f64; K], &'a [I], &'a [I]);
+    impl<I: Copy + PairAdd, const K: usize> Kernel for Job<'_, I, K>
+    where
+        f64: From<I>,
+    {
+        type Out = ();
+        #[inline(always)]
+        fn run<const W: usize>(self) {
+            dec_fir_k::<I, K, W>(self.0, self.1, self.2, self.3, self.4);
+        }
+    }
+    simd::dispatch(simd, Job::<I, K>(out, h0, h, p, q));
+}
+
+/// [`dec_fir`]'s body, compiled into each instruction set's copy.
 #[inline(always)]
-fn dec_fir<I: Copy + PairAdd, const K: usize>(out: &mut [f64], h0: f64, h: &[f64; K], p: &[I], q: &[I])
-where
+fn dec_fir_k<I: Copy + PairAdd, const K: usize, const W: usize>(
+    out: &mut [f64],
+    h0: f64,
+    h: &[f64; K],
+    p: &[I],
+    q: &[I],
+) where
     f64: From<I>,
 {
     let n = out.len();
     let mut t = 0;
+    while W > BLOCK && t + W <= n {
+        dec_lanes::<I, K, W>(&mut out[t..], h0, h, &p[t.min(p.len())..], &q[t.min(q.len())..]);
+        t += W;
+    }
     while t + BLOCK <= n {
         dec_lanes::<I, K, BLOCK>(&mut out[t..], h0, h, &p[t.min(p.len())..], &q[t.min(q.len())..]);
         t += BLOCK;
@@ -641,6 +782,42 @@ fn dec_lanes<I: Copy + PairAdd, const K: usize, const W: usize>(
 pub struct Converter {
     channels: usize,
     p: Pipeline,
+    /// The pipeline of [`convert_run`](Self::convert_run), sized for the last run; made on
+    /// first use from `p` (same filters and instruction set).
+    run: Option<Box<Pipeline>>,
+}
+
+/// Fills one channel's window: the last `e0` bytes of `prev`, the `frames`
+/// ([`FRAME_BYTES`] each), the first `e0` bytes of `next`, with DSD silence where a frame is
+/// missing or short. `window` is `e0 + frames.len() × FRAME_BYTES + e0` long.
+fn fill_window(
+    window: &mut [u8],
+    e0: usize,
+    ch: usize,
+    c: usize,
+    prev: Option<&[u8]>,
+    frames: &[&[u8]],
+    next: Option<&[u8]>,
+) {
+    let at = |frame: Option<&[u8]>, i: usize| -> u8 {
+        frame.and_then(|f| f.get(i * ch + c)).copied().unwrap_or(DSD_SILENCE)
+    };
+    let (head, rest) = window.split_at_mut(e0.min(window.len()));
+    for (i, b) in head.iter_mut().enumerate() {
+        *b = at(prev, FRAME_BYTES - e0 + i);
+    }
+    let mut chunks = rest.chunks_mut(FRAME_BYTES);
+    for (&cur, body) in frames.iter().zip(chunks.by_ref()) {
+        for (i, b) in body.iter_mut().enumerate() {
+            *b = at(Some(cur), i);
+        }
+    }
+    // The tail (e0 < FRAME_BYTES, so one chunk).
+    for tail in chunks {
+        for (i, b) in tail.iter_mut().enumerate() {
+            *b = at(next, i);
+        }
+    }
 }
 
 impl Converter {
@@ -649,7 +826,21 @@ impl Converter {
     /// converted with [`PcmConfig::effective`] instead, which [`config`](Self::config)
     /// reports. Designing the filters takes well under a millisecond.
     pub fn new(channels: u8, cfg: &PcmConfig) -> Converter {
-        Converter { channels: usize::from(channels.max(1)), p: Pipeline::new(cfg, 1) }
+        Converter::with_simd(channels, cfg, Simd::selected())
+    }
+
+    /// As [`new`](Self::new), with the code for `simd` (or the best the CPU has, if that is
+    /// less) instead of [`Simd::selected`]. Every choice gives the same output; this is for
+    /// tests and measurements.
+    pub fn with_simd(channels: u8, cfg: &PcmConfig, simd: Simd) -> Converter {
+        let mut p = Pipeline::new(cfg, 1);
+        p.simd = simd.min(Simd::detected());
+        Converter { channels: usize::from(channels.max(1)), p, run: None }
+    }
+
+    /// The instruction set this converter's kernels use.
+    pub fn simd(&self) -> Simd {
+        self.p.simd
     }
 
     /// The configuration.
@@ -666,22 +857,7 @@ impl Converter {
     /// `cur`, the first `e0` bytes of `next`, with DSD silence where a frame is missing or
     /// short.
     fn fill(&mut self, prev: Option<&[u8]>, cur: &[u8], next: Option<&[u8]>, c: usize) {
-        let ch = self.channels;
-        let e0 = self.p.ext.e0;
-        let at = |frame: Option<&[u8]>, i: usize| -> u8 {
-            frame.and_then(|f| f.get(i * ch + c)).copied().unwrap_or(DSD_SILENCE)
-        };
-        let (head, rest) = self.p.bytes.split_at_mut(e0);
-        let (body, tail) = rest.split_at_mut(FRAME_BYTES);
-        for (i, b) in head.iter_mut().enumerate() {
-            *b = at(prev, FRAME_BYTES - e0 + i);
-        }
-        for (i, b) in body.iter_mut().enumerate() {
-            *b = at(Some(cur), i);
-        }
-        for (i, b) in tail.iter_mut().enumerate() {
-            *b = at(next, i);
-        }
+        fill_window(&mut self.p.bytes, self.p.ext.e0, self.channels, c, prev, &[cur], next);
     }
 
     /// Converts DSD frame `cur` (`channels × 4704` interleaved MSB-first bytes, as
@@ -698,6 +874,54 @@ impl Converter {
             clips = clips.saturating_add(self.p.write24(out, self.channels, c));
         }
         clips
+    }
+
+    /// Converts a run of consecutive DSD frames at once (#24): the same bytes as
+    /// [`convert`](Self::convert) on each frame in turn (with its neighbours in the run, and
+    /// `prev` before the first and `next` after the last), concatenated, but the neighbour
+    /// margins each frame needs (up to about 270 bytes each side, some 8 % of a frame's
+    /// work) are converted once per run instead of once per frame. `out` is
+    /// `frames.len() × frame_bytes()` long; only whole sample frames that fit are written.
+    /// Returns the number of clipped samples, and puts each frame's in `clips` (as far as it
+    /// is long), as [`convert`](Self::convert) would return them.
+    ///
+    /// The working buffers grow with the run, about 75 KiB per frame, and are kept for the
+    /// next run: bound run lengths (sacdfs uses a few frames).
+    pub fn convert_run(
+        &mut self,
+        prev: Option<&[u8]>,
+        frames: &[&[u8]],
+        next: Option<&[u8]>,
+        out: &mut [u8],
+        clips: &mut [u32],
+    ) -> u32 {
+        clips.iter_mut().for_each(|k| *k = 0);
+        if let [cur] = frames {
+            let n = self.convert(prev, cur, next, out);
+            if let Some(k) = clips.first_mut() {
+                *k = n;
+            }
+            return n;
+        }
+        let ch = self.channels;
+        let p = self.run.get_or_insert_with(|| Box::new(self.p.clone()));
+        p.set_frames(frames.len());
+        let spf = p.cfg.rate.samples_per_frame();
+        let fb = spf * ch * 3;
+        let mut total = 0u32;
+        for c in 0..ch {
+            fill_window(&mut p.bytes, p.ext.e0, ch, c, prev, frames, next);
+            p.run();
+            for f in 0..frames.len() {
+                let Some(out) = out.get_mut(f * fb..) else { break };
+                let n = p.write24_from(out, ch, c, f * spf, spf);
+                total = total.saturating_add(n);
+                if let Some(k) = clips.get_mut(f) {
+                    *k = k.saturating_add(n);
+                }
+            }
+        }
+        total
     }
 
     /// As [`convert`](Self::convert), but writes interleaved f32 samples (1.0 is full

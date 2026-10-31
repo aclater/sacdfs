@@ -60,6 +60,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- `Converter::convert_run` (#24): converts consecutive frames together, byte-identical to
+  converting each alone. WAV files of plain DSD areas use it, four frames per job: a straight
+  read takes 15 % less time and 29 % less CPU.
+- Runtime CPU dispatch for the DSD-to-PCM converter (#23): its kernels are compiled for
+  generic x86-64, x86-64-v3 (AVX2) and x86-64-v4 (AVX-512), and the AVX2 copy runs where the
+  CPU has it, so generic builds convert about 1.4 times faster on most current CPUs, with
+  the same output bit for bit. `SACDFS_SIMD=baseline|v3|v4` picks a copy (for tests and
+  measurements); `pcm::Simd` and `Converter::with_simd` do it per converter.
 - Persistent file identity and NFS export (#18): inode numbers come from what an entry is
   (a directory's or an image's relative path; an area's image and slot; a file's image,
   slot, track number, format and PCM options), so they are the same on every mount, with
