@@ -32,6 +32,7 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 | `-f`, `--foreground` | Stay in the foreground and log to standard error. Without it sacdfs returns once the filesystem is mounted and keeps running in the background. |
 | `--threads N` | DST decoder threads; 0 (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded frames, in MiB (default 256). |
+| `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder (see below). Top-level folders of `SOURCE` are never collapsed. |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
 | `-v` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 
@@ -57,6 +58,19 @@ MOUNTPOINT/
   them are left out too.
 - A track the disc cannot play (an empty track, or one that runs past the end of the image) is
   left out; the reason is logged at `-v`.
+
+With `--flatten`, a folder whose only content is one image, directly or through a chain of
+folders that each hold nothing else, holds that image's `Stereo` and `Multichannel` folders
+itself. Folders directly in `SOURCE` (usually artists) are always kept. For example
+
+```
+SOURCE/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc.iso
+```
+
+shows as `MOUNTPOINT/Artist/2001 - Album [SACD]/Stereo/01 - Title.dsf` instead of
+`MOUNTPOINT/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc/Stereo/01 - Title.dsf`.
+A folder with an image and another folder of images, or with two images, is kept as it is.
+Flattening is decided from the file names alone, so it does not slow down mounting.
 
 Each file is a standard DSF file (2.8224 MHz, 1 bit, 4096-byte blocks) with an ID3v2.4 tag:
 title, performer, album artist, album, track n/N, disc n/N for multi-disc sets, composer, date,
