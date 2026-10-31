@@ -515,12 +515,12 @@ fn wait_for_earlier_mount(at: &Path) -> io::Result<()> {
         if m.owner.is_some_and(|o| o != uid) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                format!("{}: {} is mounted there; unmount it first", at.display(), m.describe()),
+                format!("{}: {} is mounted there; unmount it first", at.display(), m.describe(uid)),
             ));
         }
         if Instant::now() >= next_probe {
             let found = probe(at, PROBE_TIMEOUT);
-            log::debug!("{}: {} is mounted there; probe: {found:?}", at.display(), m.describe());
+            log::debug!("{}: {} is mounted there; probe: {found:?}", at.display(), m.describe(uid));
             match found {
                 Probe::Dead => {
                     detach_dead_mount(at, &m, uid)?;
@@ -532,7 +532,11 @@ fn wait_for_earlier_mount(at: &Path) -> io::Result<()> {
             next_probe = Instant::now() + PROBE_EVERY;
         }
         if !std::mem::replace(&mut logged, true) {
-            log::info!("{}: {} is mounted there: waiting for it to be unmounted", at.display(), m.describe());
+            log::info!(
+                "{}: {} is mounted there: waiting for it to be unmounted",
+                at.display(),
+                m.describe(uid)
+            );
         }
         if start.elapsed() >= EARLIER_MOUNT_WAIT {
             let how = if answers { "" } else { ", not answering," };
@@ -542,7 +546,7 @@ fn wait_for_earlier_mount(at: &Path) -> io::Result<()> {
                     "{}: {}{how} is still mounted there after {} s (another sacdfs?); stop it or \
                      unmount it first (fusermount3 -u {})",
                     at.display(),
-                    m.describe(),
+                    m.describe(uid),
                     EARLIER_MOUNT_WAIT.as_secs(),
                     at.display()
                 ),
@@ -563,7 +567,7 @@ fn detach_dead_mount(at: &Path, m: &MountEntry, uid: u32) -> io::Result<()> {
                 "{}: {} is mounted there and its server has exited (\"Transport endpoint is not \
                  connected\"); {hint}",
                 at.display(),
-                m.describe()
+                m.describe(uid)
             ),
         )
     };
@@ -695,15 +699,17 @@ impl MountEntry {
         self.fstype == "fuse.sacdfs" || (self.fstype == "fuse" && self.source == FSNAME.as_bytes())
     }
 
-    /// For messages: "a sacdfs mount of uid 1000", "a FUSE mount (fuse.sshfs) of uid 0".
-    fn describe(&self) -> String {
+    /// For messages, as seen by user `uid`: "a sacdfs mount of this user's", "a FUSE mount
+    /// (fuse.sshfs) of another user's". User ids are kept out of messages and logs.
+    fn describe(&self, uid: u32) -> String {
         let what = if self.is_sacdfs() {
             "a sacdfs mount".to_owned()
         } else {
             format!("a FUSE mount ({})", self.fstype)
         };
         match self.owner {
-            Some(uid) => format!("{what} of uid {uid}"),
+            Some(o) if o == uid => format!("{what} of this user's"),
+            Some(_) => format!("{what} of another user's"),
             None => what,
         }
     }
@@ -887,13 +893,13 @@ mod tests {
         assert_eq!(m.dev, "0:61");
         assert_eq!(m.owner, Some(1000));
         assert!(m.is_fuse() && m.is_sacdfs());
-        assert_eq!(m.describe(), "a sacdfs mount of uid 1000");
+        assert_eq!(m.describe(1000), "a sacdfs mount of this user's");
         let (_, m) = MountEntry::parse(ROOT).unwrap();
         assert!(m.is_sacdfs());
         assert_eq!(m.owner, Some(0));
         let (_, m) = MountEntry::parse(OTHER).unwrap();
         assert!(m.is_fuse() && !m.is_sacdfs());
-        assert_eq!(m.describe(), "a FUSE mount (fuse.sshfs) of uid 1000");
+        assert_eq!(m.describe(0), "a FUSE mount (fuse.sshfs) of another user's");
         // A plain `fuse` mount with another name is not taken for sacdfs's.
         let (_, m) = MountEntry::parse(OLD_ROOT).unwrap();
         assert!(!m.is_sacdfs());
