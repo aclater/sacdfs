@@ -237,9 +237,11 @@ mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a
   ends, and the check meant to skip that when the mount is already gone always passes in
   fuser 0.18.0 (`is_mounted` reads `POLLERR` the wrong way round; fixed in fuser's main branch,
   not released). Every sacdfs unmounted from outside therefore unmounted the path again on
-  its way out, removing a sacdfs mounted there in the meantime: lost in __STOPCONT__ when the
-  old one was still exiting (held stopped to make the order certain). This was the failure
-  seen in #51.
+  its way out, removing a sacdfs mounted there in the meantime. Measured, 200 restarts each,
+  as a user and as root: the new mount was lost in 200 of 200 when the old one was detached
+  from outside (`fusermount3 -u -z`, a file open) and exited after the new one mounted, and in
+  200 of 200 when the old one, unmounted, was held stopped until the new one had mounted;
+  with the fix, in none. This was the failure seen in #51.
 - On SIGINT or SIGTERM, sacdfs unmounts (or detaches, if busy) only if the mount on top at
   its path still has its own device number, read from `/proc/self/mountinfo` right after
   mounting; otherwise it logs why and leaves the path alone. *Why:* the device number is
@@ -248,10 +250,11 @@ mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a
 - A new sacdfs whose mount point is still a FUSE mount (the previous one has not unmounted
   yet) waits for it to go, up to 10 s, then fails with "already a FUSE mount". *Why:* mounted
   over the old mount, the new one sat inside it. As root, the old one's unmount then removed
-  the new mount instead (__PRE_ROOT__ when the restart started just before the old one stopped);
-  as a user, `fusermount3` refuses to mount over another user mount (`Permission denied`), so
-  the restart failed (__PRE_USER__), and when it raced the old one's detach the new mount went
-  into the detached tree and vanished (once in about 30 tries). The wait costs one read of
+  the new mount instead (189 of 200 restarts started up to 20 ms before the old one was
+  stopped failed); as a user, `fusermount3` refuses to mount over another user mount
+  (`Permission denied`), so the restart failed (183 of 200; 171 of 200 with a file open), and
+  when it raced the old one's detach the new mount went into the detached tree and vanished
+  (seen once). The wait costs one read of
   the mount table when the mount point is free.
 
 Considered: unmounting by the mount's identity instead of its path, but Linux has no unmount
