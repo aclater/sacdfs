@@ -39,9 +39,11 @@ API exposes: sector reading (`Image`), frame reassembly (`Demuxer`), TOCs and te
 
 The pin is tag v0.4.1. 0.4.0 and 0.4.1 changed no decoded output (the corpus hashes and the
 real-disc gates are unchanged) and needed no code change to build. Of what they add, sacdfs
-uses only the loudspeaker layouts so far ([Speaker layouts](#speaker-layouts)). Its seek
-indexes and cold seeks (`SeekPolicy::Speculative`) were measured against sacdfs's own frame
-locator (#28) and are not used for reading: see [Why not scarletbook's
+uses the loudspeaker layouts ([Speaker layouts](#speaker-layouts)) and positional reads
+(`ReadAtReader` over an `Arc<File>`, cloned per read, so that reads of one image run at once;
+see [Concurrent reads of one image](#concurrent-reads-of-one-image)). Its seek indexes and
+cold seeks (`SeekPolicy::Speculative`) were measured against sacdfs's own frame locator (#28)
+and are not used for reading: see [Why not scarletbook's
 seeking](#reading-a-range-of-a-dsf-file). The tests use its seek index as an exact reference. sacdfs builds scarletbook
 without its `parallel` feature and decodes on its own worker pool, so the larger window of a
 parallel library cursor (512 positions, about 48 MB) does not apply; **why:** memory stays
@@ -672,8 +674,8 @@ repeated reads. Large reads (`max_read` 1 MiB) and kernel read-ahead are enabled
 fuser dispatches requests on one thread. Reads are answered from a thread pool: the
 request's `ReplyData` moves to a worker, which decodes or copies and replies, so slow
 reads on one file don't block `lookup`/`readdir` or reads of other files. Each image has
-at most one open handle, from a bounded cache of them; sector reads are serialised per
-handle (a `Mutex<Image>`), decoding is not.
+at most one open handle, from a bounded cache of them, and the reads of one image run at the
+same time: each takes its own reader of the shared file ([below](#concurrent-reads-of-one-image)).
 
 *Implementation:* fuser 0.18 can run several dispatch threads; sacdfs uses 4, so that a
 directory listing that opens many images does not hold up other requests. Reads go to a
@@ -715,6 +717,28 @@ image opened again, as a first open would. A disc that is dropped closes its han
   read ends. No lock is held while opening a file, and the cache's lock never waits for a
   read, so eviction cannot deadlock or stall a read. The keys are per disc and unique in
   the process (not the disc id, which callers choose).
+
+**Concurrent reads of one image** (#28). A handle is an `Arc<File>` read with positional
+reads (`pread`), through scarletbook 0.4's `ReadAtReader`. Each call to the image takes a clone
+of the cached `Image` (no I/O, no lock: the same file, a position of its own) and reads
+through it, so reads of one disc by several players, a tagger and read-ahead run at once.
+Before, each handle was a `Mutex<Image<File>>`, and every read of a disc waited for the one in
+progress.
+- *Why:* on a local disk a read holds the lock only for a copy from the page cache, but on a
+  network share each read is a round trip, and on a NAS with hard disks often a disk seek:
+  a tagger's or a second player's read then waited behind the first player's for the whole
+  round trip. Measured in [performance.md](performance.md#concurrent-reads-28).
+- *Why a clone per call, not one per cursor or thread:* a clone holds the file open, and
+  cursors live as long as their open file; per call, the bound on open images
+  (`--max-open-images`) still holds between reads, and an evicted handle closes when the last
+  read through it ends, as before.
+- *Why `Image` clones, not `scarletbook::Disc::clone`:* sacdfs keeps its own TOC, frame
+  locator and seek index per disc and reads sectors through an `Image`; a `Disc` adds a parsed
+  TOC and shared seek indexes that sacdfs does not use (see [Locating a
+  frame](#reading-a-range-of-a-dsf-file) for why), and a reopened file would need its TOC
+  checked again. An `Image` clone is what `Disc::clone` does underneath.
+- Images in 2064-byte raw sectors are read through a buffer per clone (scarletbook's), so
+  each call allocates it again; the straight-read figures show no cost.
 
 ## PCM conversion (phase 1: the converter)
 
@@ -1008,6 +1032,10 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   and never more than 3 image descriptors in `/proc/self/fd`; and mounts the corpus with
   `--max-open-images 2`, reads the start, middle and end of every file through the kernel,
   and checks sacdfs's own descriptors.
+- *Concurrent reads:* `tests/concurrent.rs` reads every file of every corpus disc on 4 threads
+  per disc at once (each with its own readers, in another order and piece size), all discs
+  together, every read searching, no frame cache and at most 2 images open, and requires the
+  bytes of a straight read.
 - *WAV files:* `tests/wav.rs`, every check written against the converter's API only, so that it
   holds for any converter whose output for a frame depends only on that frame and its two
   neighbours. At every rate, every WAV file of every corpus case parses (RIFF, fmt, data,

@@ -42,6 +42,12 @@ All notable changes to sacdfs are recorded here. The format follows
   Rust, which builds it, targets x86-64-v3 (AVX2) unless told otherwise, so the image
   didn't start on CPUs without AVX2. The container share test is now
   `deploy/ci-share-test.sh`, shared by CI and the release.
+- Reads of one image run at the same time (#28): open images are read with positional reads
+  (`pread`, scarletbook's `ReadAtReader` over an `Arc<File>`), each read through its own clone
+  of the image, instead of one locked reader per image. On an NFS share, with four players and
+  a tagger, the tagger's worst file went from 38-163 ms to 7-13 ms, and players on one image
+  from a 99th percentile of 13-118 ms to 2-10 ms. Local reads and memory are unchanged.
+
 - SIGINT and SIGTERM detach a busy mount (open files, an NFS export) instead of logging an
   error and serving on: sacdfs stops when the last open file is closed. fuser already
   unmounted lazily for users other than root; now root behaves the same.
