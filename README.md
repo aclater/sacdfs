@@ -44,7 +44,9 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 | `-v` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 
 Unmount with `fusermount3 -u MOUNTPOINT`. SIGINT (Ctrl-C) and SIGTERM unmount and stop sacdfs
-too.
+too. If files are still open (or an NFS server still exports the mount), the mount is detached
+instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
+stops when the last one is closed.
 
 **The seek index cache** holds one small file per image (a few tens of KB for a disc played
 through), named by a hash of the image's path, never the path itself, and is bounded to 32 MiB
@@ -123,6 +125,34 @@ converts anything. A WAV file is converted when its audio is read; a player read
 time, or `cp`, is kept ahead by read-ahead on all cores. A program that reads every audio file
 of a library (fingerprinting, loudness scans) converts every WAV file too: use `--format dsf`
 for those.
+
+## Sharing the mount over NFS
+
+Inode numbers come from what each entry is (its source path, or the image, area, track and
+format), not from the order sacdfs finds things, so they are the same on every mount, and the
+kernel NFS server can export the mount: clients keep working, open files included, after
+sacdfs restarts. `/etc/exports` needs an `fsid` (a FUSE mount has no device number of its
+own), and sacdfs `--allow-other` when it does not run as root:
+
+```
+/srv/sacd  192.168.1.0/24(ro,fsid=4242,no_subtree_check)
+```
+
+- To restart sacdfs under an export, stop the NFS server first, then start it again after
+  the new mount is up (`systemctl stop nfs-server`, restart sacdfs, `systemctl start
+  nfs-server`). Its clients wait, as for a server reboot. While the server runs, its open
+  files keep the old mount busy, and with the export gone a client could be told "stale file
+  handle".
+- NFSv3 clients carry on reading as if nothing happened (this is what the tests check).
+  NFSv4 clients also reclaim their open state after a server restart, within the server's
+  grace period.
+- A file whose image changed (size or modification time) is refused with "stale file
+  handle" instead of showing other audio, as is a WAV file after a change of `--pcm-rate`,
+  `--pcm-cutoff` or `--pcm-gain`. Directories stay valid.
+- With `--flatten` turned on or off, images, areas and files keep their numbers (a collapsed
+  folder is the image's folder); only the folders that disappear or reappear change.
+- Adding or removing images does not change the numbers of the others. The design is in
+  [docs/design.md](docs/design.md#file-identity-and-nfs-export).
 
 ## Performance
 
