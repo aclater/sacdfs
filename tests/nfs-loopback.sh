@@ -63,7 +63,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+set -x
 mountpoint -q /proc/fs/nfsd || mount -t nfsd nfsd /proc/fs/nfsd
+# The state files the nfs-server service would create.
+mkdir -p /var/lib/nfs /run/rpcbind
+touch /var/lib/nfs/etab /var/lib/nfs/rmtab
 rpcbind -w 2>/dev/null || rpcbind
 start_sacdfs
 # FUSE has no device number of its own: an export needs an fsid.
