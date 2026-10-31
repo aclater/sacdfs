@@ -1,0 +1,114 @@
+# The NAS container image (Containerfile): build it, serve the corpus, and read it back over
+# SMB and NFS from a client container with kernel mounts, checking every track's hashes
+# against the corpus manifest. See docs/deployment.md.
+name: container
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # The client: Fedora 44, for mount.cifs and mount.nfs4 (pinned like the image's bases).
+  CLIENT_IMAGE: registry.fedoraproject.org/fedora:44@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
+
+jobs:
+  container:
+    name: container (SMB, NFS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build -f Containerfile -t sacdfs:ci .
+
+      - name: Client image (kernel SMB and NFS clients)
+        run: |
+          sudo modprobe -a cifs nfs nfsv4
+          docker network create sacdfs-ci
+          docker run --name client-build "$CLIENT_IMAGE" \
+            dnf -y -q --setopt=install_weak_deps=False install cifs-utils nfs-utils python3
+          docker commit client-build sacdfs-client:ci
+          docker rm client-build
+
+      - name: Start the server on the corpus (guest access)
+        run: |
+          docker run -d --name sacdfs --network sacdfs-ci \
+            --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
+            --security-opt apparmor=unconfined \
+            -v "$PWD/tests/corpus/images:/images:ro" sacdfs:ci
+          deploy/ci-wait-healthy.sh sacdfs
+
+      - name: Read the corpus over SMB and NFS
+        run: |
+          docker run --rm --network sacdfs-ci --privileged \
+            -v "$PWD:/repo:ro" sacdfs-client:ci bash -euxc '
+              mkdir -p /mnt/smb /mnt/nfs
+              mount -t cifs //sacdfs/sacd /mnt/smb -o ro,guest,vers=3.1.1
+              python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/smb --min 400 --wav
+              umount /mnt/smb
+              mount -t nfs4 sacdfs:/sacd /mnt/nfs -o ro,vers=4.2
+              python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/nfs --min 400 --wav
+              umount /mnt/nfs'
+
+      # Clients keep files open across a server restart (a NAS reboot, an image update).
+      # SMB reopens by path; NFS relies on sacdfs's persistent file identity (#18).
+      - name: Keep reading across a server restart
+        run: |
+          docker run -d --name client --network sacdfs-ci --privileged \
+            -v "$PWD:/repo:ro" sacdfs-client:ci sleep infinity
+          docker exec client bash -euxc '
+            mkdir -p /mnt/smb /mnt/nfs /run/hold/smb /run/hold/nfs
+            mount -t cifs //sacdfs/sacd /mnt/smb -o ro,guest,vers=3.1.1
+            mount -t nfs4 sacdfs:/sacd /mnt/nfs -o ro,vers=4.2'
+          f="dst-features-2ch-6ch/Stereo/$(docker exec client ls /mnt/nfs/dst-features-2ch-6ch/Stereo | grep -m1 '^01.*dsf$')"
+          for p in smb nfs; do
+            docker exec -d client python3 /repo/deploy/ci-hold-read.py "/mnt/$p/$f" "/run/hold/$p"
+          done
+          for p in smb nfs; do
+            timeout 30 bash -c "until docker exec client test -e /run/hold/$p/half; do sleep 0.5; done"
+          done
+          docker restart -t 20 sacdfs
+          deploy/ci-wait-healthy.sh sacdfs
+          docker exec client touch /run/hold/smb/go /run/hold/nfs/go
+          status=0
+          for p in smb nfs; do
+            timeout 120 bash -c "until docker exec client test -e /run/hold/$p/result; do sleep 0.5; done" || true
+            r=$(docker exec client cat "/run/hold/$p/result" 2>/dev/null || echo "no result")
+            echo "$p across a restart: $r"
+            [ "$r" = ok ] || status=1
+          done
+          docker exec client umount -l /mnt/smb /mnt/nfs || true
+          docker rm -f client
+          exit $status
+
+      - name: User access, DSF only, flattened
+        run: |
+          docker rm -f sacdfs
+          docker run -d --name sacdfs --network sacdfs-ci \
+            --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
+            --security-opt apparmor=unconfined \
+            -e SMB_USER=listener -e SMB_PASSWORD=ci-only-password -e NFS=0 \
+            -e SACDFS_FORMATS=dsf -e SACDFS_FLATTEN=1 \
+            -v "$PWD/tests/corpus/images:/images:ro" sacdfs:ci
+          deploy/ci-wait-healthy.sh sacdfs
+          docker run --rm --network sacdfs-ci --privileged \
+            -v "$PWD:/repo:ro" sacdfs-client:ci bash -euxc '
+              mkdir -p /mnt/smb
+              if mount -t cifs //sacdfs/sacd /mnt/smb -o ro,guest,vers=3.1.1; then
+                echo "guest access was not refused"; exit 1
+              fi
+              mount -t cifs //sacdfs/sacd /mnt/smb -o ro,username=listener,password=ci-only-password,vers=3.1.1
+              test -z "$(find /mnt/smb -name "*.wav" -print -quit)"
+              python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/smb --min 400
+              umount /mnt/smb'
+
+      - name: Server log
+        if: always()
+        run: docker logs sacdfs 2>&1 | grep -v ' INFO  sacdfs::' | tail -n 200 || true
