@@ -119,8 +119,10 @@ default), band-limited to 40 kHz (or 30 kHz with `--pcm-cutoff 30`, or about 80 
   neighbouring tracks' audio, so the WAV files of an area played one after the other are one
   continuous stream.
 
-Sizes are exact, and listing a directory, `stat` or reading the tags never decodes or
-converts anything. A WAV file is converted when its audio is read; a player reading it in real
+Sizes are exact, and listing a directory, `stat` or reading a WAV file's header or tags never
+decodes or converts anything. Reading a DSF file's header decodes the track's first quarter
+second or so: DSF audio starts at byte 92, and the kernel reads 256 KiB from the start of a
+file whatever was asked for (see [docs/performance.md](docs/performance.md#dsf-header-reads-32)). A WAV file is converted when its audio is read; a player reading it in real
 time, or `cp`, is kept ahead by read-ahead on all cores. A program that reads every audio file
 of a library (fingerprinting, loudness scans) converts every WAV file too: use `--format dsf`
 for those.

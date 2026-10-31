@@ -12,6 +12,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- A read that ends within 256 KiB of where a file's first read of audio started no longer
+  starts read-ahead (#32): that is the kernel's own read-ahead of the first read, which a
+  tagger reading a DSF file's header causes too. A DSF tag walk reads 222 KB of the image per
+  file instead of 1.18 MB. A DSF header read still decodes the track's first frames, since
+  DSF audio starts at byte 92; why that stays is in docs/design.md.
+
 - Read-ahead starts only after reads of audio, and not on a file's first one: reading a
   file's header, or walking its chunks (as taggers do), no longer decodes its first seconds in
   the background.
