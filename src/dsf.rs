@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The DSF file format: the header chunks, the ID3v2.4 tag at the end, and the mapping from
 //! bytes of the data chunk to frames.

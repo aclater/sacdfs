@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The FUSE filesystem: requests from the kernel, answered from the tree and the engine.
 //!

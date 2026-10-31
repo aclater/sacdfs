@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Licence: GPL-3.0-or-later (was MIT OR Apache-2.0 before any release), so that code from
+  GPL and LGPL projects can be adapted. SACD parsing and DST decoding still come only from
+  scarletbook (MIT OR Apache-2.0).
+
 ### Added
 
 - `sacdfs SOURCE MOUNTPOINT`: a read-only FUSE filesystem showing SACD images (one file, or a

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Every case of the conformance corpus, read through sacdfs's tree and readers without
 //! mounting: the files shown, their audio hashes, and random-offset reads.
