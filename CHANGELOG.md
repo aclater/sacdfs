@@ -8,6 +8,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- scarletbook 0.4's own seeking measured against sacdfs's locator (#28), and not adopted: its
+  cold seek (provisional reading) took 7.2-8.8 calls and 260-373 KiB per seek against 4.3 and
+  136 KiB (21-29 ms against 7-15 ms over NFS), and its provisional positions differ on a
+  hostile corpus image; its exact seek index needs the area read from its start and then
+  takes 2.0-2.7 calls against 1.0. `examples/library_seek` measures both; `tests/library_index.rs`
+  checks every frame and random ranges located by sacdfs against reads through a complete
+  library index, on the corpus and (ignored test) real discs.
+
 - A container image for a NAS (`Containerfile`): sacdfs with Samba and NFS-Ganesha, sharing
   the mount read-only over SMB and NFSv4, configured with environment variables, with a
   health check and logs on standard output. Compose file in `deploy/`, guide in
@@ -35,7 +43,7 @@ All notable changes to sacdfs are recorded here. The format follows
   Output on discs with a defined layout is unchanged; the provisional count-based mapping and
   its `TODO(scarletbook#75)` are gone.
 - scarletbook 0.5.0 (was 0.3.0; 0.4.1 until #45). No change in decoded output and no code
-  change; the seek indexes and cold seeks of 0.4 are not used yet (#28), nor 0.5.0's
+  change; 0.4's seek indexes and cold seeks are not used for reading (#28), nor 0.5.0's
   cancellation and progress (#45).
 - A read that ends within 256 KiB of where a file's first read of audio started no longer
   starts read-ahead (#32): that is the kernel's own read-ahead of the first read, which a
