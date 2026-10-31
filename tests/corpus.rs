@@ -14,6 +14,7 @@ use std::sync::Arc;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
 use sacdfs::disc::Tuning;
+use sacdfs::dsf::{BLOCK, FRAME_BYTES, HEADER_LEN};
 use sacdfs::engine::Engine;
 use sacdfs::track::{Reader, TrackFile};
 use sacdfs::tree::{SourceDir, Tree};
@@ -158,6 +159,40 @@ fn random_reads_equal_straight_reads() {
             Ok(())
         })
         .unwrap();
+}
+
+/// Every frame of every file, read on its own from a fresh reader with the exhaustive
+/// search and no cache, equals the same bytes of a straight read: the start of each
+/// channel's part of the frame, up to the end of its block. Unlike the random reads, this
+/// reaches every frame, including the ones next to repeated or backwards timecodes.
+#[test]
+fn every_frame_alone_equals_straight_read() {
+    let engine = Engine::new(2, 0).unwrap();
+    let mut reads = 0;
+    for case in cases() {
+        if case["expected"]["outcome"] != "ok" {
+            continue;
+        }
+        let id = case["id"].as_str().unwrap().to_owned();
+        let tree = Tree::with_tuning(SourceDir::scan(&image(&case)).unwrap(), Tuning::exhaustive());
+        for (path, f) in tree.all_files() {
+            let whole = read_all(&engine, &f, 1 << 20);
+            let c = u64::from(f.layout.channels);
+            for k in 0..u64::from(f.layout.frames) {
+                let b = k * FRAME_BYTES;
+                for ch in 0..c {
+                    let at = HEADER_LEN + (b / BLOCK) * BLOCK * c + ch * BLOCK + b % BLOCK;
+                    let len = BLOCK - b % BLOCK;
+                    let (data, _) = Reader::new(f.clone()).read(&engine, at, len).unwrap();
+                    let (s, e) = (at as usize, (at + len) as usize);
+                    assert!(data == whole[s..e], "{id} {path:?} frame {k} channel {ch}");
+                    reads += 1;
+                }
+            }
+        }
+    }
+    eprintln!("{reads} reads");
+    assert!(reads > 1000);
 }
 
 /// Images in a directory tree: names, nesting, de-duplication and non-SACD files.
