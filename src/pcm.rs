@@ -426,10 +426,10 @@ impl Pipeline {
 }
 
 /// Stage 1: `e[q]` and `o[q]` are the outputs centred on the first bit of bytes `2q` and
-/// `2q + 1` of the window (counted from its first converted byte, `bytes[S1_BEFORE]`).
-/// Each output is `lut[0][w[0]] + lut[1][w[1]] + ... + lut[11][w[11]]`, in integers, so
-/// exact (and the same in any order). The 12 bytes are read as two words and taken apart
-/// with shifts, which halves the loads.
+/// `2q + 1` of the window (counted from its first converted byte, `B/2` bytes in).
+/// Each output is `lut[0][w[0]] + lut[1][w[1]] + ... + lut[B-1][w[B-1]]`, in integers, so
+/// exact (and the same in any order). The `B` bytes (12, or 18 for the wide filter) are read
+/// as words and taken apart with shifts, which halves the loads.
 fn stage1<const B: usize>(lut: &[[i32; 256]; B], bytes: &[u8], e: &mut [i32], o: &mut [i32]) {
     #[inline(always)]
     fn one<const B: usize>(lut: &[[i32; 256]; B], w: &[u8; B]) -> i32 {
