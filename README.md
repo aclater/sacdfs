@@ -30,7 +30,11 @@ depends on a git repository. `cargo install` from crates.io comes once scarletbo
   them: DST areas read 10 to 18 % faster ([performance](docs/performance.md#straight-reads)).
   On an older CPU this build stops with an illegal-instruction error. `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
 
-Both need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). Each
+Both need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). The
+generic build was tested on the oldest of each, with their own kernels (4.18 to 5.4) and
+`fusermount3` (3.3 to 3.9): mounting in the foreground and in the background, with and
+without `--allow-other`, reads identical to a current system, and a clean stop on SIGTERM
+with a file open ([testing](docs/design.md#oldest-distributions-58)). Each
 archive holds `sacdfs`, `COPYING`, `README.md` and `CHANGELOG.md`. To download, check and
 install one:
 

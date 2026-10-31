@@ -80,6 +80,12 @@ The first release.
 
 ### Documentation
 
+- The oldest distributions the README names were tested (#58): RHEL 8.10, Debian 10,
+  Ubuntu 20.04 and Fedora 29, each on its own kernel (4.18 to 5.4) with its own
+  `fusermount3` (3.3.0 to 3.9.0), using the generic release build. Mounting with `-f` and
+  in the background, with and without `--allow-other`, reads identical to a current
+  system's, SIGTERM with a file open and `fusermount3 -u` all pass; nothing needed fixing
+  and the README's claim stands. Results in `docs/design.md`, "Oldest distributions".
 - README as a user guide (install, quick start, options, layout, formats, deployment,
   limits, credits); `docs/user-guide.md` (options in detail, formats, tagging behaviour,
   sharing over NFS, troubleshooting); `docs/design.md` with the current design and the reason

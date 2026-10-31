@@ -1202,6 +1202,48 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   its samples equal to the raw bytes; a sparse 4.76 GB six-channel RF64 file reads in FFmpeg
   and libsndfile.
 
+### Oldest distributions (#58)
+
+*Why:* the README promises RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, but CI tests only
+a current runner (`fusermount3` 3.18, a current kernel), and the reviewed changelogs of other
+FUSE projects show `fusermount3` behaviour changing across libfuse versions (3.0 renamed
+the helpers and dropped `nonempty`; 3.15 stopped silently accepting unsupported options),
+and kernels before 4.20 have neither `FOPEN_CACHE_DIR` nor `max_pages`. A glibc check alone
+shows that the binary loads, not that it mounts.
+
+*How:* the generic x86-64 release build (built on UBI 8 like `release.yml`, `-C
+target-cpu=x86-64`), in a fresh VM of each distribution's last point release, from its
+cloud image, as an ordinary user with the distribution's own `fuse3` package and its stock
+kernel. The source is a real hybrid disc image, attached read-only. Per distribution:
+
+- mount with `-f` and in the background, then with `--allow-other` in both modes (first
+  refused without `user_allow_other` in `/etc/fuse.conf`, with fusermount3's message, then
+  set);
+- the listing (24 files: names and sizes) and SHA-256 of a stereo DSF file, its WAV file
+  and a multichannel DSF file, equal to the same files read on a current system from the
+  same image; through `--allow-other` mounts, read as root; a private mount refuses root;
+- SIGTERM while a file is open (4 MiB read through it): the mount is detached at once,
+  sacdfs serves the open file until it is closed, then exits; the mount point is usable;
+- `fusermount3 -u`: sacdfs exits;
+- the INIT negotiation from fuser's debug log (`RUST_LOG=fuser::session=debug`).
+
+| Distribution | Kernel | `fusermount3` | glibc | INIT: enabled | Result |
+|---|---|---|---|---|---|
+| RHEL 8.10 | 4.18.0-553.el8_10 | 3.3.0 | 2.28 | `ASYNC_READ`, `EXPORT_SUPPORT`, `BIG_WRITES`, `MAX_PAGES` | 21/21 |
+| Fedora 29 | 4.18.16-300.fc29 | 3.6.2 | 2.28 | `ASYNC_READ`, `EXPORT_SUPPORT`, `BIG_WRITES` | 21/21 |
+| Debian 10 | 4.19.0-27-cloud | 3.4.1 | 2.28 | `ASYNC_READ`, `EXPORT_SUPPORT`, `BIG_WRITES` | 21/21 |
+| Ubuntu 20.04.6 | 5.4.0-216 | 3.9.0 | 2.31 | `ASYNC_READ`, `EXPORT_SUPPORT`, `BIG_WRITES`, `MAX_PAGES` | 21/21 |
+
+The kernels without `max_pages` (Fedora 29's and Debian 10's; RHEL 8 has it backported)
+cap a request at 128 KiB instead of 1 MiB, and those without `FOPEN_CACHE_DIR` ignore the
+flag; reads are the same bytes either way. `FUSE_EXPORT_SUPPORT` is offered by every one of
+them. Read-ahead is 128 KiB on all four. No `fusermount3` refused an option sacdfs passes
+(`ro`, `nodev`, `nosuid`, `noexec`, `fsname`, `subtype`, `max_read`, `allow_other`). The
+claim stands as written; nothing needed fixing. Not covered: the x86-64-v3 build (the same
+code, differently compiled) and the container on these kernels. The test is a VM harness
+outside the repository (it needs the real disc and VM images), so it is rerun by hand
+before a release that changes how sacdfs mounts.
+
 ## Prior art
 
 ratarmount (MIT; lazy archive indexing, seek points), squashfuse (BSD), fuser's examples
