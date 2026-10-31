@@ -49,7 +49,7 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   needs a small part of one core.
 - `--cache-mb N` (default 256) bounds the cache of decoded DSD frames and converted PCM
   frames, which DSF and WAV reads share. It is sacdfs's main use of memory, whatever the
-  number of open files: about 170 to 340 MiB in all with the default, under four players and
+  number of open files: about 170 to 360 MiB in all with the default, under four players and
   a tagger. A larger cache helps only when the same parts of files are read again and the
   kernel's page cache has dropped them.
 - `--max-open-images N` (default 64, 1 to 1024): an image stays open after its directory is
@@ -169,7 +169,7 @@ its own database, or in copies of the files.
 - A DSF file's audio starts at byte 92, and the kernel reads at least 128 KiB from the start
   of a file whatever was asked for, so reading a DSF file's header decodes the track's first
   quarter second or so (about 220 KB of the image). Reading its tag decodes almost nothing.
-  A tag walk of 93 DSF files took 0.07 s from a local disk.
+  A tag walk of 93 DSF files took 0.09 s from a local disk.
 - Neither starts read-ahead: sacdfs decodes ahead only once a reader reads on into the audio.
 
 **Library scanners.** A program that reads every audio file of a library (fingerprinting,

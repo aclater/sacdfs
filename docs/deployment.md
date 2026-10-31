@@ -6,7 +6,7 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
   container, and shares its mount over SMB and NFS. Every client (Linux, macOS, Windows,
   phones, network players) sees ordinary DSF and WAV files. A seek costs sacdfs's few
   milliseconds on the NAS plus about one network round trip, because sacdfs's own reads of
-  the image stay on the NAS: about 5 ms for a cold seek over SMB on a gigabit LAN
+  the image stay on the NAS: 5 to 6 ms for a cold seek over SMB on a gigabit LAN
   ([performance](performance.md#nas-container-server-side)).
 - **On a Linux client (client-side).** sacdfs runs on the client and reads the images from a
   network share, as in the [user guide](user-guide.md). Every read of an image is then a
