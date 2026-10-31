@@ -320,15 +320,15 @@ them (blocks of 16 independent outputs, windows cut to exact lengths so there ar
 checks, the generated code checked: packed `addpd`/`mulpd` on generic x86-64, `vaddpd` on
 `ymm` registers on x86-64-v3). Stage 1 reads its bytes as words and takes them apart with
 shifts (half the loads). `std::arch` with runtime detection would need `unsafe`, which the
-crate denies; the generic build already clears the bar, and x86-64-v3 builds (RHEL 10's
-default, or `-C target-cpu=x86-64-v3`) are 1.2 to 1.5 times faster. Runtime dispatch is a
+crate denies; the generic build already clears the bar for the default filter, and x86-64-v3 builds
+(RHEL 10's default, or `-C target-cpu=x86-64-v3`) are 1.1 to 1.6 times faster. Runtime dispatch is a
 follow-up if a generic build ever needs it.
 
 **Interleaved input.** The converter takes frames as scarletbook gives them (`C × 4704`
 interleaved, MSB first) and copies one channel at a time into a window buffer with its
 neighbours' margins (about 5 KB); the kernels then run on contiguous data. *Alternative:*
 reading the interleaved bytes in stage 1 directly; it would lose the word loads, and the
-copy costs about 5 % of the conversion.
+copy costs about 7 % of the conversion.
 
 **Gain and clipping.** The gain is a multiply folded into the final rounding (f64, ties to
 even, by the 1.5 × 2^52 trick, which needs no libm call). Samples beyond the 24-bit range are
