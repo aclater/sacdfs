@@ -220,11 +220,20 @@ fn run(args: Args) -> io::Result<()> {
     };
     let mut unmounter = session.unmount_callable();
     let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
+    let at = mountpoint.clone();
     std::thread::Builder::new().name("sacdfs-signals".to_owned()).spawn(move || {
         if let Some(sig) = signals.forever().next() {
             log::info!("signal {sig}: unmounting");
             if let Err(e) = unmounter.unmount() {
-                log::error!("unmount: {e}");
+                // Busy (open files, or an NFS server exporting the mount): detach it, as
+                // fuser already does for users other than root. sacdfs then serves the
+                // files still open and exits when the last is closed.
+                match lazy_unmount(&at) {
+                    Ok(()) => log::warn!(
+                        "unmount: {e}; detached instead: sacdfs stops when its open files are closed"
+                    ),
+                    Err(e2) => log::error!("unmount: {e}; detaching: {e2}"),
+                }
             }
         }
     })?;
@@ -284,6 +293,25 @@ fn open_index_cache(args: &Args) {
 
 fn with_path(e: io::Error, path: &std::path::Path) -> io::Error {
     io::Error::new(e.kind(), format!("{}: {e}", path.display()))
+}
+
+/// Detaches the mount at `at` (`umount -l`).
+#[allow(unsafe_code)]
+fn lazy_unmount(at: &std::path::Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(at.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mount point holds a NUL byte"))?;
+    // SAFETY: a valid NUL-terminated path that outlives the call.
+    if unsafe { libc::umount2(c.as_ptr(), libc::MNT_DETACH) } == 0 {
+        return Ok(());
+    }
+    let e = io::Error::last_os_error();
+    // Not root: the setuid helper, lazily.
+    let st = std::process::Command::new("fusermount3").args(["-u", "-z", "--"]).arg(at).status();
+    match st {
+        Ok(s) if s.success() => Ok(()),
+        _ => Err(e),
+    }
 }
 
 #[allow(unsafe_code)]

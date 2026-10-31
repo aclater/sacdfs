@@ -369,3 +369,36 @@ fn directory_handles_survive_a_restart() {
         m.stop();
     }
 }
+
+#[test]
+fn a_busy_mount_is_detached_on_sigterm() {
+    if !fuse_available() {
+        return;
+    }
+    let src = source();
+    let cache = tempfile::tempdir().unwrap();
+    let at = tempfile::tempdir().unwrap();
+    let mut m = Mount::new(src.path(), at.path(), cache.path(), &[]);
+    let path = m.at.join("Artist/Other/dst/Stereo").read_dir().unwrap().next().unwrap().unwrap().path();
+    let whole = std::fs::read(&path).unwrap();
+    let open = File::open(&path).unwrap();
+    let mut child = m.child.take().unwrap();
+    assert!(Command::new("kill").arg("-TERM").arg(child.id().to_string()).status().unwrap().success());
+    // Detached at once (as root a plain unmount would fail: the file is open) ...
+    wait_for("the detach", || !is_mounted(&m.at));
+    // ... while the open file still reads, until it is closed.
+    let mut buf = vec![0; 4096];
+    open.read_exact_at(&mut buf, (whole.len() - 4096) as u64).unwrap();
+    assert_eq!(buf, whole[whole.len() - 4096..]);
+    assert!(child.try_wait().unwrap().is_none(), "sacdfs stopped with a file still open");
+    drop(open);
+    let start = Instant::now();
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s;
+        }
+        assert!(start.elapsed() < Duration::from_secs(30), "sacdfs did not exit after the last close");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(status.success(), "{status}");
+}

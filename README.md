@@ -44,7 +44,9 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 | `-v` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 
 Unmount with `fusermount3 -u MOUNTPOINT`. SIGINT (Ctrl-C) and SIGTERM unmount and stop sacdfs
-too.
+too. If files are still open (or an NFS server still exports the mount), the mount is detached
+instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
+stops when the last one is closed.
 
 **The seek index cache** holds one small file per image (a few tens of KB for a disc played
 through), named by a hash of the image's path, never the path itself, and is bounded to 32 MiB
