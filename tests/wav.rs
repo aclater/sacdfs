@@ -469,3 +469,30 @@ fn real_discs() {
     eprintln!("{total} WAV files checked at {} Hz", rate.hz());
     assert!(total > 0);
 }
+
+/// Writes a sparse RF64 file made by sacdfs's own header and trailer code (six channels,
+/// 25 minutes at 176.4 kHz: 4.6 GB of silence), for checking with other programs locally:
+/// `SACDFS_RF64_OUT=FILE cargo test --test wav rf64_file -- --ignored`. No real disc in the
+/// local set has a track long enough to need RF64.
+#[test]
+#[ignore = "writes a 4.6 GB sparse file: set SACDFS_RF64_OUT"]
+fn rf64_file() {
+    use std::io::{Seek, SeekFrom, Write};
+    let Some(path) = std::env::var_os("SACDFS_RF64_OUT") else { return };
+    let layout = wav::Layout { channels: 6, frames: 25 * 60 * 75, samples_per_frame: 2352, rate: 176_400 };
+    let mut tags = sacdfs::dsf::Tags::default();
+    tags.set(b"TIT2", Some("Long track"));
+    tags.set(b"TALB", Some("Album"));
+    tags.set(b"TRCK", Some("1/1"));
+    let t = wav::trailer(&tags);
+    let h = wav::header(&layout, t.bytes.len() as u64);
+    assert!(wav::needs_rf64(&layout, t.bytes.len() as u64));
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(&h).unwrap();
+    f.seek(SeekFrom::Start(h.len() as u64 + layout.data_len())).unwrap();
+    f.write_all(&t.bytes).unwrap();
+    drop(f);
+    let size = std::fs::metadata(&path).unwrap().len();
+    assert_eq!(size, h.len() as u64 + layout.data_len() + t.bytes.len() as u64);
+    eprintln!("{size} bytes, {} samples per channel", layout.samples());
+}
