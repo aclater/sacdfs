@@ -5,8 +5,9 @@
 //! The hot code (every stage of a channel, the window fill and the sample writing) is
 //! compiled three times on x86-64: for the baseline (SSE2, what a generic build gives), for
 //! x86-64-v3 (AVX2) and for x86-64-v4 (AVX-512). One is chosen when the process first
-//! converts, from the CPU, and can be capped with the `SACDFS_SIMD` environment variable
-//! (`baseline`, `v3` or `v4`) to test or measure each path.
+//! converts, from the CPU: x86-64-v3 where the CPU has it, else the baseline. The
+//! `SACDFS_SIMD` environment variable (`baseline`, `v3` or `v4`) picks another, as far as the
+//! CPU has it, to test or measure each path. v4 is not the default (see [`Simd::DEFAULT`]).
 //!
 //! **No `unsafe` here.** The `multiversion` crate generates the copies with
 //! `#[target_feature]` and keeps the `unsafe` call behind its own feature check, so a copy
@@ -34,6 +35,12 @@ pub enum Simd {
 }
 
 impl Simd {
+    /// The best choice without `SACDFS_SIMD`: v3, even on CPUs with AVX-512. Measured on a
+    /// Zen 5 CPU, the v4 copy was 6 to 13 % slower than v3 on one thread and 25 to 40 %
+    /// slower with both threads of a core converting (docs/performance.md); it stays
+    /// available, for measuring other CPUs, with `SACDFS_SIMD=v4`.
+    pub const DEFAULT: Simd = Simd::V3;
+
     /// The name used by `SACDFS_SIMD` and in the log.
     pub fn name(self) -> &'static str {
         match self {
@@ -49,25 +56,21 @@ impl Simd {
         *DETECTED.get_or_init(detect)
     }
 
-    /// What converters use by default: [`detected`](Self::detected), capped by the
-    /// `SACDFS_SIMD` environment variable if it is set. Read once per process.
+    /// What converters use by default: [`DEFAULT`](Self::DEFAULT) (x86-64-v3) or less if
+    /// the CPU lacks it, or what the `SACDFS_SIMD` environment variable asks for (`baseline`,
+    /// `v3` or `v4`), again as far as the CPU has it. Read once per process.
     pub fn selected() -> Simd {
         static SELECTED: OnceLock<Simd> = OnceLock::new();
         *SELECTED.get_or_init(|| {
             let best = Simd::detected();
-            let chosen = match std::env::var("SACDFS_SIMD") {
-                Ok(v) => match Simd::parse(&v) {
-                    Some(cap) => cap.min(best),
-                    None => {
-                        log::warn!(
-                            "SACDFS_SIMD={v:?} not understood (baseline, v3 or v4); using {}",
-                            best.name()
-                        );
-                        best
-                    }
-                },
-                Err(_) => best,
+            let want = match std::env::var("SACDFS_SIMD") {
+                Ok(v) => Simd::parse(&v).unwrap_or_else(|| {
+                    log::warn!("SACDFS_SIMD={v:?} not understood (baseline, v3 or v4); ignored");
+                    Simd::DEFAULT
+                }),
+                Err(_) => Simd::DEFAULT,
             };
+            let chosen = want.min(best);
             log::debug!("PCM converter: {} code (CPU supports {})", chosen.name(), best.name());
             chosen
         })
@@ -186,11 +189,11 @@ mod tests {
         assert!(Simd::selected() <= Simd::detected());
     }
 
-    /// `SACDFS_SIMD` caps the choice (CI runs the converter tests once per value).
+    /// `SACDFS_SIMD` picks the code (CI runs the converter tests once per value).
     #[test]
-    fn env_caps_the_choice() {
+    fn env_picks_the_code() {
         let want = std::env::var("SACDFS_SIMD").ok().and_then(|v| Simd::parse(&v));
-        let want = want.map_or(Simd::detected(), |cap| cap.min(Simd::detected()));
+        let want = want.unwrap_or(Simd::DEFAULT).min(Simd::detected());
         eprintln!("SACDFS_SIMD: running {} (CPU: {})", Simd::selected().name(), Simd::detected().name());
         assert_eq!(Simd::selected(), want);
     }
