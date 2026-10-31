@@ -438,3 +438,129 @@ fn bad_arguments_fail_cleanly() {
         Command::new(env!("CARGO_BIN_EXE_sacdfs")).args(["--pcm-gain", "-6", "--help"]).output().unwrap();
     assert!(out.status.success());
 }
+
+/// The FUSE mounts on `mountpoint`: more than one when one is mounted over another.
+fn fuse_mounts_on(mountpoint: &Path) -> usize {
+    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    let mp = mountpoint.to_str().unwrap();
+    info.lines()
+        .filter(|l| {
+            l.split(' ').nth(4) == Some(mp) && l.split(" - ").nth(1).is_some_and(|t| t.starts_with("fuse"))
+        })
+        .count()
+}
+
+/// Waits for `child` to exit, for up to 30 s, and returns whether it succeeded.
+fn wait_exit(child: &mut Child, what: &str) -> bool {
+    let start = Instant::now();
+    loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            return s.success();
+        }
+        if start.elapsed() > Duration::from_secs(30) {
+            let _ = child.kill();
+            panic!("{what} did not exit");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A sacdfs restarted on the same mount point while the previous one is still there (a
+/// service manager or a script restarting it) waits for it to go instead of mounting over
+/// it, and the previous one's unmount, or its detach while a file is open, leaves the new
+/// mount alone (#51). Before, the new mount went on top, inside the old one, and the old
+/// one's unmount by path removed it.
+#[test]
+// Both children are waited for, the old one on one path or the other.
+#[allow(clippy::zombie_processes)]
+fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
+    if !fuse_available() {
+        return;
+    }
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    for busy in [false, true] {
+        let mut old = Mount::foreground(&image, &[]);
+        let at = old.path();
+        let file = at
+            .join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
+        let whole = std::fs::read(&file).unwrap();
+        let open = busy.then(|| std::fs::File::open(&file).unwrap());
+        let cache = tempfile::tempdir().unwrap();
+        let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
+            .arg("-f")
+            .arg(&image)
+            .arg(&at)
+            .spawn()
+            .unwrap();
+        // The new one waits: nothing is mounted over the old one.
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs exited (busy: {busy})");
+        assert_eq!(fuse_mounts_on(&at), 1, "mounted over the old mount (busy: {busy})");
+        let mut old_child = old.child.take().unwrap();
+        let st = Command::new("kill").arg("-TERM").arg(old_child.id().to_string()).status().unwrap();
+        assert!(st.success());
+        if !busy {
+            assert!(wait_exit(&mut old_child, "the old sacdfs"));
+        }
+        // The new one mounts once the old one is unmounted (or detached: busy).
+        wait_for("the new mount", || {
+            std::fs::read(&file).is_ok_and(|d| d == whole) && fuse_mounts_on(&at) == 1
+        });
+        if let Some(f) = open {
+            // The old one still serves its open file, and stops when it is closed.
+            let mut buf = vec![0; 4096];
+            f.read_exact_at(&mut buf, 0).unwrap();
+            assert_eq!(buf, whole[..4096]);
+            drop(f);
+            assert!(wait_exit(&mut old_child, "the old sacdfs"));
+        }
+        // The old one has exited; the new mount is still there and serving.
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (busy: {busy})");
+        assert_eq!(fuse_mounts_on(&at), 1, "busy: {busy}");
+        assert_eq!(std::fs::read(&file).unwrap(), whole, "busy: {busy}");
+        unmount_retrying(&at);
+        assert!(wait_exit(&mut new, "the new sacdfs"));
+        assert_eq!(fuse_mounts_on(&at), 0);
+    }
+}
+
+/// A sacdfs whose mount was unmounted from outside (`fusermount3 -u`) and that is still on
+/// its way out leaves alone the mount that is on the path by then (#51). fuser 0.18 unmounted
+/// by path when the session ended, and its check that the mount still existed always passed:
+/// the old sacdfs removed the new mount. The old one is held stopped (SIGSTOP) to make the
+/// order certain: unmounted, new mount, then the old one exits.
+#[test]
+fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
+    if !fuse_available() {
+        return;
+    }
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    let mut old = Mount::foreground(&image, &[]);
+    let at = old.path();
+    let file =
+        at.join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
+    let whole = std::fs::read(&file).unwrap();
+    let mut old_child = old.child.take().unwrap();
+    let pid = old_child.id().to_string();
+    assert!(Command::new("kill").arg("-STOP").arg(&pid).status().unwrap().success());
+    unmount_retrying(&at);
+    let cache = tempfile::tempdir().unwrap();
+    let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .env("XDG_CACHE_HOME", cache.path())
+        .arg("-f")
+        .arg(&image)
+        .arg(&at)
+        .spawn()
+        .unwrap();
+    wait_for("the new mount", || std::fs::read(&file).is_ok_and(|d| d == whole));
+    assert!(Command::new("kill").arg("-CONT").arg(&pid).status().unwrap().success());
+    assert!(wait_exit(&mut old_child, "the old sacdfs"));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped");
+    assert_eq!(fuse_mounts_on(&at), 1);
+    assert_eq!(std::fs::read(&file).unwrap(), whole);
+    unmount_retrying(&at);
+    assert!(wait_exit(&mut new, "the new sacdfs"));
+}

@@ -171,6 +171,9 @@ fn run(args: Args) -> io::Result<()> {
             format!("{}: not a directory", mountpoint.display()),
         ));
     }
+    // A FUSE mount still on the mount point (an earlier sacdfs that is stopping): mounting
+    // over it would put this mount inside it, where its unmount takes this one along (#51).
+    wait_for_earlier_mount(&mountpoint)?;
     // Only names are read here; images are opened when their directory is first listed.
     let root = SourceDir::scan(&source).map_err(|e| with_path(e, &source))?;
     log::info!("{}: {} image files", source.display(), root.image_count());
@@ -216,7 +219,7 @@ fn run(args: Args) -> io::Result<()> {
         config.acl = SessionACL::All;
     }
     config.n_threads = Some(4);
-    let mut session = match Session::new(fs, &mountpoint, &config) {
+    let session = match Session::new(fs, &mountpoint, &config) {
         Ok(s) => s,
         Err(e) => {
             let e = io::Error::new(e.kind(), format!("cannot mount on {}: {e}", mountpoint.display()));
@@ -226,19 +229,37 @@ fn run(args: Args) -> io::Result<()> {
             return Err(e);
         }
     };
-    let mut unmounter = session.unmount_callable();
+    // This mount's identity: its device number, unique while the mount exists. Read from
+    // the mount table, which asks the file system nothing (a stat would wait for the session).
+    let own = top_mount_device(&mountpoint);
     let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
     let at = mountpoint.clone();
+    let mine = own.clone();
     let detached = Arc::new(AtomicBool::new(false));
     let detached_by_signal = detached.clone();
     std::thread::Builder::new().name("sacdfs-signals".to_owned()).spawn(move || {
         if let Some(sig) = signals.forever().next() {
+            // Unmounting goes by path, so only while the mount on top at the path is still
+            // this one: once it was unmounted or detached, or something else was mounted
+            // over it, the path names another mount, which must be left alone (#51).
+            if mine.is_none() || top_mount_device(&at) != mine {
+                log::warn!(
+                    "signal {sig}: {} is no longer this mount (unmounted, or another is mounted \
+                     over it): not unmounting it; sacdfs stops when its mount is gone",
+                    at.display()
+                );
+                return;
+            }
             log::info!("signal {sig}: unmounting");
             detached_by_signal.store(true, Ordering::Relaxed);
-            if let Err(e) = unmounter.unmount() {
+            if let Err(e) = unmount(&at) {
                 // Busy (open files, or an NFS server exporting the mount): detach it, as
-                // fuser already does for users other than root. sacdfs then serves the
-                // files still open and exits when the last is closed.
+                // fusermount3 does for users other than root. sacdfs then serves the files
+                // still open and exits when the last is closed.
+                if top_mount_device(&at) != mine {
+                    log::warn!("unmount: {e}; {} is no longer this mount: not detaching it", at.display());
+                    return;
+                }
                 match lazy_unmount(&at) {
                     Ok(()) => log::warn!(
                         "unmount: {e}; detached instead: sacdfs stops when its open files are closed"
@@ -267,7 +288,15 @@ fn run(args: Args) -> io::Result<()> {
         n.ok();
     }
     log::info!("mounted {} on {}", source.display(), mountpoint.display());
-    let result = session.run();
+    let result = serve(session);
+    let failed = result.as_ref().err().filter(|e| e.raw_os_error() != Some(libc::ECONNABORTED));
+    if let Some(e) = failed.filter(|_| own.is_some() && top_mount_device(&mountpoint) == own) {
+        // The session failed while still mounted (an error, not an unmount): don't leave a
+        // dead mount behind. The device number is still this mount's: the mount still
+        // exists, so no other can have it.
+        log::warn!("session ended: {e}; detaching {}", mountpoint.display());
+        let _ = lazy_unmount(&mountpoint);
+    }
     if let Some(cache) = index_cache::global() {
         match cache.flush() {
             Ok(n) => log::debug!("seek index cache: {n} entries written"),
@@ -312,6 +341,120 @@ fn open_index_cache(args: &Args) {
 
 fn with_path(e: io::Error, path: &std::path::Path) -> io::Error {
     io::Error::new(e.kind(), format!("{}: {e}", path.display()))
+}
+
+/// How long a new mount waits for an earlier FUSE mount on the same mount point to go away.
+const EARLIER_MOUNT_WAIT: Duration = Duration::from_secs(10);
+
+/// Waits until no FUSE file system is mounted on `at`, for up to [`EARLIER_MOUNT_WAIT`].
+///
+/// A sacdfs restarted at the same path (by a service manager, a container, a script) can
+/// start before the previous one has unmounted. Mounted on top, the new mount would sit
+/// inside the old one: the old one's unmount (by path) would then remove the new mount, or
+/// its detach (`MNT_DETACH`, which takes every mount below too) would take it along (#51).
+fn wait_for_earlier_mount(at: &std::path::Path) -> io::Result<()> {
+    if !fuse_mounted_on(at) {
+        return Ok(());
+    }
+    log::info!("{} is a FUSE mount: waiting for it to be unmounted", at.display());
+    let start = std::time::Instant::now();
+    while fuse_mounted_on(at) {
+        if start.elapsed() >= EARLIER_MOUNT_WAIT {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("{}: already a FUSE mount (another sacdfs?); unmount it first", at.display()),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
+/// Whether the mount on top at `at` is a FUSE file system (`at` is its mount point, not
+/// just inside one). Read from the mount table, which asks the file system nothing.
+fn fuse_mounted_on(at: &std::path::Path) -> bool {
+    top_mount(at).is_some_and(|(_, fstype)| fstype == "fuse" || fstype.starts_with("fuse."))
+}
+
+/// The device number (`major:minor`) of the mount on top at `at`, if `at` is a mount point.
+fn top_mount_device(at: &std::path::Path) -> Option<String> {
+    top_mount(at).map(|(dev, _)| dev)
+}
+
+/// The device number and file system type of the mount on top at `at`, from
+/// `/proc/self/mountinfo`: of the mounts on that path, the last listed, which is the one
+/// mounted last, over the others.
+fn top_mount(at: &std::path::Path) -> Option<(String, String)> {
+    let info = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+    let want = at.as_os_str().as_encoded_bytes();
+    info.lines()
+        .filter_map(|l| {
+            let mut f = l.split(' ');
+            let (_, _, dev, _, mp) = (f.next()?, f.next()?, f.next()?, f.next()?, f.next()?);
+            let fstype = l.split(" - ").nth(1)?.split(' ').next()?;
+            (unescape_mountinfo(mp) == want).then(|| (dev.to_owned(), fstype.to_owned()))
+        })
+        .next_back()
+}
+
+/// A path from `/proc/self/mountinfo`, where space, tab, newline and backslash are written
+/// as `\ooo` (octal).
+fn unescape_mountinfo(s: &str) -> Vec<u8> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let oct =
+            b.get(i + 1..i + 4).filter(|o| b[i] == b'\\' && o.iter().all(|c| (b'0'..=b'7').contains(c)));
+        match oct {
+            Some(o) => {
+                out.push(o.iter().fold(0u8, |v, c| v.wrapping_mul(8).wrapping_add(c - b'0')));
+                i += 4;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Serves the session until the kernel ends it, then returns, without unmounting.
+///
+/// `Session::run` unmounts by path when it ends, and in fuser 0.18 its check that the
+/// mount still exists always passes (`is_mounted` reads `POLLERR` the wrong way round;
+/// fixed upstream after 0.18.0). After `fusermount3 -u`, a sacdfs on its way out would then
+/// unmount whatever was mounted on the path since: a restarted sacdfs (#51). `spawn` moves
+/// the mount out of the session, so its end unmounts nothing; the mount is then never
+/// dropped (its drop unmounts by path, too). sacdfs unmounts on a signal itself, by path
+/// but only after checking that the mount there is its own.
+#[allow(unsafe_code)]
+fn serve(session: Session<SacdFs>) -> io::Result<()> {
+    let background = std::mem::ManuallyDrop::new(session.spawn()?);
+    // SAFETY: the handle is read out once and `background` is never dropped or used again,
+    // so the handle has a single owner.
+    let guard = unsafe { std::ptr::read(&background.guard) };
+    guard.join().map_err(|_| io::Error::other("the FUSE session panicked"))?
+}
+
+/// Unmounts the file system at `at`: `umount`, or `fusermount3 -u -z` if not root (as fuser
+/// did; the setuid helper detaches, so a busy mount is not refused).
+#[allow(unsafe_code)]
+fn unmount(at: &std::path::Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(at.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mount point holds a NUL byte"))?;
+    // SAFETY: a valid NUL-terminated path that outlives the call.
+    if unsafe { libc::umount2(c.as_ptr(), 0) } == 0 {
+        return Ok(());
+    }
+    let e = io::Error::last_os_error();
+    if e.raw_os_error() != Some(libc::EPERM) {
+        return Err(e);
+    }
+    let st = std::process::Command::new("fusermount3").args(["-u", "-z", "--"]).arg(at).status()?;
+    if st.success() { Ok(()) } else { Err(io::Error::other(format!("fusermount3 -u -z: {st}"))) }
 }
 
 /// Detaches the mount at `at` (`umount -l`).

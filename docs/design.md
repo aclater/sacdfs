@@ -227,6 +227,41 @@ unmount failed with `EBUSY`, sacdfs logged it and kept serving, and a container 
 manager waiting for it to stop hung until it killed it, leaving a dead mount behind; for users
 other than root, fuser already unmounted lazily, so this makes the two behave the same.
 
+**Restarting on the same mount point (#51).** A sacdfs stopping (after a signal, or after
+`fusermount3 -u` from outside) unmounts or detaches only its own mount, and a new sacdfs never
+mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a mount:
+`umount2` and `fusermount3 -u` act on whatever is on top at the path. Three rules:
+
+- sacdfs serves the session with `Session::spawn` and never drops fuser's mount object, so
+  the session's end unmounts nothing. *Why:* `Session::run` unmounts by path when the session
+  ends, and the check meant to skip that when the mount is already gone always passes in
+  fuser 0.18.0 (`is_mounted` reads `POLLERR` the wrong way round; fixed in fuser's main branch,
+  not released). Every sacdfs unmounted from outside therefore unmounted the path again on
+  its way out, removing a sacdfs mounted there in the meantime: lost in __STOPCONT__ when the
+  old one was still exiting (held stopped to make the order certain). This was the failure
+  seen in #51.
+- On SIGINT or SIGTERM, sacdfs unmounts (or detaches, if busy) only if the mount on top at
+  its path still has its own device number, read from `/proc/self/mountinfo` right after
+  mounting; otherwise it logs why and leaves the path alone. *Why:* the device number is
+  unique while the mount exists, which is the only time it is compared; the mount table asks
+  the file system nothing, so the check cannot wait on a stopping session.
+- A new sacdfs whose mount point is still a FUSE mount (the previous one has not unmounted
+  yet) waits for it to go, up to 10 s, then fails with "already a FUSE mount". *Why:* mounted
+  over the old mount, the new one sat inside it. As root, the old one's unmount then removed
+  the new mount instead (__PRE_ROOT__ when the restart started just before the old one stopped);
+  as a user, `fusermount3` refuses to mount over another user mount (`Permission denied`), so
+  the restart failed (__PRE_USER__), and when it raced the old one's detach the new mount went
+  into the detached tree and vanished (once in about 30 tries). The wait costs one read of
+  the mount table when the mount point is free.
+
+Considered: unmounting by the mount's identity instead of its path, but Linux has no unmount
+by mount id or descriptor (`umount2` on `/proc/self/fd/N` follows to the top mount), and
+aborting through `/sys/fs/fuse/connections` needs root and leaves a dead mount behind.
+Mounting through `Session::from_fd` with sacdfs's own `fusermount3` handshake would also work
+but duplicates fuser's mount code. When fuser releases its fix, `serve` can go back to
+`Session::run`. The container is unaffected: sacdfs starts once per container, each start has
+a new mount namespace, and the entry point clears a stale mount first.
+
 **Cost.** Mounting now hashes every source directory and image name once and keeps one map
 entry per directory and image (tens of bytes each). The node table is a hash map by inode
 number instead of a vector. Lookups of files compute their generation (one SHA-256 of about
