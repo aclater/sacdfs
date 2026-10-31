@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! `sacdfs SOURCE MOUNTPOINT`: mount SACD disc images as DSF files.
+//! `sacdfs SOURCE MOUNTPOINT`: mount SACD disc images as DSF and WAV files.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -15,15 +15,18 @@ use fuser::{Config, MountOption, Session, SessionACL};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
+use sacdfs::disc::Tuning;
 use sacdfs::engine::{Engine, default_threads};
 use sacdfs::fs::{MAX_READ, SacdFs};
 use sacdfs::index_cache::{self, IndexCache};
-use sacdfs::tree::{SourceDir, Tree};
+use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
+use sacdfs::tree::{Output, SourceDir, Tree};
 
-/// Show the audio of SACD disc images as DSF files, decoded on demand.
+/// Show the audio of SACD disc images as DSF and WAV files, decoded on demand.
 ///
 /// SOURCE is an image file or a directory searched recursively for *.iso files. Each image
-/// appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN - title.dsf.
+/// appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN - title.dsf,
+/// with NN - title.wav (24-bit PCM, converted on demand) next to it.
 /// Unmount with `fusermount3 -u MOUNTPOINT`, or stop sacdfs with SIGINT or SIGTERM.
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -38,9 +41,22 @@ struct Args {
     /// DST decoder threads (0: one per CPU).
     #[arg(long, default_value_t = 0, value_name = "N")]
     threads: usize,
-    /// Size of the cache of decoded frames, in MiB.
+    /// Size of the cache of decoded and converted frames, in MiB.
     #[arg(long, default_value_t = 256, value_name = "N")]
     cache_mb: usize,
+    /// Which files to show: dsf, wav, or both (dsf,wav).
+    #[arg(long, default_value = "dsf,wav", value_name = "LIST", value_parser = parse_formats)]
+    format: Formats,
+    /// Sample rate of the WAV files, in Hz: 88200, 176400 or 352800.
+    #[arg(long, default_value_t = 176_400, value_name = "HZ", value_parser = parse_rate)]
+    pcm_rate: u32,
+    /// Low-pass cutoff of the PCM conversion: 40 or 30 (kHz), or wide (about 80 kHz; needs a
+    /// --pcm-rate of 176400 or 352800).
+    #[arg(long, default_value = "40", value_name = "KHZ", value_parser = parse_cutoff)]
+    pcm_cutoff: Cutoff,
+    /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
+    #[arg(long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
+    pcm_gain: f32,
     /// Collapse each chain of folders below the top level that holds a single image into
     /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
     #[arg(long)]
@@ -58,6 +74,57 @@ struct Args {
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
+}
+
+/// The formats shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Formats {
+    dsf: bool,
+    wav: bool,
+}
+
+fn parse_formats(s: &str) -> Result<Formats, String> {
+    let mut f = Formats { dsf: false, wav: false };
+    for part in s.split(',') {
+        match part.trim().to_ascii_lowercase().as_str() {
+            "dsf" => f.dsf = true,
+            "wav" => f.wav = true,
+            other => return Err(format!("unknown format {other:?}: use dsf, wav or dsf,wav")),
+        }
+    }
+    Ok(f)
+}
+
+fn pcm_rate(hz: u32) -> Option<PcmRate> {
+    match hz {
+        88_200 => Some(PcmRate::R88200),
+        176_400 => Some(PcmRate::R176400),
+        352_800 => Some(PcmRate::R352800),
+        _ => None,
+    }
+}
+
+fn parse_rate(s: &str) -> Result<u32, String> {
+    s.parse()
+        .ok()
+        .filter(|&hz| pcm_rate(hz).is_some())
+        .ok_or_else(|| "use 88200, 176400 or 352800".to_owned())
+}
+
+fn parse_cutoff(s: &str) -> Result<Cutoff, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "40" => Ok(Cutoff::Khz40),
+        "30" => Ok(Cutoff::Khz30),
+        "wide" => Ok(Cutoff::Wide80),
+        _ => Err("use 40, 30 or wide".to_owned()),
+    }
+}
+
+fn parse_gain(s: &str) -> Result<f32, String> {
+    s.parse::<f32>()
+        .ok()
+        .filter(|g| g.is_finite() && (-60.0..=24.0).contains(g))
+        .ok_or_else(|| "use a number of dB from -60 to 24".to_owned())
 }
 
 fn main() -> ExitCode {
@@ -79,6 +146,17 @@ fn main() -> ExitCode {
 }
 
 fn run(args: Args) -> io::Result<()> {
+    // The wide filter passes up to about 80 kHz, which 88.2 kHz PCM cannot hold (its Nyquist
+    // frequency is 44.1 kHz). The converter would quietly use 40 kHz instead: refuse the
+    // combination before mounting.
+    let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
+    let pcm = PcmConfig { rate, cutoff: args.pcm_cutoff, gain_db: args.pcm_gain };
+    if let Err(e) = pcm.validate() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("--pcm-cutoff wide needs --pcm-rate 176400 or 352800 ({e})"),
+        ));
+    }
     let source = args.source.canonicalize().map_err(|e| with_path(e, &args.source))?;
     let mountpoint = args.mountpoint.canonicalize().map_err(|e| with_path(e, &args.mountpoint))?;
     if !mountpoint.is_dir() {
@@ -103,8 +181,13 @@ fn run(args: Args) -> io::Result<()> {
         .num_threads(threads.min(8))
         .thread_name(|i| format!("sacdfs-toc-{i}"))
         .build_global();
-    let engine = Arc::new(Engine::new(threads, args.cache_mb.saturating_mul(1 << 20))?);
-    let tree = Arc::new(Tree::new(root).with_flatten(args.flatten));
+    let output = Output {
+        dsf: args.format.dsf,
+        wav: args.format.wav,
+        samples_per_frame: rate.samples_per_frame() as u32,
+    };
+    let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
+    let tree = Arc::new(Tree::with_options(root, Tuning::default(), output).with_flatten(args.flatten));
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;

@@ -3,7 +3,7 @@
 //! The directory tree of the mount and its inode numbers.
 //!
 //! ```text
-//! MOUNT/<relative dir of the image>/<image file stem>/{Stereo,Multichannel}/NN - title.dsf
+//! MOUNT/<relative dir of the image>/<image file stem>/{Stereo,Multichannel}/NN - title.{dsf,wav}
 //! ```
 //!
 //! At mount time only the names of the source tree are walked, to find the directories
@@ -31,7 +31,44 @@ use scarletbook::audio::check_track;
 
 use crate::disc::{Disc, Tuning};
 use crate::names::{Deduper, track_file_name};
-use crate::track::TrackFile;
+use crate::track::{Format, TrackFile};
+
+/// Which files an area directory shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Output {
+    /// Show DSF files.
+    pub dsf: bool,
+    /// Show WAV files.
+    pub wav: bool,
+    /// Samples per channel per frame of the WAV files (from the PCM rate).
+    pub samples_per_frame: u32,
+}
+
+impl Default for Output {
+    /// DSF and WAV side by side, WAV at 176.4 kHz.
+    fn default() -> Self {
+        Output { dsf: true, wav: true, samples_per_frame: 2352 }
+    }
+}
+
+impl Output {
+    /// DSF files only.
+    pub fn dsf_only() -> Self {
+        Output { dsf: true, wav: false, ..Output::default() }
+    }
+
+    /// The formats shown, in the order a track's files are listed.
+    pub fn formats(&self) -> Vec<Format> {
+        let mut f = Vec::new();
+        if self.dsf {
+            f.push(Format::Dsf);
+        }
+        if self.wav {
+            f.push(Format::Wav);
+        }
+        f
+    }
+}
 
 /// Inode number of the root directory.
 pub const ROOT: u64 = 1;
@@ -174,17 +211,23 @@ pub struct Tree {
     nodes: RwLock<Vec<Arc<Node>>>,
     next_disc: AtomicU32,
     tuning: Tuning,
+    output: Output,
     flatten: bool,
 }
 
 impl Tree {
-    /// A tree with `root` at its root.
+    /// A tree with `root` at its root, showing DSF and WAV files.
     pub fn new(root: SourceDir) -> Tree {
-        Self::with_tuning(root, Tuning::default())
+        Self::with_options(root, Tuning::default(), Output::default())
     }
 
-    /// A tree whose discs search for frames with `tuning`.
+    /// A tree showing DSF files only, whose discs search for frames with `tuning`.
     pub fn with_tuning(root: SourceDir, tuning: Tuning) -> Tree {
+        Self::with_options(root, tuning, Output::dsf_only())
+    }
+
+    /// A tree whose discs search for frames with `tuning`, showing the files of `output`.
+    pub fn with_options(root: SourceDir, tuning: Tuning, output: Output) -> Tree {
         let mtime = fs::metadata(&root.path).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
         let node =
             Node::Dir(Dir { kind: DirKind::Source(root), mtime, parent: ROOT, children: Mutex::new(None) });
@@ -192,6 +235,7 @@ impl Tree {
             nodes: RwLock::new(vec![Arc::new(node)]),
             next_disc: AtomicU32::new(1),
             tuning,
+            output,
             flatten: false,
         }
     }
@@ -351,10 +395,19 @@ impl Tree {
                         );
                         continue;
                     }
-                    let Some(file) = TrackFile::new(disc.clone(), *i, track) else { continue };
-                    let name = track_file_name(track.number, track.text.title.as_deref());
-                    let ino = self.add(Node::File(Arc::new(file)));
-                    out.push(Entry { name: dedup.unique(OsStr::new(&name), true), ino, is_dir: false });
+                    // The files of one track are listed together and get the same name
+                    // but for the extension (and the same de-duplication suffix, since
+                    // they are made unique in the same order).
+                    for format in self.output.formats() {
+                        let spf = self.output.samples_per_frame;
+                        let Some(file) = TrackFile::with_format(disc.clone(), *i, track, format, spf) else {
+                            continue;
+                        };
+                        let name =
+                            track_file_name(track.number, track.text.title.as_deref(), format.extension());
+                        let ino = self.add(Node::File(Arc::new(file)));
+                        out.push(Entry { name: dedup.unique(OsStr::new(&name), true), ino, is_dir: false });
+                    }
                 }
             }
         }

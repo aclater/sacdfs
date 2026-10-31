@@ -214,6 +214,11 @@ impl Tags {
         }
     }
 
+    /// The text of frame `id`, if it is set.
+    pub fn get(&self, id: &[u8; 4]) -> Option<&str> {
+        self.frames.iter().find(|(f, _)| f == id).map(|(_, t)| t.as_str())
+    }
+
     /// The tag: an ID3v2.4 header and one UTF-8 text frame per entry. Empty if there are
     /// no frames.
     pub fn to_id3(&self) -> Vec<u8> {
@@ -354,6 +359,8 @@ mod tests {
         assert_eq!(&tag[24..28], b"TRCK");
         assert_eq!(&tag[34..], b"\x031/2");
         assert!(Tags::default().to_id3().is_empty());
+        assert_eq!(tags.get(b"TIT2"), Some("Abc"));
+        assert_eq!(tags.get(b"TPE1"), None);
     }
 
     #[test]

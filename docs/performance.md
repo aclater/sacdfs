@@ -17,7 +17,10 @@ the guest's.
 |---|---|---|---|
 | Straight read of a whole area, vs `bench decode` at the same thread count | within 1.5x | **1.43x** (machine loaded) | met |
 | First bytes of a read at a random offset, fresh mount | under 100 ms | **3.4 ms** (image in the page cache), **3.7 ms** (image evicted) | met |
-| DSD-to-PCM conversion, stereo, 176.4 kHz, default filter, one core (#6; no WAV files yet) | at least 100x real time | **209x** generic x86-64, **264x** x86-64-v3 ([below](#pcm-conversion)) | met |
+| DSD-to-PCM conversion, stereo, 176.4 kHz, default filter, one core (#6) | at least 100x real time | **209x** generic x86-64, **264x** x86-64-v3 ([below](#pcm-conversion)) | met |
+| Straight read of WAV files vs the same area's DSF files (#6) | within 1.5x | **1.09x** to **1.37x** ([below](#wav-files-6-7-8)) | met |
+| WAV: first byte at a random offset, fresh mount (#6) | under 20 ms | **1.8 ms** | met |
+| WAV: 4 players and a tagger (#6) | no read over 50 ms | worst **30.6 ms** | met |
 
 ## Client-side seek latency (issue #20)
 
@@ -127,7 +130,7 @@ in both scarletbook versions for a single frame. Grouping frames for scarletbook
 lockstep `DstDecoder::decode_many` was also measured. In a separate loaded run of 3 rounds,
 the means were 7.93 s with lockstep always on, 7.86 s with it only when there are frames
 enough for every thread, and 7.99 s without it, against 5.83 s for `bench decode`. That is
-no measurable gain, so it was not kept (see the [design](design.md#reading-a-range-of-a-file)).
+no measurable gain, so it was not kept (see the [design](design.md#reading-a-range-of-a-dsf-file)).
 
 ## Seek
 
@@ -169,9 +172,24 @@ DST stereo and 6 channels; DSD stereo with DST 5 channels; DST stereo in 2064-by
 sectors; another 2064-byte raw image), against reference hashes made from `pysacd-extract`
 output: 93 of 93 tracks in 7 areas identical, with no warnings logged.
 
+The WAV files of the same discs (2026-10-31, with the converter of #16):
+- All 93 equal their positions of a reference stream of the whole area, converted frame by
+  frame with a fresh converter (`real_discs` in `tests/wav.rs`, compared by SHA-256). That is
+  every join between tracks (gapless). 16 random ranges of up to 3 MiB per file equal the
+  straight read.
+- FFmpeg 8.1 (`ffprobe`) and Python's `wave` read all 93 at 88.2, 176.4 and 352.8 kHz, and with
+  `--pcm-cutoff wide` at 352.8 kHz: duration, rate, channels, layout (stereo, 5.0, 5.1),
+  `pcm_s24le` and tags. libsndfile reads all 457 WAV files of the corpus, its samples equal to
+  the raw bytes.
+- An RF64 file (no local track is long enough, so an ignored test writes a sparse 4.76 GB
+  six-channel file with sacdfs's header and trailer code) reads in FFmpeg as 1500 s, 5.1, and
+  in libsndfile as RF64 PCM_24.
+- Peaks of a DST stereo track are about -5.6 dBFS at 0 dB gain, as expected for SACD's
+  reference level, with no clipped samples logged.
+
 ## PCM conversion
 
-The DSD-to-PCM converter alone (phase 1 of #11; no WAV files yet), measured 2026-10-31 with
+The DSD-to-PCM converter alone (phase 1 of #11; the WAV files are [below](#wav-files-6-7-8)), measured 2026-10-31 with
 `cargo bench --bench pcm` (criterion, one frame at a time as the filesystem will call it,
 with both neighbours, noise-like DSD; 2 s warm-up, 5 s measurement per case), three rounds
 under the benchmark lock on the same 16-core machine, one thread. Two builds: generic
@@ -234,6 +252,80 @@ Frames per second are 10⁶ / (µs per frame); a stream plays 75 frames per seco
 Reproduce: `cargo bench --bench pcm`, and for the generic build
 `RUSTFLAGS="-C target-cpu=x86-64" cargo bench --bench pcm`. CI runs every case once
 (`-- --test`) as a smoke test.
+
+## WAV files (#6, #7, #8)
+
+Measured on 2026-10-31 with the WAV files of this change (`--format dsf,wav`, the defaults:
+176.4 kHz, 24-bit, 40 kHz filter, 0 dB, 256 MiB cache, one decoder thread per CPU), release
+build for generic x86-64 (`-C target-cpu=x86-64`, what most distributions build), on the
+same 16-core (32-thread) machine, images in the page cache, under the benchmark lock, with
+`--no-index-cache` so that every mount starts cold. Means of 3.
+
+**Machine load.** The virtual machine on the host was mostly idle this time: 0.1 to 2.6 of
+the 32 hardware threads busy during most runs (from its CPU time, `/proc/<pid>/stat` fields 14
+and 15), but 9.0 and 3.6 during the last two six-channel runs; the slowest DSF run (18.7 s)
+is the one with 9.0 threads busy. The ratios below include it.
+
+| What (#6) | Target | Measured | |
+|---|---|---|---|
+| Straight read of a WAV area vs the same area's DSF files, through the mount | within 1.5x | **1.09x** DST stereo, **1.37x** plain DSD stereo, **1.10x** DST 6 channels | met |
+| First byte at a random offset, fresh mount, page cache | under 20 ms | **1.8 ms** (WAV), 1.6 ms (DSF) | met |
+| `ls -l`, `stat`, header and tag reads | no decoding or conversion | WAV: none; 186 files' headers and tags in 84 ms with 0.16 s of CPU in all | met |
+| 4 players and a tagger walking the library | no read over 50 ms | worst read **30.6 ms** (players), 19.0 ms (tagger); p99 0.7 ms | met |
+
+**Straight read.** `cat` (1 MiB reads) of every file of an area, DSF then WAV, each on a fresh
+mount:
+
+| Area | Bytes DSF / WAV | DSF (s) | WAV (s) | WAV/DSF | sacdfs CPU DSF / WAV |
+|---|---|---|---|---|---|
+| DST stereo, 50 min | 2.12 / 3.19 GB | 4.52, 4.75, 4.55: **4.61** | 4.99, 4.89, 5.14: **5.00** | **1.09** | 102 / 124 s |
+| plain DSD stereo, 79 min | 3.34 / 5.01 GB | 1.71, 1.74, 1.70: **1.72** | 2.37, 2.33, 2.35: **2.35** | **1.37** | 2 / 49 s |
+| DST 6 channels, 50 min | 6.36 / 9.55 GB | 13.71, 13.97, 18.70: **15.46** | 16.61, 16.26, 17.93: **16.94** | **1.10** | 318 / 397 s |
+
+A WAV file at 176.4 kHz holds 1.5 times the bytes of the DSF file, so where reading DSF costs
+nothing but copying (plain DSD: 2 s of CPU for 79 minutes, about 2 GB/s through FUSE), the
+copy alone puts WAV near 1.5x; the conversion is hidden behind it. On DST areas decoding
+dominates either way, and the conversion adds about 20 % CPU (22 s for the stereo area at
+about 0.12 s per minute of stereo audio).
+
+How the plain DSD figure got there (same method, means of 3, WAV time with DSF at about
+1.65 s): demultiplex, then convert, 2 s read-ahead: 3.42 s (2.05x); with the
+demultiplex-and-convert pipeline: 2.90 s; and an 8 MiB read-ahead window: 2.29 s (1.39x). The
+first pipeline version also decoded DST 16 frames at a time and made DST reads 1.79x and
+1.92x; DST frames are now decoded in one parallel batch (see the
+[design](design.md#reading-a-range-of-a-wav-file)).
+
+**Seek.** A fresh mount each time, then `open`, one 128 KiB `pread` and `close`, at 37 %, 81 %
+and 55 % of three tracks of the DST stereo disc, 3 rounds: WAV 2.3, 1.6, 1.7, 1.7, 2.0, 1.6,
+2.2, 1.7, 1.8 ms (mean **1.8 ms**, worst 2.3 ms); DSF mean 1.6 ms. A WAV seek decodes two DSD
+frames more than the DSF one (its neighbours) and converts about 10 frames.
+
+**Metadata and tags.** A fresh mount: `os.walk` with `stat` of all 186 files of the five
+discs (93 DSF, 93 WAV) in 10 ms; then, for every file, a chunk walk like mutagen's (header,
+chunk headers, the bodies of `LIST` and `id3 `) or the DSF tag: 84 ms in all, 0.16 s of sacdfs
+CPU, and 20.5 MB of image reads, all from DSF files (a DSF header read still decodes its first
+frames, since its audio starts at byte 92). Before the padding and read-ahead fixes in this
+change, the same walk read 388 MB of the images and took 28 s of CPU.
+
+**Concurrency.** For 30 s, four players on four different areas (DST stereo, plain DSD
+stereo, DST 6 channels, DSD+DST 5 channels), each starting at a random position and reading
+128 KiB at a time in real time with a 2 s buffer, while a tagger walks the whole mount over and
+over (stat, the first 4 KiB, the tags). Per round, worst / 99th percentile:
+
+| Round | Players' reads | First read of each player | Tagger's files | VM threads busy |
+|---|---|---|---|---|
+| 1 | 25.4 / 0.19 ms (1936 reads) | 6.8 ms | 19.0 / 0.13 ms (675 180) | 5.0 |
+| 2 | 20.9 / 0.20 ms | 12.1 ms | 15.2 / 0.07 ms (843 138) | 0.3 |
+| 3 | 30.6 / 0.70 ms | 7.5 ms | 15.7 / 0.06 ms (864 342) | 0.1 |
+
+With the 8 MiB read-ahead for every reader, and before the first-audio-read rule, the
+players' worst reads were 114, 51 and 48 ms: a tagger touching each file started 8 s of
+conversion, and players converted in long bursts on the shared pool. A reader now gets the
+long window only when it reads far faster than real time.
+
+**Reproducing.** The same scenarios as the DSF ones above, with the `.wav` files:
+`cat MOUNT/<disc>/Stereo/*.wav > /dev/null` on a fresh mount; one `pread` of 128 KiB on a
+fresh mount for the seek; under `benchlock`, with `--no-index-cache`.
 
 ## Earlier figures (scarletbook 0.2.0, idle machine)
 

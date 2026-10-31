@@ -92,3 +92,121 @@ pub fn dsf_channels(file: &[u8]) -> Vec<Vec<u8>> {
 pub fn sha256(data: &[u8]) -> String {
     Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
 }
+
+/// A parsed WAV file.
+#[derive(Debug)]
+pub struct Wav {
+    pub rf64: bool,
+    pub channels: u16,
+    pub rate: u32,
+    pub bits: u16,
+    pub mask: u32,
+    /// The data chunk body.
+    pub data: std::ops::Range<usize>,
+    /// Samples per channel (from ds64 for RF64, else from the data length).
+    pub samples: u64,
+    /// The `LIST`/`INFO` fields.
+    pub info: Vec<(String, String)>,
+    /// The body of the `id3 ` chunk.
+    pub id3: Option<Vec<u8>>,
+    /// Chunk ids in file order.
+    pub chunks: Vec<String>,
+}
+
+fn u16_at(b: &[u8], at: usize) -> u16 {
+    u16::from_le_bytes(b[at..at + 2].try_into().unwrap())
+}
+
+/// Parses and checks a whole WAV file: RIFF or RF64, `WAVE_FORMAT_EXTENSIBLE` 24-bit PCM,
+/// sizes that add up exactly to the file length.
+pub fn parse_wav(file: &[u8]) -> Wav {
+    let rf64 = match &file[0..4] {
+        b"RIFF" => false,
+        b"RF64" => true,
+        other => panic!("not a WAV file: {other:?}"),
+    };
+    assert_eq!(&file[8..12], b"WAVE");
+    let mut riff_size = u64::from(u32_at(file, 4));
+    let mut data_size64 = None;
+    let mut samples64 = None;
+    let mut at = 12;
+    let mut w = Wav {
+        rf64,
+        channels: 0,
+        rate: 0,
+        bits: 0,
+        mask: 0,
+        data: 0..0,
+        samples: 0,
+        info: Vec::new(),
+        id3: None,
+        chunks: Vec::new(),
+    };
+    while at < file.len() {
+        let id = std::str::from_utf8(&file[at..at + 4]).unwrap().to_owned();
+        let mut size = u64::from(u32_at(file, at + 4));
+        let body = at + 8;
+        if id == "data" && rf64 {
+            assert_eq!(size, u64::from(u32::MAX));
+            size = data_size64.unwrap();
+        }
+        let end = body + size as usize;
+        assert!(end <= file.len(), "chunk {id} runs past the end");
+        match id.as_str() {
+            "ds64" => {
+                assert!(rf64 && w.chunks.is_empty(), "ds64 first, in RF64 only");
+                assert_eq!(u32_at(file, 4), u32::MAX);
+                riff_size = u64_at(file, body);
+                data_size64 = Some(u64_at(file, body + 8));
+                samples64 = Some(u64_at(file, body + 16));
+            }
+            "fmt " => {
+                assert_eq!(size, 40);
+                assert_eq!(u16_at(file, body), 0xFFFE, "WAVE_FORMAT_EXTENSIBLE");
+                w.channels = u16_at(file, body + 2);
+                w.rate = u32_at(file, body + 4);
+                let align = u16_at(file, body + 12);
+                w.bits = u16_at(file, body + 14);
+                assert_eq!(align, w.channels * w.bits / 8);
+                assert_eq!(u32_at(file, body + 8), w.rate * u32::from(align));
+                assert_eq!(u16_at(file, body + 16), 22);
+                assert_eq!(u16_at(file, body + 18), w.bits, "valid bits");
+                w.mask = u32_at(file, body + 20);
+                assert_eq!(
+                    &file[body + 24..body + 40],
+                    &[0x01, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71],
+                    "PCM subformat"
+                );
+            }
+            "data" => {
+                w.data = body..end;
+                let align = u64::from(w.channels) * 3;
+                assert_eq!(size % align, 0);
+                w.samples = samples64.unwrap_or(size / align);
+                assert_eq!(w.samples, size / align);
+            }
+            "LIST" => {
+                assert_eq!(&file[body..body + 4], b"INFO");
+                let mut p = body + 4;
+                while p < end {
+                    let fid = std::str::from_utf8(&file[p..p + 4]).unwrap().to_owned();
+                    let n = u32_at(file, p + 4) as usize;
+                    let text = &file[p + 8..p + 8 + n];
+                    assert_eq!(text.last(), Some(&0), "INFO strings end in NUL");
+                    w.info.push((fid, String::from_utf8(text[..n - 1].to_vec()).unwrap()));
+                    p += 8 + n + n % 2;
+                }
+                assert_eq!(p, end);
+            }
+            "id3 " => w.id3 = Some(file[body..end].to_vec()),
+            "JUNK" => assert!(file[body..end].iter().all(|&b| b == 0), "JUNK is zeros"),
+            other => panic!("unexpected chunk {other:?}"),
+        }
+        w.chunks.push(id);
+        at = end + (size as usize % 2);
+    }
+    assert_eq!(at, file.len());
+    assert_eq!(riff_size, file.len() as u64 - 8, "RIFF size");
+    assert_eq!(w.bits, 24);
+    w
+}

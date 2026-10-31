@@ -27,16 +27,18 @@ pub fn truncate_bytes(s: &str, max: usize) -> &str {
     &s[..end]
 }
 
-/// The name of a track's file: `NN - <title>.dsf`, or `NN.dsf` without a usable title.
-pub fn track_file_name(number: u8, title: Option<&str>) -> String {
+/// The name of a track's file: `NN - <title>.<ext>`, or `NN.<ext>` without a usable title.
+/// `ext` is a short extension (`dsf`, `wav`), so that the files of one track differ only in
+/// it.
+pub fn track_file_name(number: u8, title: Option<&str>, ext: &str) -> String {
     let title = title.map(sanitize).unwrap_or_default();
     if title.is_empty() {
-        return format!("{number:02}.dsf");
+        return format!("{number:02}.{ext}");
     }
     let prefix = format!("{number:02} - ");
     // Room for " (NNN)" from de-duplication as well as the extension.
-    let room = NAME_MAX - prefix.len() - ".dsf".len() - 6;
-    format!("{prefix}{}.dsf", truncate_bytes(&title, room).trim_end())
+    let room = NAME_MAX.saturating_sub(prefix.len() + 1 + ext.len() + 6);
+    format!("{prefix}{}.{ext}", truncate_bytes(&title, room).trim_end())
 }
 
 /// Makes names unique, in order: a repeated name gets ` (2)`, ` (3)`, ... before its
@@ -91,16 +93,20 @@ mod tests {
 
     #[test]
     fn track_names() {
-        assert_eq!(track_file_name(1, Some("Intro")), "01 - Intro.dsf");
-        assert_eq!(track_file_name(12, None), "12.dsf");
-        assert_eq!(track_file_name(3, Some(" / ")), "03 - _.dsf");
-        assert_eq!(track_file_name(3, Some("\u{1}")), "03 - _.dsf");
-        assert_eq!(track_file_name(3, Some("   ")), "03.dsf");
-        assert_eq!(track_file_name(200, Some("x")), "200 - x.dsf");
+        assert_eq!(track_file_name(1, Some("Intro"), "dsf"), "01 - Intro.dsf");
+        assert_eq!(track_file_name(1, Some("Intro"), "wav"), "01 - Intro.wav");
+        assert_eq!(track_file_name(12, None, "dsf"), "12.dsf");
+        assert_eq!(track_file_name(3, Some(" / "), "dsf"), "03 - _.dsf");
+        assert_eq!(track_file_name(3, Some("\u{1}"), "dsf"), "03 - _.dsf");
+        assert_eq!(track_file_name(3, Some("   "), "wav"), "03.wav");
+        assert_eq!(track_file_name(200, Some("x"), "dsf"), "200 - x.dsf");
         let long = "é".repeat(300);
-        let name = track_file_name(1, Some(&long));
+        let name = track_file_name(1, Some(&long), "dsf");
         assert!(name.len() <= NAME_MAX - 6);
         assert!(name.ends_with(".dsf"));
+        // The names of one track differ only in the extension, however long the title.
+        let wav = track_file_name(1, Some(&long), "wav");
+        assert_eq!(wav.strip_suffix(".wav"), name.strip_suffix(".dsf"));
     }
 
     #[test]
