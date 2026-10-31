@@ -1,0 +1,49 @@
+# Code scanning: semantic security analysis of the Rust code (it parses untrusted disc
+# images) and of the workflows themselves. Any result fails the check.
+name: codeql
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"  # weekly, picks up new queries without a code change
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read           # the action looks up its own workflow run
+      security-events: write  # upload results to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [rust, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        with:
+          category: /language:${{ matrix.language }}
+          output: ${{ runner.temp }}/codeql
+
+      - name: Fail on findings
+        run: |
+          n=$(jq -s '[.[].runs[].results[]] | length' "$RUNNER_TEMP"/codeql/*.sarif)
+          jq -r '.runs[].results[] | "\(.ruleId): \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine) \(.message.text)"' \
+            "$RUNNER_TEMP"/codeql/*.sarif
+          echo "CodeQL findings: $n"
+          test "$n" -eq 0
