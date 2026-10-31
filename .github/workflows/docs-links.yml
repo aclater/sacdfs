@@ -1,0 +1,37 @@
+# Check the links in the Markdown files with lychee: relative links to files, and
+# external ones. Weekly (links rot without a change here) and on pull requests that
+# touch Markdown.
+
+name: docs-links
+
+on:
+  pull_request:
+    paths: ["**.md", ".github/workflows/docs-links.yml"]
+  schedule:
+    - cron: "17 7 * * 1"  # weekly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lychee:
+    name: docs links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Excluded: badge images (generated on request; the Scorecard badge doesn't
+      # exist before its first run), and tests/corpus/, a verbatim copy of sacd-spec's
+      # corpus whose README links to files of that repository.
+      - uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8  # v2.9.0
+        with:
+          args: >-
+            --no-progress --max-concurrency 4 --max-retries 3
+            --exclude '^https://api\.scorecard\.dev/'
+            --exclude '^https://img\.shields\.io/'
+            --exclude-path 'tests/corpus/'
+            '**/*.md'
+          fail: true

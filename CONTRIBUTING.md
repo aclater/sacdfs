@@ -26,8 +26,11 @@ see [SECURITY.md](SECURITY.md).
    The mount tests need `/dev/fuse` and `fusermount3` (package `fuse3`); without
    `SACDFS_FUSE_TESTS=1` they are skipped where FUSE is missing. In a container, pass
    `--device /dev/fuse --cap-add SYS_ADMIN`.
-4. Update the documentation with the code: README.md for anything a user sees,
-   docs/design.md when the design changes, CHANGELOG.md under "Unreleased".
+4. Update the documentation with the code: README.md and docs/user-guide.md for anything a
+   user sees (the README's options table must match `sacdfs --help`; CI checks it with
+   `.github/scripts/check-readme-options.py`), docs/design.md when the design changes, with
+   the reason for each decision, docs/performance.md with new measurements, and CHANGELOG.md
+   under "Unreleased".
 
 ## Releasing
 

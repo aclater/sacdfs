@@ -11,13 +11,7 @@ A read-only FUSE filesystem that shows Super Audio CD disc images as DSF files, 
 files (24-bit PCM) next to them, decoded and converted on demand by
 [scarletbook](https://github.com/aclater/scarletbook-rs). Point a player, a tagger or a file
 manager at the mount point and every track of every disc is there, with tags, without
-extracting anything first.
-
-```sh
-sacdfs ~/music/sacd-images /mnt/sacd
-ls /mnt/sacd/"Some Disc"/Stereo
-fusermount3 -u /mnt/sacd
-```
+extracting anything first. Seeks return in a few milliseconds, locally or over the network.
 
 ## Install
 
@@ -29,11 +23,12 @@ depends on a git repository. `cargo install` from crates.io comes once scarletbo
 
 ### Binaries
 
-- `sacdfs-<version>-x86_64-linux.tar.gz`: generic x86-64, for any x86_64 CPU.
+- `sacdfs-<version>-x86_64-linux.tar.gz`: generic x86-64, for any x86_64 CPU. Its WAV
+  converter already uses AVX2 where the CPU has it.
 - `sacdfs-<version>-x86_64-v3-linux.tar.gz`: for x86-64-v3 CPUs (AVX2, BMI2, FMA: most Intel
-  and AMD CPUs since about 2015, the Intel N100 family included). WAV conversion costs about
-  20 % less CPU; on an older CPU this build stops with an illegal-instruction error.
-  `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
+  and AMD CPUs since about 2015, the Intel N100 family included), with all of sacdfs built for
+  them ([performance](docs/performance.md#converter-throughput)). On an older CPU this build
+  stops with an illegal-instruction error. `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
 
 Both need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). Each
 archive holds `sacdfs`, `COPYING`, `README.md` and `CHANGELOG.md`. To download, check and
@@ -66,48 +61,63 @@ is in [docs/deployment.md](docs/deployment.md).
 
 ### From source
 
-See [Building](#building): `cargo build --release` with Rust 1.85 or later, or
-`cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.1.0`.
+sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through `/dev/fuse`
+and mounts with `fusermount3`, without linking libfuse.
 
-## Usage
+```sh
+cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.1.0
+# or, in a clone:
+cargo build --release && target/release/sacdfs --help
+```
+
+Running the tests is described in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Quick start
+
+```sh
+mkdir -p ~/sacd
+sacdfs ~/music/sacd-images ~/sacd       # returns once mounted
+ls ~/sacd/"Some Disc"/Stereo
+mpv ~/sacd/"Some Disc"/Stereo/"01 - First Track.wav"
+fusermount3 -u ~/sacd
+```
+
+`~/music/sacd-images` is one `.iso` image or a directory searched recursively for them. Add
+`-f` to stay in the foreground and see the log, `--flatten` to drop the folders that hold
+nothing but one image, and `--format dsf` if a library scanner should see only the DSF files.
+The [user guide](docs/user-guide.md) has more.
+
+## Options
 
 ```
 sacdfs [OPTIONS] SOURCE MOUNTPOINT
 ```
 
-`SOURCE` is one image file, or a directory that is searched recursively for `*.iso` files
-(any case). `MOUNTPOINT` is an existing directory.
+`SOURCE` is an SACD image file, or a directory searched recursively for `*.iso` files (any
+case). `MOUNTPOINT` is an existing, empty directory.
 
 | Option | Meaning |
 |---|---|
 | `-f`, `--foreground` | Stay in the foreground and log to standard error. Without it sacdfs returns once the filesystem is mounted and keeps running in the background. |
-| `--threads N` | DST decoder threads; 0 (the default) means one per CPU. |
-| `--cache-mb N` | Size of the cache of decoded and converted frames, in MiB (default 256). DSF and WAV reads share it. |
+| `--threads N` | DST decoder and PCM converter threads; `0` (the default) means one per CPU. |
+| `--cache-mb N` | Size of the cache of decoded and converted frames, in MiB (default `256`). DSF and WAV reads share it. |
 | `--format LIST` | Which files to show: `dsf`, `wav`, or both, `dsf,wav` (the default). |
 | `--pcm-rate HZ` | Sample rate of the WAV files: `88200`, `176400` (the default) or `352800`. Always 24-bit. |
-| `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz, with `--pcm-rate 176400` or `352800` only; refused with `88200`). |
-| `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default 0). Samples that would clip are clamped, and the log says so once per file. |
-| `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder (see below). Top-level folders of `SOURCE` are never collapsed. |
+| `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz; with `--pcm-rate 176400` or `352800` only). |
+| `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default `0`). Samples that would clip are clamped, and the log says so once per file. |
+| `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder ([Layout](#layout)). Top-level folders of `SOURCE` are never collapsed. |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
-| `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where sacdfs found frames in each image, so that seeks after a remount or reboot skip most of their search: on a network share that saves round trips (see below). |
+| `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where frames are in each image, so that seeks after a remount skip most of their search. |
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
-| `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default 64). An image stays open after its directory is listed and between reads, so that a seek does not have to open it again (a round trip or two on a network share); the least recently used one is closed when the limit is reached, and any image unused for 5 minutes is closed. |
-| `-v` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
+| `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default `64`). The least recently used is closed first, and any image unused for 5 minutes is closed. |
+| `-v`, `--verbose` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
+| `-h`, `--help` | Print help (`-h` for a summary). |
+| `-V`, `--version` | Print the version. |
 
-Unmount with `fusermount3 -u MOUNTPOINT`. SIGINT (Ctrl-C) and SIGTERM unmount and stop sacdfs
-too. If files are still open (or an NFS server still exports the mount), the mount is detached
-instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
-stops when the last one is closed. Started again on a mount point that is still mounted (the
-previous sacdfs is stopping), sacdfs waits up to 10 s for it to be unmounted rather than mount
-over it.
-
-**The seek index cache** holds one small file per image (a few tens of KB for a disc played
-through), named by a hash of the image's path, never the path itself, and is bounded to 32 MiB
-in all (the least recently used files go first). It is written every 30 seconds if it changed
-and at unmount, and never leaves the machine. An image whose size or modification time
-changes misses its entry. sacdfs never trusts the cache: every saved position is checked when
-it is used, so a stale or damaged cache can only make a seek slower, never wrong. Deleting the
-directory is always safe.
+Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C) and SIGTERM unmount too. If files are
+still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
+each option does in detail, and the seek index cache, are in the
+[user guide](docs/user-guide.md#options).
 
 ## Layout
 
@@ -124,15 +134,12 @@ MOUNTPOINT/
       01 - <title>.wav
 ```
 
-- `Stereo` and `Multichannel` appear only for the areas a disc has.
-- File names come from the track titles. `/`, NUL and control characters become `_`; a track
-  without a title is `NN.dsf`; repeated names get ` (2)`, ` (3)`. A track's DSF and WAV files
-  have the same name but for the extension. `--format dsf` or `--format wav` shows one of them
-  only.
-- A file that is not an SACD image is left out. Directories with no `*.iso` file anywhere below
-  them are left out too.
-- A track the disc cannot play (an empty track, or one that runs past the end of the image) is
-  left out; the reason is logged at `-v`.
+- Each track is there twice, as a DSF and a WAV file of the same name; `--format` shows one
+  kind only. `Stereo` and `Multichannel` appear only for the areas a disc has.
+- File names come from the track titles (`NN.dsf` for a track without one); repeated names
+  get ` (2)`, ` (3)`.
+- Files that are not SACD images, folders with no `*.iso` file below them, and tracks the
+  disc cannot play are left out.
 
 With `--flatten`, a folder whose only content is one image, directly or through a chain of
 folders that each hold nothing else, holds that image's `Stereo` and `Multichannel` folders
@@ -144,141 +151,70 @@ SOURCE/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc.iso
 
 shows as `MOUNTPOINT/Artist/2001 - Album [SACD]/Stereo/01 - Title.dsf` instead of
 `MOUNTPOINT/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc/Stereo/01 - Title.dsf`.
-A folder with an image and another folder of images, or with two images, is kept as it is.
-Flattening is decided from the file names alone, so it does not slow down mounting.
+It is decided from the file names alone, so it does not slow down mounting.
 
-Each file is a standard DSF file (2.8224 MHz, 1 bit, 4096-byte blocks) with an ID3v2.4 tag:
-title, performer, album artist, album, track n/N, disc n/N for multi-disc sets, composer, date,
-ISRC, genre, publisher and copyright, as far as the disc has them. The audio is the track's
-frames as the TOC gives them, bit-identical to what the reference extractors (pysacd's
-`pysacd-extract`, scarletbook's `bench decode`) write; the pauses between tracks are not
-included.
+## Formats and quality
 
-Each WAV file is the same track converted to 24-bit PCM at `--pcm-rate` (176.4 kHz by
-default), band-limited to 40 kHz (or 30 kHz with `--pcm-cutoff 30`, or about 80 kHz with
-`--pcm-cutoff wide`, which lets more of DSD's ultrasonic noise through), at 0 dB unless
-`--pcm-gain` says otherwise:
-- RIFF/WAVE with `WAVE_FORMAT_EXTENSIBLE`; a file over 4 GiB (a long multichannel track) is
-  RF64 instead, which most current software reads.
-- Channel order and mask: from the area's loudspeaker layout on the disc, as the DSF files'
-  channel types. Stereo is FL FR, 5-channel (3/2) FL FR FC BL BR (5.0) and 5.1 FL FR FC LFE
-  BL BR, in the disc's channel order. An area with any other combination of channel count and
-  speaker configuration (rare: not defined by the format) gets the layout of its channel
-  count (1 FC; 3 FL FR FC; 4 FL FR BL BR; 5 and 6 as above), and sacdfs logs this once per
-  disc at `-v`.
-- Tags: the same ID3v2.4 tag as the DSF file in an `id3 ` chunk, and a `LIST`/`INFO` chunk
-  (title, artist, album, track number, date, genre) for software that reads only that. Both
-  come after the audio.
-- The audio starts after 256 KiB of padding (a `JUNK` chunk) and ends on a 4 KiB boundary, so
-  that reading the header or the tags converts nothing. A tagger that walks every chunk header
-  converts the track's first frame or two (a few milliseconds).
-- The audio is gapless: each track's first and last frames are converted together with the
-  neighbouring tracks' audio, so the WAV files of an area played one after the other are one
-  continuous stream.
+The **DSF files** (DSD64, 2.8224 MHz, 1 bit) hold each track's audio bit-identical to what
+the reference extractors (pysacd's `pysacd-extract`, scarletbook's `bench decode`) write, with
+an ID3v2.4 tag from the disc's text. The **WAV files** are the same tracks converted to 24-bit
+PCM at 176.4 kHz (or 88.2 or 352.8 kHz), band-limited to 40 kHz by default (30 kHz, or about
+80 kHz with `--pcm-cutoff wide`), gapless from one track to the next, with the same tag in an
+`id3 ` chunk and a `LIST`/`INFO` chunk; channel masks follow the disc's speaker layout
+(stereo, 5.0, 5.1), and files over 4 GiB are RF64. The converter's pass band is flat to
+±0.00003 dB, its stopband at least 114.9 dB down, and it adds nothing measurable above the
+24-bit step ([docs/pcm-quality.md](docs/pcm-quality.md)). Sizes are exact; listing, `stat`
+and reading a WAV file's header or tags never decode anything. Details, and how taggers and
+scanners are served: [user guide](docs/user-guide.md#formats).
 
-Sizes are exact, and listing a directory, `stat` or reading a WAV file's header or tags never
-decodes or converts anything. Reading a DSF file's header decodes the track's first quarter
-second or so: DSF audio starts at byte 92, and the kernel reads 256 KiB from the start of a
-file whatever was asked for (see [docs/performance.md](docs/performance.md#dsf-header-reads-32)). A WAV file is converted when its audio is read; a player reading it in real
-time, or `cp`, is kept ahead by read-ahead on all cores. A program that reads every audio file
-of a library (fingerprinting, loudness scans) converts every WAV file too: use `--format dsf`
-for those.
+## Deployment
 
-## Sharing the mount over NFS
+- **Locally:** run sacdfs on the Linux machine that holds the images, as in the
+  [quick start](#quick-start). A cold seek returns in about 1 ms, a WAV seek in about 2 ms.
+- **On a NAS (the main deployment):** the [container image](docs/deployment.md) runs sacdfs
+  next to the images and shares its mount over SMB and NFS, so any client (Linux, macOS,
+  Windows, phones, network players) sees the DSF and WAV files. sacdfs's reads of the images
+  stay on the NAS, so a seek costs about one network round trip more than locally: about 5 ms
+  over SMB on a gigabit LAN. Docker, Podman, Compose and TrueNAS SCALE are covered.
+- **On a Linux client, images on a network share:** sacdfs runs on the client, and each read
+  of an image is a round trip to the server. A cold seek takes about 19 to 27 ms over NFS from
+  a NAS's hard disks, about 2 to 3 ms once the seek index knows that part of the disc. The
+  mount can also be re-exported by the kernel NFS server
+  ([user guide](docs/user-guide.md#sharing-the-mount-over-nfs)).
 
-Inode numbers come from what each entry is (its source path, or the image, area, track and
-format), not from the order sacdfs finds things, so they are the same on every mount, and the
-kernel NFS server can export the mount: clients keep working, open files included, after
-sacdfs restarts. `/etc/exports` needs an `fsid` (a FUSE mount has no device number of its
-own), and sacdfs `--allow-other` when it does not run as root:
-
-```
-/srv/sacd  192.168.1.0/24(ro,fsid=4242,no_subtree_check)
-```
-
-- To restart sacdfs under an export, stop the NFS server first, then start it again after
-  the new mount is up (`systemctl stop nfs-server`, restart sacdfs, `systemctl start
-  nfs-server`). Its clients wait, as for a server reboot. While the server runs, its open
-  files keep the old mount busy, and with the export gone a client could be told "stale file
-  handle".
-- NFSv3 clients carry on reading as if nothing happened (this is what the tests check).
-  NFSv4 clients also reclaim their open state after a server restart, within the server's
-  grace period.
-- A file whose image changed (size or modification time) is refused with "stale file
-  handle" instead of showing other audio, as is a WAV file after a change of `--pcm-rate`,
-  `--pcm-cutoff` or `--pcm-gain`. Directories stay valid.
-- With `--flatten` turned on or off, images, areas and files keep their numbers (a collapsed
-  folder is the image's folder); only the folders that disappear or reappear change.
-- Adding or removing images does not change the numbers of the others. The design is in
-  [docs/design.md](docs/design.md#file-identity-and-nfs-export).
-
-## Performance
-
-A straight read of a DST stereo disc runs at 1.2x the time scarletbook's own `bench decode`
-takes for the same area on an idle machine (about 500 MB/s), and at 1.4x on a heavily loaded
-one; a read at a random offset returns in about 1 to 4 ms on a fresh mount from a local disk,
-with four to five reads of the image (three for plain DSD discs), or one read when the seek
-index cache already knows that part of the disc. With images on a network share, each read of
-the image is a round trip, so these counts matter most there. Reading a WAV file straight through
-takes 1.1 to 1.2 times as long as reading the same track's DSF file (the WAV file holds 1.5
-times the bytes), and a seek in it returns in about 2 ms. Over SMB on a gigabit LAN, a seek
-returns in about 5 ms with sacdfs on the server, or with the images on the share. See
-[docs/performance.md](docs/performance.md).
-
-## Running it on a NAS
-
-The container image (`ghcr.io/aclater/sacdfs`, or built from this repository) runs sacdfs
-next to the images and shares its mount over SMB and NFS, so that any client (Windows, macOS, phones, network players) sees the DSF
-and WAV files, and seeks stay fast because sacdfs's reads of the images stay on the NAS. See
-[docs/deployment.md](docs/deployment.md) for Docker, Podman, Compose and TrueNAS SCALE, and
-for mounting the shares.
+How fast each one is, against the project's targets: [docs/performance.md](docs/performance.md).
 
 ## Limits
 
-- Linux only for now, and read-only; other systems can read the files over SMB or NFS from
+- Linux only, and read-only; other systems read the files over SMB or NFS from
   [the container](docs/deployment.md).
-- DSF and WAV output only: no DSDIFF (DFF), no FLAC, no 44.1/48 kHz or 16-bit PCM. The converter is measured in
-  [docs/pcm-quality.md](docs/pcm-quality.md).
-- The directory tree is read once, at mount time. Images added to or removed from `SOURCE`
+- DSF and WAV output only: no DSDIFF (DFF), no FLAC, no DoP, no 44.1/48 kHz or 16-bit PCM.
+- The directory tree is read once, at mount time: images added to or removed from `SOURCE`
   later need a remount.
-- Each image is read through one file handle; reads of one disc's sectors are serialised.
-  Decoding runs in parallel. At most `--max-open-images` images are open at once.
-- An image file that changes while mounted (another size, modification time or file) is
-  opened again, at most a second after the change; an image whose size changed gives I/O
-  errors until the next mount, since its directory still shows the old tracks.
-- A damaged disc image shows up as missing directories or files, filled audio (missing frames as
-  0x69, invalid DST frames as 0x55, as the reference extractors do, with a warning in the log)
-  or an I/O error on one file. It never stops the mount.
-
-## Building
-
-sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through `/dev/fuse`
-and mounts with the `fusermount3` helper of FUSE 3 (package `fuse3` on most distributions),
-without linking libfuse.
-
-```sh
-cargo build --release
-target/release/sacdfs --help
-```
-
-The DSD-to-PCM converter chooses its code when it starts: AVX2 (x86-64-v3) where the CPU has
-it, SSE2 otherwise. A generic build therefore runs the converter at AVX2 speed on most
-current CPUs, with the same output bit for bit. `SACDFS_SIMD=baseline`, `v3` or `v4` picks
-another copy, for tests and measurements; the AVX-512 copy (`v4`) is not the default because
-it measured slower ([docs/design.md](docs/design.md#pcm-conversion-phase-1-the-converter)).
-
-Run the tests with `cargo test`. The mount tests need `/dev/fuse` and `fusermount3` and pass
-silently without them; set `SACDFS_FUSE_TESTS=1` to make their absence a failure. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
+- A DSF file's header read decodes the track's first quarter second or so (a WAV file's
+  decodes nothing); a program that reads every audio file (fingerprinting, loudness scans)
+  converts every WAV file, so use `--format dsf` for those.
+- A damaged image shows up as missing directories or files, filled audio (with a warning in
+  the log) or an I/O error on one file. It never stops the mount.
 
 ## How it works
 
-[docs/design.md](docs/design.md) describes the layout, the DSF and WAV mappings, the frame
-locator, caching and concurrency.
+[docs/design.md](docs/design.md) describes the architecture and the reason for each decision:
+the layout, the DSF and WAV mappings, the frame locator and seek index, caching, concurrency,
+the converter, the container and the release builds.
 
-## Licence
+## Licence and credits
 
 sacdfs is free software: you can redistribute it and/or modify it under the terms of the
 [GNU General Public License](COPYING) as published by the Free Software Foundation, either
-version 3 of the License, or (at your option) any later version. The test corpus in `tests/corpus/` is dedicated to
-the public domain under CC0 1.0 (see its [licence](tests/corpus/LICENSE)).
+version 3 of the License, or (at your option) any later version.
+
+- **[scarletbook](https://github.com/aclater/scarletbook-rs)** (MIT OR Apache-2.0) does all
+  SACD parsing and DST decoding; sacdfs uses its public API only.
+- **[pysacd](https://github.com/aclater/pysacd)** (GPL-2.0-or-later): the DSD-to-PCM
+  converter's structure is ported from its `csrc/dsp.c`, and its `pysacd-extract` made the
+  reference hashes the DSF files are checked against.
+- **dsd2pcm** by Sebastian Gesemann (BSD-3-Clause): the converter's first stage uses its
+  technique of filter lookup tables indexed by whole DSD bytes.
+- The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec),
+  is dedicated to the public domain under CC0 1.0 (see its [licence](tests/corpus/LICENSE)).
