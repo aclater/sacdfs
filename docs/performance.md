@@ -451,6 +451,26 @@ Reproduce: `cargo bench --bench pcm`, and for the generic build
 `RUSTFLAGS="-C target-cpu=x86-64" cargo bench --bench pcm`. CI runs every case once
 (`-- --test`) as a smoke test.
 
+## scarletbook 0.5.0 (#45)
+
+Measured on 2026-10-31 with the pin moved from 0.4.1 to 0.5.0. 0.5.0 changes scarletbook's own
+cursors (a cancellation check every 32 sectors, a stored-frames mode); the `Demuxer` and
+`DstDecoder` that sacdfs reads with are unchanged. Generic x86-64 release builds
+(`-C target-cpu=x86-64`), images in the page cache, a fresh mount with `--no-index-cache` for
+every measurement, the two builds alternating, under the benchmark lock, means of 3. The
+virtual machine on the host kept 0.0 to 0.2 hardware threads busy.
+
+| What | 0.4.1 | 0.5.0 |
+|---|---|---|
+| `cat` of every DSF file of a DST stereo area (50 min, 2.12 GB) | 4.35, 4.63, 4.42: **4.47 s** | 4.22, 4.34, 4.43: **4.33 s** |
+| Cold seek, DST stereo: open and one 128 KiB read at 37 %, 81 % and 55 % of three tracks | **0.85 ms** | **0.81 ms** |
+| Cold seek, plain DSD stereo, the same positions | **0.25 ms** | **0.24 ms** |
+
+Equal within the noise (the straight reads spread over 0.4 s in each build). These seek
+times are taken inside one process (`open` and `pread`); the 3.4 ms [below](#seek) times a
+whole `dd`, including starting it. DSF: 93 of 93 tracks identical to the reference hashes with
+either build; WAV: all 93 files byte-identical between the builds, and `real_discs` passes.
+
 ## Converting runs of frames (#24)
 
 Measured on 2026-10-31, after scarletbook 0.4.1 (#39): the same straight reads as below (`cat`

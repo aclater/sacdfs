@@ -37,11 +37,20 @@ published on crates.io. sacdfs adds no SACD format knowledge of its own beyond w
 API exposes: sector reading (`Image`), frame reassembly (`Demuxer`), TOCs and text
 (`Toc`), and decoding (`DstDecoder`, `audio::decode_frame`).
 
-The pin is tag v0.4.1. 0.4.0 and 0.4.1 changed no decoded output (the corpus hashes and the
-real-disc gates are unchanged) and needed no code change to build. Of what they add, sacdfs
-uses only the loudspeaker layouts so far ([Speaker layouts](#speaker-layouts)). The seek
-indexes, cold seeks (`SeekPolicy::Speculative`) and per-thread disc clones are for sacdfs#28,
-which first measures them against sacdfs's own frame locator. sacdfs builds scarletbook
+The pin is tag v0.5.0, the latest release when 0.1.0's release preparation started (#45);
+**why:** the release ships against the newest scarletbook, and later releases move the pin in
+their own change. 0.4.0, 0.4.1 and 0.5.0 changed no decoded output (the corpus hashes and the
+real-disc gates are unchanged) and needed no code change to build. 0.5.0's one breaking
+change, new public fields in `Locale` and `MasterToc`, breaks only code that builds those
+structs as literals, which sacdfs does not do. Of what these releases add, sacdfs uses only the
+loudspeaker layouts so far ([Speaker layouts](#speaker-layouts)). 0.5.0's cancellation
+(`CancelToken`) and progress (`Progress`) work on scarletbook's own cursors, which sacdfs does
+not use (it demultiplexes with `Demuxer` and decodes with `DstDecoder`, both unchanged in
+0.5.0). They could later back FUSE `INTERRUPT` (noted in #45). They are not adopted in the
+pin change; **why:** a pin change that adds no behaviour can be checked by comparing output
+and timings before and after, and adopting them is a change of its own. The seek indexes,
+cold seeks (`SeekPolicy::Speculative`) and per-thread disc clones are for sacdfs#28, which
+first measures them against sacdfs's own frame locator. sacdfs builds scarletbook
 without its `parallel` feature and decodes on its own worker pool, so the larger window of a
 parallel library cursor (512 positions, about 48 MB) does not apply; **why:** memory stays
 bounded by `--cache-mb` however many files are open.
