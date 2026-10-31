@@ -127,11 +127,13 @@ thread_local! {
     static CONVERTERS: RefCell<Vec<(u64, u8, Converter)>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Most frames converted in one job (#24). TEMPORARY: `SACDFS_PCM_RUN` for measuring.
-fn pcm_run() -> u32 {
-    static RUN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *RUN.get_or_init(|| std::env::var("SACDFS_PCM_RUN").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1))
-}
+/// Most consecutive frames converted in one job (#24), for frames that come from the
+/// plain DSD pipeline (at most [`PIPELINE_CHUNK`] at a time): one job per four frames cut a
+/// straight WAV read of a plain DSD area by 17 %, against 11 % with two and 12 % with eight.
+/// Frames of a DST batch, which arrive all at once, are converted one per job: there the
+/// parallelism matters more, and runs of four made the read 5 % slower. Small, so that a job
+/// takes well under a millisecond and readers sharing the pool are not held up (#15).
+const PCM_RUN: u32 = 4;
 
 /// Engine ids, for the per-thread converters.
 static NEXT_ENGINE: AtomicU64 = AtomicU64::new(1);
@@ -287,7 +289,7 @@ impl Engine {
         self.pool.scope(|s| -> Result<(), ReadError> {
             let mut dsd: Vec<Arc<Dsd>> = Vec::with_capacity((d1 - d0) as usize);
             let mut next_job = t0;
-            let spawn_ready = |dsd: &Vec<Arc<Dsd>>, next_job: &mut u32| {
+            let spawn_ready = |dsd: &Vec<Arc<Dsd>>, next_job: &mut u32, run: u32| {
                 let have = d0 + dsd.len() as u32;
                 // Frame t can be converted once t + 1 is decoded, or is past the area.
                 let ready = |t: u32| t < t1 && (t + 1 < have || (t < have && t + 1 >= area_end));
@@ -299,7 +301,7 @@ impl Engine {
                     }
                     // A run of consecutive wanted frames, converted in one job (#24).
                     let mut u = t + 1;
-                    while u - t < pcm_run() && ready(u) && wanted[(u - t0) as usize] {
+                    while u - t < run && ready(u) && wanted[(u - t0) as usize] {
                         u += 1;
                     }
                     *next_job = u;
@@ -323,11 +325,14 @@ impl Engine {
                     });
                 }
             };
+            // Runs only for pipeline chunks (plain DSD, or the carry): see PCM_RUN.
+            let mut run = PCM_RUN;
             self.dsd_frames(disc, area, stream, d0, d1, |chunk| {
+                run = if chunk.len() as u32 <= PIPELINE_CHUNK { PCM_RUN } else { 1 };
                 dsd.extend(chunk);
-                spawn_ready(&dsd, &mut next_job);
+                spawn_ready(&dsd, &mut next_job, run);
             })?;
-            spawn_ready(&dsd, &mut next_job);
+            spawn_ready(&dsd, &mut next_job, run);
             Ok(())
         })?;
         let converted = converted.into_inner().unwrap_or_else(|p| p.into_inner());
