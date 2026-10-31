@@ -101,7 +101,8 @@ default), band-limited to 40 kHz (or 30 kHz with `--pcm-cutoff 30`), at 0 dB unl
   (title, artist, album, track number, date, genre) for software that reads only that. Both
   come after the audio.
 - The audio starts after 256 KiB of padding (a `JUNK` chunk) and ends on a 4 KiB boundary, so
-  that a tagger reading the header or the tags never makes sacdfs convert anything.
+  that reading the header or the tags converts nothing. A tagger that walks every chunk header
+  converts the track's first frame or two (a few milliseconds).
 - The audio is gapless: each track's first and last frames are converted together with the
   neighbouring tracks' audio, so the WAV files of an area played one after the other are one
   continuous stream.

@@ -205,11 +205,16 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   1.1 MB of image reads per file before, 0 after; reading the tags, about 240 KB per file
   before, 0 after. The cost is 256 KiB of zeros per file, about 0.05 % of a typical track. The
   padding takes up the ds64 chunk in RF64 files, so the audio offset is the same for both.
+  *What padding cannot avoid:* a tagger that walks the chunks (mutagen, TagLib) reads the 8-byte
+  header of the data chunk, which RIFF puts right before the audio, and the kernel then reads
+  that page and about 16 KiB after it. So such a tagger converts the track's first one or two
+  frames: measured, about 3 ms per file with the stub converter, and the image reads of one
+  cold seek (about 1.1 MB per file, the same as reading a DSF file's header).
   *Not for DSF:* a DSF file's chunk layout is fixed (the audio starts at byte 92), so reading a
   DSF file's header still decodes its first frames. Reading its tag decodes almost nothing.
 - Header and tag bytes are built when the area directory is listed, like the DSF files', so
-  `stat` and `ls -l` never read the image, and reading the header or tags of a WAV file
-  decodes and converts nothing.
+  `stat` and `ls -l` never read the image, and reading the first 256 KiB or the tags of a WAV
+  file decodes and converts nothing.
 
 ## Reading a range of a WAV file
 
