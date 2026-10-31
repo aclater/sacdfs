@@ -37,6 +37,15 @@ published on crates.io. sacdfs adds no SACD format knowledge of its own beyond w
 API exposes: sector reading (`Image`), frame reassembly (`Demuxer`), TOCs and text
 (`Toc`), and decoding (`DstDecoder`, `audio::decode_frame`).
 
+The pin is tag v0.4.1. 0.4.0 and 0.4.1 changed no decoded output (the corpus hashes and the
+real-disc gates are unchanged) and needed no code change to build. Of what they add, sacdfs
+uses only the loudspeaker layouts so far ([Speaker layouts](#speaker-layouts)). The seek
+indexes, cold seeks (`SeekPolicy::Speculative`) and per-thread disc clones are for sacdfs#28,
+which first measures them against sacdfs's own frame locator. sacdfs builds scarletbook
+without its `parallel` feature and decodes on its own worker pool, so the larger window of a
+parallel library cursor (512 positions, about 48 MB) does not apply; **why:** memory stays
+bounded by `--cache-mb` however many files are open.
+
 ## Layout
 
 ```
@@ -77,8 +86,9 @@ MOUNT/
 - *Implementation:* a track's files are made one after the other, DSF first, through the same
   de-duplicator, so a track's two names always differ only in the extension, ` (2)` suffixes
   included.
-- Every inode number is stable for a mount's lifetime. Sizes are exact and known from the
-  TOC alone.
+- Inode numbers say what an entry is and are the same on every mount (see
+  [File identity and NFS export](#file-identity-and-nfs-export)). Sizes are exact and known
+  from the TOC alone.
 
 **Hybrid discs.** sacdfs shows only the SACD audio areas of an image. The CD (Red Book)
 layer of a hybrid disc is not in SACD images at all, because SACD rippers read only the
@@ -105,7 +115,9 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   with one album keeps both folders. A single image file as SOURCE is unaffected.
 - Collisions get ` (2)` as before (the collapsed folder keeps its own name, so it can
   collide only where an image of the same stem sits next to it, exactly as without the
-  option). Inode numbers stay stable for the mount's lifetime.
+  option). A collapsed folder has its image's inode number, so the image, its areas and its
+  files have the same numbers with and without the option; only the folders that collapse
+  away (or come back) differ.
 - *Implementation:* the decision is made from the names walked at mount time
   (`SourceDir::single_image`, a walk down the chain already in memory), when the parent
   directory is listed. No image is opened for it, so mounting costs the same with and
@@ -122,6 +134,90 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   example, not counting files that are not SACD images) would mean opening every image at
   mount, which is the cost the lazy tree exists to avoid.
 
+## File identity and NFS export
+
+Issue #18, for the server-side deployment (#17): an NFS client keeps file handles, which hold
+the inode and generation numbers, across server restarts. Numbers handed out in walk order
+changed on every mount, and clients got `ESTALE` on open files and cached directories after
+every NAS reboot or app update.
+
+**Inode numbers** (`src/ident.rs`) are 64 bits:
+
+```
+ 63                                16 15 14 13 12         5  4  3      0
++------------------------------------+-----+--+------------+--+--------+
+| key: 48 bits of SHA-256 of a path  |kind |sl| track no.  |wv| flavour|
++------------------------------------+-----+--+------------+--+--------+
+```
+
+- A source directory's key comes from its path relative to SOURCE; an image's from the
+  image's relative path (with a domain byte, so a directory and an image never share an
+  input). Kind 0 is that directory itself (a source directory, an image's directory, or a
+  collapsed `--flatten` folder, which takes its image's number); kind 1 an area (`sl` is the
+  slot); kind 2 a track file: slot, track number (1 to 255, unique in an area by
+  construction), `wv` for WAV, and 4 bits of the PCM flavour (0 for DSF). The root is 1, as
+  FUSE requires; key 0 is never used.
+- *Why the image's key and the entry bits in one number:* after a restart the number is all
+  sacdfs gets (the kernel asks for `.` of it). With the image's key in the number, the image
+  is found from the index of names made at mount, and the area and file from the low bits,
+  without opening any other image. A plain hash of every entry would need a persistent table,
+  or all images opened, to be found again.
+- *Why SHA-256:* its output is fixed forever (std's `DefaultHasher` may change between Rust
+  releases, which would turn an app update into a restart with all handles stale), the crate
+  is already a dependency, and hashing every name walked costs little at mount (below). A
+  unit test pins one number so that an accidental change of the scheme fails.
+- *Why 48 bits of key:* 16 bits are needed for the entries; with 48 bits, a collision
+  becomes likely only around 16 million paths, and is detected anyway.
+- **Collisions** are detected at mount, where every key is computed from the names walked
+  (`Ids::new`). The path that sorts first (domain, then bytes) keeps the key; every other one
+  takes the first free key of the hash of its path with an attempt number appended (1, 2,
+  ...), free meaning no path's first key and not yet handed out. This does not depend on the
+  walk order, but a fallback key can change on a later mount if a new path's first key takes
+  it. A second area in the same slot (only a hostile image has one) is not shown, rather than
+  given a number that is not its own.
+- **What changes the numbers:** renaming or moving a folder or image changes its number and
+  everything below it. `--flatten` changes only the folders that collapse away. `--format`
+  hides files without changing the others'. `--pcm-rate`, `--pcm-cutoff` and `--pcm-gain`
+  change the WAV files' 4 flavour bits (so usually their numbers) and always their
+  generations. Adding or removing an image changes no other number, except in the
+  collision case above.
+
+**Generation numbers.** A track file's generation is 32 bits (all the kernel keeps) of a hash
+of its image's sector count and mtime, its format, size and an output version per format, and
+for WAV the full PCM flavour; never 0. A handle to a file whose bytes may have changed then
+fails with `ESTALE` instead of serving other audio. The output versions (`DSF_VERSION`,
+`WAV_VERSION`) are bumped by any change that makes the same track's bytes differ.
+Directories have generation 0: they are containers found by name, and a handle to one whose
+content changed should still work (a missing area or file is then not found).
+*Why not the image's file size:* the sector count is the image's size in sectors, already in
+the TOC; together with the mtime it catches any rewrite, without another `stat` per lookup.
+
+**Export support.** `init` asks for `FUSE_EXPORT_SUPPORT`. `lookup` answers `.` (the inode
+itself) and `..` (its directory's parent), which the kernel sends to turn a file handle into
+an inode and to connect a directory to the root. `Tree::get` of a number not made yet in this
+mount finds it from `Ids`, the index of keys built at mount from the names already walked:
+the key's chain of parent directories, then from the root down, each directory on the way is
+loaded (by inode number, not name, so de-duplicated names and `--flatten` do not matter), then
+the image's area and file. That opens exactly the images a lookup of the path would open (the
+images of the directories on the way, as when a client walks there), never all of them.
+
+**Restarting under an export.** The NFS server's open files and export cache hold the old FUSE
+mount, which then cannot be unmounted; and with the export removed, a client is told `ESTALE`.
+So the server is stopped around a restart of sacdfs, and its clients wait as for a server
+reboot. NFSv3 is stateless and reads on; NFSv4 reclaims its open state in the grace period.
+
+**Stopping a busy mount.** On SIGINT or SIGTERM, a mount that cannot be unmounted (files open,
+or held by an NFS server) is detached (`MNT_DETACH`, or `fusermount3 -u -z`) with a warning;
+sacdfs serves the files still open and exits when the last is closed. *Why:* before, as root, the
+unmount failed with `EBUSY`, sacdfs logged it and kept serving, and a container or service
+manager waiting for it to stop hung until it killed it, leaving a dead mount behind; for users
+other than root, fuser already unmounted lazily, so this makes the two behave the same.
+
+**Cost.** Mounting now hashes every source directory and image name once and keeps one map
+entry per directory and image (tens of bytes each). The node table is a hash map by inode
+number instead of a vector. Lookups of files compute their generation (one SHA-256 of about
+70 bytes, well under a microsecond). Measured in [performance.md](performance.md).
+
 ## DSF files
 
 A DSF file is the DSD chunk (28 bytes), the fmt chunk (52 bytes), the data chunk (12-byte
@@ -132,7 +228,8 @@ header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
   channel in 4096-byte blocks, channel after channel, earliest sample in the least
   significant bit (bits per sample = 1). The last block of each channel is padded with
   zeros. Sample count per channel = frames x 4704 x 8.
-- Channel type in fmt: from the channel count (2: stereo; 5: 5 channels; 6: 5.1).
+- Channel type in fmt: from the area's loudspeaker layout (stereo: 2; 5-channel 3/2: 6, "5
+  channels"; 5.1: 7), else from the channel count; see [Speaker layouts](#speaker-layouts).
 - A position with no frame, or with an invalid DST frame, is filled as scarletbook fills
   it (0x69 / 0x55); a warning is logged once per file.
 - Tag (built when the directory is listed, so the file size is known): TIT2 title, TPE1
@@ -144,8 +241,8 @@ header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
   only names of the general genre table (not "not used"/"not defined"). TDRC is `YYYY`,
   `YYYY-MM` or `YYYY-MM-DD` as far as the stored date is set. NUL characters are dropped
   and empty values leave their frame out; a track with no text at all has no tag and a
-  zero metadata pointer. Channel types: 1 mono, 2 stereo, 3 three channels, 4 quad, 5
-  five channels, 6 5.1.
+  zero metadata pointer. Channel types by channel count, for an area without a defined
+  layout: 1 mono, 2 stereo, 3 three channels, 4 quad, 5 five channels, 6 5.1.
 
 ## WAV files
 
@@ -189,13 +286,10 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   67 minutes, six channels after about 22, so long multichannel tracks need it. The decision is
   made per file, from its size. *Implementation:* no `JUNK` placeholder is written, since the
   size is known before the file is made.
-- **Channel mask and order:** 1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR FC BL BR; 6 FL
-  FR FC LFE BL BR. This is the order of the DSF files' channel types, and also the order of the
-  mask bits, so the samples need no reordering. **Provisional:** it comes from the channel
-  count alone. scarletbook 0.3.0 exposes the area's loudspeaker configuration only as the raw
-  `area_config` byte, and sacdfs keeps no SACD format knowledge of its own (see
-  [Engine](#engine)), so it does not decode that byte; a typed channel assignment is requested
-  from scarletbook (scarletbook-rs#75), and the code carries a `TODO(scarletbook#75)`.
+- **Channel mask and order:** from the area's loudspeaker layout, like the DSF channel type;
+  see [Speaker layouts](#speaker-layouts). Stereo 0x3 (FL FR), 5-channel 3/2 0x37 (FL FR FC BL
+  BR, which FFmpeg reads as "5.0") and 5.1 0x3F (FL FR FC LFE BL BR); without a defined layout,
+  the mask of the channel count.
 - **Tags:** the same ID3v2.4 tag as the DSF file, in an `id3 ` chunk (FFmpeg, TagLib, mutagen,
   foobar2000 and mp3tag read it), and a `LIST`/`INFO` chunk for software that reads only that:
   INAM (title), IART (performer), IPRD (album), ITRK (the track number alone), ICRD (date),
@@ -224,6 +318,48 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
 - Header and tag bytes are built when the area directory is listed, like the DSF files', so
   `stat` and `ls -l` never read the image, and reading the first 256 KiB or the tags of a WAV
   file decodes and converts nothing.
+
+
+## Speaker layouts
+
+The WAV channel mask (`dwChannelMask`) and the DSF channel type come from the area's
+loudspeaker layout, which scarletbook (0.4.0 and later) gives as `Area::loudspeaker_layout`
+(from the channel count and the low 3 bits of the area configuration byte, specification 3,
+3.4.1) with the speaker of each channel in decoded-frame order (`Area::channel_speakers`):
+
+| Layout | Speakers, in decoded order | WAV mask | DSF channel type |
+|---|---|---|---|
+| Stereo (2 channels, configuration 0) | FL FR | 0x3 | 2, stereo |
+| 5-channel 3/2 (5, configuration 3) | FL FR C SL SR | 0x37 (FL FR FC BL BR) | 6, 5 channels |
+| 5.1 (6, configuration 4) | FL FR C LFE SL SR | 0x3F (FL FR FC LFE BL BR) | 7, 5.1 channels |
+| Anything else (`Unspecified`) | not defined | by channel count | by channel count |
+
+- **Why from the disc, not the count:** the count only guesses which speakers a disc meant;
+  the layout is what the disc states. sacdfs keeps no SACD format knowledge of its own (see
+  [Engine](#engine)), so it reads the layout through scarletbook's typed API instead of
+  decoding the configuration byte itself. Before 0.4.0 scarletbook gave only the raw byte, and
+  sacdfs used the count alone (requested upstream as scarletbook-rs#75).
+- **No reordering:** a WAV file's channels must follow the order of their mask bits, and the
+  DSF types fix the order FL FR C (LFE) SL SR. scarletbook's decoded-frame order is that
+  order for all three layouts (its order is informative, the order existing tools label
+  extracted channels in), so the samples are written as decoded. A unit test checks that the
+  speakers' mask bits rise in decoded order, so a change upstream would fail it.
+- **Surround on the back bits (BL BR), not the side bits:** what 5.0 and 5.1 mean to most
+  players and to FFmpeg (0x37 is its "5.0", 0x3F its "5.1"; the side bits give "5.0(side)"
+  and "5.1(side)"), and what sacdfs wrote before. The DSF types have one surround pair, so
+  they do not distinguish.
+- **`Unspecified`** (any other combination: 1, 3 or 4 channels, or a stereo or 5-channel
+  count with another configuration; seen only on synthetic test images so far) keeps the
+  layout of the channel count, as before: 1 FC; 2 FL FR; 3 FL FR FC; 4 FL FR BL BR; 5 FL FR
+  FC BL BR; 6 FL FR FC LFE BL BR (DSF types 1, 2, 3, 4, 6, 7). **Why:** the disc does not say
+  which speakers it means, the count gives players a usable default, and a file is always
+  shown. sacdfs logs it at Info once per disc, when the image is opened, naming the areas
+  and their stored fields, so that a surprising mask can be traced to the disc.
+- **Checked:** a test reads the header of every file of every corpus case and compares the
+  mask and type with the manifest's channel count and configuration (written out in the
+  test, not taken from sacdfs or scarletbook): stereo, 3/2 and 5.1, and six unspecified
+  combinations. On the real discs, FFmpeg's `ffprobe` reads the stereo, 5-channel and 5.1
+  areas as "stereo", "5.0" and "5.1" in both formats.
 
 ## Reading a range of a WAV file
 
@@ -430,7 +566,34 @@ offset 0 counted as the start of a sequential read, so every tagger opening a fi
 decode (and, for WAV, convert) its first 2 s in the background.
 *Implementation:* a read counts as sequential when it starts at most 1 MiB after, or 8 MiB
 before, the furthest byte read so far (the kernel sends its read-ahead requests
-concurrently, slightly out of order). The next window (150 frames) is queued when the read
+concurrently, slightly out of order). The first read of audio starts none (see the WAV
+files), and neither does a read that ends within 256 KiB of where the first read of audio
+started (#32). *Why:* that is the kernel's own read-ahead. On a first read at the start of
+a file, the kernel asks for 128 KiB, then for 128 KiB more in the background, whatever the
+reader asked for: a tagger reading a DSF file's first 4 KiB gets two "sequential" reads of
+audio, and the second started 2 s of decoding. It made a DSF tag walk read 1.17 MB of the
+image per file; now 221 KB. A player's next read goes past 256 KiB and starts read-ahead
+there, one read later than before, which the measured straight reads and concurrency do not
+show.
+- *What a DSF header read still costs, and why it stays:* the 256 KiB the kernel reads hold
+  the track's first frames (about 28 in stereo), and the first page itself holds 4004 bytes
+  of the first frame, so a DSF tag walk reads audio sectors: 3.7 calls to the image per
+  file on average, all at the track's start. The options of #32 were measured:
+  - *Answer the header from a cache of track-start audio:* the kernel never asks for the
+    header alone. With `max_readahead` at 4, 16 or 64 KiB or the default 128 KiB, it still
+    asked for 128 + 128 KiB on a 4 KiB read at offset 0; only 0 changed it (4 KiB requests,
+    11 times as many for the walk), which would also take read-ahead from every player and
+    `cp`. A cache would therefore need about 28 decoded frames per track, about 256 KiB: some
+    3 GB for a thousand discs, against the seek index's 32 MiB, and it would not help the
+    first walk of a library anyway.
+  - *Detect header-only reads and serve the audio part lazily:* the request is the same
+    128 KiB whether a tagger asked for 4 KiB or a player for 128 KiB, so there is nothing to
+    detect; and a page must be answered whole, since a short reply tells the kernel the file
+    ends there. `direct_io` would pass the reader's own size, but turns off the page cache
+    and the kernel's read-ahead for every reader.
+  - *Accept the rest:* kept, with the read-ahead fix above, which removed four fifths of
+    the bytes. The WAV files hold no audio in their first 256 KiB (the `JUNK` chunk), so
+    their header and tags still read nothing. The next window (150 frames) is queued when the read
 reaches the middle of the current one; it runs on a request thread and holds the open
 file's demultiplexer, so a read that needs those frames waits for them instead of decoding
 them twice.
@@ -438,8 +601,9 @@ them twice.
 **Kernel caching.** The filesystem is read-only, so entries and attributes are cached for
 a long time, files are opened with `keep_cache`, and the kernel's page cache serves
 repeated reads. Large reads (`max_read` 1 MiB) and kernel read-ahead are enabled.
-*Implementation:* entry and attribute TTLs are 24 hours; the kernel read-ahead is set to
-1 MiB and up to 64 background requests are allowed. The filesystem is mounted `ro`,
+*Implementation:* entry and attribute TTLs are 24 hours; the kernel read-ahead is asked for
+1 MiB (the kernel grants at most its own default, 128 KiB on the test machine, as fuser's
+`INIT` log shows) and up to 64 background requests are allowed. The filesystem is mounted `ro`,
 `nodev`, `nosuid`, `noexec`.
 
 ## Concurrency
@@ -447,8 +611,8 @@ repeated reads. Large reads (`max_read` 1 MiB) and kernel read-ahead are enabled
 fuser dispatches requests on one thread. Reads are answered from a thread pool: the
 request's `ReplyData` moves to a worker, which decodes or copies and replies, so slow
 reads on one file don't block `lookup`/`readdir` or reads of other files. Each image has
-one open handle; sector reads are serialised per image (a `Mutex<Image>`), decoding is
-not.
+at most one open handle, from a bounded cache of them; sector reads are serialised per
+handle (a `Mutex<Image>`), decoding is not.
 
 *Implementation:* fuser 0.18 can run several dispatch threads; sacdfs uses 4, so that a
 directory listing that opens many images does not hold up other requests. Reads go to a
@@ -457,10 +621,39 @@ DST frames are decoded, and frames converted to PCM, on a separate rayon pool (`
 one `DstDecoder` and one `Converter` per channel count per thread.
 The request pool is deliberately not a rayon pool: a rayon worker that waits for another
 pool runs other jobs of its own pool meanwhile, and a second read of the same file would
-then wait, on the same thread, for the demultiplexer lock the first one holds. The image
-file is opened on its first audio read, and refused if its size changed since the TOC was
-read. Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O
-error on that read.
+then wait, on the same thread, for the demultiplexer lock the first one holds. Every read
+runs under `catch_unwind`, so even an unexpected panic becomes an I/O error on that read.
+
+**Open images** (`handles.rs`, #26). The handle an image's TOC was read through is kept,
+and every audio read of the disc uses it; a closed one is opened again on the next read,
+and refused if the image's size changed since the TOC was read. The handles live in one
+least-recently-used cache for the process, bounded by `--max-open-images` (default 64);
+a handle unused for 5 minutes is closed by a thread that looks every 30 seconds. A handle
+is checked against its path (one `stat`) when it is used, at most once a second: if the
+file's size, modification time, device or inode changed, the handle is closed and the
+image opened again, as a first open would. A disc that is dropped closes its handle.
+- *Why keep handles:* on a network share an open costs a round trip or two (0.6 to 0.9 ms
+  over NFS, measured in #25), as much as the one read a seek with a warm seek index needs;
+  before, a fresh mount opened every image twice (for its TOC, then for its first audio
+  read). The TOC handle is kept because a seek right after a directory listing (a player
+  resuming) is the common case.
+- *Why a bound and an idle timeout:* a library has hundreds or thousands of images, and a
+  listing of a directory opens all of its images; the process's file limit is commonly
+  1024. 64 covers several players and a tagger on different discs with room to spare. An
+  idle mount should not keep files open on a share: a handle pins a deleted or replaced
+  file on the server and keeps NFSv4 open state alive. Five minutes outlasts a pause in
+  playback.
+- *Why the check once a second, not on every read:* a `stat` of the path is a round trip
+  on a share whose attribute cache has expired. Once a second costs nothing measurable on a
+  straight read and bounds how long a replaced file is read through its old handle. The
+  tree, the frame cache and the seek index still describe the image as it was mounted (the
+  seek index checks every point it uses, so it costs only speed); a changed image needs a
+  remount, as before.
+- *Why the cache drops handles instead of closing them:* a handle is shared (`Arc`), so a
+  read in progress on an evicted handle finishes on it, and the file is closed when that
+  read ends. No lock is held while opening a file, and the cache's lock never waits for a
+  read, so eviction cannot deadlock or stall a read. The keys are per disc and unique in
+  the process (not the disc id, which callers choose).
 
 ## PCM conversion (phase 1: the converter)
 
@@ -587,8 +780,8 @@ decisions, each with its reason:
   loaded on the host (a container can't load one), a rootful and in practice privileged
   container, and shares kernel state with the host's own NFS service. NFS-Ganesha needs only
   `CAP_DAC_READ_SEARCH`, for `open_by_handle_at(2)`. sacdfs's decoding (about 500 MB/s for
-  DSF), not the server, sets the speed. Both servers depend on #18 for file handles that
-  survive a restart.
+  DSF), not the server, sets the speed. Both servers rely on sacdfs's persistent file identity
+  (#18) for file handles that survive a restart; CI checks this with NFS-Ganesha.
 - **Privileges:** `/dev/fuse` and `CAP_SYS_ADMIN` for FUSE, `CAP_DAC_READ_SEARCH` for NFS
   only (`NFS=0` drops the need), and on AppArmor hosts `apparmor=unconfined`, since Docker's
   default profile forbids `mount(2)`. No `--privileged`.
@@ -646,6 +839,17 @@ decisions, each with its reason:
   bytes; and a changed size or mtime misses. `tests/mount_index.rs` mounts, seeks, unmounts,
   remounts and seeks again through the kernel: the same bytes, with fewer calls to the image
   and fewer bytes read.
+- *DSF header reads:* `tests/dsf_header.rs` reads every DSF file of the corpus as the
+  kernel does for a tagger (128 KiB at 0, 128 KiB at 128 KiB, the tag's page): none of the
+  reads starts read-ahead, and a player reading on starts it exactly at 256 KiB.
+- *Open images:* unit tests of the handle cache (reuse, the bound, idle closing, a new
+  handle after a change of size, of modification time or of the file, and none within the
+  check interval). `tests/handles.rs` walks the whole corpus with at most 3 images open,
+  reading every file whole and then pieces of all files interleaved (so that handles are
+  closed and opened again mid-file), and requires the bytes of a walk with every image open
+  and never more than 3 image descriptors in `/proc/self/fd`; and mounts the corpus with
+  `--max-open-images 2`, reads the start, middle and end of every file through the kernel,
+  and checks sacdfs's own descriptors.
 - *WAV files:* `tests/wav.rs`, every check written against the converter's API only, so that it
   holds for any converter whose output for a frame depends only on that frame and its two
   neighbours. At every rate, every WAV file of every corpus case parses (RIFF, fmt, data,
@@ -663,6 +867,27 @@ decisions, each with its reason:
   SMB and NFS with the kernel clients from a client container, and checks every track's
   per-channel hashes and every WAV header (`deploy/check-share.py`); a second run checks user
   access (guests refused), `--format dsf` and `--flatten`.
+
+- *File identity:* unit tests (`src/ident.rs`, `src/tree.rs`): the bit layout; a pinned key;
+  forced collisions, which fall back the same way whatever the walk order; the same numbers on
+  every tree, listed in any order; the same numbers for images, areas and files with and
+  without `--flatten`; every number found from a fresh tree that knows only the number,
+  opening only the images on its way, and numbers that name nothing not found; PCM options
+  change the WAV files' generations only; a changed mtime changes every file's generation.
+  `tests/export.rs` mounts through the kernel: the whole corpus has distinct numbers, the same
+  after a remount, and with `--flatten` the same for what is still shown; directory handles
+  (`name_to_handle_at`) kept across a restart of sacdfs open again (`open_by_handle_at`, which
+  sends `.` and `..`) and list the same entries; file handles kept across a restart read on
+  where they were, and a changed image's go stale. Opening file handles needs
+  `CAP_DAC_READ_SEARCH` in the initial user namespace, so CI's `nfs` workflow runs these tests
+  as root; directory handles also open in a container (`--cap-add DAC_READ_SEARCH`).
+  `tests/nfs-loopback.sh` (CI, in a privileged Fedora container with the runner's nfsd)
+  exports a mount with the kernel NFS server, mounts it over loopback NFSv3, reads half of
+  each of several files through open descriptors with `O_DIRECT` (so no read is answered from
+  the client's cache), restarts sacdfs, and reads the rest through the same descriptors; then
+  changes an image and requires `ESTALE` from its open file. The kernel NFS server could not
+  be run on the development machine (no root, rootless containers, no nfsd module), so this
+  test runs only in CI.
 
 ## Prior art
 

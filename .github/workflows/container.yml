@@ -58,11 +58,8 @@ jobs:
               umount /mnt/nfs'
 
       # Clients keep files open across a server restart (a NAS reboot, an image update).
-      # SMB reopens by path; NFS needs file handles that survive, which is #18. Until #18
-      # is merged the NFS half is expected to fail, so this step reports but doesn't fail
-      # the job; make it fail (drop continue-on-error) once #18 is in.
-      - name: Keep reading across a server restart (NFS needs #18)
-        continue-on-error: true
+      # SMB reopens by path; NFS relies on sacdfs's persistent file identity (#18).
+      - name: Keep reading across a server restart
         run: |
           docker run -d --name client --network sacdfs-ci --privileged \
             -v "$PWD:/repo:ro" sacdfs-client:ci sleep infinity

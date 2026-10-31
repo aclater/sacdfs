@@ -94,9 +94,9 @@ Samba is the only choice for SMB. For NFS there are two servers:
 
 **NFS-Ganesha is used**, because it asks nothing of the host, needs one capability instead
 of a privileged container, and stops with the container. Both servers reopen files by NFS
-file handle through `open_by_handle_at(2)` on the FUSE mount, so both depend equally on
-sacdfs's persistent file identity ([#18](https://github.com/aclater/sacdfs/issues/18), see
-[below](#nfs-and-restarts-pending-18)).
+file handle through `open_by_handle_at(2)` on the FUSE mount, so both rely on sacdfs's
+persistent file identity ([#18](https://github.com/aclater/sacdfs/issues/18), see
+[below](#nfs-and-restarts)).
 
 ## Privileges
 
@@ -130,6 +130,7 @@ All settings are environment variables.
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
 | `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB |
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
+| `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
 | `SACDFS_INDEX_CACHE` | `/cache` | `--index-cache` directory (keep it on a volume so it survives updates); `off` for `--no-index-cache` |
 | `SACDFS_VERBOSE` | `1` | `0` warnings only, `1` (`-v`), `2` (`-vv`) |
 | `SMB` | `1` | `0` to turn the SMB server off |
@@ -305,22 +306,18 @@ Over NFS the names are exactly sacdfs's. Over SMB, `SMB_NAME_MAPPING` chooses ho
   often do, then cannot be opened, so it is not the default.
 - `none`: Samba's own fallback, a short mangled name (`0JL0SQ~I.DSF`).
 
-## NFS and restarts (pending #18)
+## NFS and restarts
 
-NFS clients keep file handles across server restarts. Today sacdfs's inode numbers are
-stable for one mount's lifetime only. So **after the container restarts (a NAS reboot, an
-update), NFS clients get "stale file handle" errors** on files and directories they had open
-or cached, and must remount. A file whose kernel inode the container evicts under memory
-pressure can also go stale while the container runs.
+NFS clients keep file handles across server restarts. sacdfs gives every file and
+directory the same inode number on every mount, and supports NFS export (#18). So after the
+container restarts (a NAS reboot, an update), NFS clients go on reading the files they had
+open, and their cached directories stay valid. SMB is path-based and reconnects by itself.
 
-SMB is path-based and reconnects by itself. CI checks this: a client keeps reading a file it
-opened before a restart.
+CI checks both: a client opens a file over SMB and over NFS (4.2), reads half of it, the
+container restarts, and the client reads the rest through the same open file.
 
-Persistent file identity and FUSE export support
-([#18](https://github.com/aclater/sacdfs/issues/18)) fix this. In CI, with that change merged
-in, an NFSv4.2 client kept reading through the same open file across a container restart,
-as the SMB client does. Until it is merged, prefer SMB, or remount NFS clients after a
-restart.
+An image whose file changed (size or modification time) gets new file handles, so a client
+holding an old one gets "stale file handle" instead of other data.
 
 ## Troubleshooting
 
@@ -340,6 +337,5 @@ mounts the shares with the kernel's SMB and NFS clients from a client container.
 every track the corpus manifest expects and checks each DSF file's per-channel SHA-256 and
 each WAV file's header (`deploy/check-share.py`), over SMB and over NFS. A second run checks
 user access (guests refused), `SACDFS_FORMATS=dsf` and `SACDFS_FLATTEN=1`. In between, a
-client opens a file over SMB and over NFS, reads half of it, and reads the rest after the
-container restarts. Until #18 is in, the NFS half is expected to fail, so that step reports
-the result without failing the job.
+client opens a file over SMB and over NFS, reads half of it, and reads the rest through the
+same open file after the container restarts.

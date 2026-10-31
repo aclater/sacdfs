@@ -11,8 +11,8 @@ All notable changes to sacdfs are recorded here. The format follows
 - A container image for a NAS (`Containerfile`): sacdfs with Samba and NFS-Ganesha, sharing
   the mount read-only over SMB and NFSv4, configured with environment variables, with a
   health check and logs on standard output. Compose file in `deploy/`, guide in
-  `docs/deployment.md` (Docker, Podman, Compose, TrueNAS SCALE, client mounts). NFS clients
-  still see stale file handles after the container restarts, until #18.
+  `docs/deployment.md` (Docker, Podman, Compose, TrueNAS SCALE, client mounts). NFS and SMB
+  clients keep reading open files across a container restart.
 
 ### Documentation
 
@@ -24,6 +24,24 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- SIGINT and SIGTERM detach a busy mount (open files, an NFS export) instead of logging an
+  error and serving on: sacdfs stops when the last open file is closed. fuser already
+  unmounted lazily for users other than root; now root behaves the same.
+- Speaker layouts (#31): the WAV channel mask and the DSF channel type come from the area's
+  loudspeaker layout on the disc (scarletbook's `Area::loudspeaker_layout` and
+  `Area::channel_speakers`) instead of the channel count alone: stereo FL FR, 5-channel (3/2)
+  FL FR FC BL BR ("5.0") and 5.1 FL FR FC LFE BL BR, in decoded order, so no reordering. An
+  area without a defined layout keeps the layout of its channel count, logged once per disc.
+  Output on discs with a defined layout is unchanged; the provisional count-based mapping and
+  its `TODO(scarletbook#75)` are gone.
+- scarletbook 0.4.1 (was 0.3.0). No change in decoded output; the seek indexes and cold
+  seeks it adds are not used yet (#28).
+- A read that ends within 256 KiB of where a file's first read of audio started no longer
+  starts read-ahead (#32): that is the kernel's own read-ahead of the first read, which a
+  tagger reading a DSF file's header causes too. A DSF tag walk reads 222 KB of the image per
+  file instead of 1.18 MB. A DSF header read still decodes the track's first frames, since
+  DSF audio starts at byte 92; why that stays is in docs/design.md.
+
 - Read-ahead starts only after reads of audio, and not on a file's first one: reading a
   file's header, or walking its chunks (as taggers do), no longer decodes its first seconds in
   the background.
@@ -34,6 +52,19 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- Persistent file identity and NFS export (#18): inode numbers come from what an entry is
+  (a directory's or an image's relative path; an area's image and slot; a file's image,
+  slot, track number, format and PCM options), so they are the same on every mount, with
+  `--flatten` on or off. Track files carry a generation number that changes with their
+  image's size or mtime and with the PCM options, so stale handles fail with `ESTALE`. FUSE
+  export support is on, `.` and `..` are looked up, and an inode number from a file handle
+  kept across a restart is found again from the names walked at mount: the kernel NFS server
+  can export the mount, and its clients read on through a restart of sacdfs.
+- Open image files are kept in a bounded cache (#26): an image stays open from the listing
+  of its directory and between reads, so that a seek no longer opens it again (0.6 to 0.9 ms
+  on an NFS share). `--max-open-images N` (default 64) bounds them, least recently used
+  closed first; an image unused for 5 minutes is closed; an image whose size, modification
+  time or file changed is opened again.
 - Persistent seek index (#20): the frame positions sacdfs learns in each image are kept in
   `$XDG_CACHE_HOME/sacdfs` (`--index-cache DIR`, `--no-index-cache`), so that a seek after a
   remount needs about one read of the image instead of four to five; on a network share each
@@ -57,7 +88,7 @@ All notable changes to sacdfs are recorded here. The format follows
   (#13). Decided from the names walked at mount, so mounting is as fast as without it.
 - WAV files next to the DSF files (#7, #8, plan #11): each track also appears as
   `NN - title.wav`, 24-bit PCM converted from the DSD on demand. RIFF/WAVE with
-  `WAVE_FORMAT_EXTENSIBLE` and a channel mask (from the channel count, provisionally), RF64 for
+  `WAVE_FORMAT_EXTENSIBLE` and a channel mask (from the area's loudspeaker layout, #31), RF64 for
   files over 4 GiB; the DSF file's ID3v2.4 tag in an `id3 ` chunk and a `LIST`/`INFO` chunk,
   after the audio, which is padded (`JUNK`) to start at 256 KiB and end on a page boundary.
   Exact sizes from the TOC; listing, `stat`, and reading the header or the tags never

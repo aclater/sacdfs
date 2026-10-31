@@ -17,6 +17,7 @@ SOURCE=${SACDFS_SOURCE:-/images}
 [ -e "$SOURCE" ] || die "SACDFS_SOURCE $SOURCE does not exist (mount the images there, read-only)"
 args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}" --cache-mb "${SACDFS_CACHE_MB:-256}")
 [ -n "${SACDFS_THREADS:-}" ] && args+=(--threads "$SACDFS_THREADS")
+[ -n "${SACDFS_MAX_OPEN_IMAGES:-}" ] && args+=(--max-open-images "$SACDFS_MAX_OPEN_IMAGES")
 [ -n "${SACDFS_PCM_RATE:-}" ] && args+=(--pcm-rate "$SACDFS_PCM_RATE")
 [ -n "${SACDFS_PCM_CUTOFF:-}" ] && args+=(--pcm-cutoff "$SACDFS_PCM_CUTOFF")
 [ -n "${SACDFS_PCM_GAIN:-}" ] && args+=(--pcm-gain "$SACDFS_PCM_GAIN")
