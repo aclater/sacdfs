@@ -236,8 +236,10 @@ mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a
   its way out, removing a sacdfs mounted there in the meantime. Measured, 200 restarts each,
   as a user and as root: the new mount was lost in 200 of 200 when the old one was detached
   from outside (`fusermount3 -u -z`, a file open) and exited after the new one mounted, and in
-  200 of 200 when the old one, unmounted, was held stopped until the new one had mounted;
-  with the fix, in none. This was the failure seen in #51.
+  200 of 200 when the old one, unmounted, was held stopped until the new one had mounted.
+  With the fix, 2 of about 5,000 fixed-binary restarts lost the new mount, both with a file
+  open and the old mount detached from outside, and neither sacdfs logged an unmount: not
+  explained yet, and not an unmount by sacdfs. This was the failure seen in #51.
 - On SIGINT or SIGTERM, sacdfs unmounts (or detaches, if busy) only if the mount on top at
   its path still has its own device number, read from `/proc/self/mountinfo` right after
   mounting; otherwise it logs why and leaves the path alone. *Why:* the device number is
