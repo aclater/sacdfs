@@ -414,6 +414,14 @@ loudspeaker layout, which scarletbook (0.4.0 and later) gives as `Area::loudspea
 7. **Converters.** One `Converter` per pool thread and channel count, made on first use and
    kept in a thread-local, keyed by engine as well so that two engines in one process (tests)
    never share one. Conversion always runs on the pool, never on a request thread.
+8. **Runs of frames (#24).** Frames of the plain DSD pipeline are converted up to four at a
+   time, consecutive ones in one job (`Converter::convert_run`, byte-identical to converting
+   each alone): a straight WAV read of a plain DSD area took 15 % less time and 29 % less CPU.
+   **Why only plain DSD:** its frames arrive 16 at a time from one demultiplexing thread, and
+   one job per frame spent much of the conversion's cost on scheduling and on each frame's
+   margins; a DST batch arrives all at once with enough frames for every thread, where runs
+   of four made reads 5 % slower. **Why four:** two and eight gained less (11 and 12 %), and
+   a short job (about 0.2 ms) keeps the 4 players and a tagger under 50 ms per read (#15).
 
 *Why convert per frame, with neighbours, rather than as a stream:* any byte of any file can be
 produced from three DSD frames, with no state carried from earlier reads, so a seek costs the
@@ -748,13 +756,42 @@ is covered by the pinned-hash test, which passes on the local RHEL glibc and on 
 Ubuntu glibc.
 
 **SIMD (why portable code).** The FIR kernels are written so that the compiler vectorises
-them (blocks of 16 independent outputs, windows cut to exact lengths so there are no bounds
+them (blocks of independent outputs, windows cut to exact lengths so there are no bounds
 checks, the generated code checked: packed `addpd`/`mulpd` on generic x86-64, `vaddpd` on
 `ymm` registers on x86-64-v3). Stage 1 reads its bytes as words and takes them apart with
-shifts (half the loads). `std::arch` with runtime detection would need `unsafe`, which the
-crate denies; the generic build already clears the bar for the default filter, and x86-64-v3 builds
-(RHEL 10's default, or `-C target-cpu=x86-64-v3`) are 1.1 to 1.6 times faster. Runtime dispatch is a
-follow-up if a generic build ever needs it.
+shifts (half the loads).
+
+**Runtime CPU dispatch (#23, why).** Generic x86-64 builds, which distributions and
+`cargo install` users get, would otherwise run the converter with SSE2 only; the wide filter
+then sat near the 100x bar of #6. So stage 1 and the three FIR kernels are compiled three
+times, for the baseline, x86-64-v3 (AVX2) and x86-64-v4 (AVX-512), by the `multiversion`
+crate (MIT OR Apache-2.0), and the copy is chosen from the CPU when the first converter is
+made (`pcm::Simd`). *Why `multiversion`:* calling `#[target_feature]` code needs `unsafe`,
+which sacdfs denies outside its daemonising code; the crate's macro keeps that call behind its
+own CPU check, so no copy can run on a CPU without its features, and sacdfs keeps
+`unsafe_code = "deny"`. *Alternatives:* a local `unsafe` block with `std::arch` (more control,
+breaks the policy for no measured gain); shipping x86-64-v3 builds only (excludes older CPUs);
+a 112 dB wide filter (about 5 % faster, lower quality).
+- *Granularity:* the kernels are dispatched, not the whole channel. Forcing all of a channel's
+  code inline into one dispatched function made the baseline path about 10 % slower than
+  before; dispatching each kernel (a few calls per channel and frame) leaves the baseline as it
+  was.
+- *Wider blocks on wider vectors:* each output is a chain of dependent adds, so a block must
+  hold enough independent outputs to keep the adders busy: 16 on the baseline, 32 on v3, 64
+  on v4 (8 registers of accumulators each). The block size never changes an output's
+  operations.
+- *v3 by default, even with AVX-512:* measured on a Zen 5 CPU, the v4 copy was slower than v3
+  on every filter but one (performance.md), and much slower with both threads of a core
+  converting, as the decoder pool does under load. It is built and tested, and
+  `SACDFS_SIMD=v4` selects it, so that other CPUs can be measured; the default changes only
+  with a measurement. AVX-512 target features need Rust 1.89, so a build with an older
+  compiler (the MSRV is 1.85) has no v4 copy.
+- *Identical output:* every output is the same sequence of operations on every path (Rust does
+  not fuse multiplies and adds, even with FMA enabled, nor reorder float sums). The pinned
+  hashes are checked on all three paths in one process (`Converter::with_simd`), and CI runs
+  the converter and WAV tests once per `SACDFS_SIMD` value.
+- *Building:* RHEL 10's Rust targets x86-64-v3 by default; there every copy has AVX2, and
+  `-C target-cpu=x86-64` gives a true baseline (how the figures were measured).
 
 **Interleaved input.** The converter takes frames as scarletbook gives them (`C × 4704`
 interleaved, MSB first) and copies one channel at a time into a window buffer with its
@@ -774,6 +811,8 @@ reference level is 50 % modulation): no clips on the local discs.
 `convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM
 (`frame_bytes()` long) and returns the clip count; `None` neighbours are silence.
 `convert_f32` gives the samples before rounding (for tests, and for FLAC later).
+`convert_run(prev, frames, next, out, clips)` converts consecutive frames in one window, the
+same bytes as `convert` on each, and each frame's clip count (#24).
 `new` never fails: a configuration that `PcmConfig::validate` refuses (the wide filter at
 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()`
 reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once,

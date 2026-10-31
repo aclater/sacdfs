@@ -10,7 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use proptest::prelude::*;
-use sacdfs::pcm::{Converter, Cutoff, DSD_SILENCE, FRAME_BYTES, PcmConfig, PcmRate, convert_area};
+use sacdfs::pcm::{Converter, Cutoff, DSD_SILENCE, FRAME_BYTES, PcmConfig, PcmRate, Simd, convert_area};
 use std::f64::consts::PI;
 
 const FS: f64 = 2_822_400.0;
@@ -698,6 +698,63 @@ proptest! {
     }
 }
 
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
+    /// Random runs of frames (#24): `convert_run` equals the area's slice, and so per-frame
+    /// conversion, byte for byte; one converter does runs of changing lengths, short last
+    /// frames included, on a random instruction set's code.
+    #[test]
+    fn random_runs(
+        frames in 1usize..9,
+        ch in 1u8..=6,
+        rate in 0usize..3,
+        cutoff in 0usize..3,
+        gain in -6.0f32..12.0,
+        seed in any::<u64>(),
+        runs in proptest::collection::vec((any::<usize>(), 1usize..6), 1..4),
+        simd in 0usize..3,
+        short in 0usize..300,
+    ) {
+        let cfg = PcmConfig { rate: RATES[rate], cutoff: CUTOFFS[cutoff], gain_db: gain };
+        let n = usize::from(ch) * FRAME_BYTES;
+        let mut dsd = noise(frames * n, seed);
+        // A short last frame: its missing bytes are silence in both.
+        let cut = frames * n - short.min(n - 1);
+        for b in &mut dsd[cut..] {
+            *b = DSD_SILENCE;
+        }
+        let (area, clips_area) = convert_area(ch, &cfg, &dsd);
+        let simd = [Simd::Baseline, Simd::V3, Simd::V4][simd];
+        let mut conv = Converter::with_simd(ch, &cfg, simd);
+        let fb = conv.frame_bytes();
+        let slices: Vec<&[u8]> = (0..frames)
+            .map(|f| if f + 1 == frames { &dsd[f * n..cut] } else { &dsd[f * n..(f + 1) * n] })
+            .collect();
+        for (start, len) in runs {
+            let f0 = start % frames;
+            let f1 = (f0 + len).min(frames);
+            let mut out = vec![0u8; (f1 - f0) * fb];
+            let prev = f0.checked_sub(1).map(|p| slices[p]);
+            let next = slices.get(f1).copied();
+            let mut clips = vec![u32::MAX; f1 - f0];
+            let total = conv.convert_run(prev, &slices[f0..f1], next, &mut out, &mut clips);
+            prop_assert!(out == area[f0 * fb..f1 * fb], "frames {f0}..{f1} of {frames}");
+            prop_assert_eq!(total, clips.iter().sum::<u32>());
+            if f0 == 0 && f1 == frames {
+                prop_assert_eq!(total, clips_area);
+            }
+            // Each frame's clip count is what converting it alone reports.
+            let mut one = Converter::with_simd(ch, &cfg, simd);
+            let mut buf = vec![0u8; fb];
+            for (j, f) in (f0..f1).enumerate() {
+                let p = f.checked_sub(1).map(|p| slices[p]);
+                prop_assert_eq!(clips[j], one.convert(p, slices[f], slices.get(f + 1).copied(), &mut buf));
+            }
+        }
+    }
+}
+
 /// The output for a fixed input, pinned: any change to the filters, the arithmetic or the
 /// platform's maths library (the designs use `sin` and `exp`-like series at start-up) shows
 /// up here. A deliberate change to the filters updates these hashes.
@@ -720,6 +777,61 @@ fn golden_output() {
     }
     let want = GOLDEN;
     assert_eq!(got, want);
+}
+
+/// Every instruction set's code (#23) gives the golden output, frame by frame, at 24 bits and
+/// in f32: the baseline, x86-64-v3 and x86-64-v4 paths, as far as this CPU has them (the
+/// others fall back and are reported). `SACDFS_SIMD` additionally forces the path of every
+/// other test in a run.
+#[test]
+fn every_simd_path_gives_the_golden_output() {
+    use sha2::{Digest, Sha256};
+    let n = 2 * FRAME_BYTES;
+    let dsd = noise(3 * n, 11);
+    let frame = |f: usize| (f < 3).then(|| &dsd[f * n..(f + 1) * n]);
+    eprintln!("CPU supports {}", Simd::detected().name());
+    let mut f32_ref: Vec<Vec<u32>> = Vec::new();
+    for simd in [Simd::Baseline, Simd::V3, Simd::V4] {
+        let mut got = Vec::new();
+        let mut f32s = Vec::new();
+        for cutoff in CUTOFFS {
+            for rate in RATES {
+                if !valid(rate, cutoff) {
+                    continue;
+                }
+                let mut conv = Converter::with_simd(2, &cfg(rate, cutoff), simd);
+                if conv.simd() != simd {
+                    eprintln!("{} not available here: testing {}", simd.name(), conv.simd().name());
+                }
+                let mut pcm = vec![0u8; 3 * conv.frame_bytes()];
+                let mut flt = vec![0f32; 3 * conv.frame_bytes() / 3];
+                let fb = conv.frame_bytes();
+                for f in 0..3usize {
+                    conv.convert(
+                        f.checked_sub(1).and_then(frame),
+                        &dsd[f * n..(f + 1) * n],
+                        frame(f + 1),
+                        &mut pcm[f * fb..(f + 1) * fb],
+                    );
+                    conv.convert_f32(
+                        f.checked_sub(1).and_then(frame),
+                        &dsd[f * n..(f + 1) * n],
+                        frame(f + 1),
+                        &mut flt[f * fb / 3..(f + 1) * fb / 3],
+                    );
+                }
+                let h = Sha256::digest(&pcm);
+                got.push(h.iter().take(8).map(|b| format!("{b:02x}")).collect::<String>());
+                f32s.push(flt.iter().map(|v| v.to_bits()).collect::<Vec<u32>>());
+            }
+        }
+        assert_eq!(got, GOLDEN, "{}", simd.name());
+        if f32_ref.is_empty() {
+            f32_ref = f32s;
+        } else {
+            assert!(f32_ref == f32s, "{}: f32 output differs from the baseline", simd.name());
+        }
+    }
 }
 
 /// First 8 bytes of the SHA-256 of each configuration's output, in the order of the loops:
