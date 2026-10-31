@@ -14,6 +14,14 @@ All notable changes to sacdfs are recorded here. The format follows
   `ghcr.io/aclater/sacdfs` (version and `latest`) after the share test passed on it. Run by
   hand, it is a dry run that publishes nothing. Install instructions in the README; release
   checklist in CONTRIBUTING.md. Not on crates.io while scarletbook is a git dependency.
+- scarletbook 0.4's own seeking measured against sacdfs's locator (#28), and not adopted: its
+  cold seek (provisional reading) took 7.2-8.8 calls and 260-373 KiB per seek against 4.3 and
+  136 KiB (21-29 ms against 7-15 ms over NFS), and its provisional positions differ on a
+  hostile corpus image; its exact seek index needs the area read from its start and then
+  takes 2.0-2.7 calls against 1.0. `examples/library_seek` measures both; `tests/library_index.rs`
+  checks every frame and random ranges located by sacdfs against reads through a complete
+  library index, on the corpus and (ignored test) real discs.
+
 - A container image for a NAS (`Containerfile`): sacdfs with Samba and NFS-Ganesha, sharing
   the mount read-only over SMB and NFSv4, configured with environment variables, with a
   health check and logs on standard output. Compose file in `deploy/`, guide in

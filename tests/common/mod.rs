@@ -5,9 +5,27 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+/// Unmounts the FUSE mount at `mountpoint` with `fusermount3 -u`, retrying for up to
+/// 20 s. Right after files on the mount are closed, the kernel can hold it busy for a
+/// moment and `fusermount3` fails with EBUSY (#41); `tests/export.rs` retries the same way.
+pub fn unmount_retrying(mountpoint: &Path) {
+    let start = Instant::now();
+    loop {
+        let st =
+            Command::new("fusermount3").arg("-u").arg(mountpoint).stderr(Stdio::null()).status().unwrap();
+        if st.success() {
+            return;
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "the mount stays busy");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 
 /// The corpus directory.
 pub fn corpus() -> PathBuf {

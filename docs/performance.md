@@ -244,6 +244,46 @@ negligible and over a network is not. The read could be about 30 KiB smaller (it
 frames and the search's stop distance more than a 128 KiB read needs, which a cursor started
 at a known point does not need; a possible follow-up), which would save about 0.25 ms.
 
+## Seeking through scarletbook (#28)
+
+Measured on 2026-10-31 with scarletbook 0.4.1, release build, under the benchmark lock,
+without FUSE (`examples/library_seek`): the frames of a 128 KiB DSF read at the positions of
+`seek_latency`'s `cold` scenario, each seek on a freshly opened disc. "sacdfs" is its locator
+(warm: after a "remount" that loads the persistent seek index a first seek at the same
+position saved); "library cold" is `SeekPolicy::Speculative` with an empty seek index;
+"library warm" starts from a complete exact index, built in one pass, saved and loaded.
+
+**Local images**, 200 seeks per area, all 7 areas of the five discs (calls / KiB per seek):
+
+| | plain DSD stereo | DST stereo | DST 6 ch. | DSD stereo (hybrid) | DST 5 ch. | DST stereo, 2064-byte sectors | another such disc | all |
+|---|---|---|---|---|---|---|---|---|
+| library cold, defaults | 9.47 / 472 | 8.85 / 362 | 8.21 / 330 | 8.22 / 384 | 8.68 / 317 | 8.87 / 367 | 9.62 / 376 | 8.84 / 373 |
+| library cold, gap 64, K = 16 | 6.98 / 303 | 7.10 / 237 | 7.04 / 251 | 7.00 / 304 | 7.51 / 236 | 7.09 / 239 | 7.86 / 249 | 7.22 / 260 |
+| library warm, K = 64 | 3.62 / 232 | 2.28 / 146 | 2.42 / 155 | 3.69 / 236 | 2.15 / 137 | 2.29 / 148 | 2.29 / 148 | 2.68 / 172 |
+| library warm, K = 16 | 3.00 / 192 | 1.60 / 103 | 1.80 / 115 | 3.00 / 192 | 1.32 / 85 | 1.64 / 106 | 1.56 / 101 | 1.99 / 128 |
+
+sacdfs on the same positions: **4.31 / 136** cold and **1.01 / 103** warm in all (the per-disc
+figures are those of [client-side seek latency](#client-side-seek-latency-issue-20)). With the
+default options, 5 to 7 % of the seeks lie within 2 048 sectors of the area's start, where
+the library reads exactly from the first sector (up to 4 MiB); the others were provisional,
+with 3.0 (plain DSD) to 5.3 (DST) search reads before the first frame. Every frame equalled
+sacdfs's.
+
+**Images on NFS** (the share above, `O_DIRECT` shim), stereo area of plain DSD images, 30
+seeks each, mean ms per seek (calls):
+
+| | image 1 | image 2 | image 3 | image 4 | image 5 |
+|---|---|---|---|---|---|
+| library cold | 29.1 (8.6) | 28.0 (8.4) | 28.9 (11.7) | 20.6 (7.5) | 28.6 (9.0) |
+| sacdfs cold | 6.9 (3.0) | 6.5 (3.0) | 7.9 (4.1) | 15.2 (3.0) | 13.3 (3.0) |
+| library warm, K = 64 | 1.82 (3.7) | 1.84 (3.6) | 1.51 (2.6) | | |
+| sacdfs warm | 0.91 (1.0) | 1.24 (1.0) | 0.58 (1.0) | | |
+
+On images 1 to 3 the library ran first, on 4 and 5 sacdfs did (at other positions), so the
+NAS's cache favoured the second; the library was slower either way. The warm seeks follow a
+pass or a seek that left those sectors in the NAS's cache. Through FUSE these add about 1 ms
+(compare [keeping images open](#keeping-images-open-26)).
+
 ## Straight read
 
 One DST stereo disc of about 50 minutes: 14 tracks, 2.12 GB of DSF files. Each round ran
