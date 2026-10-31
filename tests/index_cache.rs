@@ -26,8 +26,20 @@ use sacdfs::tree::{SourceDir, Tree};
 
 use common::*;
 
-/// The process-wide cache, in a fresh directory.
-fn cache() -> &'static IndexCache {
+/// The process-wide cache, in a fresh directory, held by one test at a time.
+///
+/// Every disc any test opens registers with this cache, and a flush writes the entries of
+/// all of them. A test that flushes while `hostile_entries_cost_only_speed` runs would
+/// replace its hostile entries with the real points its discs learned (correctly: that
+/// is what a flush is for), so that fewer bad starts are left to catch. Hence the lock;
+/// the reads stayed correct either way.
+fn cache() -> (std::sync::MutexGuard<'static, ()>, &'static IndexCache) {
+    static EXCLUSIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = EXCLUSIVE.lock().unwrap_or_else(|p| p.into_inner());
+    (guard, shared_cache())
+}
+
+fn shared_cache() -> &'static IndexCache {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     let dir = DIR.get_or_init(|| {
         let d = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("index-cache-{}", std::process::id()));
@@ -124,7 +136,7 @@ fn every_frame_alone(engine: &Engine, file: &Arc<TrackFile>, whole: &[u8], what:
 /// straight read.
 #[test]
 fn warm_index_reads_equal_straight_reads() {
-    let cache = cache();
+    let (_exclusive, cache) = cache();
     let engine = Engine::new(2, 0).unwrap();
     let mut loaded = 0;
     let mut reads = 0;
@@ -184,7 +196,7 @@ fn warm_index_reads_equal_straight_reads() {
 /// A warm seek reads less than a cold one: the same seek after a "remount".
 #[test]
 fn warm_seek_reads_less() {
-    let cache = cache();
+    let (_exclusive, cache) = cache();
     let engine = Engine::new(2, 0).unwrap();
     // A copy, so that no other test writes this image's entry.
     let dir = tempfile::tempdir().unwrap();
@@ -210,7 +222,7 @@ fn warm_seek_reads_less() {
 /// speed: every frame read alone still equals the straight read.
 #[test]
 fn hostile_entries_cost_only_speed() {
-    let cache = cache();
+    let (_exclusive, cache) = cache();
     let engine = Engine::new(2, 0).unwrap();
     let dir = tempfile::tempdir().unwrap();
     // Copies of a few images with several areas and hostile timelines, so that no other
