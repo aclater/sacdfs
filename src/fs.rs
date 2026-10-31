@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use fuser::{
     AccessFlags, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo,
-    KernelConfig, LockOwner, OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
-    ReplyEntry, ReplyOpen, ReplyStatfs, ReplyXattr, Request,
+    InitFlags, KernelConfig, LockOwner, OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory,
+    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyXattr, Request,
 };
 
 use crate::engine::Engine;
@@ -145,12 +145,33 @@ impl Filesystem for SacdFs {
             let _ = config.set_max_readahead(nearest);
         }
         let _ = config.set_max_background(64);
+        // Lets the kernel NFS server export the mount: it then looks up `.` and `..` of
+        // inode numbers from file handles, which the tree finds again after a restart.
+        if let Err(missing) = config.add_capabilities(InitFlags::FUSE_EXPORT_SUPPORT) {
+            log::info!("the kernel offers no FUSE export support ({missing:?}): no NFS export");
+        }
         Ok(())
     }
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
-        match self.tree.lookup(parent.0, name).and_then(|ino| self.tree.get(ino).map(|n| (ino, n))) {
-            Some((ino, node)) => reply.entry(&TTL, &self.attr(ino, &node), Generation(0)),
+        let ino = match name.as_encoded_bytes() {
+            // The kernel's export code asks for `.` of an inode number from a file handle
+            // and for `..` of a directory, to rebuild its path.
+            b"." => self.tree.get(parent.0).map(|_| parent.0),
+            b".." => match self.tree.get(parent.0).as_deref() {
+                Some(Node::Dir(d)) => Some(d.parent),
+                Some(Node::File(_)) => {
+                    reply.error(Errno::ENOTDIR);
+                    return;
+                }
+                None => None,
+            },
+            _ => self.tree.lookup(parent.0, name),
+        };
+        match ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n))) {
+            Some((ino, node)) => {
+                reply.entry(&TTL, &self.attr(ino, &node), Generation(self.tree.generation(&node)))
+            }
             None => reply.error(Errno::ENOENT),
         }
     }

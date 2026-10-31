@@ -424,6 +424,28 @@ long window only when it reads far faster than real time.
 `cat MOUNT/<disc>/Stereo/*.wav > /dev/null` on a fresh mount; one `pread` of 128 KiB on a
 fresh mount for the seek; under `benchlock`, with `--no-index-cache`.
 
+## Persistent file identity (#18)
+
+The cost of computing inode numbers from paths, against `main` before the change. Measured on
+a library on an NFS share (138 images in 216 directories), release builds, under the bench
+lock.
+
+| | before | after |
+|---|---|---|
+| Mount (`sacdfs` returns once mounted, warm NFS cache), median of 6, alternating | 95 ms | 101 ms |
+| of which: building the index of keys (`Ids::new`, measured alone) | - | 0.15 ms (354 entries, about 0.4 µs each) |
+| Fresh mount of five real discs, walk and `stat` of all 198 entries (first lookups, which open the images), median of 15, two rounds | 10.4 / 10.9 ms | 10.8 / 11.0 ms |
+
+- The index itself costs 0.15 ms for the whole library: 0.15 % of the 100 ms that walking the
+  names over NFS takes. The 6 ms between the two mount medians is not in the index; it is
+  within the run-to-run spread of the mount (the first, cold run took 4.9 s and 0.9 s).
+  Extrapolated, a library of 10,000 images adds a few milliseconds to a mount that walks
+  their names in seconds.
+- First lookups are as fast as before within the noise: they are dominated by reading the
+  images' TOCs, and the hash-map node table and the generation (one SHA-256 per file lookup)
+  cost well under a microsecond each.
+- The DSF gate on the five real discs is 93/93 with the change.
+
 ## DSF header reads (#32)
 
 Measured on 2026-10-31, the five discs mounted from a local disk (`--format dsf`,

@@ -86,8 +86,9 @@ MOUNT/
 - *Implementation:* a track's files are made one after the other, DSF first, through the same
   de-duplicator, so a track's two names always differ only in the extension, ` (2)` suffixes
   included.
-- Every inode number is stable for a mount's lifetime. Sizes are exact and known from the
-  TOC alone.
+- Inode numbers say what an entry is and are the same on every mount (see
+  [File identity and NFS export](#file-identity-and-nfs-export)). Sizes are exact and known
+  from the TOC alone.
 
 **Hybrid discs.** sacdfs shows only the SACD audio areas of an image. The CD (Red Book)
 layer of a hybrid disc is not in SACD images at all, because SACD rippers read only the
@@ -114,7 +115,9 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   with one album keeps both folders. A single image file as SOURCE is unaffected.
 - Collisions get ` (2)` as before (the collapsed folder keeps its own name, so it can
   collide only where an image of the same stem sits next to it, exactly as without the
-  option). Inode numbers stay stable for the mount's lifetime.
+  option). A collapsed folder has its image's inode number, so the image, its areas and its
+  files have the same numbers with and without the option; only the folders that collapse
+  away (or come back) differ.
 - *Implementation:* the decision is made from the names walked at mount time
   (`SourceDir::single_image`, a walk down the chain already in memory), when the parent
   directory is listed. No image is opened for it, so mounting costs the same with and
@@ -130,6 +133,90 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   often less descriptive than the owner's folder names. Deciding from the TOCs (for
   example, not counting files that are not SACD images) would mean opening every image at
   mount, which is the cost the lazy tree exists to avoid.
+
+## File identity and NFS export
+
+Issue #18, for the server-side deployment (#17): an NFS client keeps file handles, which hold
+the inode and generation numbers, across server restarts. Numbers handed out in walk order
+changed on every mount, and clients got `ESTALE` on open files and cached directories after
+every NAS reboot or app update.
+
+**Inode numbers** (`src/ident.rs`) are 64 bits:
+
+```
+ 63                                16 15 14 13 12         5  4  3      0
++------------------------------------+-----+--+------------+--+--------+
+| key: 48 bits of SHA-256 of a path  |kind |sl| track no.  |wv| flavour|
++------------------------------------+-----+--+------------+--+--------+
+```
+
+- A source directory's key comes from its path relative to SOURCE; an image's from the
+  image's relative path (with a domain byte, so a directory and an image never share an
+  input). Kind 0 is that directory itself (a source directory, an image's directory, or a
+  collapsed `--flatten` folder, which takes its image's number); kind 1 an area (`sl` is the
+  slot); kind 2 a track file: slot, track number (1 to 255, unique in an area by
+  construction), `wv` for WAV, and 4 bits of the PCM flavour (0 for DSF). The root is 1, as
+  FUSE requires; key 0 is never used.
+- *Why the image's key and the entry bits in one number:* after a restart the number is all
+  sacdfs gets (the kernel asks for `.` of it). With the image's key in the number, the image
+  is found from the index of names made at mount, and the area and file from the low bits,
+  without opening any other image. A plain hash of every entry would need a persistent table,
+  or all images opened, to be found again.
+- *Why SHA-256:* its output is fixed forever (std's `DefaultHasher` may change between Rust
+  releases, which would turn an app update into a restart with all handles stale), the crate
+  is already a dependency, and hashing every name walked costs little at mount (below). A
+  unit test pins one number so that an accidental change of the scheme fails.
+- *Why 48 bits of key:* 16 bits are needed for the entries; with 48 bits, a collision
+  becomes likely only around 16 million paths, and is detected anyway.
+- **Collisions** are detected at mount, where every key is computed from the names walked
+  (`Ids::new`). The path that sorts first (domain, then bytes) keeps the key; every other one
+  takes the first free key of the hash of its path with an attempt number appended (1, 2,
+  ...), free meaning no path's first key and not yet handed out. This does not depend on the
+  walk order, but a fallback key can change on a later mount if a new path's first key takes
+  it. A second area in the same slot (only a hostile image has one) is not shown, rather than
+  given a number that is not its own.
+- **What changes the numbers:** renaming or moving a folder or image changes its number and
+  everything below it. `--flatten` changes only the folders that collapse away. `--format`
+  hides files without changing the others'. `--pcm-rate`, `--pcm-cutoff` and `--pcm-gain`
+  change the WAV files' 4 flavour bits (so usually their numbers) and always their
+  generations. Adding or removing an image changes no other number, except in the
+  collision case above.
+
+**Generation numbers.** A track file's generation is 32 bits (all the kernel keeps) of a hash
+of its image's sector count and mtime, its format, size and an output version per format, and
+for WAV the full PCM flavour; never 0. A handle to a file whose bytes may have changed then
+fails with `ESTALE` instead of serving other audio. The output versions (`DSF_VERSION`,
+`WAV_VERSION`) are bumped by any change that makes the same track's bytes differ.
+Directories have generation 0: they are containers found by name, and a handle to one whose
+content changed should still work (a missing area or file is then not found).
+*Why not the image's file size:* the sector count is the image's size in sectors, already in
+the TOC; together with the mtime it catches any rewrite, without another `stat` per lookup.
+
+**Export support.** `init` asks for `FUSE_EXPORT_SUPPORT`. `lookup` answers `.` (the inode
+itself) and `..` (its directory's parent), which the kernel sends to turn a file handle into
+an inode and to connect a directory to the root. `Tree::get` of a number not made yet in this
+mount finds it from `Ids`, the index of keys built at mount from the names already walked:
+the key's chain of parent directories, then from the root down, each directory on the way is
+loaded (by inode number, not name, so de-duplicated names and `--flatten` do not matter), then
+the image's area and file. That opens exactly the images a lookup of the path would open (the
+images of the directories on the way, as when a client walks there), never all of them.
+
+**Restarting under an export.** The NFS server's open files and export cache hold the old FUSE
+mount, which then cannot be unmounted; and with the export removed, a client is told `ESTALE`.
+So the server is stopped around a restart of sacdfs, and its clients wait as for a server
+reboot. NFSv3 is stateless and reads on; NFSv4 reclaims its open state in the grace period.
+
+**Stopping a busy mount.** On SIGINT or SIGTERM, a mount that cannot be unmounted (files open,
+or held by an NFS server) is detached (`MNT_DETACH`, or `fusermount3 -u -z`) with a warning;
+sacdfs serves the files still open and exits when the last is closed. *Why:* before, as root, the
+unmount failed with `EBUSY`, sacdfs logged it and kept serving, and a container or service
+manager waiting for it to stop hung until it killed it, leaving a dead mount behind; for users
+other than root, fuser already unmounted lazily, so this makes the two behave the same.
+
+**Cost.** Mounting now hashes every source directory and image name once and keeps one map
+entry per directory and image (tens of bytes each). The node table is a hash map by inode
+number instead of a vector. Lookups of files compute their generation (one SHA-256 of about
+70 bytes, well under a microsecond). Measured in [performance.md](performance.md).
 
 ## DSF files
 
@@ -760,6 +847,27 @@ overheads, not by decoding. Measured figures are in [performance.md](performance
   file's. `tests/mount.rs` reads every WAV file through the kernel and compares it with the
   library, and checks `--format` and `--pcm-*`. An ignored test, `real_discs`, runs the stream
   check on local real discs (`SACDFS_REAL_IMAGES`).
+
+- *File identity:* unit tests (`src/ident.rs`, `src/tree.rs`): the bit layout; a pinned key;
+  forced collisions, which fall back the same way whatever the walk order; the same numbers on
+  every tree, listed in any order; the same numbers for images, areas and files with and
+  without `--flatten`; every number found from a fresh tree that knows only the number,
+  opening only the images on its way, and numbers that name nothing not found; PCM options
+  change the WAV files' generations only; a changed mtime changes every file's generation.
+  `tests/export.rs` mounts through the kernel: the whole corpus has distinct numbers, the same
+  after a remount, and with `--flatten` the same for what is still shown; directory handles
+  (`name_to_handle_at`) kept across a restart of sacdfs open again (`open_by_handle_at`, which
+  sends `.` and `..`) and list the same entries; file handles kept across a restart read on
+  where they were, and a changed image's go stale. Opening file handles needs
+  `CAP_DAC_READ_SEARCH` in the initial user namespace, so CI's `nfs` workflow runs these tests
+  as root; directory handles also open in a container (`--cap-add DAC_READ_SEARCH`).
+  `tests/nfs-loopback.sh` (CI, in a privileged Fedora container with the runner's nfsd)
+  exports a mount with the kernel NFS server, mounts it over loopback NFSv3, reads half of
+  each of several files through open descriptors with `O_DIRECT` (so no read is answered from
+  the client's cache), restarts sacdfs, and reads the rest through the same descriptors; then
+  changes an image and requires `ESTALE` from its open file. The kernel NFS server could not
+  be run on the development machine (no root, rootless containers, no nfsd module), so this
+  test runs only in CI.
 
 ## Prior art
 

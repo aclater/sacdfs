@@ -12,6 +12,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- SIGINT and SIGTERM detach a busy mount (open files, an NFS export) instead of logging an
+  error and serving on: sacdfs stops when the last open file is closed. fuser already
+  unmounted lazily for users other than root; now root behaves the same.
 - Speaker layouts (#31): the WAV channel mask and the DSF channel type come from the area's
   loudspeaker layout on the disc (scarletbook's `Area::loudspeaker_layout` and
   `Area::channel_speakers`) instead of the channel count alone: stereo FL FR, 5-channel (3/2)
@@ -42,6 +45,14 @@ All notable changes to sacdfs are recorded here. The format follows
   CPU has it, so generic builds convert about 1.4 times faster on most current CPUs, with
   the same output bit for bit. `SACDFS_SIMD=baseline|v3|v4` picks a copy (for tests and
   measurements); `pcm::Simd` and `Converter::with_simd` do it per converter.
+- Persistent file identity and NFS export (#18): inode numbers come from what an entry is
+  (a directory's or an image's relative path; an area's image and slot; a file's image,
+  slot, track number, format and PCM options), so they are the same on every mount, with
+  `--flatten` on or off. Track files carry a generation number that changes with their
+  image's size or mtime and with the PCM options, so stale handles fail with `ESTALE`. FUSE
+  export support is on, `.` and `..` are looked up, and an inode number from a file handle
+  kept across a restart is found again from the names walked at mount: the kernel NFS server
+  can export the mount, and its clients read on through a restart of sacdfs.
 - Open image files are kept in a bounded cache (#26): an image stays open from the listing
   of its directory and between reads, so that a seek no longer opens it again (0.6 to 0.9 ms
   on an NFS share). `--max-open-images N` (default 64) bounds them, least recently used

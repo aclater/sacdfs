@@ -14,6 +14,7 @@ pub mod dsf;
 pub mod engine;
 pub mod fs;
 pub mod handles;
+pub mod ident;
 pub mod index_cache;
 pub mod names;
 pub mod pcm;

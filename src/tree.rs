@@ -9,14 +9,19 @@
 //! At mount time only the names of the source tree are walked, to find the directories
 //! that hold `*.iso` files. A source directory's images are opened (their master and area
 //! TOCs read) when the directory is first looked into; an area's files and their tags are
-//! made when the area directory is first looked into. Inode numbers are handed out as nodes
-//! are made and never reused, so they are stable for the life of the mount.
+//! made when the area directory is first looked into.
+//!
+//! Inode numbers say what an entry is (see [`crate::ident`]): the same source tree gives the
+//! same numbers on every mount. A number the tree has not made yet, such as one from an NFS
+//! file handle kept across a restart, is found again from the index of names built at mount
+//! ([`Ids`]): the directories on its way are loaded as a lookup of its path would load them.
 //!
 //! With [`Tree::with_flatten`], a chain of source directories below the top level whose only
 //! content is one image is shown as its outermost directory holding the image's areas. The
 //! chains are found from the names walked at mount time ([`SourceDir::single_image`]); the
 //! image is still opened only when that directory is first looked into.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
@@ -30,7 +35,9 @@ use scarletbook::Slot;
 use scarletbook::audio::check_track;
 
 use crate::disc::{Disc, Tuning};
+use crate::ident::{self, Ids};
 use crate::names::{Deduper, track_file_name};
+use crate::pcm::PcmConfig;
 use crate::track::{Format, TrackFile};
 
 /// Which files an area directory shows.
@@ -208,11 +215,14 @@ pub enum Node {
 /// The tree: every node made so far, by inode number.
 #[derive(Debug)]
 pub struct Tree {
-    nodes: RwLock<Vec<Arc<Node>>>,
+    nodes: RwLock<HashMap<u64, Arc<Node>>>,
+    ids: Ids,
     next_disc: AtomicU32,
     tuning: Tuning,
     output: Output,
     flatten: bool,
+    /// The flavour of the WAV files (PCM options and rate), part of their numbers.
+    wav_flavour: u64,
 }
 
 impl Tree {
@@ -229,15 +239,31 @@ impl Tree {
     /// A tree whose discs search for frames with `tuning`, showing the files of `output`.
     pub fn with_options(root: SourceDir, tuning: Tuning, output: Output) -> Tree {
         let mtime = fs::metadata(&root.path).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+        // Hashes every name walked once (no file is opened), so that numbers made later can
+        // be found again from their key.
+        let ids = Ids::new(&root);
         let node =
             Node::Dir(Dir { kind: DirKind::Source(root), mtime, parent: ROOT, children: Mutex::new(None) });
+        let wav_flavour =
+            ident::wav_flavour(ident::pcm_flavour(&PcmConfig::default()), output.samples_per_frame);
         Tree {
-            nodes: RwLock::new(vec![Arc::new(node)]),
+            nodes: RwLock::new(HashMap::from([(ROOT, Arc::new(node))])),
+            ids,
             next_disc: AtomicU32::new(1),
             tuning,
             output,
             flatten: false,
+            wav_flavour,
         }
+    }
+
+    /// The same tree, its WAV files converted with `pcm` (whose rate must be the one of the
+    /// output's samples per frame): the PCM options are part of the WAV files' inode and
+    /// generation numbers. Without it, the default options are assumed.
+    #[must_use]
+    pub fn with_pcm(mut self, pcm: &PcmConfig) -> Tree {
+        self.wav_flavour = ident::wav_flavour(ident::pcm_flavour(pcm), self.output.samples_per_frame);
+        self
     }
 
     /// The same tree, with chains of directories below the top level that hold a single
@@ -249,10 +275,47 @@ impl Tree {
         self
     }
 
-    /// The node with inode number `ino`.
+    /// The node with inode number `ino`. A number not made yet in this mount (one from an
+    /// NFS file handle kept across a restart) is looked for along its path, which loads the
+    /// directories on the way as looking up that path would.
     pub fn get(&self, ino: u64) -> Option<Arc<Node>> {
-        let i = usize::try_from(ino.checked_sub(1)?).ok()?;
-        self.nodes.read().unwrap_or_else(|p| p.into_inner()).get(i).cloned()
+        if let Some(n) = self.nodes.read().unwrap_or_else(|p| p.into_inner()).get(&ino) {
+            return Some(n.clone());
+        }
+        self.find(ino)
+    }
+
+    /// Finds `ino` from the index: walks from the root through the directories its key's
+    /// path goes through (matching inode numbers, not names, so that `--flatten` and
+    /// de-duplicated names do not matter), then into the image's area and file.
+    fn find(&self, ino: u64) -> Option<Arc<Node>> {
+        let chain = self.ids.chain(ino)?;
+        let mut cur = ROOT;
+        let mut rest = chain.as_slice();
+        while !rest.is_empty() {
+            let children = self.children(cur)?;
+            // The deepest directory of the chain listed here: with --flatten, a collapsed
+            // directory carries its image's number, skipping the directories in between.
+            let (at, e) = children
+                .iter()
+                .filter(|e| e.is_dir)
+                .find_map(|e| rest.iter().position(|&c| c == e.ino).map(|j| (j, e.ino)))?;
+            cur = e;
+            rest = &rest[at + 1..];
+        }
+        if ident::entry_of(ino) != 0 {
+            // An area, or a file of the area with the same key and slot.
+            let area = ident::area_of(ino)?;
+            if !self.children(cur)?.iter().any(|e| e.ino == area) {
+                return None;
+            }
+            if area != ino && !self.children(area)?.iter().any(|e| e.ino == ino) {
+                return None;
+            }
+        } else if cur != ino {
+            return None;
+        }
+        self.nodes.read().unwrap_or_else(|p| p.into_inner()).get(&ino).cloned()
     }
 
     /// Number of nodes made so far.
@@ -265,10 +328,17 @@ impl Tree {
         false
     }
 
-    fn add(&self, node: Node) -> u64 {
+    /// Adds `node` as `ino`; `false` (and the node is dropped) if that number is taken,
+    /// which only a hostile image (two areas in one slot) can cause.
+    fn add(&self, ino: u64, node: Node) -> bool {
         let mut nodes = self.nodes.write().unwrap_or_else(|p| p.into_inner());
-        nodes.push(Arc::new(node));
-        nodes.len() as u64
+        match nodes.entry(ino) {
+            std::collections::hash_map::Entry::Occupied(_) => false,
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert(Arc::new(node));
+                true
+            }
+        }
     }
 
     /// The entries of directory `ino`, made on first use. `None` if it is not a directory.
@@ -290,6 +360,15 @@ impl Tree {
         match self.get(ino).as_deref() {
             Some(Node::Dir(d)) => d.parent,
             _ => ROOT,
+        }
+    }
+
+    /// The generation number of `node`: 0 for a directory; for a track file, a hash of what
+    /// its bytes depend on (see [`crate::ident`]).
+    pub fn generation(&self, node: &Node) -> u64 {
+        match node {
+            Node::Dir(_) => 0,
+            Node::File(f) => ident::generation(f, self.wav_flavour),
         }
     }
 
@@ -316,11 +395,14 @@ impl Tree {
                     let mtime = fs::metadata(&sub.path).and_then(|m| m.modified()).unwrap_or(dir.mtime);
                     // The top-level directories (usually artists) are never collapsed.
                     let flat = if self.flatten && parent != ROOT { sub.single_image() } else { None };
-                    let kind = match flat {
-                        Some(image) => DirKind::Flat(image.to_owned()),
-                        None => DirKind::Source(sub.clone()),
+                    // A collapsed directory is the image's directory: it has its number.
+                    let (kind, ino) = match flat {
+                        Some(image) => (DirKind::Flat(image.to_owned()), self.ids.image(image)),
+                        None => (DirKind::Source(sub.clone()), self.ids.dir(&sub.path)),
                     };
-                    let ino = self.add(Node::Dir(Dir { kind, mtime, parent, children: Mutex::new(None) }));
+                    if !self.add(ino, Node::Dir(Dir { kind, mtime, parent, children: Mutex::new(None) })) {
+                        continue;
+                    }
                     out.push(Entry { name: dedup.unique(name, false), ino, is_dir: true });
                 }
                 // Opening an image reads its master and area TOCs: a few small reads,
@@ -343,12 +425,16 @@ impl Tree {
                     let Some(disc) = disc else { continue };
                     let stem = path.file_stem().map_or_else(|| OsString::from("disc"), OsStr::to_owned);
                     let mtime = disc.mtime;
-                    let ino = self.add(Node::Dir(Dir {
+                    let ino = self.ids.image(&path);
+                    let dir = Dir {
                         kind: DirKind::Image(Arc::new(disc)),
                         mtime,
                         parent,
                         children: Mutex::new(None),
-                    }));
+                    };
+                    if !self.add(ino, Node::Dir(dir)) {
+                        continue;
+                    }
                     out.push(Entry { name: dedup.unique(&stem, false), ino, is_dir: true });
                 }
             }
@@ -358,12 +444,17 @@ impl Tree {
                         Slot::TwoChannel => STEREO,
                         Slot::Multichannel => MULTICHANNEL,
                     };
-                    let ino = self.add(Node::Dir(Dir {
+                    let ino = ident::area(parent, area.slot);
+                    let dir = Dir {
                         kind: DirKind::Area(disc.clone(), i),
                         mtime: disc.mtime,
                         parent,
                         children: Mutex::new(None),
-                    }));
+                    };
+                    if !self.add(ino, Node::Dir(dir)) {
+                        log::info!("{}: second {} area: not shown", disc.path.display(), area.slot);
+                        continue;
+                    }
                     out.push(Entry { name: dedup.unique(OsStr::new(name), false), ino, is_dir: true });
                 }
             }
@@ -405,7 +496,10 @@ impl Tree {
                         };
                         let name =
                             track_file_name(track.number, track.text.title.as_deref(), format.extension());
-                        let ino = self.add(Node::File(Arc::new(file)));
+                        let ino = ident::file(parent, area.slot, track.number, format, self.wav_flavour);
+                        if !self.add(ino, Node::File(Arc::new(file))) {
+                            continue;
+                        }
                         out.push(Entry { name: dedup.unique(OsStr::new(&name), true), ino, is_dir: false });
                     }
                 }
@@ -616,5 +710,158 @@ mod tests {
         let count = |flatten| tree(dir.path(), flatten).all_files().len();
         assert_eq!(count(true), count(false));
         assert!(count(true) > 0);
+    }
+
+    /// Every path of the tree with its inode number, loading every directory.
+    fn numbered(tree: &Tree) -> Vec<(String, u64)> {
+        let mut out: Vec<_> = paths(tree)
+            .into_iter()
+            .map(|p| {
+                let ino = tree.resolve(Path::new(&p)).unwrap();
+                (p, ino)
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn numbers_are_the_same_on_every_mount() {
+        let dir = source(&["Artist/Album/Rip/x.iso", "Artist/Box/a.iso", "Artist/Box/Bonus/b.iso", "y.iso"]);
+        let a = numbered(&tree(dir.path(), false));
+        // Another tree (a remount), listed in another order.
+        let t = tree(dir.path(), false);
+        let _ = names(&t, "y/Multichannel");
+        assert_eq!(numbered(&t), a);
+        // Every number distinct, none the root's.
+        let mut inos: Vec<u64> = a.iter().map(|(_, i)| *i).collect();
+        inos.sort_unstable();
+        inos.dedup();
+        assert_eq!(inos.len(), a.len());
+        assert!(!inos.contains(&ROOT));
+    }
+
+    #[test]
+    fn flatten_keeps_the_numbers_of_images_areas_and_files() {
+        let dir = source(&["Artist/Album/Rip/x.iso", "Artist/Box/a.iso", "Artist/Box/Bonus/b.iso"]);
+        let plain = tree(dir.path(), false);
+        let flat = tree(dir.path(), true);
+        let same = [
+            ("Artist/Album/Rip/x", "Artist/Album"),
+            ("Artist/Album/Rip/x/Stereo", "Artist/Album/Stereo"),
+            ("Artist/Box/Bonus/b/Multichannel", "Artist/Box/Bonus/Multichannel"),
+            ("Artist/Box/a/Stereo", "Artist/Box/a/Stereo"),
+            ("Artist", "Artist"),
+        ];
+        for (p, f) in same {
+            assert_eq!(plain.resolve(Path::new(p)), flat.resolve(Path::new(f)), "{p} / {f}");
+        }
+        let files = |t: &Tree, area: &str| -> Vec<u64> {
+            let ino = t.resolve(Path::new(area)).unwrap();
+            t.children(ino).unwrap().iter().map(|e| e.ino).collect()
+        };
+        assert_eq!(files(&plain, "Artist/Album/Rip/x/Stereo"), files(&flat, "Artist/Album/Stereo"));
+        // The collapsed source directories have no node with --flatten.
+        let rip = plain.resolve(Path::new("Artist/Album/Rip")).unwrap();
+        assert!(flat.get(rip).is_none());
+    }
+
+    #[test]
+    fn numbers_are_found_on_a_fresh_mount() {
+        let dir = source(&[
+            "Artist/Album/Rip/x.iso",
+            "Artist/Box/a.iso",
+            "Artist/Box/Bonus/b.iso",
+            "Other/Deep/z.iso",
+            "y.iso",
+        ]);
+        for flatten in [false, true] {
+            let all = numbered(&tree(dir.path(), flatten));
+            for (path, ino) in &all {
+                // A fresh tree, as after a restart: only the number is known.
+                let t = tree(dir.path(), flatten);
+                let node = t.get(*ino).unwrap_or_else(|| panic!("{path} ({ino:#x}) not found"));
+                // Only the images of the directories on the way are opened (as a lookup of
+                // the path would): never all five, at most y, a and b (next_disc starts at 1).
+                if !path.starts_with("Other") {
+                    assert!(t.next_disc.load(Ordering::Relaxed) <= 4, "{path}");
+                }
+                assert_eq!(t.resolve(Path::new(path)), Some(*ino));
+                let is_dir = matches!(&*node, Node::Dir(_));
+                assert_eq!(is_dir, !path.ends_with(".dsf") && !path.ends_with(".wav"), "{path}");
+            }
+            // Numbers that name nothing.
+            let t = tree(dir.path(), flatten);
+            let (_, area) = all.iter().find(|(p, _)| p.ends_with("Stereo")).unwrap();
+            for bad in [0, 2, 1 << 16, area | (3 << 14), area | 0x1fff, u64::MAX] {
+                assert!(t.get(bad).is_none(), "{bad:#x}");
+            }
+        }
+        // A source directory hidden by --flatten is not found in a flattened mount.
+        let rip = tree(dir.path(), false).resolve(Path::new("Artist/Album/Rip")).unwrap();
+        assert!(tree(dir.path(), true).get(rip).is_none());
+    }
+
+    #[test]
+    fn pcm_options_change_wav_numbers_and_generations_only() {
+        let dir = source(&["Artist/x.iso"]);
+        let files = |pcm: PcmConfig, spf: u32| {
+            let out = Output { samples_per_frame: spf, ..Output::default() };
+            let t = Tree::with_options(SourceDir::scan(dir.path()).unwrap(), Tuning::default(), out)
+                .with_pcm(&pcm);
+            let mut v: Vec<(String, u64, u64)> = t
+                .all_files()
+                .into_iter()
+                .map(|(p, f)| {
+                    let ino = t.resolve(&p).unwrap();
+                    (p.display().to_string(), ino, ident::generation(&f, t.wav_flavour))
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        let base = files(PcmConfig::default(), 2352);
+        assert_eq!(files(PcmConfig::default(), 2352), base);
+        for other in [
+            files(PcmConfig { gain_db: -3.0, ..PcmConfig::default() }, 2352),
+            files(PcmConfig { cutoff: crate::pcm::Cutoff::Khz30, ..PcmConfig::default() }, 2352),
+            files(PcmConfig::default(), 4704),
+        ] {
+            for (a, b) in base.iter().zip(&other) {
+                assert_eq!(a.0, b.0);
+                if a.0.ends_with(".dsf") {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a.2, b.2, "{}: same generation", a.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_changed_image_gets_new_generations() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("x.iso");
+        fs::copy(corpus_image(), &image).unwrap();
+        let gens = || -> Vec<(u64, u64)> {
+            let t = tree(dir.path(), false);
+            t.all_files()
+                .into_iter()
+                .map(|(p, f)| (t.resolve(&p).unwrap(), t.generation(&Node::File(f))))
+                .collect()
+        };
+        let before = gens();
+        assert_eq!(gens(), before);
+        let f = fs::File::options().write(true).open(&image).unwrap();
+        f.set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)).unwrap();
+        let after = gens();
+        for (a, b) in before.iter().zip(&after) {
+            assert_eq!(a.0, b.0, "same numbers");
+            assert_ne!(a.1, b.1, "new generation");
+            assert_ne!(b.1, 0);
+        }
+        // Directories keep generation 0.
+        let t = tree(dir.path(), false);
+        assert_eq!(t.generation(&t.get(ROOT).unwrap()), 0);
     }
 }
