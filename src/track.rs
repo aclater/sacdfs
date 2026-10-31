@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! A track shown as a DSF file, and reading byte ranges of it.
+//! A track shown as a DSF or WAV file, and reading byte ranges of it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex};
 use scarletbook::toc::{DiscTextItem, TrackTextItem};
 use scarletbook::{Area, Track};
 
-use crate::disc::{Cursor, Disc, ReadError};
-use crate::dsf::{self, HEADER_LEN, Layout, Piece, Tags};
-use crate::engine::{Engine, Fill, Frame};
+use crate::disc::{Disc, ReadError};
+use crate::dsf::{self, Layout, Piece, Tags};
+use crate::engine::{Engine, Fill, Frame, Stream};
+use crate::wav;
 
 /// Frames decoded ahead of a sequential reader: 2 s of audio.
 pub const READ_AHEAD_FRAMES: u32 = 150;
@@ -23,7 +24,35 @@ const SEQ_GAP_AHEAD: u64 = 1 << 20;
 /// sequential (the kernel sends read-ahead requests concurrently, slightly out of order).
 const SEQ_GAP_BEHIND: u64 = 8 << 20;
 
-/// One track of one area, shown as a DSF file.
+/// The file format of a track file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Format {
+    /// DSF: the DSD audio as it is.
+    Dsf,
+    /// WAV: the audio converted to 24-bit PCM.
+    Wav,
+}
+
+impl Format {
+    /// The file name extension, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Format::Dsf => "dsf",
+            Format::Wav => "wav",
+        }
+    }
+}
+
+/// How the audio of a file is laid out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Audio {
+    /// DSF blocks.
+    Dsf(Layout),
+    /// WAV frames of PCM.
+    Wav(wav::Layout),
+}
+
+/// One track of one area, shown as a DSF or WAV file.
 #[derive(Debug)]
 pub struct TrackFile {
     /// The disc.
@@ -34,114 +63,220 @@ pub struct TrackFile {
     pub number: u8,
     /// First timeline position of the track.
     pub start_frame: u32,
-    /// The audio layout.
+    /// The track's channel count and number of frames (timeline positions).
     pub layout: Layout,
-    header: [u8; HEADER_LEN as usize],
-    tag: Vec<u8>,
+    /// The first timeline position after the area's last frame: the later of the area's
+    /// play time and the end of its last track. A WAV file's neighbouring DSD frames at or
+    /// past it are silence.
+    pub area_end: u32,
+    /// The audio layout of the file.
+    pub audio: Audio,
+    header: Vec<u8>,
+    trailer: Vec<u8>,
+    tag: std::ops::Range<usize>,
     /// File size in bytes.
     pub size: u64,
     warned: AtomicBool,
+    warned_clips: AtomicBool,
 }
 
 impl TrackFile {
-    /// The file of `track` in area `area` of `disc`, with its tag.
+    /// The DSF file of `track` in area `area` of `disc`, with its tag.
     pub fn new(disc: Arc<Disc>, area: usize, track: &Track) -> Option<TrackFile> {
+        Self::with_format(disc, area, track, Format::Dsf, 0)
+    }
+
+    /// The file of `track` in area `area` of `disc` in `format`; a WAV file has
+    /// `samples_per_frame` samples per channel per frame.
+    pub fn with_format(
+        disc: Arc<Disc>,
+        area: usize,
+        track: &Track,
+        format: Format,
+        samples_per_frame: u32,
+    ) -> Option<TrackFile> {
         let a = disc.toc.areas.get(area)?;
         let layout = Layout { channels: a.channel_count, frames: track.duration_frames };
-        let tag = tags(&disc, a, track).to_id3();
-        let header = dsf::header(&layout, tag.len() as u64);
-        let size = HEADER_LEN + layout.data_len() + tag.len() as u64;
+        let tags = tags(&disc, a, track);
+        let (audio, header, trailer, tag) = match format {
+            Format::Dsf => {
+                let tag = tags.to_id3();
+                let header = dsf::header(&layout, tag.len() as u64).to_vec();
+                let range = 0..tag.len();
+                (Audio::Dsf(layout), header, tag, range)
+            }
+            Format::Wav => {
+                let spf = u64::from(samples_per_frame);
+                if spf == 0 || dsf::FRAME_BYTES * 8 % spf != 0 {
+                    return None;
+                }
+                let rate = (u64::from(dsf::SAMPLE_RATE) * spf / (dsf::FRAME_BYTES * 8)) as u32;
+                let wl =
+                    wav::Layout { channels: layout.channels, frames: layout.frames, samples_per_frame, rate };
+                let t = wav::trailer(&tags);
+                let header = wav::header(&wl, t.bytes.len() as u64);
+                (Audio::Wav(wl), header, t.bytes, t.tag)
+            }
+        };
+        let data_len = match audio {
+            Audio::Dsf(l) => l.data_len(),
+            Audio::Wav(l) => l.data_len(),
+        };
+        let size = header.len() as u64 + data_len + trailer.len() as u64;
+        let track_end = a.tracks.iter().map(|t| t.end_frame()).max().unwrap_or(0);
+        let area_end = a.playtime_frames().max(track_end);
         Some(TrackFile {
             disc,
             area,
             number: track.number,
             start_frame: track.start_frame,
             layout,
+            area_end,
+            audio,
             header,
+            trailer,
             tag,
             size,
             warned: AtomicBool::new(false),
+            warned_clips: AtomicBool::new(false),
         })
+    }
+
+    /// The file format.
+    pub fn format(&self) -> Format {
+        match self.audio {
+            Audio::Dsf(_) => Format::Dsf,
+            Audio::Wav(_) => Format::Wav,
+        }
     }
 
     /// The ID3v2.4 tag bytes.
     pub fn tag(&self) -> &[u8] {
-        &self.tag
+        self.trailer.get(self.tag.clone()).unwrap_or(&[])
     }
 
-    fn data_end(&self) -> u64 {
-        HEADER_LEN + self.layout.data_len()
+    /// Length of everything before the first audio byte.
+    pub fn header_len(&self) -> u64 {
+        self.header.len() as u64
+    }
+
+    /// Offset of the first byte after the audio.
+    pub fn data_end(&self) -> u64 {
+        self.size - self.trailer.len() as u64
     }
 
     /// The file indices of the frames that bytes `[offset, end)` of the file need.
     pub fn frames_for(&self, offset: u64, end: u64) -> (u32, u32) {
-        let s = offset.max(HEADER_LEN).min(self.data_end()) - HEADER_LEN;
-        let e = end.max(HEADER_LEN).min(self.data_end()) - HEADER_LEN;
-        self.layout.frames_for(s, e)
+        let h = self.header_len();
+        let s = offset.max(h).min(self.data_end()) - h;
+        let e = end.max(h).min(self.data_end()) - h;
+        match self.audio {
+            Audio::Dsf(l) => l.frames_for(s, e),
+            Audio::Wav(l) => l.frames_for(s, e),
+        }
     }
 
     /// Bytes `[offset, offset + len)` of the file, clipped at its end, built from `frames`,
-    /// the decoded frames for file indices `first..`.
+    /// the frames for file indices `first..` (decoded DSD for a DSF file, PCM for a WAV
+    /// file).
     pub fn assemble(&self, offset: u64, len: u64, first: u32, frames: &[Arc<Frame>]) -> Vec<u8> {
         let end = offset.saturating_add(len).min(self.size);
         let mut out = Vec::with_capacity(end.saturating_sub(offset) as usize);
         if offset >= end {
             return out;
         }
+        let h = self.header_len();
         // Header.
-        if offset < HEADER_LEN {
-            let e = end.min(HEADER_LEN);
+        if offset < h {
+            let e = end.min(h);
             out.extend_from_slice(&self.header[offset as usize..e as usize]);
         }
         // Audio.
-        let (ds, de) = (offset.max(HEADER_LEN), end.min(self.data_end()));
+        let (ds, de) = (offset.max(h), end.min(self.data_end()));
         if ds < de {
             let mut fill = None;
-            for p in self.layout.pieces(ds - HEADER_LEN, de - HEADER_LEN) {
-                match p {
-                    Piece::Pad { len } => out.resize(out.len() + len, 0),
-                    Piece::Audio { channel, byte, len } => {
-                        let k = (byte / dsf::FRAME_BYTES) as u32;
-                        let at = (byte % dsf::FRAME_BYTES) as usize;
-                        match k.checked_sub(first).and_then(|i| frames.get(i as usize)) {
-                            Some(f) => {
-                                if f.fill != Fill::Audio {
-                                    fill = Some(f.fill);
-                                }
-                                match f.plane(channel).get(at..at + len) {
-                                    Some(src) => out.extend_from_slice(src),
+            let mut clips = 0;
+            let mut note = |f: &Frame| {
+                if f.fill != Fill::Audio {
+                    fill = Some(f.fill);
+                }
+                clips += u64::from(f.clips);
+            };
+            match self.audio {
+                Audio::Dsf(layout) => {
+                    for p in layout.pieces(ds - h, de - h) {
+                        match p {
+                            Piece::Pad { len } => out.resize(out.len() + len, 0),
+                            Piece::Audio { channel, byte, len } => {
+                                let k = (byte / dsf::FRAME_BYTES) as u32;
+                                let at = (byte % dsf::FRAME_BYTES) as usize;
+                                match k.checked_sub(first).and_then(|i| frames.get(i as usize)) {
+                                    Some(f) => {
+                                        note(f);
+                                        match f.plane(channel).get(at..at + len) {
+                                            Some(src) => out.extend_from_slice(src),
+                                            None => out.resize(out.len() + len, 0),
+                                        }
+                                    }
                                     None => out.resize(out.len() + len, 0),
                                 }
                             }
-                            None => out.resize(out.len() + len, 0),
                         }
                     }
                 }
-            }
-            if let Some(fill) = fill {
-                if !self.warned.swap(true, Ordering::Relaxed) {
-                    let what = match fill {
-                        Fill::Missing => "missing frames (filled with 0x69)",
-                        _ => "invalid DST frames (filled with 0x55)",
-                    };
-                    log::warn!(
-                        "{} area {} track {}: {what}",
-                        self.disc.path.display(),
-                        self.area,
-                        self.number
-                    );
+                Audio::Wav(layout) => {
+                    let fb = layout.frame_bytes();
+                    let mut d = ds - h;
+                    while d < de - h {
+                        let k = (d / fb) as u32;
+                        let at = d % fb;
+                        let n = (fb - at).min(de - h - d) as usize;
+                        match k.checked_sub(first).and_then(|i| frames.get(i as usize)) {
+                            Some(f) => {
+                                note(f);
+                                match f.data.get(at as usize..at as usize + n) {
+                                    Some(src) => out.extend_from_slice(src),
+                                    None => out.resize(out.len() + n, 0),
+                                }
+                            }
+                            None => out.resize(out.len() + n, 0),
+                        }
+                        d += n as u64;
+                    }
                 }
             }
+            self.warn(fill, clips);
         }
-        // Tag.
+        // Trailer.
         if end > self.data_end() {
             let s = (offset.max(self.data_end()) - self.data_end()) as usize;
             let e = (end - self.data_end()) as usize;
-            if let Some(t) = self.tag.get(s..e) {
+            if let Some(t) = self.trailer.get(s..e) {
                 out.extend_from_slice(t);
             }
         }
         out
+    }
+
+    /// Logs, once per file, that it holds filled frames or clipped samples.
+    fn warn(&self, fill: Option<Fill>, clips: u64) {
+        if let Some(fill) = fill {
+            if !self.warned.swap(true, Ordering::Relaxed) {
+                let what = match fill {
+                    Fill::Missing => "missing frames (filled with 0x69)",
+                    _ => "invalid DST frames (filled with 0x55)",
+                };
+                log::warn!("{} area {} track {}: {what}", self.disc.path.display(), self.area, self.number);
+            }
+        }
+        if clips > 0 && !self.warned_clips.swap(true, Ordering::Relaxed) {
+            log::warn!(
+                "{} area {} track {}: {clips} PCM samples clipped (lower --pcm-gain to avoid it)",
+                self.disc.path.display(),
+                self.area,
+                self.number
+            );
+        }
     }
 }
 
@@ -201,20 +336,20 @@ struct Seq {
     ahead_until: u32,
 }
 
-/// An open file: the file and its own demultiplexer state, so that a sequential read
-/// continues where the last one stopped.
+/// An open file: the file and its own demultiplexer state (and, for a WAV file, its last
+/// decoded DSD frames), so that a sequential read continues where the last one stopped.
 #[derive(Debug)]
 pub struct Reader {
     /// The file.
     pub file: Arc<TrackFile>,
-    cursor: Mutex<Option<Cursor>>,
+    stream: Mutex<Stream>,
     seq: Mutex<Seq>,
 }
 
 impl Reader {
     /// A reader of `file`.
     pub fn new(file: Arc<TrackFile>) -> Self {
-        Reader { file, cursor: Mutex::new(None), seq: Mutex::new(Seq::default()) }
+        Reader { file, stream: Mutex::new(Stream::default()), seq: Mutex::new(Seq::default()) }
     }
 
     /// Bytes `[offset, offset + len)` of the file (fewer at its end), and the frames (file
@@ -243,11 +378,27 @@ impl Reader {
     fn decoded(&self, engine: &Engine, k0: u32, k1: u32) -> Result<Vec<Arc<Frame>>, ReadError> {
         let f = &self.file;
         let (t0, t1) = (f.start_frame + k0, f.start_frame + k1);
-        if let Some(frames) = engine.cached(&f.disc, f.area, t0, t1) {
-            return Ok(frames);
+        match f.audio {
+            Audio::Dsf(_) => {
+                if let Some(frames) = engine.cached(&f.disc, f.area, t0, t1) {
+                    return Ok(frames);
+                }
+                let mut stream = self.stream.lock().unwrap_or_else(|p| p.into_inner());
+                engine.frames(&f.disc, f.area, &mut stream.cursor, t0, t1)
+            }
+            Audio::Wav(l) => {
+                if engine.pcm_frame_bytes(l.channels) as u64 != l.frame_bytes() {
+                    return Err(ReadError::Io(std::io::Error::other(
+                        "the file's PCM rate differs from the engine's",
+                    )));
+                }
+                if let Some(frames) = engine.cached_pcm(&f.disc, f.area, t0, t1) {
+                    return Ok(frames);
+                }
+                let mut stream = self.stream.lock().unwrap_or_else(|p| p.into_inner());
+                engine.pcm_frames(&f.disc, f.area, &mut stream, t0, t1, f.area_end)
+            }
         }
-        let mut cursor = self.cursor.lock().unwrap_or_else(|p| p.into_inner());
-        engine.frames(&f.disc, f.area, &mut cursor, t0, t1)
     }
 
     fn plan_read_ahead(&self, offset: u64, end: u64, k1: u32) -> Option<ReadAhead> {

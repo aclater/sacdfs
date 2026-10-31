@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! `sacdfs SOURCE MOUNTPOINT`: mount SACD disc images as DSF files.
+//! `sacdfs SOURCE MOUNTPOINT`: mount SACD disc images as DSF and WAV files.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -14,14 +14,17 @@ use fuser::{Config, MountOption, Session, SessionACL};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
+use sacdfs::disc::Tuning;
 use sacdfs::engine::{Engine, default_threads};
 use sacdfs::fs::{MAX_READ, SacdFs};
-use sacdfs::tree::{SourceDir, Tree};
+use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
+use sacdfs::tree::{Output, SourceDir, Tree};
 
-/// Show the audio of SACD disc images as DSF files, decoded on demand.
+/// Show the audio of SACD disc images as DSF and WAV files, decoded on demand.
 ///
 /// SOURCE is an image file or a directory searched recursively for *.iso files. Each image
-/// appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN - title.dsf.
+/// appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN - title.dsf,
+/// with NN - title.wav (24-bit PCM, converted on demand) next to it.
 /// Unmount with `fusermount3 -u MOUNTPOINT`, or stop sacdfs with SIGINT or SIGTERM.
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -36,15 +39,73 @@ struct Args {
     /// DST decoder threads (0: one per CPU).
     #[arg(long, default_value_t = 0, value_name = "N")]
     threads: usize,
-    /// Size of the cache of decoded frames, in MiB.
+    /// Size of the cache of decoded and converted frames, in MiB.
     #[arg(long, default_value_t = 256, value_name = "N")]
     cache_mb: usize,
+    /// Which files to show: dsf, wav, or both (dsf,wav).
+    #[arg(long, default_value = "dsf,wav", value_name = "LIST", value_parser = parse_formats)]
+    format: Formats,
+    /// Sample rate of the WAV files, in Hz: 88200, 176400 or 352800.
+    #[arg(long, default_value_t = 176_400, value_name = "HZ", value_parser = parse_rate)]
+    pcm_rate: u32,
+    /// Low-pass cutoff of the PCM conversion, in kHz: 40 or 30.
+    #[arg(long, default_value_t = 40, value_name = "KHZ", value_parser = parse_cutoff)]
+    pcm_cutoff: u32,
+    /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
+    #[arg(long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
+    pcm_gain: f32,
     /// Let other users see the mount (needs `user_allow_other` in /etc/fuse.conf).
     #[arg(long)]
     allow_other: bool,
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
+}
+
+/// The formats shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Formats {
+    dsf: bool,
+    wav: bool,
+}
+
+fn parse_formats(s: &str) -> Result<Formats, String> {
+    let mut f = Formats { dsf: false, wav: false };
+    for part in s.split(',') {
+        match part.trim().to_ascii_lowercase().as_str() {
+            "dsf" => f.dsf = true,
+            "wav" => f.wav = true,
+            other => return Err(format!("unknown format {other:?}: use dsf, wav or dsf,wav")),
+        }
+    }
+    Ok(f)
+}
+
+fn pcm_rate(hz: u32) -> Option<PcmRate> {
+    match hz {
+        88_200 => Some(PcmRate::R88200),
+        176_400 => Some(PcmRate::R176400),
+        352_800 => Some(PcmRate::R352800),
+        _ => None,
+    }
+}
+
+fn parse_rate(s: &str) -> Result<u32, String> {
+    s.parse()
+        .ok()
+        .filter(|&hz| pcm_rate(hz).is_some())
+        .ok_or_else(|| "use 88200, 176400 or 352800".to_owned())
+}
+
+fn parse_cutoff(s: &str) -> Result<u32, String> {
+    s.parse().ok().filter(|k| [30, 40].contains(k)).ok_or_else(|| "use 40 or 30".to_owned())
+}
+
+fn parse_gain(s: &str) -> Result<f32, String> {
+    s.parse::<f32>()
+        .ok()
+        .filter(|g| g.is_finite() && (-60.0..=24.0).contains(g))
+        .ok_or_else(|| "use a number of dB from -60 to 24".to_owned())
 }
 
 fn main() -> ExitCode {
@@ -87,8 +148,16 @@ fn run(args: Args) -> io::Result<()> {
         .num_threads(threads.min(8))
         .thread_name(|i| format!("sacdfs-toc-{i}"))
         .build_global();
-    let engine = Arc::new(Engine::new(threads, args.cache_mb.saturating_mul(1 << 20))?);
-    let tree = Arc::new(Tree::new(root));
+    let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
+    let cutoff = if args.pcm_cutoff == 30 { Cutoff::Khz30 } else { Cutoff::Khz40 };
+    let pcm = PcmConfig { rate, cutoff, gain_db: args.pcm_gain };
+    let output = Output {
+        dsf: args.format.dsf,
+        wav: args.format.wav,
+        samples_per_frame: rate.samples_per_frame() as u32,
+    };
+    let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
+    let tree = Arc::new(Tree::with_options(root, Tuning::default(), output));
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;
