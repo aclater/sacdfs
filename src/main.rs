@@ -287,6 +287,8 @@ fn run(args: Args) -> io::Result<()> {
     } else {
         Some(daemonize(keeps_stderr(args.log_file.is_some(), std::env::var_os("JOURNAL_STREAM").is_some()))?)
     };
+    // Before any thread allocates (#73).
+    sacdfs::engine::limit_malloc_arenas();
 
     sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
 
