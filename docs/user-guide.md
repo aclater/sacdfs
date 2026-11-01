@@ -159,6 +159,18 @@ mp3tag), plus a `LIST`/`INFO` chunk (title, artist, album, track number, date, g
 software that reads only that. Both come after the audio. sacdfs 0.2 changed the TCOP of discs
 with a copyright text, so those files show a new modification time once.
 
+**Multichannel copies have their own album name.** The album tag of the files in a disc's
+`Multichannel` folder (DSF and WAV) ends in ` (Multichannel)`, so "Album" is the stereo copy
+and "Album (Multichannel)" the multichannel one. *Why:* in client tests, Navidrome, LMS, MPD
+and MinimServer all showed a disc's two copies as one album, either merged (each track up to
+four times) or as two albums with the same name. Stereo files are unchanged, and so is a
+disc with no album text. Only tags change: the audio is the same, and `sacdfs verify`
+compares audio only, so extracts of multichannel tracks still verify. `--no-multichannel-album-suffix`
+(`SACDFS_MC_ALBUM_SUFFIX=0` in the container) leaves the album as the disc has it. Switching
+it does not change the files' modification times, so restart the mount and have your player
+rescan. (When the tag layer, #81, can name a disc's album, that name will win and get no
+suffix, unless the tags file asks for one.)
+
 The filesystem is read-only, so tags cannot be edited in place; a tagger's changes belong in
 its own database, or in copies of the files.
 
@@ -178,6 +190,16 @@ its own database, or in copies of the files.
 loudness or ReplayGain scans, waveform previews) converts every WAV file it reads, which costs
 CPU and time for no new information. Point such programs at a mount with `--format dsf`, or
 mount twice: one mount for them, one with WAV files for players.
+
+**MPD, moOde, Volumio and Jellyfin.** Use `--format dsf` for any mount that MPD (which moOde
+and Volumio run) or Jellyfin scans. Jellyfin's ffprobe reads 5 MB of each stereo WAV and 12 to
+14 MB of each 5.1 WAV (a first scan 27 to 58 % slower); for MPD: MPD plays DSF natively. Its first database scan probes about 5 MB of every WAV
+file through FFmpeg, so every WAV file is converted for that probe: in a test of 93 tracks the
+first scan took about 9 s with `dsf,wav` and 0.6 s with `dsf` (about 15 times as long), and
+a library of 1,000 discs would cost about an hour of CPU. The same happens after any MPD
+database rebuild. Incremental `mpc update` reads nothing. If a player needs WAV files, mount
+twice as above. Jellyfin's LUFS normalization and Plex's nightly deep analysis read every
+file in full; turn them off, or use `--cache-mb 16`.
 
 ## Sidecar files: art, scans, playlists
 
@@ -206,6 +228,15 @@ player, once as the extract and once as sacdfs's file.
 **Where they appear.**
 - Next to the image's folder: `SOURCE/Artist/Album/folder.jpg` is
   `MOUNTPOINT/Artist/Album/folder.jpg`, beside `MOUNTPOINT/Artist/Album/disc/`.
+- **Folder art is also inside each area folder** (#95): the images among the sidecars
+  (`jpg`, `jpeg`, `png`, `webp`; not playlists, scans folders or other files) also show in
+  `Stereo/` and `Multichannel/` of every image in the folder, after the tracks, so that
+  Lyrion Music Server, MPD, MinimServer and Plex, which look for folder art only in the
+  audio file's own folder, find it. It is the same file with a second name: the same inode
+  number, so a server that walks both sees one image. No audio file changes, only the art is
+  added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
+  is not shown in either place, and `none` shows no art at all. A name that a track file
+  already has gets ` (2)`.
 - With `--flatten`, the sidecar files of every folder of a collapsed chain show in the folder
   that is kept, next to `Stereo` and `Multichannel`, outermost folder first. A name that is
   already taken (two `folder.jpg` in the chain, or a file named `Stereo`) gets ` (2)`, as
@@ -229,10 +260,16 @@ through a linked folder, and folder links are not followed at all. Every sidecar
 folder at a time without following links, so nothing changed in `SOURCE` after the mount can
 lead sacdfs outside it.
 
-**Changes.** The tree, sidecar files included, is read at mount time; files added later
-appear after a remount. A sidecar file whose size or modification time changed since its
-folder was listed fails to open with "stale file handle" (its size, already shown, would not
-match its bytes) until the next mount, which shows the new file under the same inode number.
+**Changes.** New and removed sidecar files appear without a remount (#101). When a folder is
+listed or looked into, and its folder in `SOURCE` has a different modification time than at the
+last reading (checked at most every 2 seconds), sacdfs reads that folder again: new images,
+sidecar files and sidecar folders show, removed ones go. Entries that did not change keep
+their inode numbers. A file removed while a program has it open still reads for that program;
+new opens fail with "no such file". A sidecar file that was replaced shows its new size and
+time under the same inode number. While a sidecar is open for the first time after being
+replaced but before its folder was read again, the open fails with "stale file handle"
+(its size, already shown, would not match its bytes), and works once the folder is read
+again. Programs that cache listings see a change after the 2 seconds.
 
 **Cost.** Mounting reads only names, as before. The first listing of a folder looks at its
 sidecar files (one `stat` each, in parallel, as images are opened); nothing else reads them
@@ -380,10 +417,13 @@ Notes:
 
 ## Images that change, and damaged images
 
-- **New or removed images** appear or disappear only after a remount: the directory tree is
-  read once, at mount time. The same goes for sidecar files; one that changes while mounted
-  fails to open with "stale file handle" until the next mount
-  ([Sidecar files](#sidecar-files-art-scans-playlists)).
+- **New or removed images and sidecar files** appear or disappear within a few seconds, with
+  no remount: a folder is read again when its modification time in `SOURCE` changes
+  ([Sidecar files](#sidecar-files-art-scans-playlists)). A subfolder that held no image
+  when its parent was last read is watched too, so an album copied in file by file shows
+  once its image is there. Not covered: a folder collapsed by `--flatten` that gains a
+  second image (it stays one image's folder until a remount), and an image file replaced
+  under the same name.
 - **An image file that changes while mounted** (another size, modification time or file) is
   opened again, at most a second after the change. An image whose size changed gives I/O
   errors until the next mount, since its directory still shows the old tracks.
@@ -416,7 +456,7 @@ Run in the foreground with logging to see what sacdfs does: `sacdfs -f -v SOURCE
   generic build; it converts with AVX2 where the CPU has it anyway.
 - **A directory or disc is missing:** files that are not SACD images, and folders with no
   `*.iso` file below them, are left out; a damaged image may be too. `-v` logs why. Images
-  added after mounting need a remount.
+  added after mounting appear without a remount.
 - **A track is missing:** a track the disc cannot play (empty, or running past the end of the
   image) is left out; `-v` logs the reason.
 - **`--pcm-cutoff wide needs --pcm-rate 176400 or 352800`:** 88.2 kHz cannot hold the wide

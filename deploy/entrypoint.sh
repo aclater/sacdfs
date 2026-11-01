@@ -22,6 +22,7 @@ args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}" --cache-mb "${SACDF
 [ -n "${SACDFS_PCM_CUTOFF:-}" ] && args+=(--pcm-cutoff "$SACDFS_PCM_CUTOFF")
 [ -n "${SACDFS_PCM_GAIN:-}" ] && args+=(--pcm-gain "$SACDFS_PCM_GAIN")
 on "${SACDFS_FLATTEN:-0}" && args+=(--flatten)
+on "${SACDFS_MC_ALBUM_SUFFIX:-1}" || args+=(--no-multichannel-album-suffix)
 [ -n "${SACDFS_SIDECARS:-}" ] && args+=(--sidecars "$SACDFS_SIDECARS")
 case "${SACDFS_INDEX_CACHE:-/cache}" in
     "" | off | none | 0) args+=(--no-index-cache) ;;
