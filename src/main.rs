@@ -88,6 +88,10 @@ struct Args {
     #[arg(long, default_value_t = sacdfs::handles::DEFAULT_MAX_OPEN, value_name = "N",
           value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=1024))]
     max_open_images: usize,
+    /// Append the log to FILE instead of standard error, at info level unless -v says more.
+    /// Without it a background mount logs nowhere, except to the journal under systemd.
+    #[arg(long, value_name = "FILE")]
+    log_file: Option<PathBuf>,
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -151,12 +155,28 @@ fn main() -> ExitCode {
     }
     let args = Args::parse();
     let level = match args.verbose {
+        // With a log file the `mounted` line and the like are the point of it.
+        0 if args.log_file.is_some() => "info",
         0 => "warn",
         1 => "info",
         2 => "debug",
         _ => "trace",
     };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    let mut logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level));
+    if let Some(path) = &args.log_file {
+        // Opened here, before the fork: a bad path fails the command, and the daemon's
+        // change to / does not matter.
+        match open_log_file(path) {
+            Ok(f) => {
+                logger.target(env_logger::Target::Pipe(Box::new(f)));
+            }
+            Err(e) => {
+                eprintln!("sacdfs: --log-file {}: {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    logger.init();
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -164,6 +184,18 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Opens `path` for appending, creating it with mode 0600 (it can hold file names).
+fn open_log_file(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(path)
+}
+
+/// Whether the daemon keeps standard error: under systemd, with a journal stream and no log
+/// file, it is the journal (#59). `journal_stream` is `$JOURNAL_STREAM`.
+fn keeps_stderr(log_file: bool, journal_stream: bool) -> bool {
+    journal_stream && !log_file
 }
 
 fn run(args: Args) -> io::Result<()> {
@@ -213,7 +245,11 @@ fn run(args: Args) -> io::Result<()> {
     }
 
     // Become a daemon before any thread exists; the parent waits for the mount.
-    let notify = if args.foreground { None } else { Some(daemonize()?) };
+    let notify = if args.foreground {
+        None
+    } else {
+        Some(daemonize(keeps_stderr(args.log_file.is_some(), std::env::var_os("JOURNAL_STREAM").is_some()))?)
+    };
 
     sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
 
@@ -833,12 +869,12 @@ fn ids() -> (u32, u32) {
 }
 
 /// The daemon side of the pipe to the waiting parent.
-struct Notify(File);
+struct Notify(File, bool);
 
 impl Notify {
     fn ok(mut self) {
         let _ = self.0.write_all(b"\0");
-        redirect_stdio();
+        redirect_stdio(self.1);
     }
 
     fn fail(mut self, e: &io::Error) {
@@ -849,7 +885,7 @@ impl Notify {
 /// Forks. The parent waits until the child reports the mount, then exits; the child
 /// continues in a new session.
 #[allow(unsafe_code)]
-fn daemonize() -> io::Result<Notify> {
+fn daemonize(keep_stderr: bool) -> io::Result<Notify> {
     let mut fds = [0 as libc::c_int; 2];
     // SAFETY: fds is a valid array of two ints for pipe to fill.
     if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
@@ -867,7 +903,7 @@ fn daemonize() -> io::Result<Notify> {
             // a fresh child is not.
             unsafe { libc::setsid() };
             let _ = std::env::set_current_dir("/");
-            Ok(Notify(File::from(w)))
+            Ok(Notify(File::from(w), keep_stderr))
         }
         _ => {
             drop(w);
@@ -888,11 +924,11 @@ fn daemonize() -> io::Result<Notify> {
     }
 }
 
-/// Points standard input, output and error at /dev/null.
+/// Points standard input, output and (unless `keep_stderr`) error at /dev/null.
 #[allow(unsafe_code)]
-fn redirect_stdio() {
+fn redirect_stdio(keep_stderr: bool) {
     let Ok(null) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/null") else { return };
-    for fd in 0..3 {
+    for fd in 0..if keep_stderr { 2 } else { 3 } {
         // SAFETY: dup2 onto the standard descriptors; `null` stays open for the call.
         unsafe { libc::dup2(null.as_raw_fd(), fd) };
     }
@@ -958,6 +994,26 @@ mod tests {
         };
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/m")).is_err());
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/n")).is_ok());
+    }
+
+    #[test]
+    fn stderr_kept_only_for_the_journal() {
+        assert!(keeps_stderr(false, true));
+        assert!(!keeps_stderr(true, true));
+        assert!(!keeps_stderr(false, false));
+    }
+
+    #[test]
+    fn log_file_is_appended_privately() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("log");
+        writeln!(open_log_file(&p).unwrap(), "one").unwrap();
+        writeln!(open_log_file(&p).unwrap(), "two").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "one\ntwo\n");
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(open_log_file(&d.path().join("no/such/log")).is_err());
     }
 
     #[test]
