@@ -421,6 +421,20 @@ smbclient //nas/sacd -p 10445 -U music        # or smb://nas:10445/sacd in a fil
 
 On macOS, NFS takes `port=12049` in its `-o` options and SMB takes `smb://nas:10445/sacd`.
 
+### Media servers in containers on a client host
+
+If sacdfs runs on the host and a container (Jellyfin, Plex, MPD) reads its mount, do not
+bind-mount the mount point itself: when sacdfs restarts, the container's copy goes stale and
+every read fails with "not connected". Bind the parent directory with `rslave` propagation, so
+the new mount shows up inside the container:
+
+```sh
+# sacdfs mounted at /srv/sacd/music; bind /srv/sacd, not /srv/sacd/music
+podman run -v /srv/sacd:/media:ro,rslave ...
+```
+
+In Compose: `- /srv/sacd:/media:ro,rslave`.
+
 ### macOS
 
 - **SMB:** Finder, Go, Connect to Server (⌘K), `smb://nas/sacd`; "Connect as Guest", or the
@@ -437,7 +451,7 @@ Current Windows versions refuse guest access to SMB shares (Windows 11 24H2 and 
 the Enterprise and Education editions of Windows 10 and 11). Set `SMB_USER` and
 `SMB_PASSWORD` for Windows clients rather than relaxing that policy.
 
-### MPD-based players (MPD, moOde, Volumio)
+### Players that scan the library (MPD, moOde, Volumio, Jellyfin, Plex)
 
 Run the container with `SACDFS_FORMATS=dsf` (`--format dsf`) for a library that MPD scans. MPD
 plays DSF natively, as DoP or native DSD depending on the output. MPD's first database scan
@@ -447,6 +461,12 @@ although its tags and duration are in the first bytes. In a test of 93 tracks th
 took about 9 s with `dsf,wav` and 0.6 s with `dsf`, about 15 times as long, and used about
 27 CPU-seconds. Incremental updates are unaffected. If some other client needs WAV files, run
 a second container (or mount) with `dsf,wav` for it.
+
+Jellyfin behaves the same way: its ffprobe reads about 5 MB of each stereo WAV file and 12 to
+14 MB of each 5.1 WAV file, so its first scan took 27 to 58 % longer than on extracted files.
+Use `dsf` unless it needs WAV files. Jellyfin's LUFS normalization and Plex's nightly deep
+analysis each read every file in full (one pass for Plex, two for Jellyfin, about 110 GiB for
+a library of 186 files with 5.1 audio): turn them off, or use a 16 MiB `--cache-mb` as on a NAS.
 
 ### File names over SMB
 
