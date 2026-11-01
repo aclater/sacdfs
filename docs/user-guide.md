@@ -288,6 +288,94 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
 - **Extended attributes.** There are none: `getfattr` and `listxattr` say "Operation not
   supported" (the kernel answers this itself after the first request).
 
+## Before you delete extracts
+
+If you extracted DSF or DFF files from your images before (with `sacd_extract`, pysacd or
+another tool), sacdfs can replace them: it serves every track from the image on demand.
+`sacdfs verify` tells you, file by file, whether that is safe. It reads the extracts and the
+images and writes a report; **it never deletes, moves or changes a file.**
+
+```
+sacdfs verify [OPTIONS] SOURCE [EXTRACTS]...
+```
+
+`SOURCE` is the image file or directory of images, as for mounting. `EXTRACTS` are files or
+directories searched recursively for `.dsf`, `.dff`, `.flac` and `.wav` files; without them,
+`SOURCE` itself is searched, for extracts kept next to their images. Nothing needs to be
+mounted: the files sacdfs would serve are read in-process, through the same code as a mount.
+
+| Verify option | Meaning |
+|---|---|
+| `--map FROM TO` | Extracts under `FROM` belong to the images under `TO`, a directory in `SOURCE`; for extracts kept in a tree of their own that mirrors the images' folders. Repeat it for more trees; the longest `FROM` that applies wins. |
+| `-o`, `--output FILE` | Write the report to `FILE` instead of standard output. |
+| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. An interrupted run leaves every row it finished in `FILE`, so `--resume` picks up where it stopped. |
+| `--threads N` | Files checked at once, and DST decoder threads; `0` (the default) means one per CPU. |
+| `--cache-mb N` | Size of the cache of decoded frames, in MiB (default `64`). |
+| `-q`, `--quiet` | No progress line on standard error. |
+| `-v`, `--verbose` | Log more; `RUST_LOG` overrides it. |
+
+**How a file is matched.** An extract belongs to the images in its folder, or in the nearest
+folder above it that holds images (after `--map`). Among the tracks sacdfs shows for those
+images, the candidates are those with the extract's channel count and samples per channel;
+the track whose number the file name starts with is tried first. The audio is compared by the
+SHA-256 of the raw DSD: the samples the header counts, interleaved, earliest sample first,
+whatever the container (DSF or DFF), bit order, block size, padding or tags. Only candidates
+are decoded, so a library is read about once.
+
+**The statuses.**
+
+| Status | Meaning | Delete? |
+|---|---|---|
+| `IDENTICAL` | sacdfs serves the same audio (the `image`, `area` and `track` columns say which track). | Safe for the audio; see `loses` for tags. |
+| `DIFFERENT` | A track of the same length and channels exists, but its audio differs. | Keep it. |
+| `NO-MATCH` | No track of those images has the file's channel count and length, or the file isn't at SACD's 2.8224 MHz, or no image is in its folder or above. The reason names the nearest track by length. | Keep it. |
+| `UNSUPPORTED` | A file that can't be compared, such as a DST-compressed DFF; the reason says why. Decompress it (to a plain DSD DFF or DSF) and check again. | Keep it. |
+| `ERROR` | The file is truncated, broken or unreadable, or sacdfs could not read its track. | Keep it until you know why. |
+| `NOT-COMPARABLE` | FLAC or WAV. A CD-layer rip isn't in the SACD image at all, and a PCM conversion of the SACD layer made by another converter never matches sacdfs's WAV bit for bit. | Your call: sacdfs's WAV replaces it only if you prefer it. |
+
+**What a deletion would lose.** The `loses` column lists what the extract's tags hold that
+sacdfs's own tag for the track doesn't: `musicbrainz` (MusicBrainz IDs), `art` (embedded
+pictures), `replaygain`, and `other=` with the frame names (a changed title shows up as
+`TIT2`, a genre as `TCON`). sacdfs's tags come from the disc's text only, so anything a
+tagger added is listed here. The same information written another way doesn't count: an
+ID3v2.3 date (`TYER` and `TDAT`, day and month in either order) that sacdfs's `TDRC` holds, a disc number of `1/1` (sacdfs
+leaves it out for a single disc), a `PERFORMER` that is sacdfs's artist, empty frames. The
+summary counts the IDENTICAL files that lose each kind.
+
+**The report** is tab-separated, one row per file, with a header row: `status`, `path`,
+`bytes`, `mtime`, `image`, `area`, `track`, `channels`, `samples`, `sha256` (of the
+compared audio), `loses` and `reason`. Tabs, newlines and backslashes in fields are
+escaped (`\t`, `\n`, `\\`), as are bytes of a path that aren't UTF-8 (`\xNN`). The summary
+goes to standard error: counts and bytes by status, the reclaimable bytes (the IDENTICAL
+files), and the tags they carry.
+
+**Exit status:** 0 when every DSF and DFF file is IDENTICAL, 2 when any is not, 1 when the
+check couldn't run.
+
+Examples:
+
+```sh
+# Extracts next to the images; then list what is safe to delete.
+sacdfs verify -o report.tsv ~/music/sacd-images
+awk -F'\t' '$1 == "IDENTICAL" && $11 == "" {print $2}' report.tsv
+
+# Extracts in ~/music/dsf/<artist>/<album>/, images in ~/music/sacd-images/<artist>/<album>/.
+sacdfs verify -o report.tsv --map ~/music/dsf ~/music/sacd-images ~/music/sacd-images ~/music/dsf
+```
+
+Notes:
+- A directory named `verify` given as `SOURCE` to mount needs a path (`./verify`):
+  `sacdfs verify ...` is always this command.
+- Only `.dsf`, `.dff`, `.flac` and `.wav` files are looked at. Folder art, playlists and other
+  files are not audio: they are counted in the summary ("not audio, not checked"), never
+  listed in the report, and never touched. sacdfs passes its sidecar files through itself
+  ([Sidecar files](#sidecar-files-art-scans-playlists)), so those next to the images stay
+  where they are.
+- A sacdfs mount can't be given as `EXTRACTS` (its files are what verify compares with), and
+  mounts inside `EXTRACTS` are skipped.
+- A file sacdfs's tree leaves out (a track it can't play, a damaged image) has no candidate:
+  NO-MATCH or ERROR, never IDENTICAL.
+
 ## Images that change, and damaged images
 
 - **New or removed images** appear or disappear only after a remount: the directory tree is

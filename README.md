@@ -105,7 +105,7 @@ above it.
 |---|---|
 | `-f`, `--foreground` | Stay in the foreground and log to standard error. Without it sacdfs returns once the filesystem is mounted and keeps running in the background. |
 | `--threads N` | DST decoder and PCM converter threads; `0` (the default) means one per CPU. |
-| `--cache-mb N` | Size of the cache of decoded and converted frames, in MiB (default `256`). DSF and WAV reads share it. |
+| `--cache-mb N` | Size of the cache of decoded and converted frames, in MiB (default `256`). DSF and WAV reads share it. On a NAS, `16` is recommended ([deployment guide](docs/deployment.md#memory)). |
 | `--format LIST` | Which files to show: `dsf`, `wav`, or both, `dsf,wav` (the default). |
 | `--pcm-rate HZ` | Sample rate of the WAV files: `88200`, `176400` (the default) or `352800`. Always 24-bit. |
 | `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz; with `--pcm-rate 176400` or `352800` only). |
@@ -124,6 +124,25 @@ Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C), SIGTERM and SIGHUP un
 still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
 each option does in detail, and the seek index cache, are in the
 [user guide](docs/user-guide.md#options).
+
+## Before you delete extracted files
+
+Already have DSF or DFF files extracted from your images? `sacdfs verify` checks, file by
+file, whether sacdfs serves the same audio, so that you can delete the extracts and keep only
+the images. It never deletes or changes anything.
+
+```sh
+sacdfs verify -o report.tsv ~/music/sacd-images                 # extracts next to the images
+sacdfs verify -o report.tsv --map ~/music/dsf ~/music/sacd-images \
+    ~/music/sacd-images ~/music/dsf                              # extracts in a tree of their own
+```
+
+Each file gets a status, IDENTICAL, DIFFERENT, NO-MATCH, UNSUPPORTED (such as DST-compressed
+DFF), ERROR, or NOT-COMPARABLE (FLAC and WAV), with the reason; the summary gives the space
+that deleting the IDENTICAL files would free, and which of them carry tags sacdfs doesn't
+serve (MusicBrainz IDs, embedded art, ReplayGain, others). Tags, padding and the container
+don't count: only the audio is compared. Details are in the
+[user guide](docs/user-guide.md#before-you-delete-extracts).
 
 ## Layout
 

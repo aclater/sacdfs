@@ -1158,6 +1158,76 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
 - **Not crates.io.** scarletbook is a git dependency and crates.io refuses those
   (`publish = false`). Publishing waits for scarletbook on crates.io (scarletbook-rs#39).
 
+## Verifying extracts (`sacdfs verify`, #80)
+
+The owner's aim for sacdfs is reclaiming storage (#82): people delete the DSF and DFF files
+they extracted from their images and keep one copy of each disc, the image. `sacdfs verify`
+gives the per-file proof that this loses no audio, and lists what it would lose in tags. It
+never deletes anything; the user acts on its report. The method is the one a one-off run on
+the owner's NAS already used.
+
+- **A subcommand, `sacdfs verify`, not a separate binary.** *Why:* one binary to install,
+  ship and package: the release archives, the container image and the packaging all carry
+  `sacdfs` only, and the check must use exactly the build that will serve the files. The
+  first argument `verify` selects it before the mount's options are parsed, so `sacdfs
+  --help` and the mount's command line are unchanged. *Trade-off:* a directory named `verify`
+  in the current directory must be given as `./verify` to mount it (documented). A clap
+  subcommand next to the mount's positional arguments would have changed the mount's help and
+  usage lines for one rarely used command; a second binary (`sacdfs-verify`) would have
+  needed the release workflow, archives and container to change.
+- **In-process, through the mount's own code.** The files sacdfs would serve are made by the
+  same `Tree` (with the same per-track checks that leave unplayable tracks out) and read
+  with the same `track::Reader` as a mount reads them, then reduced by the same container
+  reader as the extracts. *Why:* the proof is about the bytes a mount serves, not about a
+  second decoding path that could disagree with it; and no FUSE mount is needed, so it runs
+  wherever sacdfs is installed, in the container too, and can't hang a mount.
+- **Canonical audio, compared by SHA-256.** Every file, extract or served, is reduced to the
+  header's samples per channel, byte-interleaved across channels with the earliest sample in
+  the most significant bit (the disc's and DFF's order; DSF's LSB-first blocks are
+  bit-reversed and interleaved), so tags, padding, block size, bit order and container don't
+  count. *Why:* tags differ by design between extractors, and an extract's padding and chunk
+  layout say nothing about the audio. A digest (rather than a byte-wise comparison of two
+  streams) lets each served track be decoded once however many extracts point at it, and
+  goes in the report, where it identifies duplicate copies. SHA-256 is already a dependency.
+- **Matching: the same folder, channels and length, then content.** An extract belongs to the
+  images in its folder or the nearest folder above it that holds images (after `--map`).
+  Only tracks with its channel count and sample count are candidates, the one its file name's
+  number points at first, so normally exactly one track is decoded per extract. *Why:* the
+  shape check costs nothing and avoids decoding every track of a disc; content decides, so a
+  misnumbered file still matches. A file that matches nothing gets the nearest track by length
+  in its reason, since a track-boundary difference (pauses included or not) is the usual
+  cause.
+- **Separate trees by prefix mapping (`--map FROM TO`).** *Why:* the two layouts the owner's
+  library and common practice use are extracts next to the image and a mirror tree; a prefix
+  map covers the second without guessing from names. Matching by disc text or digest across
+  the whole library would cost a decode of every disc per unmatched file.
+- **Statuses.** IDENTICAL, DIFFERENT (same shape, other audio), NO-MATCH, UNSUPPORTED (a
+  valid file that can't be compared: DST-compressed DFF, which would need a DST decoder for
+  the extract side, an SACD format concern that belongs to scarletbook), ERROR (truncated,
+  broken, unreadable) and NOT-COMPARABLE for FLAC and WAV (#80: a CD-layer rip isn't in the
+  image, and another converter's PCM never matches sacdfs's bit for bit). A truncated file is
+  an ERROR, not DIFFERENT: it isn't a valid file of other audio.
+- **What a deletion loses.** The extract's ID3 frames (v2.2 to v2.4) are compared with those
+  of sacdfs's tag for the matched track, by frame and value; the ones sacdfs lacks are
+  grouped as MusicBrainz IDs, art, ReplayGain and other frame names. DFF text chunks
+  (DIIN/DITI, DIIN/DIAR) are compared with the title and artist. *Why:* the user's decision is
+  "delete, or move these tags first" (to a tag layer, #81), so the report says which.
+- **Parallel and bounded.** `--threads N` workers (plain threads, not a rayon pool, so that a
+  worker waiting for another's decode of the same track can't be handed that same work by
+  work stealing) check files at once, with an engine of N DST decoder threads and a small
+  frame cache (64 MiB). Each reader holds a few MiB; a tag over 16 MiB is not read (reported
+  as `unread`). The images of every folder needed are opened up front, on one thread.
+- **Resumable at no cost.** Rows are written and flushed as they are made, so an interrupted
+  run leaves what it finished; `--resume` keeps rows whose file has the same size and
+  modification time (except ERROR rows) and checks the rest. At the end the report is
+  rewritten sorted, replacing the file at once. *Trade-off:* a resumed row isn't re-checked
+  if only the image changed; deleting the report starts afresh.
+- **Hostile input.** Extracts are untrusted like images: every size in a DSF or DFF header is
+  checked against the file's length before use, chunk walks are bounded, and the readers are
+  fuzzed in the unit tests by truncating and corrupting every header byte. The DSF and DFF
+  readers are container parsing written here from the published format descriptions; no SACD
+  parsing or DST code is involved on the extract side.
+
 ## Testing
 
 - **Unit tests:** DSF header and tag layout, offset-to-frame mapping (including the padded
