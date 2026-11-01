@@ -277,15 +277,19 @@ impl Losses {
             // The same information written another way: not lost.
             let same = match f.key.as_str() {
                 "TDRC" | "TDAT" => {
+                    // TDAT is DDMM by the specification; some writers put MMDD: either counts.
                     let year = extract.iter().find(|g| g.key == "TDRC").map(|g| g.value.as_str());
-                    let date = match (year, tdat) {
+                    let dates: Vec<String> = match (year, tdat) {
                         (Some(y), Some(d)) if d.len() == 4 && d.bytes().all(|b| b.is_ascii_digit()) => {
-                            format!("{y}-{}-{}", &d[2..4], &d[0..2])
+                            vec![
+                                format!("{y}-{}-{}", &d[2..4], &d[0..2]),
+                                format!("{y}-{}-{}", &d[0..2], &d[2..4]),
+                            ]
                         }
-                        (Some(y), _) => y.to_owned(),
-                        (None, _) => String::new(),
+                        (Some(y), _) => vec![y.to_owned()],
+                        (None, _) => Vec::new(),
                     };
-                    served_value("TDRC").is_some_and(|s| !date.is_empty() && s.starts_with(&date))
+                    served_value("TDRC").is_some_and(|s| dates.iter().any(|d| s.starts_with(d.as_str())))
                 }
                 // A set of one disc, which sacdfs leaves out.
                 "TPOS" => value == "1/1" && served_value("TPOS").is_none(),
@@ -441,6 +445,8 @@ pub(crate) mod tests {
             &[],
         ));
         assert!(Losses::between(&ext, &served).is_empty(), "{:?}", Losses::between(&ext, &served));
+        let mmdd = frames(&tag24(&[("TYER", "2013"), ("TDAT", "0423")], &[]));
+        assert!(Losses::between(&mmdd, &served).is_empty());
         let ext = frames(&tag24(&[("TYER", "2014"), ("TPOS", "1/2"), ("TXXX:PERFORMER", "B")], &[]));
         let l = Losses::between(&ext, &served);
         assert_eq!(l.other.into_iter().collect::<Vec<_>>(), vec!["TDRC", "TPOS", "TXXX:PERFORMER"]);

@@ -340,7 +340,7 @@ sacdfs's own tag for the track doesn't: `musicbrainz` (MusicBrainz IDs), `art` (
 pictures), `replaygain`, and `other=` with the frame names (a changed title shows up as
 `TIT2`, a genre as `TCON`). sacdfs's tags come from the disc's text only, so anything a
 tagger added is listed here. The same information written another way doesn't count: an
-ID3v2.3 date (`TYER` and `TDAT`) that sacdfs's `TDRC` holds, a disc number of `1/1` (sacdfs
+ID3v2.3 date (`TYER` and `TDAT`, day and month in either order) that sacdfs's `TDRC` holds, a disc number of `1/1` (sacdfs
 leaves it out for a single disc), a `PERFORMER` that is sacdfs's artist, empty frames. The
 summary counts the IDENTICAL files that lose each kind.
 
