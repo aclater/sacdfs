@@ -6,6 +6,18 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The tag layer (#81): `--tags DIR` (`SACDFS_TAGS` in the container) serves user tags from a
+  tags directory, one TOML file per disc named by its TOC identity (`sacdfs tags key IMAGE`),
+  so edits survive renames. A file overrides and adds album- and track-level tags (genres,
+  MusicBrainz IDs, corrected names, any ID3 text, `TXXX`, `COMM` or `UFID` frame) and embeds a
+  picture only when it names one; an album it names gets no ` (Multichannel)` suffix. Only the
+  files it changes get new bytes, a new mtime and a new generation; every other file is byte
+  for byte as before. `sacdfs tags import` writes tags files from the tags of extracts that
+  `sacdfs verify` matches, so they can be deleted without losing them; it writes only the tags
+  directory. See the user guide, "Your own tags".
+
 ## [0.2.0-rc.1] - 2026-11-01
 
 ### Added

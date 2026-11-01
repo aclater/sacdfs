@@ -169,11 +169,11 @@ disc with no album text. Only tags change: the audio is the same, and `sacdfs ve
 compares audio only, so extracts of multichannel tracks still verify. `--no-multichannel-album-suffix`
 (`SACDFS_MC_ALBUM_SUFFIX=0` in the container) leaves the album as the disc has it. Switching
 it does not change the files' modification times, so restart the mount and have your player
-rescan. (When the tag layer, #81, can name a disc's album, that name will win and get no
-suffix, unless the tags file asks for one.)
+rescan. A disc's [tags file](#your-own-tags---tags) that names the album wins, and gets no
+suffix.
 
-The filesystem is read-only, so tags cannot be edited in place; a tagger's changes belong in
-its own database, or in copies of the files.
+The filesystem is read-only, so tags cannot be edited in place: your own tags go in a tags
+directory ([below](#your-own-tags---tags)), or in a tagger's own database.
 
 **What reading tags costs:**
 - `ls -l`, `stat` and directory listings never read audio: sizes are exact and known from
@@ -201,6 +201,76 @@ a library of 1,000 discs would cost about an hour of CPU. The same happens after
 database rebuild. Incremental `mpc update` reads nothing. If a player needs WAV files, mount
 twice as above. Jellyfin's LUFS normalization and Plex's nightly deep analysis read every
 file in full; turn them off, or use `--cache-mb 16`.
+
+## Your own tags (`--tags`)
+
+The tags from the disc's TOC are often thin: no genre, no MusicBrainz IDs, no art, names as
+the label typed them. A **tags directory** holds your own, one small TOML file per disc, and a
+mount with `--tags DIR` (`SACDFS_TAGS` in the container) serves them in the DSF and WAV files.
+The mount stays read-only; the files are edited out of band.
+
+- **One file per disc, named by its disc key**, `DIR/<key>.toml`. The key is a hash of the
+  disc's table of contents, not of its path, so renaming or moving the image keeps its tags,
+  and two copies of one disc share them. `sacdfs tags key [--tags DIR] IMAGE...` prints it
+  (with `--tags`, also the file's path and whether it exists).
+- **A disc without a file is unchanged**, byte for byte, and so is a track the file sets
+  nothing for. A changed file gets a new size, a modification time no older than the tags
+  file, and a new NFS generation, so players and `rsync` see it.
+- **When edits show:** a disc's tags file is read when its area folder is first listed. After
+  editing, restart the mount (or unmount and mount again) and let the player rescan.
+
+```toml
+[album]                         # every file of the disc
+genre = "Jazz"
+art = "cover.jpg"               # a JPEG or PNG in the tags directory, embedded (APIC)
+"TXXX:MusicBrainz Album Id" = "4c6c..."
+
+[track.3]                       # track 3, both areas
+title = "Corrected Title"
+"UFID:http://musicbrainz.org" = "a1b2..."
+
+[multichannel.album]            # one area only: [stereo.*] or [multichannel.*]
+album = "Album Name (5.1)"
+
+[stereo.track.3]
+"TXXX:replaygain_track_gain" = "-6.20 dB"
+```
+
+- **Keys:** `title`, `artist`, `album`, `album_artist`, `composer`, `genre`, `date`, `track`
+  (`n` or `n/N`), `disc` (`n` or `n/N`), `publisher`, `copyright`, `isrc` (or their ID3 ids,
+  `TIT2`, `TCON` ...), and any ID3 frame as `sacdfs verify` names it: a text frame (`TBPM`),
+  `TXXX:description`, `COMM:description`, `UFID:owner`. An empty value removes the item.
+  Levels apply in the order `[album]`, `[<area>.album]`, `[track.N]`, `[<area>.track.N]`; the
+  later wins. A file with an unknown key or section is ignored, with a warning in the log.
+- **Art** is embedded only when the file names a picture with `art`, up to 960 KiB (the
+  tag's limit is 1 MiB). Folder art passes through either way ([Sidecar
+  files](#sidecar-files-art-scans-playlists)).
+- **Album name:** an `album` the file sets gets no ` (Multichannel)` suffix: you named it. Put
+  a name for the multichannel copy in `[multichannel.album]`.
+
+**From extracts: `sacdfs tags import`.** Before deleting extracts, copy what their tags have
+and sacdfs's lack into the tags directory:
+
+```sh
+sacdfs tags import --tags ~/music/sacd-tags --map ~/music/dsf ~/music/sacd-images \
+    ~/music/sacd-images ~/music/dsf
+```
+
+It runs `sacdfs verify` with the same arguments (`SOURCE`, `EXTRACTS`, `--map`, `--output`,
+`--resume` ...) and reads the tags of the IDENTICAL and IDENTICAL-PAUSE files only: the frames
+a deletion would lose, and the front cover. A value every track of an area shares goes in
+`[stereo.album]` or `[multichannel.album]` (in `[album]` when both areas share it), the rest
+per track; the picture becomes `<key>.jpg` or `.png`. A tags file that exists keeps its
+values; only keys it lacks are added, so run it again after more extracts are matched. It
+writes nothing but the tags directory (verify's report goes to `DIR/.last-import.tsv` unless
+`--output` says otherwise); the extracts and images are only read. Binary frames other than
+the picture (`PRIV`, `RVA2`, `GEOB` ...) cannot be kept; the summary lists them. DFF text
+chunks are not imported.
+
+**From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).
+
+As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
+to mount it.
 
 ## Sidecar files: art, scans, playlists
 
