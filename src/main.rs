@@ -197,15 +197,16 @@ fn run(args: Args) -> io::Result<()> {
     let cache_dir = index_cache_dir(&args, &mountpoint)?;
     warn_if_not_empty(&mountpoint);
     // Only names are read here; images are opened when their directory is first listed.
-    let root = SourceDir::scan_with(&source, &args.sidecars, Some(&mountpoint))
+    let mut root = SourceDir::scan_with(&source, &args.sidecars, Some(&mountpoint))
         .map_err(|e| with_path(e, &source))?;
+    refuse_images_under_mountpoint(&root, &mountpoint)?;
+    skip_linked_images_under_mountpoint(&mut root, &mountpoint);
     log::info!(
         "{}: {} image files; sidecar files: {}",
         source.display(),
         root.image_count(),
         args.sidecars.describe()
     );
-    refuse_images_under_mountpoint(&root, &mountpoint)?;
 
     // Before daemonizing, which changes the working directory.
     if let Some(dir) = cache_dir {
@@ -470,6 +471,31 @@ fn refuse_images_under_mountpoint(root: &SourceDir, mountpoint: &Path) -> io::Re
             image.display()
         ),
     ))
+}
+
+/// Drops, with a warning, every image whose symbolic link leads below the mount point (#67).
+///
+/// The scan lists a link by its own path, which is outside the mount point, so the checks
+/// above pass; but reading the image would go through sacdfs's own mount and hang. The
+/// link's target is resolved here; a link that cannot be resolved is kept (opening it fails
+/// on its own).
+fn skip_linked_images_under_mountpoint(dir: &mut SourceDir, mountpoint: &Path) {
+    dir.images.retain(|p| match p.canonicalize() {
+        Ok(real) if real.starts_with(mountpoint) => {
+            log::warn!(
+                "{}: skipped, it leads to {} inside the mount point {}",
+                p.display(),
+                real.display(),
+                mountpoint.display()
+            );
+            false
+        }
+        _ => true,
+    });
+    for (_, sub) in &mut dir.dirs {
+        skip_linked_images_under_mountpoint(sub, mountpoint);
+    }
+    dir.dirs.retain(|(_, sub)| sub.image_count() > 0);
 }
 
 /// Warns when the mount point is not empty: its files are hidden while mounted. Not
@@ -958,6 +984,27 @@ mod tests {
         };
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/m")).is_err());
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/n")).is_ok());
+    }
+
+    #[test]
+    fn symlinked_image_into_mountpoint_is_skipped() {
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().canonicalize().unwrap();
+        let mnt = base.join("mnt");
+        let src = base.join("src");
+        std::fs::create_dir_all(src.join("A")).unwrap();
+        std::fs::create_dir_all(&mnt).unwrap();
+        std::fs::write(mnt.join("real.iso"), b"x").unwrap();
+        std::fs::write(src.join("ok.iso"), b"x").unwrap();
+        std::os::unix::fs::symlink(mnt.join("real.iso"), src.join("A/link.iso")).unwrap();
+        let mut root = SourceDir::scan_with(&src, &Default::default(), Some(&mnt)).unwrap();
+        assert_eq!(root.image_count(), 2);
+        // The lexical check cannot see it ...
+        assert!(refuse_images_under_mountpoint(&root, &mnt).is_ok());
+        // ... the link is dropped, and so is the directory it emptied.
+        skip_linked_images_under_mountpoint(&mut root, &mnt);
+        assert_eq!(root.image_count(), 1);
+        assert!(root.dirs.is_empty());
     }
 
     #[test]

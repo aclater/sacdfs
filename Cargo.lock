@@ -568,28 +568,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multiversion"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb8a68be21d0755f83bfe47e79b896cc732687cf1903f0e50585e8d6ecc53076"
-dependencies = [
- "multiversion-macros",
- "target-features",
-]
-
-[[package]]
-name = "multiversion-macros"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a05e0c3c3e4edaa21d87c645852ed0b0c3663752bcc6ec43353bd6189dce35e1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "target-features",
-]
-
-[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -914,12 +892,11 @@ dependencies = [
  "libc",
  "log",
  "lru",
- "multiversion",
  "nix",
  "proptest",
  "rayon",
- "rustversion",
  "scarletbook",
+ "scarletbook-pcm",
  "serde_json",
  "sha2",
  "signal-hook",
@@ -937,8 +914,16 @@ dependencies = [
 
 [[package]]
 name = "scarletbook"
-version = "0.5.2"
-source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.5.2#03732e746eafa1dd22a3e393ce222f9c4d3d5e1c"
+version = "0.5.3"
+source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.5.3#71f1cb2e72f8430a3a0e53c2555776cad457a3f2"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
+name = "scarletbook-pcm"
+version = "0.5.3"
+source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.5.3#71f1cb2e72f8430a3a0e53c2555776cad457a3f2"
 dependencies = [
  "thiserror",
 ]
@@ -1056,12 +1041,6 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
-
-[[package]]
-name = "target-features"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1bbb9f3c5c463a01705937a24fdabc5047929ac764b2d5b9cf681c1f5041ed5"
 
 [[package]]
 name = "tempfile"
