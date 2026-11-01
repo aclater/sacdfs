@@ -6,10 +6,6 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-11-01
-
-Folder art, scans and playlists for players such as Roon, and far fewer requests per file. These come from a real-world Roon test on a NAS. scarletbook 0.5.2. The audio files are byte-identical to 0.1.0's.
-
 ### Added
 
 - `sacdfs verify SOURCE [EXTRACTS]...` (#80): checks extracted DSF and DFF files against
@@ -20,6 +16,13 @@ Folder art, scans and playlists for players such as Roon, and far fewer requests
   ReplayGain, others), and writes a TSV report and a summary of the reclaimable space.
   `--map` handles extracts kept in a tree of their own, `--resume` continues an earlier run.
   It never deletes anything. See the user guide, "Before you delete extracts".
+
+## [0.1.1] - 2026-11-01
+
+Folder art, scans and playlists for players such as Roon, and far fewer requests per file. These come from a real-world Roon test on a NAS. scarletbook 0.5.2. The audio files are byte-identical to 0.1.0's.
+
+### Added
+
 - Sidecar files are passed through (#79, #75): folder art (`.jpg`, `.jpeg`, `.png`,
   `.webp`), `Artwork/` and `Scans/` folders with all their content, and `.m3u`/`.m3u8`
   playlists next to the images show at their relative path, read-only and byte for byte,
