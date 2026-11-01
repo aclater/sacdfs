@@ -49,8 +49,7 @@ jobs:
       - name: Converter benchmark (smoke test, each case once)
         run: cargo bench --locked --bench pcm -- --test
 
-  # The same tests on aarch64 (#43), on a native arm64 runner. The converter's portable path
-  # is the only one there (no runtime dispatch to SIMD kernels), so only the baseline runs.
+  # The same tests on aarch64 (#43), on a native arm64 runner.
   test-arm64:
     name: tests (arm64)
     runs-on: ubuntu-24.04-arm
@@ -68,8 +67,6 @@ jobs:
         env:
           SACDFS_FUSE_TESTS: "1"
         run: cargo test --locked
-      - name: Converter tests (portable path)
-        run: SACDFS_SIMD=baseline cargo test --locked --lib --test pcm --test wav
 
   readme-options:
     name: readme options
