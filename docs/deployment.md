@@ -339,6 +339,13 @@ host networking, on the same NAS as sacdfs.
     Roon's own way of reading network shares.
 - **Show DSF only.** With both formats, every track appears twice in Roon. Roon plays DSD
   natively and converts it to PCM where an endpoint needs that.
+- **Discs you have also extracted.** If the same disc is also in your library as extracted
+  files, Roon merges the two into one album and plays whichever copy it makes primary,
+  hiding the other. In the owner's test it chose sacdfs's copy for some albums and the
+  library's for others. So beside existing extracts you aren't always playing from sacdfs.
+  Removing the extracts (the space sacdfs saves) removes the ambiguity.
+- **Playlists** can't live on the share yet: sacdfs shows only what it makes from images, and
+  Roon imports playlist entries only from inside the same storage location (#75).
 - **Roon's background audio analysis** reads every track in full, so sacdfs decodes each one
   as Roon adds it. On a NAS-class CPU, multichannel DST areas decode at about 40× real time.
   Expect a burst of CPU load after adding a large library, or set the analysis speed lower in
