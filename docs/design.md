@@ -340,6 +340,16 @@ after every NAS reboot or app update.
   generations. Adding or removing an image changes no other number, except in the
   collision case above.
 
+**Multichannel album suffix (#97).** The album tag of a multichannel area's DSF and WAV files
+ends in ` (Multichannel)` unless `--no-multichannel-album-suffix`. *Owner quote:* "multichannel
+copies get their own album name in the tags, by default, with an option to turn it off".
+*Why:* Navidrome, LMS, MPD and MinimServer all showed a disc's two copies as one album.
+*Sources:* the client tests on #82. *Alternatives:* no change; a separate album-artist or
+comment tag (servers group by album name); hiding an area (loses content). *Trade-off:* the
+tag bytes differ from an extract's, which the owner allows (only audio must match); the
+output versions move (DSF 3, WAV 4). The option is a process-wide switch in `dsf.rs`, and
+toggling it does not move mtimes. The tag layer (#81) will override the album name.
+
 **Generation numbers.** A track file's generation is 32 bits (all the kernel keeps) of a hash
 of its image's sector count and mtime, its format, size and an output version per format, and
 for WAV the full PCM flavour; never 0. A handle to a file whose bytes may have changed then
