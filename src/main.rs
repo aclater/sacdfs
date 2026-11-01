@@ -214,6 +214,8 @@ fn run(args: Args) -> io::Result<()> {
 
     // Become a daemon before any thread exists; the parent waits for the mount.
     let notify = if args.foreground { None } else { Some(daemonize()?) };
+    // Before any thread allocates (#73).
+    sacdfs::engine::limit_malloc_arenas();
 
     sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
 

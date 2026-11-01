@@ -63,6 +63,53 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   *Why:* memory stays bounded by `--cache-mb` however many files are open, and a parallel
   library cursor would hold a window of its own (512 positions, about 48 MB).
 
+### Memory (#73)
+
+Measured with `scripts/import-replay.py`, a replay of a library import's reads (Roon: 768 KiB
+at each DSF file's start, 36 KiB at its middle, 33 KiB at its end) over 60 images (five discs,
+twelve times; 1 116 files) on a 32-thread host; peak resident memory (`VmHWM`) at the end:
+
+| | `--cache-mb 0` | `--cache-mb 16` | `--cache-mb 256` | straight reads, 256 |
+|---|---|---|---|---|
+| before | 83 MiB | 125 MiB | 473 MiB | 965 to 1 066 MiB |
+| after | 32 MiB | 58 MiB | 271 MiB | 327 MiB |
+
+("Straight reads": three areas' DSF files and one area's WAV files read through, on one mount.)
+So `--cache-mb C` now costs about C + 15 to 40 MiB under this pattern, against C + 220 MiB
+before. Two changes, each needed:
+
+- **One malloc arena** (`engine::limit_malloc_arenas`: glibc's `M_ARENA_MAX` set to 1 at
+  start, unless `MALLOC_ARENA_MAX` or `GLIBC_TUNABLES` sets it). *Why:* glibc gives every
+  thread that allocates an arena of its own, up to eight per CPU, and memory freed in an arena
+  stays there for that arena. Decoder, FUSE and read-ahead threads all allocate and free
+  frames and read buffers, so each arena held its own share of the working set: 50 MiB more
+  with no cache at all, and up to four times the cap after straight reads. *Trade-off:* one
+  lock for all allocation; DST straight reads took 4 % longer (DSF 11.11 → 11.55 s, WAV
+  13.52 → 13.98 s for a 6-channel area; plain DSD 1.69 → 1.59 s), inside the 5 % allowed.
+  *Alternatives measured:* eight arenas, 2 % slower and 287 MiB at 256 (C + 31); two and four
+  arenas held more than one without the cache's change below. *Not tried:* jemalloc or
+  mimalloc as the global allocator (a C dependency and a new cost for every allocation, for
+  what one setting does); `malloc_trim` after evictions (gives back only whole free pages,
+  and walks the heap). This is the one `unsafe` call outside the daemonising code: `mallopt`
+  takes two integers.
+- **The cache reuses the buffers of evicted frames** (`FrameCache::buffers`, `spares`): DST
+  frames are decoded straight into them (`DstDecoder::decode`, with scarletbook's fills for
+  missing and invalid frames, as `audio::decode_frame` does), plain DSD and PCM frames are
+  copied in. An eighth of the cap, at most 32 MiB, is kept for spare buffers, so frames and
+  spares together stay within the cap. *Why:* freeing evicted frames left holes between the
+  cached frames and the short-lived allocations of decoding (read buffers of up to 1 MiB,
+  compressed frames) that the heap could not give back; a malloc profile showed the cache's
+  count was right and the excess was the heap's. With one arena, reuse took 339 → 271 MiB at
+  256. *Why 32 MiB:* a read-ahead's worth of frames, so that straight reads reuse buffers
+  rather than allocate; a 4 MiB reserve held 314 MiB. *Trade-off:* the cache holds an eighth
+  fewer frames.
+- **What is left above the cap** (#73 item 3): about 32 MiB that a mount holds with no cache:
+  12 MiB at mount (binary, FUSE buffers, the scan), then the decoders' tables (256 KiB per
+  decoder thread), the image cursors' read buffers (up to 1 MiB each while a file is open),
+  the seek indexes and the open images. It levels off after the first few hundred files and
+  does not depend on `--max-open-images`. With more decoder threads (`--threads`, one per
+  CPU by default) it grows by about 0.3 MiB per thread.
+
 ## Layout
 
 ```

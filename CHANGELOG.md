@@ -19,6 +19,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- Memory stays near `--cache-mb` (#73): one malloc arena, and the frame cache reuses the
+  buffers of evicted frames within its cap. A library import's reads over 60 images peak at
+  271 MiB with the default 256 MiB cache (was 473 MiB) and 58 MiB at 16 MiB (was 125 MiB);
+  straight reads peak at 327 MiB (was about 1 GiB). DST straight reads take about 4 % longer.
+
 - Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts
   a scarletbook provisional (cold) reading or, after a remount, one from the saved seek hints;
   sacdfs's own frame locator is gone. Cold seeks make fewer calls to the image (3.06 a seek on

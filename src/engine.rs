@@ -62,11 +62,27 @@ struct Key {
 struct CacheInner {
     lru: LruCache<Key, Arc<Frame>>,
     bytes: usize,
+    /// Buffers of evicted frames, oldest first, handed out again for new frames (#73).
+    spare: Vec<Box<[u8]>>,
+    spare_bytes: usize,
+}
+
+/// Bytes of a cache's cap kept for spare buffers: an eighth of the cap, at most 32 MiB, which
+/// is a read-ahead's worth of frames. Cached frames fill the rest, so that frames and spare
+/// buffers together stay within the cap.
+fn spare_cap(cap: usize) -> usize {
+    (cap / 8).min(32 << 20)
 }
 
 /// A least-recently-used cache of decoded DSD frames and converted PCM frames, bounded in
 /// bytes: one budget for both, so a mount that serves only one format spends all of it on
 /// that format.
+///
+/// The buffers of evicted frames are not freed but handed out again for new frames
+/// ([`FrameCache::buffers`]). *Why (#73):* freeing them left holes between the cached frames
+/// and the short-lived allocations of decoding, which the allocator could neither give back
+/// nor always reuse, so the process held about 20 % more than the cap; reusing them keeps
+/// the cache's memory, frames and spare buffers together, within its cap ([`spare_cap`]).
 #[derive(Debug)]
 pub struct FrameCache {
     inner: Mutex<CacheInner>,
@@ -76,7 +92,47 @@ pub struct FrameCache {
 impl FrameCache {
     /// A cache holding at most `cap` bytes of frames.
     pub fn new(cap: usize) -> Self {
-        FrameCache { inner: Mutex::new(CacheInner { lru: LruCache::unbounded(), bytes: 0 }), cap }
+        FrameCache {
+            inner: Mutex::new(CacheInner {
+                lru: LruCache::unbounded(),
+                bytes: 0,
+                spare: Vec::new(),
+                spare_bytes: 0,
+            }),
+            cap,
+        }
+    }
+
+    /// `n` buffers of `len` bytes for new frames: spare buffers of evicted frames where there
+    /// are some, otherwise new ones. Their content is unspecified.
+    fn buffers(&self, len: usize, n: usize) -> Vec<Box<[u8]>> {
+        let mut out = self.spares(len, n);
+        out.resize_with(n, || vec![0u8; len].into_boxed_slice());
+        out
+    }
+
+    /// Up to `n` spare buffers of `len` bytes, for [`FrameCache::buffers`]; the caller makes
+    /// the rest (on the threads that fill them, so that zeroing new ones is parallel too).
+    fn spares(&self, len: usize, n: usize) -> Vec<Box<[u8]>> {
+        let mut out = Vec::with_capacity(n);
+        if self.cap > 0 {
+            let mut g = self.lock();
+            let mut i = g.spare.len();
+            while i > 0 && out.len() < n {
+                i -= 1;
+                if g.spare[i].len() == len {
+                    let b = g.spare.remove(i);
+                    g.spare_bytes -= len;
+                    out.push(b);
+                }
+            }
+        }
+        out
+    }
+
+    /// One buffer of `len` bytes for a new frame, as [`FrameCache::buffers`].
+    fn buffer(&self, len: usize) -> Box<[u8]> {
+        self.buffers(len, 1).pop().unwrap_or_else(|| vec![0u8; len].into_boxed_slice())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, CacheInner> {
@@ -97,12 +153,26 @@ impl FrameCache {
             g.bytes -= old.data.len();
         }
         g.bytes += len;
-        while g.bytes > self.cap {
+        let spare_cap = spare_cap(self.cap);
+        while g.bytes > self.cap - spare_cap {
             match g.lru.pop_lru() {
-                Some((_, f)) => g.bytes -= f.data.len(),
+                Some((_, f)) => {
+                    g.bytes -= f.data.len();
+                    // A frame a reader still holds is freed when the reader drops it.
+                    if let Ok(f) = Arc::try_unwrap(f) {
+                        g.spare_bytes += f.data.len();
+                        g.spare.push(f.data);
+                    }
+                }
                 None => break,
             }
         }
+        let mut drop_n = 0;
+        while drop_n < g.spare.len() && g.bytes + g.spare_bytes > self.cap {
+            g.spare_bytes -= g.spare[drop_n].len();
+            drop_n += 1;
+        }
+        g.spare.drain(..drop_n);
     }
 
     /// Bytes held.
@@ -359,11 +429,16 @@ impl Engine {
             c.convert_run(p, &frames, n, &mut data, &mut clips);
             Ok(())
         })?;
+        let bufs = self.cache.buffers(frame_bytes, cur.len());
         Ok(cur
             .iter()
             .zip(data.chunks_exact(frame_bytes))
             .zip(clips)
-            .map(|((d, pcm), clips)| Frame { data: pcm.into(), fill: d.fill, clips })
+            .zip(bufs)
+            .map(|(((d, pcm), clips), mut buf)| {
+                buf.copy_from_slice(pcm);
+                Frame { data: buf, fill: d.fill, clips }
+            })
             .collect())
     }
 
@@ -376,7 +451,7 @@ impl Engine {
         cur: &Dsd,
         next: Option<&Dsd>,
     ) -> Result<Frame, ReadError> {
-        let mut data = vec![0u8; frame_bytes].into_boxed_slice();
+        let mut data = self.cache.buffer(frame_bytes);
         let clips = self.with_converter(channels, |c| {
             if c.frame_bytes() != frame_bytes {
                 return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
@@ -544,11 +619,14 @@ impl Engine {
                 jobs.push(TrackFrame { number: t, content });
             }
         }
+        let mut bufs =
+            self.cache.spares(usize::from(channels) * FRAME_BYTES_PER_CHANNEL, jobs.len()).into_iter();
+        let jobs: Vec<(TrackFrame, Option<Box<[u8]>>)> = jobs.into_iter().map(|j| (j, bufs.next())).collect();
         let decoded: Vec<Result<(u32, Frame), ReadError>> =
-            if jobs.iter().any(|j| matches!(j.content, FrameContent::Dst(_))) {
-                self.pool.install(|| jobs.into_par_iter().map(|j| decode(j, channels)).collect())
+            if jobs.iter().any(|(j, _)| matches!(j.content, FrameContent::Dst(_))) {
+                self.pool.install(|| jobs.into_par_iter().map(|(j, b)| decode(j, channels, b)).collect())
             } else {
-                jobs.into_iter().map(|j| decode(j, channels)).collect()
+                jobs.into_iter().map(|(j, b)| decode(j, channels, b)).collect()
             };
         for r in decoded {
             let (t, frame) = r?;
@@ -562,10 +640,41 @@ impl Engine {
     }
 }
 
-/// Decodes one timeline position, interleaved, for the cache.
-fn decode(job: TrackFrame, channels: u8) -> Result<(u32, Frame), ReadError> {
-    let (number, d) = decode_interleaved(job, channels)?;
-    Ok((number, Frame { data: d.data.into_boxed_slice(), fill: d.fill, clips: 0 }))
+/// Bytes per channel of a decoded DSD frame.
+const FRAME_BYTES_PER_CHANNEL: usize = 4704;
+
+/// Decodes one timeline position, interleaved, for the cache, into `buf` (`channels x 4704`
+/// bytes, from [`FrameCache::spares`], or a new one): what `scarletbook::audio::decode_frame` gives, but
+/// written into a buffer of the cache rather than a new one (#73).
+fn decode(job: TrackFrame, channels: u8, buf: Option<Box<[u8]>>) -> Result<(u32, Frame), ReadError> {
+    let bad = |m: &str| Err(ReadError::Io(io::Error::other(m.to_owned())));
+    let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
+    let mut buf = buf.unwrap_or_else(|| vec![0u8; len].into_boxed_slice());
+    if !(1..=6).contains(&channels) || buf.len() != len {
+        return bad("bad channel count");
+    }
+    let fill = match job.content {
+        FrameContent::Dsd(d) => {
+            if d.len() != buf.len() {
+                return bad("a plain DSD frame of the wrong size");
+            }
+            buf.copy_from_slice(&d);
+            Fill::Audio
+        }
+        FrameContent::Missing => {
+            buf.fill(scarletbook::audio::MISSING_FILL);
+            Fill::Missing
+        }
+        FrameContent::Dst(bytes) => match DECODER.with(|d| d.borrow_mut().decode(&bytes, channels, &mut buf))
+        {
+            Ok(()) => Fill::Audio,
+            Err(_) => {
+                buf.fill(scarletbook::audio::INVALID_FILL);
+                Fill::Invalid
+            }
+        },
+    };
+    Ok((job.number, Frame { data: buf, fill, clips: 0 }))
 }
 
 /// Decodes one timeline position, in scarletbook's interleaved layout.
@@ -578,6 +687,41 @@ fn decode_interleaved(job: TrackFrame, channels: u8) -> Result<(u32, Dsd), ReadE
         _ => Fill::Audio,
     };
     Ok((number, Dsd { data: audio.data, fill }))
+}
+
+/// Malloc arenas glibc may use, set by [`limit_malloc_arenas`].
+pub const MALLOC_ARENAS: i32 = 1;
+
+/// Limits glibc's malloc to [`MALLOC_ARENAS`] arenas, unless `MALLOC_ARENA_MAX` or
+/// `GLIBC_TUNABLES` already sets it. To be called before any thread is started; returns
+/// whether it was set.
+///
+/// *Why (#73):* glibc gives each thread that allocates its own arena, up to eight per CPU,
+/// and every arena keeps the memory freed in it for that arena alone. Decoder, FUSE and
+/// read-ahead threads all allocate and free frames and read buffers, so each arena ended up
+/// holding its own copy of the working set: a seek-heavy scan (a library import) of 60
+/// images held 473 MiB at a 256 MiB cache and 125 MiB at 16 MiB, against 314 and 56 MiB with
+/// one arena. *Why one:* two and four held 330 and 368 MiB; decoding allocates little per
+/// frame (the cache's buffers are reused), so the shared lock did not slow reads (see
+/// docs/performance.md).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[allow(unsafe_code)]
+pub fn limit_malloc_arenas() -> bool {
+    let tuned = std::env::var_os("MALLOC_ARENA_MAX").is_some()
+        || std::env::var("GLIBC_TUNABLES").is_ok_and(|t| t.contains("arena_max"));
+    if tuned {
+        return false;
+    }
+    // SAFETY: mallopt takes two integers and only changes allocator settings; M_ARENA_MAX
+    // is a documented parameter, and changing it is safe at any time (it bounds arenas
+    // created afterwards).
+    unsafe { libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS) == 1 }
+}
+
+/// Elsewhere there is no glibc arena to limit.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn limit_malloc_arenas() -> bool {
+    false
 }
 
 /// One CPU per decoder thread unless told otherwise.
@@ -605,9 +749,37 @@ mod tests {
         assert!(c.get(&Key { disc: 1, area: 0, frame: 9, kind: Kind::Dsd }).is_some());
         assert!(c.get(&Key { disc: 1, area: 0, frame: 0, kind: Kind::Dsd }).is_none());
         c.insert(Key { disc: 1, area: 0, frame: 9, kind: Kind::Dsd }, frame(100));
-        assert_eq!(c.bytes(), 4704 + 100);
+        // Only frame 9 fitted beside the spare buffers' share, and it was replaced.
+        assert_eq!(c.bytes(), 100);
         let z = FrameCache::new(0);
+        assert_eq!(z.buffers(8, 2).len(), 2);
         z.insert(Key { disc: 1, area: 0, frame: 0, kind: Kind::Dsd }, frame(1));
         assert_eq!(z.bytes(), 0);
+    }
+
+    #[test]
+    fn evicted_buffers_are_reused() {
+        // Room for 7 frames, and one spare buffer (an eighth of the cap).
+        let c = FrameCache::new(40_000);
+        let key = |i| Key { disc: 1, area: 0, frame: i, kind: Kind::Dsd };
+        for i in 0..9 {
+            c.insert(key(i), frame(4704));
+        }
+        // Frame 0 was evicted, and its buffer kept.
+        assert!(c.get(&key(0)).is_none());
+        assert_eq!(c.lock().spare.len(), 1);
+        assert_eq!(c.buffers(4704, 2).len(), 2);
+        assert!(c.lock().spare.is_empty());
+        // A buffer of another size is not handed out.
+        c.insert(key(9), frame(4704));
+        assert_eq!(c.lock().spare.len(), 1);
+        assert_eq!(c.buffers(100, 1)[0].len(), 100);
+        assert_eq!(c.lock().spare.len(), 1);
+        let big = FrameCache::new(1 << 20);
+        for i in 0..1000 {
+            big.insert(key(i), frame(4704));
+        }
+        let g = big.lock();
+        assert!(g.bytes + g.spare_bytes <= 1 << 20 && g.spare_bytes <= spare_cap(1 << 20));
     }
 }
