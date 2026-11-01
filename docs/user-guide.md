@@ -206,6 +206,25 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
 - Adding or removing images does not change the numbers of the others. The design is in
   [design.md](design.md#file-identity-and-nfs-export).
 
+## Times, sizes and free space
+
+- **Modification times.** A DSF or WAV file shows its image's modification time, moved
+  forward whenever its bytes would differ: a WAV file with a non-default `--pcm-cutoff` or
+  `--pcm-gain` shows a later time (by up to 7 hours, a different time for every cutoff and
+  0.01 dB of gain), and a sacdfs release that changes the bytes of a format moves that
+  format's times forward again. rsync, Plex, Roon and other tools that compare size and time
+  therefore see a change of options or of output as a change of the file, and copy or
+  re-analyse it. The same options always show the same times, across remounts and restarts.
+  `--pcm-rate` changes the files' size instead. With the default options, the times are the
+  images' own.
+  With non-default options, a file whose image changed in the last few hours can show a
+  time slightly in the future (up to 7 hours ahead); tools such as `tar` may warn about it.
+- **`df` and free space.** The mount reports the size of the filesystem that holds SOURCE,
+  all of it used: `df` shows that size with 0 available, and SMB clients (Explorer, Finder)
+  see a full drive of that size. Nothing can be written to the mount anyway.
+- **Extended attributes.** There are none: `getfattr` and `listxattr` say "Operation not
+  supported" (the kernel answers this itself after the first request).
+
 ## Images that change, and damaged images
 
 - **New or removed images** appear or disappear only after a remount: the directory tree is

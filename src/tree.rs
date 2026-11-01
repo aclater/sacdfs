@@ -223,6 +223,8 @@ pub struct Tree {
     flatten: bool,
     /// The flavour of the WAV files (PCM options and rate), part of their numbers.
     wav_flavour: u64,
+    /// Seconds added to the WAV files' mtime for the PCM options (issue #64).
+    wav_mtime_offset: u64,
 }
 
 impl Tree {
@@ -254,15 +256,17 @@ impl Tree {
             output,
             flatten: false,
             wav_flavour,
+            wav_mtime_offset: 0,
         }
     }
 
     /// The same tree, its WAV files converted with `pcm` (whose rate must be the one of the
     /// output's samples per frame): the PCM options are part of the WAV files' inode and
-    /// generation numbers. Without it, the default options are assumed.
+    /// generation numbers, and of their mtime. Without it, the default options are assumed.
     #[must_use]
     pub fn with_pcm(mut self, pcm: &PcmConfig) -> Tree {
         self.wav_flavour = ident::wav_flavour(ident::pcm_flavour(pcm), self.output.samples_per_frame);
+        self.wav_mtime_offset = ident::pcm_mtime_offset(pcm);
         self
     }
 
@@ -370,6 +374,20 @@ impl Tree {
             Node::Dir(_) => 0,
             Node::File(f) => ident::generation(f, self.wav_flavour),
         }
+    }
+
+    /// The modification time shown for `node`: a directory's own; for a track file, its
+    /// image's, moved by the output version and PCM options (see [`ident::mtime`]).
+    pub fn mtime(&self, node: &Node) -> SystemTime {
+        match node {
+            Node::Dir(d) => d.mtime,
+            Node::File(f) => ident::mtime(f, self.wav_mtime_offset),
+        }
+    }
+
+    /// The source path: the SOURCE directory, or the directory of a single image.
+    pub fn source(&self) -> &Path {
+        self.ids.source()
     }
 
     /// Looks up `name` in directory `parent`.
@@ -809,23 +827,29 @@ mod tests {
             let out = Output { samples_per_frame: spf, ..Output::default() };
             let t = Tree::with_options(SourceDir::scan(dir.path()).unwrap(), Tuning::default(), out)
                 .with_pcm(&pcm);
-            let mut v: Vec<(String, u64, u64)> = t
+            let mut v: Vec<(String, u64, u64, SystemTime)> = t
                 .all_files()
                 .into_iter()
                 .map(|(p, f)| {
                     let ino = t.resolve(&p).unwrap();
-                    (p.display().to_string(), ino, ident::generation(&f, t.wav_flavour))
+                    let mtime = t.mtime(&Node::File(f.clone()));
+                    (p.display().to_string(), ino, ident::generation(&f, t.wav_flavour), mtime)
                 })
                 .collect();
             v.sort();
             v
         };
         let base = files(PcmConfig::default(), 2352);
+        // The same options on another mount: the same numbers, generations and mtimes.
         assert_eq!(files(PcmConfig::default(), 2352), base);
-        for other in [
-            files(PcmConfig { gain_db: -3.0, ..PcmConfig::default() }, 2352),
-            files(PcmConfig { cutoff: crate::pcm::Cutoff::Khz30, ..PcmConfig::default() }, 2352),
-            files(PcmConfig::default(), 4704),
+        // With the default options, every file shows its image's mtime (issue #64).
+        let image = fs::metadata(dir.path().join("Artist/x.iso")).unwrap().modified().unwrap();
+        assert!(base.iter().all(|f| f.3 == image));
+        // Options that keep the size move the WAV files' mtime; the rate changes the size.
+        for (other, mtime_moves) in [
+            (files(PcmConfig { gain_db: -3.0, ..PcmConfig::default() }, 2352), true),
+            (files(PcmConfig { cutoff: crate::pcm::Cutoff::Khz30, ..PcmConfig::default() }, 2352), true),
+            (files(PcmConfig::default(), 4704), false),
         ] {
             for (a, b) in base.iter().zip(&other) {
                 assert_eq!(a.0, b.0);
@@ -833,6 +857,8 @@ mod tests {
                     assert_eq!(a, b);
                 } else {
                     assert_ne!(a.2, b.2, "{}: same generation", a.0);
+                    assert_eq!(a.3 != b.3, mtime_moves, "{}: mtime", a.0);
+                    assert!(b.3 >= a.3, "{}: older mtime", a.0);
                 }
             }
         }

@@ -201,6 +201,47 @@ Directories have generation 0: they are containers found by name, and a handle t
 content changed should still work (a missing area or file is then not found).
 *Why not the image's file size:* the sector count is the image's size in sectors, already in
 the TOC; together with the mtime it catches any rewrite, without another `stat` per lookup.
+**Modification times (#64).** A track file's bytes depend on more than its image: on the
+output version of its format, and for WAV on `--pcm-cutoff` and `--pcm-gain`, which keep the
+file's size. Showing the image's mtime alone, a copy by size and mtime (rsync's default check)
+or a library scanner keyed on mtime would miss such a change. So a file's mtime is its image's
+plus two offsets, in whole seconds:
+
+- for WAV, a PCM offset: 0 for the default options, and for every other cutoff and gain (in
+  steps of 0.01 dB from -60 to +24 dB) a different number below 25,203 (7 hours);
+- a version offset: 25,203 s per output version after the first (`DSF_VERSION`,
+  `WAV_VERSION`), more than any PCM offset.
+
+Directories keep their own mtime.
+
+- *Why derive it, not document "re-copy after changing options":* rsync, Plex, Roon and the
+  like rely on mtime and would silently keep stale WAV copies or analyses. Deriving costs
+  nothing per request (an addition) and needs no state.
+- *Stable across remounts:* the mtime is a function of the image's mtime, the output version
+  and the options only, so the same options always show the same times.
+- *Why a version step larger than every PCM offset:* a version bump then moves every file
+  past every time it showed under the previous version, whatever the options, so even a tool
+  that only looks at newer files (beets' `update`) sees it. Considered: the date of the bump
+  (mtime never older than it). That moves only files whose image predates the date, and misses
+  an image changed after the bump was made but served by the old version until the upgrade.
+- *Why an exact offset, not a hash of the options:* every cutoff and 0.01 dB gain step gets its
+  own offset, so two option sets never show the same mtime (gains closer than 0.01 dB share one,
+  and the CLI accepts any gain in range).
+  The default options at version 1 add nothing, so a mount with defaults shows exactly what
+  0.1 showed. Changing the options back and forth moves the mtime back and forth: still a
+  change for rsync, Plex and Roon, though not for a scanner that wants newer files (beets
+  reads only tags, which the options do not change).
+- *Why not the rate:* `--pcm-rate` changes the file's size (and usually its inode number),
+  which every tool already sees.
+- *Cost:* a file can show a time ahead of its image's (up to 7 hours with non-default
+  options, 7 more per version bump), so an image changed in the last hours can show a time
+  slightly in the future. Harmless on a read-only filesystem; `tar` extracting a copy may warn.
+- **Generations stay consistent:** everything the mtime is derived from (the image's mtime,
+  the output version, the full PCM flavour) is already in the generation hash, so a file whose
+  mtime changed also has a new generation, and an NFS handle to the old bytes is stale. The
+  generation hash itself is unchanged from 0.1, so an upgrade keeps every handle valid. Unit
+  tests (`ident::tests::mtime_offsets`, `tree::tests::pcm_options_change_wav_numbers_and_generations_only`)
+  and a mount test (`tests/probes.rs`) check this.
 
 **Export support.** `init` asks for `FUSE_EXPORT_SUPPORT`. `lookup` answers `.` (the inode
 itself) and `..` (its directory's parent), which the kernel sends to turn a file handle into
@@ -773,6 +814,39 @@ opened with `keep_cache`, and the kernel's page cache serves repeated reads. Rea
 1 MiB (the kernel grants at most its own default, typically 128 KiB, as fuser's `INIT` log
 shows), and up to 64 background requests are allowed. The filesystem is mounted `ro`,
 `nodev`, `nosuid`, `noexec`.
+
+Two kinds of probe are answered so that the kernel stops asking (#61):
+
+- **Missing names** get a negative entry (inode 0, cached for the same 24 hours) instead of
+  `ENOENT`. Players, file managers and SMB clients look for `cover.jpg`, `folder.jpg`,
+  `desktop.ini` and the like in every folder, again and again; the kernel now answers the
+  repeats itself. *Why it is safe:* a directory's listing is made once per mount and never
+  changes, so a name missing from it stays missing. Lookups of `.` and `..` (the NFS export
+  code's) still fail with `ENOENT` when the inode is unknown, so a handle to something gone
+  still gets `ESTALE`. Measured with fuser's request log on a 24-track area: three `stat`s of
+  each of four missing names sent 3 `LOOKUP`s each before, 1 after.
+- **Extended attributes:** `getxattr` and `listxattr` answer `ENOSYS`. The kernel then
+  remembers that the filesystem has none and answers every later call itself, with
+  `EOPNOTSUPP`, the answer of a filesystem without xattrs. *Why not `ENODATA` and an empty list,
+  as before:* those are answers about one file, so the kernel asked again for every file:
+  `ls -l` sends a `LISTXATTR` per entry. Measured on the same area (48 files): two `ls -l` and a
+  `getfattr -d` sent 49, 49 and 48 `LISTXATTR` before; 1 `LISTXATTR` and 1 `GETXATTR` in the
+  first `ls -l`, then none. Samba (`ea support = no` in the container) and NFS-Ganesha (no
+  xattr support configured) read the same files through the container test.
+
+**Filesystem size (#62).** `statfs` reports the size of the filesystem holding SOURCE, all of
+it used (0 free, 0 available), the number of entries made so far as inodes, and 0 free
+inodes. `df` showed a 0-byte filesystem before, and SMB clients were told 0 bytes total and
+free, which some treat as a broken share. *Why the source's size, not the sum of the files'
+sizes:* the tree is made lazily, so the sum is known only for the folders listed so far; it
+would grow while a client browses and opening every image at mount to know it costs a TOC read
+per image. The source's size is one `statvfs`, is the same however much has been browsed, and
+says truthfully where the bytes live. *Why 0 free:* the mount is read-only; a full
+filesystem is what copy dialogs understand as "nothing can be written here". The size is read
+at mount (the source was just walked, so this does not wait) and again at most once a minute,
+on a request thread, so a stalled source never holds up a `statfs` reply: it gets the last
+size read. `statvfs` comes from `nix` (MIT, already a dependency of fuser, with the same
+`fs` feature), not `libc`: sacdfs keeps `unsafe` to its daemonising code.
 
 ## Concurrency
 
