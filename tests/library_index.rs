@@ -147,15 +147,14 @@ fn locator_equals_the_seek_index_on_the_corpus() {
     assert!(compared > 10_000, "too few positions compared: {compared}");
 }
 
-/// The library's cold seek on a hostile corpus image: a provisional reading of
-/// `area-audio-past-end` (frames stored past the area's play range raise the next
-/// acceptable frame number of a scan from the first sector) returns frames that a scan
-/// does not, and is refuted only when the seek index's pass reaches it. sacdfs's locator
-/// gives the exact positions at once. This is the case a cache of served frames would
-/// have to drop and the kernel's pages to be invalidated for, had sacdfs served
-/// provisional positions.
+/// The library's cold seek on a hostile corpus image, `area-audio-past-end` (frames stored
+/// past the area's play range raise the next acceptable frame number of a scan from the
+/// first sector). Up to scarletbook 0.5.0 its provisional readings there returned frames
+/// that a scan does not, refuted only when the seek index's pass reached them; on 0.5.2
+/// every one of them equals the exact reading. This keeps what matters either way: every provisional
+/// reading that differs is refuted, and sacdfs's locator gives the exact positions at once.
 #[test]
-fn provisional_reading_is_refuted_where_the_locator_is_exact() {
+fn provisional_readings_that_differ_are_refuted() {
     let case = cases().into_iter().find(|c| c["id"] == "area-audio-past-end").expect("corpus case");
     let disc = Disc::open_with(&image(&case), 1, Tuning::default(), None).unwrap();
     let mut image = library_image(&disc);
@@ -197,7 +196,6 @@ fn provisional_reading_is_refuted_where_the_locator_is_exact() {
         }
     }
     assert!(provisional > 0, "no provisional reading was made");
-    assert!(differ > 0, "the provisional readings equal the exact ones");
     assert!(refuted >= differ, "{refuted} refuted, {differ} differing");
 }
 

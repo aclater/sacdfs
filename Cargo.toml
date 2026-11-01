@@ -15,7 +15,7 @@ exclude = ["tests/corpus/images"]
 [dependencies]
 # The engine: SACD parsing, demultiplexing and DST decoding. Not on crates.io yet; pinned
 # to a release tag.
-scarletbook = { git = "https://github.com/aclater/scarletbook-rs", tag = "v0.5.0" }
+scarletbook = { git = "https://github.com/aclater/scarletbook-rs", tag = "v0.5.2" }
 # TEMPORARY: scarletbook's DSD-to-PCM converter, for the comparison behind
 # SACDFS_PCM_ENGINE (src/pcm/sb.rs). Not the default.
 scarletbook-pcm = { git = "https://github.com/aclater/scarletbook-rs", tag = "v0.5.2" }
