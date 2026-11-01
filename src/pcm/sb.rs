@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! TEMPORARY, for the comparison in "PCM: scarletbook-pcm against our converter (0.5.2)":
+//! TEMPORARY, for the comparison in "PCM: scarletbook-pcm against our converter" (#84):
 //! scarletbook-pcm behind the same interface as [`super::Converter`], and a switch between
 //! the two. Not a decision: the default stays sacdfs's own converter, and this module goes
 //! once the owner has decided.
@@ -9,16 +9,11 @@
 //! scarletbook-pcm, anything else (or unset) sacdfs's converter. It is read once per
 //! process.
 //!
-//! What the adapter has to add, because scarletbook-pcm does not offer it (the gaps):
-//! - frames of a run given as separate slices: scarletbook-pcm takes one contiguous run,
-//!   so they are copied together first;
-//! - clip counts per frame of a run: scarletbook-pcm counts per channel per call, so they
-//!   are counted here from the output (samples at either rail);
-//! - packed 24-bit output: scarletbook-pcm's Rust API writes `i32`, packed afterwards with
-//!   its `pack_s24le` (a second pass over the output);
-//! - short frames: scarletbook-pcm refuses them; they are padded with DSD silence (0x69)
-//!   here, as sacdfs's converter treats them;
-//! - f32 output: not offered; `convert_f32` gives the 24-bit samples scaled.
+//! With 0.5.3 (scarletbook-rs#172) the adapter reads a run's frames in place
+//! (`Frames::Separate`), writes 24-bit bytes directly (`PcmOut::S24le`) and takes clip
+//! counts per frame from the library. It still pads a short frame with DSD silence (the
+//! library refuses one; the decoder never makes one), and `convert_f32` gives the 24-bit
+//! samples scaled (no float output, needed only by tools).
 
 use std::sync::OnceLock;
 
@@ -48,8 +43,7 @@ pub fn selected() -> Engine {
 }
 
 /// scarletbook-pcm's configuration for sacdfs's: the same rate, the cutoff of the same
-/// name (40 kHz Default, 30 kHz Low, wide Wide; note that scarletbook's Low stops at
-/// 38 kHz, not 36, and its Wide at 96 kHz, not 88.2/100), the same gain.
+/// name (40 kHz Default, 30 kHz Low, wide Wide), the same gain.
 pub fn sb_config(channels: u8, cfg: &PcmConfig) -> sb::PcmConfig {
     let cfg = cfg.effective();
     let rate = match cfg.rate {
@@ -76,11 +70,8 @@ pub struct SbConverter {
     /// Input frames copied together (and padded), output samples before packing.
     input: Vec<u8>,
     pad: [Vec<u8>; 2],
-    pcm: Vec<i32>,
+    counts: Vec<u64>,
 }
-
-/// The largest and smallest 24-bit sample: where clamped samples land.
-const RAILS: [i32; 2] = [8_388_607, -8_388_608];
 
 impl SbConverter {
     /// As [`Converter::new`].
@@ -94,7 +85,7 @@ impl SbConverter {
             conv,
             input: Vec::new(),
             pad: [Vec::new(), Vec::new()],
-            pcm: Vec::new(),
+            counts: Vec::new(),
         }
     }
 
@@ -124,7 +115,10 @@ impl SbConverter {
         Some(pad)
     }
 
-    /// As [`Converter::convert_run`]; [`Converter::convert`] is a run of one.
+    /// As [`Converter::convert_run`]; [`Converter::convert`] is a run of one. The frames
+    /// are read in place (`Frames::Separate`), the output is written as 24-bit bytes
+    /// (`PcmOut::S24le`) and the clip counts come per frame from scarletbook-pcm; only a
+    /// short frame (never from the decoder) is copied, padded with DSD silence.
     pub fn convert_run(
         &mut self,
         prev: Option<&[u8]>,
@@ -135,31 +129,35 @@ impl SbConverter {
     ) -> u32 {
         clips.iter_mut().for_each(|k| *k = 0);
         let whole = self.whole();
-        self.input.clear();
-        for f in frames {
-            let n = f.len().min(whole);
-            self.input.extend_from_slice(&f[..n]);
-            self.input.resize(self.input.len() + whole - n, DSD_SILENCE);
-        }
-        let spf = self.conv.samples_per_frame() * self.channels;
-        self.pcm.resize(frames.len() * spf, 0);
+        let fb = self.frame_bytes();
+        let n = frames.len();
+        let Some(out) = out.get_mut(..n * fb) else { return 0 };
+        self.counts.clear();
+        self.counts.resize(n, 0);
         let [pa, pb] = &mut self.pad;
-        let run = sb::FrameRun::new(&self.input)
-            .with_before(Self::neighbour(whole, prev, pa))
-            .with_after(Self::neighbour(whole, next, pb));
-        if self.conv.convert_run(run, &mut self.pcm).is_err() {
+        let (before, after) = (Self::neighbour(whole, prev, pa), Self::neighbour(whole, next, pb));
+        let r = if frames.iter().all(|f| f.len() == whole) {
+            let run = sb::Run::new(frames).with_before(before).with_after(after);
+            self.conv.convert(run, sb::PcmOut::S24le(out), Some(&mut self.counts))
+        } else {
+            self.input.clear();
+            for f in frames {
+                let k = f.len().min(whole);
+                self.input.extend_from_slice(&f[..k]);
+                self.input.resize(self.input.len() + whole - k, DSD_SILENCE);
+            }
+            let run = sb::Run::new(self.input.as_slice()).with_before(before).with_after(after);
+            self.conv.convert(run, sb::PcmOut::S24le(out), Some(&mut self.counts))
+        };
+        if r.is_err() {
             return 0;
         }
         let mut total = 0u32;
-        for (f, samples) in self.pcm.chunks_exact(spf).enumerate() {
-            let n = samples.iter().filter(|s| RAILS.contains(s)).count() as u32;
-            total = total.saturating_add(n);
-            if let Some(k) = clips.get_mut(f) {
-                *k = n;
-            }
-            if let Some(o) = out.get_mut(f * spf * 3..) {
-                sb::pack_s24le(samples, o);
-            }
+        for (k, &c) in clips.iter_mut().zip(&self.counts) {
+            *k = u32::try_from(c).unwrap_or(u32::MAX);
+        }
+        for &c in &self.counts {
+            total = total.saturating_add(u32::try_from(c).unwrap_or(u32::MAX));
         }
         total
     }

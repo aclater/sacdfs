@@ -938,16 +938,16 @@ dependencies = [
 
 [[package]]
 name = "scarletbook"
-version = "0.5.2"
-source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.5.2#03732e746eafa1dd22a3e393ce222f9c4d3d5e1c"
+version = "0.5.3"
+source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.5.3#71f1cb2e72f8430a3a0e53c2555776cad457a3f2"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "scarletbook-pcm"
-version = "0.5.2"
-source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.5.2#03732e746eafa1dd22a3e393ce222f9c4d3d5e1c"
+version = "0.5.3"
+source = "git+https://github.com/aclater/scarletbook-rs?tag=v0.5.3#71f1cb2e72f8430a3a0e53c2555776cad457a3f2"
 dependencies = [
  "thiserror",
 ]

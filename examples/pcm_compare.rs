@@ -57,12 +57,14 @@ fn name(c: &PcmConfig) -> String {
 
 /// Pass band edge, sacdfs's stop edge (#5), scarletbook's stop edge.
 fn edges(c: &PcmConfig) -> (f64, f64, f64) {
-    match c.cutoff {
-        Cutoff::Khz40 => (40_000.0, 48_000.0, 48_000.0),
-        Cutoff::Khz30 => (30_000.0, 36_000.0, 38_000.0),
-        Cutoff::Wide80 if c.rate == PcmRate::R352800 => (80_000.0, 100_000.0, 96_000.0),
-        Cutoff::Wide80 => (80_000.0, 88_200.0, 96_000.0),
-    }
+    let (pass, ours) = match c.cutoff {
+        Cutoff::Khz40 => (40_000.0, 48_000.0),
+        Cutoff::Khz30 => (30_000.0, 36_000.0),
+        Cutoff::Wide80 if c.rate == PcmRate::R352800 => (80_000.0, 100_000.0),
+        Cutoff::Wide80 => (80_000.0, 88_200.0),
+    };
+    let sc = sb_config(1, c);
+    (pass, ours, f64::from(sc.cutoff.stopband_hz_at(sc.rate)))
 }
 
 const WHICH: [(Which, &str); 2] = [(Which::Sacdfs, "sacdfs"), (Which::Scarletbook, "scarletbook")];
