@@ -56,3 +56,26 @@ fn dsf_tag_walk_starts_no_read_ahead() {
     assert!(walked > 100, "{walked} files");
     assert!(continued > 0, "no corpus file is long enough to check a player's read-ahead");
 }
+
+/// The bytes of a DSF file from scarletbook's layout without decoded frames: the header and
+/// tag are the file's, and audio not given is zeros (as a failed read leaves it), never a
+/// panic; a range past the end is empty.
+#[test]
+fn dsf_bytes_without_frames() {
+    let tree = Tree::with_options(
+        SourceDir::scan(&corpus().join("images/dsd-stereo-mch-2048.iso")).unwrap(),
+        sacdfs::disc::Tuning::default(),
+        Output::dsf_only(),
+    );
+    for (path, f) in tree.all_files() {
+        let h = f.header_len();
+        let head = f.assemble(0, h + 8192, 0, &[]);
+        assert_eq!(&head[..4], b"DSD ", "{path:?}");
+        assert_eq!(u64::from_le_bytes(head[12..20].try_into().unwrap()), f.size, "{path:?}: total size");
+        assert!(head[h as usize..].iter().all(|&b| b == 0), "{path:?}: audio not given is zeros");
+        let tail = f.assemble(f.data_end(), f.size, 0, &[]);
+        assert_eq!(&tail[..], f.tag(), "{path:?}: the tag");
+        assert!(f.assemble(f.size, 10, 0, &[]).is_empty());
+        assert_eq!(f.frames_for(0, h), (0, 0), "{path:?}: the header needs no frame");
+    }
+}
