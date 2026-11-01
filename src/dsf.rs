@@ -32,7 +32,7 @@ pub struct Layout {
 }
 
 /// The ID3 frames in the order sacdfs writes them.
-const FRAME_ORDER: [&[u8; 4]; 12] = [
+pub const FRAME_ORDER: [&[u8; 4]; 12] = [
     b"TIT2", b"TPE1", b"TPE2", b"TALB", b"TRCK", b"TPOS", b"TCOM", b"TDRC", b"TSRC", b"TCON", b"TPUB",
     b"TCOP",
 ];
