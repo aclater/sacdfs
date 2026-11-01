@@ -380,7 +380,7 @@ pictures), `replaygain`, and `other=` with the frame names (a changed title show
 `TIT2`, a genre as `TCON`). sacdfs's tags come from the disc's text only, so anything a
 tagger added is listed here. The same information written another way doesn't count: an
 ID3v2.3 date (`TYER` and `TDAT`, day and month in either order) that sacdfs's `TDRC` holds, a disc number of `1/1` (sacdfs
-leaves it out for a single disc), a `PERFORMER` that is sacdfs's artist, empty frames. The
+leaves it out for a single disc), a track number with the total (`3/12`) where sacdfs has `3` and 12 is the area's track count, a `PERFORMER` that is sacdfs's artist, empty frames. The
 summary counts the IDENTICAL files that lose each kind.
 
 **The report** is tab-separated, one row per file, with a header row: `status`, `path`,
