@@ -369,7 +369,7 @@ are decoded, so a library is read about once.
 |---|---|---|
 | `IDENTICAL` | sacdfs serves the same audio (the `image`, `area` and `track` columns say which track). | Safe for the audio; see `loses` for tags. |
 | `DIFFERENT` | A track of the same length and channels exists, but its audio differs. | Keep it. |
-| `NO-MATCH` | No track of those images has the file's channel count and length, or the file isn't at SACD's 2.8224 MHz, or no image is in its folder or above. The reason names the nearest track by length. | Keep it. |
+| `NO-MATCH` | No track of those images has the file's channel count and length, or the file isn't at SACD's 2.8224 MHz, or no image is in its folder, above it, or in its subfolders (two levels down). The reason names the nearest track by length. | Keep it. |
 | `UNSUPPORTED` | A file that can't be compared, such as a DST-compressed DFF; the reason says why. Decompress it (to a plain DSD DFF or DSF) and check again. | Keep it. |
 | `ERROR` | The file is truncated, broken or unreadable, or sacdfs could not read its track. | Keep it until you know why. |
 | `NOT-COMPARABLE` | FLAC or WAV. A CD-layer rip isn't in the SACD image at all, and a PCM conversion of the SACD layer made by another converter never matches sacdfs's WAV bit for bit. | Your call: sacdfs's WAV replaces it only if you prefer it. |
