@@ -33,8 +33,9 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
 
 **Running.**
 - Without `-f` (`--foreground`), sacdfs returns once the filesystem is mounted and keeps
-  running in the background, logging nowhere; with it, it stays in the foreground and logs to
-  standard error. `-v` logs what sacdfs found (image counts, images and tracks not shown and
+  running in the background, logging nowhere unless `--log-file FILE` is given (or under
+  systemd, where standard error is the journal and is kept); with it, it stays in the
+  foreground and logs to standard error. `-v` logs what sacdfs found (image counts, images and tracks not shown and
   why, areas without a defined speaker layout, and at exit how many reads of the images it
   made); `-vv` logs debug detail. `RUST_LOG` (for example `RUST_LOG=sacdfs=debug`) overrides
   both.
@@ -351,6 +352,7 @@ mounted: the files sacdfs would serve are read in-process, through the same code
 | `--threads N` | Files checked at once, and DST decoder threads; `0` (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded frames, in MiB (default `64`). |
 | `-q`, `--quiet` | No progress line on standard error. |
+| `--log-file FILE` | Append the log to `FILE` (mode 0600), at info level unless `-v` says more. |
 | `-v`, `--verbose` | Log more; `RUST_LOG` overrides it. |
 
 **How a file is matched.** An extract belongs to the images in its folder, or in the nearest
@@ -431,10 +433,62 @@ Notes:
   as 0x69, invalid DST frames as 0x55, with a warning in the log) or an I/O error on one
   file. It never stops the mount: every image is treated as untrusted input.
 
+## Mounting at boot: fstab and systemd
+
+**fstab.** `mount -t fuse.sacdfs` runs `mount.fuse3`, which runs `sacdfs SOURCE MOUNTPOINT -o OPTIONS`.
+Put `sacdfs` where root finds it (`/usr/local/bin` or `/usr/bin`) and `fuse3` installed:
+
+```
+# /etc/fstab
+/srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,cache_mb=64,format=dsf,_netdev,nofail  0 0
+```
+
+`-o` takes sacdfs's own options as `name` or `name=value` with the dashes written as underscores
+(`allow_other`, `cache_mb=64`, `pcm_rate=88200`, `flatten`, `index_cache=/var/cache/sacdfs`,
+`log_file=/var/log/sacdfs.log`, `verbose=2`). A comma separates `-o` options, so a list value
+uses `+`: `format=dsf+wav`, `sidecars=default+cue`. The options of `mount(8)` and fstab (`ro`,
+`rw`, `noauto`, `nofail`, `_netdev`, `nosuid`, `nodev`, `x-systemd.*` and similar) are accepted
+and ignored by sacdfs itself; sacdfs is always read-only. Any other option is an error, so a
+typo does not pass silently. `allow_other` needs `user_allow_other` in `/etc/fuse.conf` for
+non-root users. Without `-f`, sacdfs goes to the background once mounted, which `mount` expects.
+
+**systemd unit.** sacdfs sends `READY=1` when `NOTIFY_SOCKET` is set, so `Type=notify` works.
+Run it in the foreground (`-f`) so that the service's main process is the one that serves the
+mount; its log goes to the journal.
+
+```ini
+# /etc/systemd/system/sacdfs.service
+[Unit]
+Description=SACD images as DSF and WAV files
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/sacdfs -f --cache-mb 64 --format dsf /srv/sacd /mnt/sacd
+ExecStop=/usr/bin/fusermount3 -u /mnt/sacd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`systemctl enable --now sacdfs`, `journalctl -u sacdfs` for the log. Services that read the
+mount should say `After=sacdfs.service` and `Requires=sacdfs.service`. A container that
+bind-mounts the mount point must bind its parent directory instead
+([deployment guide](deployment.md#media-servers-in-containers-on-a-client-host)). This
+recipe was written from the mount helper's and systemd's documentation and the unit tests; it
+was not run in a test VM.
+
 ## Troubleshooting
 
 Run in the foreground with logging to see what sacdfs does: `sacdfs -f -v SOURCE MOUNTPOINT`
 (`-vv` for debug detail).
+
+A background mount (the default) logs nowhere, so its read errors and damaged-image warnings
+are invisible. Start it with `--log-file /var/log/sacdfs.log` to keep the log (it records
+the `mounted` line and warnings; add `-v` for more), or run it under systemd, where the log
+goes to the journal: `journalctl -u sacdfs`.
 
 - **`fusermount3: command not found`, or `failed to open /dev/fuse`:** install FUSE 3
   (package `fuse3`). In a container, pass `--device /dev/fuse --cap-add SYS_ADMIN`.

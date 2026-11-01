@@ -60,7 +60,7 @@ docker pull ghcr.io/aclater/sacdfs:0.1.1        # or :latest
 gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.1 -R aclater/sacdfs
 ```
 
-It runs sacdfs with Samba and NFS-Ganesha for a NAS, built for generic x86-64; how to run it
+It runs sacdfs with Samba and NFS-Ganesha for a NAS, for x86_64 and arm64; how to run it
 is in [docs/deployment.md](docs/deployment.md).
 
 ### From source
@@ -117,9 +117,12 @@ above it.
 | `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where frames are in each image, so that seeks after a remount skip most of their search. |
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
 | `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default `64`). The least recently used is closed first, and any image unused for 5 minutes is closed. |
+| `--log-file FILE` | Append the log to `FILE` instead of standard error, at info level unless `-v` says more. Without it, a background mount logs nowhere, except to the journal under systemd; use it (or `-f`) to see read errors and the `mounted` line ([troubleshooting](docs/user-guide.md#troubleshooting)). |
 | `-v`, `--verbose` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 | `-h`, `--help` | Print help (`-h` for a summary). |
 | `-V`, `--version` | Print the version. |
+
+`mount -t fuse.sacdfs` and fstab work too, with the options above as `-o` options, and `Type=notify` units are supported: see [Mounting at boot](docs/user-guide.md#mounting-at-boot-fstab-and-systemd).
 
 Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
 still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
