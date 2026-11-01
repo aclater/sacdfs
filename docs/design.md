@@ -46,13 +46,14 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is tag v0.5.2** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is tag v0.5.3** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
   release (DSF 93/93, the real-disc and corpus comparisons with scarletbook's exact seek
-  index). 0.5.2 was taken for 0.2.0 because its seeking (#28), DSF output and DSD-to-PCM
-  conversion are what sacdfs may offload to it next; the move itself changes no output.
+  index). 0.5.2 was taken for 0.2.0 for its seeking (#28); 0.5.3 for its DSD-to-PCM converter,
+  `scarletbook-pcm` from the same release, which sacdfs now uses (#84,
+  [PCM conversion](#pcm-conversion)).
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -990,141 +991,57 @@ so reads of one disc by several players, a tagger and read-ahead run at once.
 
 ## PCM conversion
 
-The DSD-to-PCM converter, `sacdfs::pcm`, behind the WAV files. The filter designs and their
-measurements are in [pcm-quality.md](pcm-quality.md), the speed in
+The DSD-to-PCM conversion behind the WAV files is scarletbook-rs's `scarletbook-pcm` (since
+#84), through `sacdfs::pcm`, which maps sacdfs's options to it and feeds it the engine's
+frames. Its measured quality is in [pcm-quality.md](pcm-quality.md), the speed in
 [performance.md](performance.md#converter-throughput). Each decision below says why, the
 alternatives and the trade-off.
 
-**Output.** 24-bit PCM at 176.4 kHz (DSD64 ÷ 16, the default), 88.2 kHz (÷ 32) or
-352.8 kHz (÷ 8); a pass band to 40 kHz (default, fully attenuated by 48 kHz), 30 kHz
-(attenuated by 36 kHz), or a wide 80 kHz (176.4 and 352.8 kHz only); a gain, 0 dB by
-default, where 100 % DSD modulation is full scale. These are owner decisions, recorded with
-their reasons in #11 and #5.
+**Output.** sacdfs offers these outputs (owner decisions, with their reasons, in #11 and #5):
+- 24-bit PCM at 176.4 kHz (DSD64 ÷ 16, the default), 88.2 kHz (÷ 32) or 352.8 kHz (÷ 8);
+- a pass band to 40 kHz (the default, fully attenuated by 48 kHz), to 30 kHz (attenuated by 36 kHz), or a wide 80 kHz (176.4 and 352.8 kHz only, attenuated by the Nyquist frequency at 176.4 kHz);
+- a gain, 0 dB by default, where 100 % DSD modulation is full scale.
 
-**Stateless per frame (why: random reads).** Frame `f`'s PCM is computed from DSD frames
-`f - 1`, `f` and `f + 1` only, and equals, bit for bit, a conversion of the whole area in one
-pass (`pcm::convert_area`, tested for every frame, 1 to 6 channels, every rate and cutoff,
-and by proptest on random windows). Every stage is a linear-phase FIR, so each output sample
-depends on a fixed window of DSD bits: at most about 2 200 DSD samples each way (about 270
-bytes per channel of each neighbour, the 30 kHz and wide filters being the longest), far
-less than a frame. *Alternative:* pysacd's converter carries filter state from frame to
-frame, which needs every earlier frame converted first: a seek would cost a conversion from
-the start of the area. *Trade-off:* each frame converts its neighbours' margins again, about
-8 % more work than streaming.
+**Why scarletbook-pcm (#84).** The owner's decision (2026-11-01) was to keep scarletbook-rs's clean converter, measure it against sacdfs's own, and switch when it is within the 15 % offload leeway and meets the targets above.
+- **0.5.2 did not:**
+  - it was 33 to 46 % slower with the default filter;
+  - its wide filter folded 88.2-96 kHz back below Nyquist at 176.4 kHz;
+  - its 30 kHz filter stopped from 38 kHz;
+  - DSD silence did not convert to exact zero.
+- **0.5.3 fixed all four** (scarletbook-rs#170 to #173), so sacdfs's own converter, about 1 600 lines, was deleted.
+- *Alternative:* keep sacdfs's converter (ported from pysacd's), which has a flatter pass band (±0.00003 against ±0.004 dB) and a 4 dB lower noise floor. Neither difference is audible, and the code would be maintained twice, which the owner wants to avoid.
+- *Trade-off:* the WAV files' samples changed (by less than -72 dB against the signal in the audio band), so their output version moved to 2 ([identity](#file-identity-and-nfs-export)): new mtimes and generations, so copies and library scanners pick up the new bytes.
 
-**Aligned (why: DSF and WAV of a track line up).** PCM sample `n` is centred on DSD sample
-`d × n` of the same frame, exactly: every stage has an odd number of taps, so a whole-sample
-delay, and stage 1's 8 × 12 - 1 = 95 taps are placed so that their centre is the first bit of
-a byte. *Alternative:* pysacd's even-length (96-tap) stage 1 has a half-sample delay, which
-it rounds to whole output samples; measured against pysacd, its output is 0.26 samples (at
-88.2 kHz) away from the DSD timeline (see pcm-quality.md).
+**Stateless per frame (why: random reads).** Frame `f`'s PCM is computed from DSD frames `f - 1`, `f` and `f + 1` only, and equals, bit for bit, a conversion of the whole area in one pass. `pcm::convert_area` and scarletbook-pcm's own tests check this for every frame, 1 to 6 channels, every rate and cutoff, and by proptest on random windows and runs. Each output sample depends on at most 195 bytes per channel of each neighbour, far less than a frame.
+- *Alternative:* a converter that carries filter state from frame to frame would need every earlier frame converted first, so a seek would cost a conversion from the start of the area.
 
-**Silence (why 0x69).** Before the first and after the last frame of an area the filter
-reads DSD silence, the byte 0x69 (01101001), the Scarlet Book silence pattern that
-scarletbook and sacdfs already use for missing frames. Stage 1's eight polyphase sums are
-made equal, which puts exact zeros at every multiple of 352.8 kHz; any byte-periodic
-balanced pattern, 0x69 included, then converts to exact digital zero (and after the integer
-tables are rounded, the last table's 0x69 entry is adjusted so the sum is exactly 0).
-*Alternatives:* zero bytes are -100 % modulation, a full-scale negative step; repeating the
-area's first or last frame would invent audio. A track that starts at the area start fades
-in from true zero.
+**Aligned (why: DSF and WAV of a track line up).** PCM sample `n` is centred on DSD sample `d × n` of the same frame. The measured offset is below 0.0001 samples.
 
-**The port (why: proven code, same author).** The structure is ported from pysacd's
-`csrc/dsp.c` (GPL-2.0-or-later, the owner's own; commit 2113789, named in the source): the
-Kaiser-windowed design, the byte lookup tables of the ÷ 8 stage and the cascade of ÷ 2
-stages. Stage 1's technique, lookup tables of filter partial sums indexed by whole DSD bytes,
-is credited to Sebastian Gesemann's dsd2pcm (BSD-3-Clause), which FFmpeg and MPD also use; no
-code was taken from dsd2pcm or FFmpeg. What changed from pysacd: stateless per frame; odd
-lengths; equal polyphase sums; new tap counts for the 40/30/80 kHz bands at every rate
-(pysacd's 176.4 kHz path passes to 60 kHz); half-band stages where the band allows, which
-halves their cost; integer stage 1 and f64 accumulation (below).
+**Silence (why 0x69).** Before the first and after the last frame of an area, the converter reads DSD silence, the byte 0x69: a neighbour of `None` is the silence pattern. 0x69 converts to exact zero, so a track that starts at the area start fades in from true digital zero, and a silent channel is all zeros.
+- *Alternatives:* zero bytes are -100 % modulation, a full-scale negative step; repeating the area's first or last frame would invent audio.
 
-**Arithmetic (why: nothing above the 24-bit step, and the same bits everywhere).** Stage 1
-adds integer table entries (fixed point, 2^-28): exact. The later stages accumulate in f64.
-Measured on random DSD against a plain f64 evaluation of the same filters, f32 accumulation
-in stage 3 alone added 0.34 of a 24-bit step RMS, and an f32 stage 2 another 0.15: more
-than the 24-bit quantisation itself (0.29). In f64 the difference is below 0.00001 of a
-step. Every output is a fixed sequence of operations (Rust never fuses a multiply and an
-add, nor reorders float sums), so the SSE2, AVX2 and AVX-512 code gives identical bytes
-(a test pins the output's hash for every configuration). *Trade-off:* f64 halves the SIMD
-width of the FIR stages; the bar is still met with margin.
+**Frames in place (why: the frame cache).** The engine keeps each decoded DSD frame in its own buffer and converts short runs of them: four at a time from plain DSD areas, one at a time from DST batches ([WAV reads](#reading-a-range-of-a-wav-file)). `Converter::convert_run` hands scarletbook-pcm the run as separate frames (`Frames::Separate`), and gets back:
+- 24-bit little-endian bytes, written directly into the frame-cache entries (`PcmOut::S24le`);
+- each frame's clip count, which is cached with the frame, so a later read reports the clips of exactly the frames it returns.
 
-**Coefficients computed at start-up (why).** A converter designs its filters when it is made:
-27 to 55 µs (Kaiser windows, a Bessel series, the stage-1 tables), once per worker thread.
-*Alternative:* tables generated by a script and committed, which would need a generator and a
-check that the two agree; with start-up design the parameters (taps, attenuation, edges)
-are what the code says. The risk, a platform maths library giving different `sin` results,
-is covered by the pinned-hash test, which passes on the local RHEL glibc and on CI's
-Ubuntu glibc.
+*Alternative:* copying the frames together and packing `i32` samples afterwards, which was 0.5.2's only API. That cost a copy and an extra pass per run (scarletbook-rs#172).
 
-**SIMD (why portable code).** The FIR kernels are written so that the compiler vectorises
-them (blocks of independent outputs, windows cut to exact lengths so there are no bounds
-checks, the generated code checked: packed `addpd`/`mulpd` on generic x86-64, `vaddpd` on
-`ymm` registers on x86-64-v3). Stage 1 reads its bytes as words and takes them apart with
-shifts (half the loads).
+**Gain and clipping.** `--pcm-gain` (-60 to +24 dB) maps to scarletbook-pcm's `Gain` (-120 to +24 dB, the same factor on every platform). Samples beyond the 24-bit range are clamped and counted. 100 % positive modulation is exactly one step above the largest code, so a full-scale positive DC counts as clipping. Real discs stay far below this (SACD's reference level is 50 % modulation): no clips on the local discs.
 
-**Runtime CPU dispatch (#23, why).** Generic x86-64 builds, which distributions and
-`cargo install` users get, would otherwise run the converter with SSE2 only, and the wide
-filter sat near the 100x bar of #6. So stage 1 and the three FIR kernels are compiled three
-times, for the baseline, x86-64-v3 (AVX2) and x86-64-v4 (AVX-512), by the `multiversion`
-crate (MIT OR Apache-2.0), and the copy is chosen from the CPU when the first converter is
-made (`pcm::Simd`; `SACDFS_SIMD=baseline|v3|v4` overrides it). *Why `multiversion`:* calling
-`#[target_feature]` code needs `unsafe`, which sacdfs denies outside its daemonising code; the
-crate's macro keeps that call behind its own CPU check, so no copy can run on a CPU without
-its features, and sacdfs keeps `unsafe_code = "deny"`. *Alternatives:* a local `unsafe` block
-with `std::arch` (more control, breaks the policy for no measured gain); shipping x86-64-v3
-builds only (excludes older CPUs); a 112 dB wide filter (about 5 % faster, lower quality).
+**Deterministic everywhere.** scarletbook-pcm uses integer arithmetic and chooses its code at run time (AVX2 and FMA where the CPU has them), with the same bytes on every path and CPU. sacdfs pins the output's hash per configuration (`tests/pcm.rs`), so a change to the filters shows up there and needs a `WAV_VERSION` bump.
 
-- *Granularity:* the kernels are dispatched, not the whole channel. Forcing all of a channel's
-  code inline into one dispatched function made the baseline path about 10 % slower;
-  dispatching each kernel (a few calls per channel and frame) leaves it as fast as a build
-  without dispatch.
-- *Wider blocks on wider vectors:* each output is a chain of dependent adds, so a block must
-  hold enough independent outputs to keep the adders busy: 16 on the baseline, 32 on v3, 64
-  on v4 (8 registers of accumulators each), which gained up to 4 % over 16. The block size
-  never changes an output's operations.
-- *v3 by default, even with AVX-512:* measured on a Zen 5 CPU, the v4 copy was slower than v3
-  on every filter but one, and much slower with both threads of a core converting, as the
-  decoder pool does under load. It is built and tested, and `SACDFS_SIMD=v4` selects it, so
-  that other CPUs can be measured; the default changes only with a measurement. AVX-512
-  target features need Rust 1.89, so a build with an older compiler (the MSRV is 1.85) has no
-  v4 copy.
-- *Identical output:* the pinned hashes are checked on all three paths in one process
-  (`Converter::with_simd`), and CI runs the converter and WAV tests once per `SACDFS_SIMD`
-  value.
-- *Building:* RHEL's Rust targets x86-64-v3 by default; there every copy has AVX2, and
-  `-C target-cpu=x86-64` gives a true baseline.
-
-**Interleaved input.** The converter takes frames as scarletbook gives them (`C × 4704`
-interleaved, MSB first) and copies one channel at a time into a window buffer with its
-neighbours' margins (about 5 KB); the kernels then run on contiguous data. *Alternative:*
-reading the interleaved bytes in stage 1 directly; it would lose the word loads, and the
-copy costs about 7 % of the conversion.
-
-**Gain and clipping.** The gain is a multiply folded into the final rounding (f64, ties to
-even, by the 1.5 × 2^52 trick, which needs no libm call). Samples beyond the 24-bit range are
-clamped and counted (`convert` returns the count). 100 % positive modulation is exactly one
-step above the largest code, so a full-scale positive DC counts as clipping; a full-scale
-step overshoots by about 9 % (the filter's ringing). Real discs stay far below this (SACD's
-reference level is 50 % modulation): no clips on the local discs.
-
-**API.** `pcm::Converter::new(channels, &PcmConfig)` holds its buffers (about 100 KiB), is
-`Send`, allocates nothing per frame, and is made once per worker thread.
-`convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM
-(`frame_bytes()` long) and returns the clip count; `None` neighbours are silence.
-`convert_f32` gives the samples before rounding (for tests, and for FLAC later).
-`convert_run(prev, frames, next, out, clips)` converts consecutive frames in one window, the
-same bytes as `convert` on each, and each frame's clip count.
-`new` never fails: a configuration that `PcmConfig::validate` refuses (the wide filter at
-88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()`
-reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once,
-with `validate`, when the mount starts.
+**API.** `pcm::Converter::new(channels, &PcmConfig)` is made once per worker thread and allocates nothing per frame after the first.
+- `convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM (`frame_bytes()` long) and returns the clip count. `None` neighbours are silence.
+- `convert_run(prev, frames, next, out, clips)` converts consecutive frames: the same bytes as `convert` on each, plus each frame's clip count.
+- `convert_f32` gives the same samples as floats, for tools and tests.
+- `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
+- A short frame (which the decoder never makes) is padded with silence.
 
 ## Performance basis
 
 scarletbook decodes a stereo DST frame in about 0.17 ms on one core (about 78x real time per
-core), and plain DSD areas need no decoding. The converter runs at about 300x real time per
-core for the default 176.4 kHz stereo output, so on a DST area conversion adds about a
+core), and plain DSD areas need no decoding. The converter (scarletbook-pcm) runs at about
+300x real time per core for the default 176.4 kHz stereo output, so on a DST area conversion adds about a
 quarter of the decoding cost, and on a plain DSD area it is the only CPU cost. A straight
 read through the mount is therefore limited by decoding on DST areas and by copying through
 FUSE on plain DSD ones, and a seek by the number of reads of the image it makes. Measured
@@ -1302,8 +1219,9 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   image as the DSF file's. `tests/mount.rs` reads every WAV file through the kernel and
   compares it with the library, and checks `--format` and `--pcm-*`. An ignored test,
   `real_discs`, runs the stream check on local real discs (`SACDFS_REAL_IMAGES`).
-- **The converter:** `tests/pcm.rs` and the unit tests of `src/pcm.rs` (quality, determinism,
-  pinned hashes on every code path); see [pcm-quality.md](pcm-quality.md).
+- **The converter:** `tests/pcm.rs` and the unit tests of `src/pcm.rs` (quality against the
+  targets, silence, determinism, pinned hashes), black-box on scarletbook-pcm; see
+  [pcm-quality.md](pcm-quality.md).
 - **Speaker layouts:** a test reads the header of every file of every corpus case and compares
   the mask and type with the manifest's channel count and configuration (written out in the
   test, not taken from sacdfs or scarletbook): stereo, 3/2 and 5.1, and six unspecified
