@@ -181,6 +181,14 @@ loudness or ReplayGain scans, waveform previews) converts every WAV file it read
 CPU and time for no new information. Point such programs at a mount with `--format dsf`, or
 mount twice: one mount for them, one with WAV files for players.
 
+**MPD, moOde and Volumio.** Use `--format dsf` for any mount that MPD (which moOde and Volumio
+run) scans. MPD plays DSF natively. Its first database scan probes about 5 MB of every WAV
+file through FFmpeg, so every WAV file is converted for that probe: in a test of 93 tracks the
+first scan took about 9 s with `dsf,wav` and 0.6 s with `dsf` (about 15 times as long), and
+a library of 1,000 discs would cost about an hour of CPU. The same happens after any MPD
+database rebuild. Incremental `mpc update` reads nothing. If a player needs WAV files, mount
+twice as above.
+
 ## Sidecar files: art, scans, playlists
 
 A folder that holds images often holds what goes with them: `folder.jpg` or `cover.jpg`,

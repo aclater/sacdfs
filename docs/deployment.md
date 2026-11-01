@@ -437,6 +437,17 @@ Current Windows versions refuse guest access to SMB shares (Windows 11 24H2 and 
 the Enterprise and Education editions of Windows 10 and 11). Set `SMB_USER` and
 `SMB_PASSWORD` for Windows clients rather than relaxing that policy.
 
+### MPD-based players (MPD, moOde, Volumio)
+
+Run the container with `SACDFS_FORMATS=dsf` (`--format dsf`) for a library that MPD scans. MPD
+plays DSF natively, as DoP or native DSD depending on the output. MPD's first database scan
+(and any rebuild with a cold cache) opens every file through FFmpeg, which probes about 5 MB
+of each WAV file. Each WAV file must then be converted from the SACD image for those 5 MB,
+although its tags and duration are in the first bytes. In a test of 93 tracks the first scan
+took about 9 s with `dsf,wav` and 0.6 s with `dsf`, about 15 times as long, and used about
+27 CPU-seconds. Incremental updates are unaffected. If some other client needs WAV files, run
+a second container (or mount) with `dsf,wav` for it.
+
 ### File names over SMB
 
 Track titles may contain characters Windows doesn't allow in file names: `" * : < > ? \ |`.
