@@ -29,6 +29,9 @@ use sacdfs::tree::{Output, SourceDir, Tree};
 /// appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN - title.dsf,
 /// with NN - title.wav (24-bit PCM, converted on demand) next to it.
 /// Unmount with `fusermount3 -u MOUNTPOINT`, or stop sacdfs with SIGINT, SIGTERM or SIGHUP.
+///
+/// `sacdfs verify SOURCE [EXTRACTS]...` checks extracted DSF and DFF files against what
+/// sacdfs serves, before they are deleted: see `sacdfs verify --help`.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Args {
@@ -135,6 +138,10 @@ fn parse_gain(s: &str) -> Result<f32, String> {
 }
 
 fn main() -> ExitCode {
+    // `sacdfs verify ...` (#80) has options of its own: see `sacdfs verify --help`.
+    if std::env::args_os().nth(1).is_some_and(|a| a == "verify") {
+        return sacdfs::verify::main(std::env::args_os().skip(1));
+    }
     let args = Args::parse();
     let level = match args.verbose {
         0 => "warn",

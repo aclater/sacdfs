@@ -20,4 +20,5 @@ pub mod names;
 pub mod pcm;
 pub mod track;
 pub mod tree;
+pub mod verify;
 pub mod wav;

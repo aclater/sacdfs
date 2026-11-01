@@ -6,6 +6,17 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `sacdfs verify SOURCE [EXTRACTS]...` (#80): checks extracted DSF and DFF files against
+  what sacdfs serves, before they are deleted. It compares the raw DSD audio (ignoring tags,
+  padding, bit order and container) with the matching track of the same disc, gives each file
+  a status (IDENTICAL, DIFFERENT, NO-MATCH, UNSUPPORTED, ERROR, or NOT-COMPARABLE for FLAC and
+  WAV) with the reason, lists the tags a deletion would lose (MusicBrainz IDs, art,
+  ReplayGain, others), and writes a TSV report and a summary of the reclaimable space.
+  `--map` handles extracts kept in a tree of their own, `--resume` continues an earlier run.
+  It never deletes anything. See the user guide, "Before you delete extracts".
+
 ### Changed
 
 - Cheaper probes (#61): `getxattr` and `listxattr` answer `ENOSYS`, so the kernel stops
