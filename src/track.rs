@@ -5,11 +5,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use scarletbook::toc::{DiscTextItem, TrackTextItem};
-use scarletbook::{Area, Track};
+use scarletbook::Track;
 
 use crate::disc::{Disc, ReadError};
-use crate::dsf::{self, Layout, Piece, Tags};
+use crate::dsf::{self, Layout};
 use crate::engine::{Engine, Fill, Frame, Stream};
 use crate::wav;
 
@@ -91,6 +90,9 @@ pub struct TrackFile {
     pub area_end: u32,
     /// The audio layout of the file.
     pub audio: Audio,
+    /// A DSF file's layout, scarletbook's (`output::Layout`): its header, its tag and where
+    /// each audio byte comes from.
+    dsf: Option<scarletbook::output::Layout>,
     header: Vec<u8>,
     trailer: Vec<u8>,
     tag: std::ops::Range<usize>,
@@ -117,15 +119,23 @@ impl TrackFile {
     ) -> Option<TrackFile> {
         let a = disc.toc.areas.get(area)?;
         let layout = Layout { channels: a.channel_count, frames: track.duration_frames };
-        let tags = tags(&disc, a, track);
+        let mut lib = None;
         let (audio, header, trailer, tag) = match format {
             Format::Dsf => {
-                let tag = tags.to_id3();
-                let header = dsf::header(&layout, a.loudspeaker_layout(), tag.len() as u64).to_vec();
+                let l = dsf::layout(&disc.toc, a, track)?;
+                let header = dsf::region(&l, scarletbook::output::RegionKind::Header);
+                let tag = dsf::region(&l, scarletbook::output::RegionKind::Trailer);
                 let range = 0..tag.len();
+                lib = Some(l);
                 (Audio::Dsf(layout), header, tag, range)
             }
             Format::Wav => {
+                // The DSF file's tag as the `id3 ` chunk, and the INFO chunk from its items.
+                let options = dsf::options(a, track);
+                let set = dsf::tag_set(&disc.toc, a, track, &options);
+                let id3 = dsf::layout(&disc.toc, a, track)
+                    .map(|l| dsf::region(&l, scarletbook::output::RegionKind::Trailer))
+                    .unwrap_or_default();
                 let spf = u64::from(samples_per_frame);
                 if spf == 0 || dsf::FRAME_BYTES * 8 % spf != 0 {
                     return None;
@@ -133,16 +143,16 @@ impl TrackFile {
                 let rate = (u64::from(dsf::SAMPLE_RATE) * spf / (dsf::FRAME_BYTES * 8)) as u32;
                 let wl =
                     wav::Layout { channels: layout.channels, frames: layout.frames, samples_per_frame, rate };
-                let t = wav::trailer(&tags);
+                let t = wav::trailer(&set, &id3);
                 let header = wav::header(&wl, a.loudspeaker_layout(), t.bytes.len() as u64);
                 (Audio::Wav(wl), header, t.bytes, t.tag)
             }
         };
-        let data_len = match audio {
-            Audio::Dsf(l) => l.data_len(),
-            Audio::Wav(l) => l.data_len(),
+        let size = match (&lib, audio) {
+            (Some(l), _) => l.size(),
+            (None, Audio::Wav(l)) => header.len() as u64 + l.data_len() + trailer.len() as u64,
+            (None, Audio::Dsf(_)) => return None,
         };
-        let size = header.len() as u64 + data_len + trailer.len() as u64;
         let track_end = a.tracks.iter().map(|t| t.end_frame()).max().unwrap_or(0);
         let area_end = a.playtime_frames().max(track_end);
         Some(TrackFile {
@@ -153,6 +163,7 @@ impl TrackFile {
             layout,
             area_end,
             audio,
+            dsf: lib,
             header,
             trailer,
             tag,
@@ -211,9 +222,13 @@ impl TrackFile {
         let h = self.header_len();
         let s = offset.max(h).min(self.data_end()) - h;
         let e = end.max(h).min(self.data_end()) - h;
-        match self.audio {
-            Audio::Dsf(l) => l.frames_for(s, e),
-            Audio::Wav(l) => l.frames_for(s, e),
+        match (&self.dsf, self.audio) {
+            (Some(l), _) => {
+                let r = l.positions_for(offset..end);
+                (r.start.saturating_sub(self.start_frame), r.end.saturating_sub(self.start_frame))
+            }
+            (None, Audio::Wav(l)) => l.frames_for(s, e),
+            (None, Audio::Dsf(_)) => (0, 0),
         }
     }
 
@@ -222,6 +237,9 @@ impl TrackFile {
     /// file).
     pub fn assemble(&self, offset: u64, len: u64, first: u32, frames: &[Arc<Frame>]) -> Vec<u8> {
         let end = offset.saturating_add(len).min(self.size);
+        if let Some(l) = &self.dsf {
+            return self.assemble_dsf(l, offset, end, first, frames);
+        }
         let mut out = Vec::with_capacity(end.saturating_sub(offset) as usize);
         if offset >= end {
             return out;
@@ -244,27 +262,7 @@ impl TrackFile {
                 clips += u64::from(f.clips);
             };
             match self.audio {
-                Audio::Dsf(layout) => {
-                    for p in layout.pieces(ds - h, de - h) {
-                        match p {
-                            Piece::Pad { len } => out.resize(out.len() + len, 0),
-                            Piece::Audio { channel, byte, len } => {
-                                let k = (byte / dsf::FRAME_BYTES) as u32;
-                                let at = (byte % dsf::FRAME_BYTES) as usize;
-                                match k.checked_sub(first).and_then(|i| frames.get(i as usize)) {
-                                    Some(f) => {
-                                        note(f);
-                                        match f.plane(channel).get(at..at + len) {
-                                            Some(src) => out.extend_from_slice(src),
-                                            None => out.resize(out.len() + len, 0),
-                                        }
-                                    }
-                                    None => out.resize(out.len() + len, 0),
-                                }
-                            }
-                        }
-                    }
-                }
+                Audio::Dsf(_) => {}
                 Audio::Wav(layout) => {
                     let fb = layout.frame_bytes();
                     let mut d = ds - h;
@@ -299,6 +297,34 @@ impl TrackFile {
         out
     }
 
+    /// Bytes `[offset, end)` of a DSF file, from scarletbook's layout `l`, the audio from
+    /// `frames` (decoded DSD, interleaved, for file indices `first..`). A frame not given is
+    /// filled with zeros, as the file's padding is.
+    fn assemble_dsf(
+        &self,
+        l: &scarletbook::output::Layout,
+        offset: u64,
+        end: u64,
+        first: u32,
+        frames: &[Arc<Frame>],
+    ) -> Vec<u8> {
+        let mut out = vec![0u8; end.saturating_sub(offset) as usize];
+        if out.is_empty() {
+            return out;
+        }
+        let mut src = Frames {
+            frames,
+            first: self.start_frame.saturating_add(first),
+            zeros: vec![0; usize::from(self.layout.channels) * dsf::FRAME_BYTES as usize],
+            fill: None,
+        };
+        if let Err(e) = l.fill(offset, &mut out, &mut src) {
+            log::debug!("{} area {} track {}: {e}", self.disc.path.display(), self.area, self.number);
+        }
+        self.warn(src.fill, 0);
+        out
+    }
+
     /// Logs, once per file, that it holds filled frames or clipped samples.
     fn warn(&self, fill: Option<Fill>, clips: u64) {
         if let Some(fill) = fill {
@@ -321,43 +347,29 @@ impl TrackFile {
     }
 }
 
-/// The tag of a track, from the disc and track text.
-fn tags(disc: &Disc, area: &Area, track: &Track) -> Tags {
-    let m = &disc.toc.master;
-    let album = |a: DiscTextItem, b: DiscTextItem| m.text.get(a).or_else(|| m.text.get(b));
-    let album_artist = album(DiscTextItem::AlbumArtist, DiscTextItem::DiscArtist);
-    let mut t = Tags::default();
-    t.set(b"TIT2", track.text.get(TrackTextItem::Title));
-    t.set(b"TPE1", track.text.get(TrackTextItem::Performer).or(album_artist));
-    t.set(b"TPE2", album_artist);
-    t.set(b"TALB", album(DiscTextItem::AlbumTitle, DiscTextItem::DiscTitle));
-    t.set(b"TRCK", Some(&format!("{}/{}", track.number, area.tracks.len())));
-    if m.album_set_size > 1 {
-        t.set(b"TPOS", Some(&format!("{}/{}", m.album_sequence_number, m.album_set_size)));
-    }
-    t.set(b"TCOM", track.text.get(TrackTextItem::Composer));
-    t.set(b"TDRC", date(m.date.year, m.date.month, m.date.day).as_deref());
-    t.set(b"TSRC", track.isrc.as_deref());
-    let genre = track.genre.and_then(|g| g.name()).or_else(|| m.album_genres.iter().find_map(|g| g.name()));
-    t.set(b"TCON", genre.filter(|g| !g.starts_with("not ")));
-    t.set(b"TPUB", album(DiscTextItem::AlbumPublisher, DiscTextItem::DiscPublisher));
-    t.set(b"TCOP", album(DiscTextItem::AlbumCopyright, DiscTextItem::DiscCopyright));
-    t
+/// The decoded frames of a read, as scarletbook's layout asks for them: by timeline position.
+struct Frames<'a> {
+    frames: &'a [Arc<Frame>],
+    /// The timeline position of `frames[0]`.
+    first: u32,
+    zeros: Vec<u8>,
+    /// Whether any frame given was filled.
+    fill: Option<Fill>,
 }
 
-/// An ID3v2.4 timestamp from a stored date: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, as far as
-/// the fields are set and plausible.
-fn date(year: u16, month: u8, day: u8) -> Option<String> {
-    if year == 0 || year > 9999 {
-        return None;
+impl scarletbook::output::PositionSource for Frames<'_> {
+    fn content(&mut self, t: u32) -> Result<std::borrow::Cow<'_, [u8]>, scarletbook::Error> {
+        let f = t.checked_sub(self.first).and_then(|i| self.frames.get(i as usize));
+        Ok(match f {
+            Some(f) if f.data.len() == self.zeros.len() => {
+                if f.fill != Fill::Audio {
+                    self.fill = Some(f.fill);
+                }
+                std::borrow::Cow::Borrowed(&f.data[..])
+            }
+            _ => std::borrow::Cow::Borrowed(&self.zeros[..]),
+        })
     }
-    if !(1..=12).contains(&month) {
-        return Some(format!("{year:04}"));
-    }
-    if !(1..=31).contains(&day) {
-        return Some(format!("{year:04}-{month:02}"));
-    }
-    Some(format!("{year:04}-{month:02}-{day:02}"))
 }
 
 /// Frames of a file (indices `[first, end)`) to decode ahead of a sequential reader.
@@ -493,22 +505,5 @@ impl Reader {
         let stop = frames.min(k1 + window);
         s.ahead_until = stop;
         (start < stop).then_some(ReadAhead { first: start, end: stop })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
-    use super::*;
-
-    #[test]
-    fn dates() {
-        assert_eq!(date(0, 1, 1), None);
-        assert_eq!(date(2003, 0, 0).as_deref(), Some("2003"));
-        assert_eq!(date(2003, 13, 1).as_deref(), Some("2003"));
-        assert_eq!(date(2003, 4, 0).as_deref(), Some("2003-04"));
-        assert_eq!(date(2003, 4, 9).as_deref(), Some("2003-04-09"));
-        assert_eq!(date(65535, 4, 9), None);
     }
 }

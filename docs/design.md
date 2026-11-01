@@ -487,38 +487,45 @@ microsecond). Measured in [performance.md](performance.md#mount-listing-and-tag-
 
 ## DSF files
 
-A DSF file is the DSD chunk (28 bytes), the fmt chunk (52 bytes), the data chunk (12-byte
-header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
+Since 0.2.0 scarletbook writes the DSF files (`output::Layout`, specification 8, 8.2; #28):
+sacdfs builds a track's layout (`Layout::new` with the TOC, the track's frame range and
+`Format::Dsf`) when its directory is listed, so that the file size is known, and serves every
+read from it: `Layout::positions_for` gives the frames a byte range needs, sacdfs decodes them
+(its own pool and frame cache), and `Layout::fill` writes the bytes, header and tag included.
+sacdfs's own DSF header, block layout, bit reversal and ID3 writer were removed (`dsf.rs` went
+from 539 lines to 144, all of it the options below).
 
-- Audio: the track's timeline positions `[start_frame, end_frame)` from the area TOC (the
-  gaps between tracks are not included), each decoded to `C x 4704` bytes. DSF stores each
-  channel in 4096-byte blocks, channel after channel, earliest sample in the least
-  significant bit (bits per sample = 1). The last block of each channel is padded with
-  zeros. Sample count per channel = frames x 4704 x 8.
-- Channel type in fmt: from the area's loudspeaker layout (stereo: 2; 5-channel 3/2: 6, "5
-  channels"; 5.1: 7), else from the channel count; see [Speaker layouts](#speaker-layouts).
-- A position with no frame, or with an invalid DST frame, is filled as scarletbook fills
-  it (0x69 / 0x55); a warning is logged once per file.
-- Tag (built when the directory is listed, so the file size is known): TIT2 title, TPE1
-  track performer (else album artist), TPE2 album artist, TALB album title, TRCK n/N,
-  TPOS disc sequence/set size (when the set size > 1), TCOM composer, TDRC date, TSRC ISRC,
-  TCON genre name, TPUB publisher, TCOP copyright. Text is UTF-8 (ID3v2.4 encoding 3).
-- Album fields fall back from the album text to the disc text (artist, title, publisher,
-  copyright). TCON is the track's genre, else the first album genre, and only names of the
-  general genre table (not "not used"/"not defined"). TDRC is `YYYY`, `YYYY-MM` or
-  `YYYY-MM-DD` as far as the stored date is set. NUL characters are dropped and empty values
-  leave their frame out; a track with no text at all has no tag and a zero metadata pointer.
-
-- **Not scarletbook's DSF writer (yet).** scarletbook 0.5.2 has DSF output layouts
-  (`output::Layout`, `Disc::output_layout`) and tags from the TOC (`TagSet::from_toc`). With the
-  ID3 options set to sacdfs's (no footer, no padding, sacdfs's frame order, `TPE2` for the album
-  artist, `TDRC` for the date) and `TPOS` left out for a one-disc set, 53 of the 93 real-disc
-  files came out byte-identical to sacdfs's, header and tag. The other 40 differ only in `TCOP`:
-  the library writes the date's year, a space and the copyright (`2007 Label 2007`, from a
-  stored copyright of `Label 2007`), as ID3v2.4 asks of `TCOP`; sacdfs writes the copyright as
-  stored. That changes those files' tag, size and bytes, so sacdfs keeps its writer: *why:*
-  adoption needs the same bytes (the files' identity and mtimes follow their bytes, #64), and
-  changing the output is the owner's call (#28). The audio regions were not compared.
+- The file: the DSD chunk (28 bytes), the fmt chunk (52 bytes), the data chunk (12-byte header,
+  then audio in 4096-byte blocks per channel, channel after channel, earliest sample in the
+  least significant bit, the last block of each channel padded with zeros), and the ID3v2.4 tag,
+  pointed to by the DSD chunk. Audio: the track's timeline positions `[start_frame, end_frame)`.
+- **Writer's choices** (`dsf::options`): the ID3 tag without a footer or padding, its frames in
+  sacdfs's order (TIT2 TPE1 TPE2 TALB TRCK TPOS TCOM TDRC TSRC TCON TPUB TCOP, others after),
+  the album artist as TPE2, the date as TDRC; the channel type of an area without a defined
+  loudspeaker layout from its channel count ([Speaker layouts](#speaker-layouts)). *Why:*
+  they are what sacdfs 0.1 wrote, so that a file's bytes changed only where the library's
+  rules differ.
+- **Tag items** (`dsf::tag_set`): the library's from the TOC (`TagSet::from_toc`), with two
+  choices of sacdfs's: the album title, artist, publisher and copyright from the album text,
+  else the disc text (*why:* a set's discs share the album title, so players group them as one
+  album; the library's default takes the disc's first), and no TPOS for a one-disc set
+  ("1/1" says nothing).
+- **What changed against 0.1** (all 93 real-disc files compared, header and tag): 53 are
+  byte-identical; the other 40 differ only in TCOP, which the library writes as ID3v2.4 asks:
+  the date's year, a space, then the copyright (a stored "Label 2007" becomes "2007 Label
+  2007"); their tag and size grow by 5 bytes. The audio is the same (DSF gate 93/93). The DSF
+  output version moved to 2, so those files' NFS generations and mtimes moved as #64 intends.
+  *Decision (owner, #28):* adopt the library's writer, accept the conformant TCOP: "i dont care
+  about roons play history or churn". *Trade-off:* players and taggers that keyed on the old
+  bytes or mtime see the files as changed once.
+- **Serving:** the frame cache holds decoded frames as scarletbook gives them (interleaved);
+  `fill` gathers each channel's bytes and reverses their bits per read. *Why per read, not
+  once at decode as sacdfs did:* one copy of the layout code, and the kernel's page cache
+  serves repeated reads; `fill` alone runs at 2.5 to 2.9 GB/s on one core here, above the
+  mount's straight-read rate. A frame not decoded (a failed read) is filled with zeros.
+- A position with no frame, or with an invalid DST frame, is filled as scarletbook fills it
+  (0x69 / 0x55); a warning is logged once per file. A track the library refuses (its range
+  fails the checks of specification 4, 4.8) is not shown.
 
 ## WAV files
 
@@ -562,10 +569,13 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   made per file, from its size, so no `JUNK` placeholder for a later `ds64` is written.
 - **Channel mask and order:** from the area's loudspeaker layout, like the DSF channel type;
   see [Speaker layouts](#speaker-layouts).
-- **Tags:** the same ID3v2.4 tag as the DSF file, in an `id3 ` chunk (FFmpeg, TagLib, mutagen,
-  foobar2000 and mp3tag read it), and a `LIST`/`INFO` chunk for software that reads only that:
-  INAM (title), IART (performer), IPRD (album), ITRK (the track number alone), ICRD (date),
-  IGNR (genre), from the same values as the ID3 frames, UTF-8 and NUL-terminated. A chunk with
+- **Tags:** the DSF file's ID3v2.4 tag (scarletbook's, the bytes of its layout's tag region),
+  in an `id3 ` chunk (FFmpeg, TagLib, mutagen, foobar2000 and mp3tag read it), and a
+  `LIST`/`INFO` chunk for software that reads only that: INAM (title), IART (performer), IPRD
+  (album), ITRK (the track number), ICRD (date), IGNR (the first genre), the first value of the
+  same tag items, UTF-8 and NUL-terminated. *Why INFO from the items, not from the ID3 frames:*
+  the library has no INFO writer, and built from one `TagSet` the two cannot disagree. The WAV
+  output version moved to 2 with the DSF one (#28): the same 40 files' `id3 ` chunk changed. A chunk with
   nothing to hold is left out. *Why after the audio:* so that the header, and with it the
   offset of every audio byte, does not depend on the text, as in the DSF files. FFmpeg and
   libsndfile read chunks after the data.
@@ -629,15 +639,15 @@ speaker of each channel in decoded-frame order (`Area::channel_speakers`):
 
 A read of `[offset, offset + len)`:
 
-1. Header and tag bytes come from a buffer built once per file.
-2. Audio bytes map to frames: data byte `d` lies in block group `g = d / (4096 x C)`,
-   channel `c = (d % (4096 x C)) / 4096`, channel byte `b = g x 4096 + d % 4096`, frame
-   `b / 4704`. A read of 128 KiB of stereo covers about 14 frames.
+1. Header and tag bytes come from the file's scarletbook layout, built once per file.
+2. Audio bytes map to frames (`Layout::positions_for`): data byte `d` lies in block group
+   `g = d / (4096 x C)`, channel `c = (d % (4096 x C)) / 4096`, channel byte
+   `b = g x 4096 + d % 4096`, frame `b / 4704`. A read of 128 KiB of stereo covers about 14
+   frames.
 3. The frames come from the decoded-frame cache, or are decoded: a scarletbook range cursor
    gives the positions' frames as stored ([Seeking](#seeking-scarletbooks-28)), and the DST
    frames are decoded in parallel (one `DstDecoder` per worker thread, one frame per job).
-4. Each frame is converted from interleaved MSB-first to per-channel LSB-first once, when
-   it enters the cache, so serving a read is copying.
+4. `Layout::fill` lays the frames out in DSF order, bits reversed, as it copies them.
 
 *Why one DST frame per job:* scarletbook's `DstDecoder::decode_many` decodes two to four
 frames together on one thread, but grouping the pool's frames that way (always, or only when
