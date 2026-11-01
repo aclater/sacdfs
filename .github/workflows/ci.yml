@@ -7,6 +7,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+
 permissions:
   contents: read
 
@@ -23,6 +27,9 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal -c rustfmt,clippy && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo doc --no-deps --locked
@@ -37,6 +44,9 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - name: Install fusermount3
         run: |
           sudo apt-get update -q
@@ -58,6 +68,9 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - name: Install fusermount3
         run: |
           sudo apt-get update -q
@@ -76,6 +89,9 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - run: cargo build --locked --quiet
       - name: The README's options table matches sacdfs --help
         run: target/debug/sacdfs --help | python3 -I .github/scripts/check-readme-options.py README.md
