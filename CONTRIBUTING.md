@@ -76,6 +76,12 @@ Cargo.toml). It can be added once scarletbook is on crates.io.
   conversion, file formats, FUSE techniques) may be adapted as above.
 - **SACD knowledge lives in scarletbook.** sacdfs uses its public API only. A parsing or
   decoding problem is fixed there.
+- **Output versions move with the bytes (#89, #64).** The WAV files' audio is scarletbook-pcm's
+  (#84), and scarletbook patch releases may change its bytes without changing its API. So a
+  scarletbook bump, or any change, that alters the pinned PCM hashes in `tests/pcm.rs` must also
+  bump `WAV_VERSION` in `src/ident.rs` (and the test's `GOLDEN_WAV_VERSION`), and the CHANGELOG
+  records it as an output change. Likewise for the DSF files and `DSF_VERSION`. The version
+  moves each file's mtime and NFS generation, so players, taggers and rsync see the change.
 - **Hostile input.** Every image is untrusted. Nothing an image contains may panic, hang or
   grow memory without bound; `clippy::unwrap_used`, `expect_used` and `panic` are warnings,
   and CI treats warnings as errors.
