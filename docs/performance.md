@@ -138,12 +138,104 @@ of 128 KiB spread over each area, each on a freshly opened disc.
 | DST stereo, 2064-byte sectors (another disc) | 4.83 / 100 | | |
 | **all** | **4.44 / 137** | **1.07 / 110** | **1.05 / 109** |
 
-**scarletbook's own seeking, for comparison** (#47; `examples/library_seek`, scarletbook 0.4.1,
-not measured again in this round): its cold seek took **8.84 calls and 373 KiB** per seek with
-its default options (7.22 and 260 tuned), against sacdfs's 4.31 and 136 then; from a complete
-exact index 2.68 calls and 172 KiB (K = 64) against sacdfs's warm 1.01 and 103. Over NFS a cold
-seek took 21 to 29 ms through scarletbook against 7 to 15 ms with sacdfs's locator. Why sacdfs
-keeps its own: [design](design.md#why-not-scarletbooks-seeking).
+These are sacdfs 0.1.0's figures (its own locator, scarletbook 0.5.0). Since 0.2.0 seeking is
+scarletbook's: see [Seeking through scarletbook](#seeking-through-scarletbook-020-28).
+
+## Seeking through scarletbook (0.2.0, #28)
+
+sacdfs 0.2.0 seeks with scarletbook 0.5.2 ([design](design.md#seeking-scarletbooks-28)). Both
+builds below are scarletbook 0.5.2, generic x86-64: **(a)** sacdfs's own frame locator (0.1.0's
+code), **(b)** scarletbook's provisional readings and seek hints. Measured on 2026-11-01 under
+the benchmark lock, (a) and (b) interleaved, their order swapped every other round. *Not a quiet
+machine:* other agents' work kept the load average at 5 to 20 between parts, and the cleanroom VM
+averaged 2.5 threads busy; the NAS was serving a library import over SMB at the same time. Times
+are noisier than in the 0.1.0 round; calls and bytes are not affected.
+
+**Calls and bytes per seek** (`examples/seek_latency`, 200 seeks of 128 KiB per area on a freshly
+opened disc, the 7 areas of the real discs):
+
+| Area | Cold (a) | Cold (b) | Warm, same seek after a remount (a) | (b) |
+|---|---|---|---|---|
+| plain DSD stereo | 3.05 / 193 | 2.72 / 183 | 1.33 / 213 | 1.00 / 150 |
+| DST stereo | 4.86 / 103 | 3.02 / 105 | 1.01 / 75 | 1.00 / 57 |
+| DST 6 channels (same disc) | 4.82 / 156 | 3.17 / 128 | 1.04 / 96 | 1.00 / 76 |
+| DSD stereo (hybrid disc) | 3.00 / 192 | 3.00 / 191 | 1.00 / 170 | 1.00 / 141 |
+| DST 5 channels (same disc) | 5.46 / 114 | 3.35 / 106 | 1.03 / 68 | 1.00 / 54 |
+| DST stereo, 2064-byte sectors | 4.83 / 100 | 3.05 / 105 | 1.00 / 72 | 1.00 / 55 |
+| DST stereo, 2064-byte sectors (another disc) | 5.05 / 103 | 3.13 / 107 | 1.02 / 75 | 1.00 / 55 |
+| **all** | **4.44 / 137** | **3.06 / 132** | **1.06 / 110** | **1.00 / 84** |
+
+calls / KiB per seek. A track played through before a remount, then a seek into it: (a) 2.28 /
+265, (b) 2.29 / 178 (20 seeks per area).
+
+**Through the mount, local images** (open, one 128 KiB `pread`, close, on a fresh mount; 3 seeks
+x 3 rounds per row; ms, mean):
+
+| | Cold (a) | Cold (b) | Warm (a) | Warm (b) |
+|---|---|---|---|---|
+| plain DSD stereo, page cache | 0.49 | 0.54 | 0.44 | 0.41 |
+| plain DSD stereo, image evicted | 1.03 | 1.02 | 0.65 | 0.73 |
+| DST stereo, page cache | 1.38 | 1.36 | 1.31 | 1.17 |
+| DST stereo, image evicted | 1.65 | 1.78 | 1.31 | 1.45 |
+
+**Client-side NFS** (the share and `O_DIRECT` shim of [client-side](#client-side), three images
+of each kind, 3 rounds; ms, mean and median; *first touch*: a position not read before that day,
+(b) 0.02 of the track after (a)'s):
+
+| | (a) mean / median | (b) mean / median | calls (a) / (b) |
+|---|---|---|---|
+| plain DSD, cold, first touch | 37.3 / 34.4 | 47.8 / 26.3 | 3.00 / 3.17 |
+| plain DSD, cold, NAS cache warm | 2.2 / 2.2 | 2.4 / 2.4 | |
+| plain DSD, warm seek index | 1.5 / 1.5 | 1.5 / 1.6 | 1 / 1 |
+| DST, cold, first touch | 52.0 / 41.0 | 36.9 / 29.6 | 5.33 / 3.22 |
+| DST, cold, NAS cache warm | 3.2 / 3.2 | 2.8 / 2.7 | |
+| DST, warm seek index | 2.0 / 2.0 | 2.0 / 1.9 | 1 / 1 |
+
+18 seeks per row (two runs of 9 at other positions). First touches are disk seeks on the NAS
+while it served the import: the worst plain DSD first touches, 279 and 128 ms with (b), were
+in the first run, at the same call counts as (a)'s; in the second, quieter run (b) was faster
+on both kinds (plain DSD 15.6 against 28.4 ms, DST 21.9 against 38.2). On DST images (b) makes
+two calls fewer per cold seek, which is what #71 asked for: its first-touch DST seek is about a
+quarter faster here, and its worst one depends on the NAS's disks.
+
+**In-process time per seek** (the same 200 seeks as the calls table, including decoding, means of
+3 runs): cold (a) 0.64 ms, (b) 0.65 ms; warm after a remount (a) 0.83 ms,
+(b) 0.86 ms. (A first measurement of warm seeks, 0.82 against 0.98 ms, found the cost of
+building the saved form of every open disc's index at each flush of the persistent seek index;
+sacdfs now builds it only for discs whose cursors recorded something since, and the second
+figures are with that.)
+
+**Concurrency** (#6 scenario, 30 s x 3 rounds, worst / p99 ms of the players, peak memory):
+
+| Scenario | (a) | (b) |
+|---|---|---|
+| four tracks of one DST stereo area, DSF, local | 7.3 / 2.30, 21.3 / 3.00, 14.0 / 4.64; 169 MiB | 10.2 / 3.42, 17.6 / 2.12, 9.0 / 4.08; 169 MiB |
+| four areas of three discs, WAV, local | 24.8 / 0.34, 19.4 / 0.23, 15.4 / 0.26; 357 MiB | 20.2 / 0.76, 27.2 / 1.04, 26.0 / 0.66; 357 MiB |
+| four plain DSD images on NFS, DSF | 472 / 63.5, 97 / 5.1, 379 / 92.7; 147 MiB | 326 / 79.3, 79 / 10.1, 278 / 14.0; 147 MiB |
+
+The tagger's worst file stayed under 20 ms locally in every round of both. The NFS rounds are
+dominated by the NAS's disks, busy with the import (#71's figures were 75 to 170 ms worst on a
+quiet NAS).
+
+**A library import's reads** (#78: per file, on one open, the first 768 KiB in 128 KiB reads, 36
+KiB at the midpoint, the last 33 KiB; every file of an area, fresh mount, no seek index, local
+images in the page cache; ms per file, mean of 3 rounds, and the image calls and MiB per file):
+
+| Area | (a) | (b) |
+|---|---|---|
+| plain DSD stereo (24 files) | 1.37 ms; 21.3 calls, 2.30 MiB | 1.43 ms; 34.0 calls, 2.15 MiB |
+| DST stereo (14 files) | 5.8 ms; 15.9 calls, 0.90 MiB | 5.7 ms; 16.0 calls, 0.76 MiB |
+| DST 6 channels (14 files) | 12.9 ms; 22.6 calls, 1.85 MiB | 12.1 ms; 31.1 calls, 1.71 MiB |
+
+- The 6-channel DST file costs about 7 ms more than a stereo one here, in both builds, so seeking
+  is not where #78's extra time goes. The same bytes of a 6-channel file are a third as many
+  frames, each about three times the decoding, and sacdfs decodes one frame per job: probably
+  fewer, longer jobs at the head of each file. On the NAS's slower CPU (#21: about 40x real time
+  for 6-channel DST) that would scale up toward #78's 0.09 s; not measured there.
+- (b) reads fewer bytes per file but makes more, smaller calls on plain DSD and on 6 channels
+  (read-ahead's reads, sized to its ranges). Locally that costs nothing measurable; on a network
+  share each call is a round trip (about 0.1 ms on this LAN). Whether read-ahead past the 768 KiB
+  head is wasted for this pattern was not measured; read-ahead is unchanged.
 
 ## Straight reads
 
@@ -371,6 +463,7 @@ against its own "before", on the code of its day).
 | #42 | Plain DSD frames converted four at a time | plain DSD WAV straight read 2.42 → 2.07 s, CPU 48 → 34 s, 1.40x → 1.20x the DSF read |
 | #46 | Concurrent reads of one image (positional reads, an image clone per read) | NFS: tagger's worst file 38–163 → 7–13 ms; players on one image, 99th percentile 13–118 → 2–10 ms |
 | #47 | scarletbook 0.4's seeking measured, sacdfs's locator kept | cold seek 8.84 calls / 373 KiB through scarletbook against 4.31 / 136 with the locator; NFS 21–29 ms against 7–15 ms |
+| #88 | Seeking moved to scarletbook 0.5.2, the locator removed | cold seek 4.44 → 3.06 calls (DST 4.8–5.5 → 3.0–3.4), 137 → 132 KiB; warm 1.06 → 1.00 calls, 110 → 84 KiB; NFS first-touch DST cold seek median 41 → 30 ms; through the mount within ±12 % locally |
 
 ## Reproducing
 
@@ -382,8 +475,6 @@ time cat /mnt/x/*/Stereo/*.dsf > /dev/null      # or *.wav
 fusermount3 -u /mnt/x
 # calls, bytes and time per seek without FUSE, cold and with a warm seek index
 cargo run --release --example seek_latency -- --seeks 200 --cache /tmp/idx IMAGE...
-# scarletbook's seeking against the locator
-cargo run --release --example library_seek -- IMAGE...
 # the converter alone; CI runs every case once (-- --test)
 RUSTFLAGS="-C target-cpu=x86-64" cargo bench --bench pcm
 ```

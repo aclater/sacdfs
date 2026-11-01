@@ -42,8 +42,8 @@ All SACD parsing and DST decoding comes from
 [scarletbook](https://github.com/aclater/scarletbook-rs), the clean-room Rust library
 (MIT OR Apache-2.0), used through its public API as a pinned git dependency until it is
 published on crates.io. sacdfs adds no SACD format knowledge of its own beyond what that
-API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), frame
-reassembly (`Demuxer`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
+API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), seeking and frame
+reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
 - **The pin is tag v0.5.2** (0.1.0 shipped with v0.5.0, the latest release when its release
@@ -53,11 +53,12 @@ reassembly (`Demuxer`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and 
   release (DSF 93/93, the real-disc and corpus comparisons with scarletbook's exact seek
   index). 0.5.2 was taken for 0.2.0 because its seeking (#28), DSF output and DSD-to-PCM
   conversion are what sacdfs may offload to it next; the move itself changes no output.
-- **Not used: scarletbook's cursors, seek indexes and cold seeks** (`SeekPolicy::Speculative`),
-  nor 0.5.0's cancellation (`CancelToken`) and progress (`Progress`), which work on those
-  cursors. *Why:* sacdfs's own frame locator measured faster ([below](#why-not-scarletbooks-seeking)).
-  Cancellation could later back FUSE `INTERRUPT` (#45). The tests use scarletbook's seek
-  index as an exact reference.
+- **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
+  readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
+  *Why:* it measured within the owner's 15 % leeway and no less exact
+  ([Seeking](#seeking-scarletbooks-28)). Not used: cancellation (`CancelToken`) and progress
+  (`Progress`); cancellation could later back FUSE `INTERRUPT` (#45). The tests use
+  scarletbook's exact seek index as a reference.
 - **Built without scarletbook's `parallel` feature;** sacdfs decodes on its own worker pool.
   *Why:* memory stays bounded by `--cache-mb` however many files are open, and a parallel
   library cursor would hold a window of its own (512 positions, about 48 MB).
@@ -508,6 +509,17 @@ header, then audio), and an ID3v2.4 tag at the end, pointed to by the DSD chunk.
   `YYYY-MM-DD` as far as the stored date is set. NUL characters are dropped and empty values
   leave their frame out; a track with no text at all has no tag and a zero metadata pointer.
 
+- **Not scarletbook's DSF writer (yet).** scarletbook 0.5.2 has DSF output layouts
+  (`output::Layout`, `Disc::output_layout`) and tags from the TOC (`TagSet::from_toc`). With the
+  ID3 options set to sacdfs's (no footer, no padding, sacdfs's frame order, `TPE2` for the album
+  artist, `TDRC` for the date) and `TPOS` left out for a one-disc set, 53 of the 93 real-disc
+  files came out byte-identical to sacdfs's, header and tag. The other 40 differ only in `TCOP`:
+  the library writes the date's year, a space and the copyright (`2007 Label 2007`, from a
+  stored copyright of `Label 2007`), as ID3v2.4 asks of `TCOP`; sacdfs writes the copyright as
+  stored. That changes those files' tag, size and bytes, so sacdfs keeps its writer: *why:*
+  adoption needs the same bytes (the files' identity and mtimes follow their bytes, #64), and
+  changing the output is the owner's call (#28). The audio regions were not compared.
+
 ## WAV files
 
 A WAV file is a RIFF/WAVE file with a `WAVE_FORMAT_EXTENSIBLE` fmt chunk (24-bit PCM, the
@@ -621,9 +633,9 @@ A read of `[offset, offset + len)`:
 2. Audio bytes map to frames: data byte `d` lies in block group `g = d / (4096 x C)`,
    channel `c = (d % (4096 x C)) / 4096`, channel byte `b = g x 4096 + d % 4096`, frame
    `b / 4704`. A read of 128 KiB of stereo covers about 14 frames.
-3. The frames come from the decoded-frame cache, or are decoded: locate the first frame,
-   demultiplex forward with `Demuxer`, and decode the DST frames in parallel (one
-   `DstDecoder` per worker thread, one frame per job).
+3. The frames come from the decoded-frame cache, or are decoded: a scarletbook range cursor
+   gives the positions' frames as stored ([Seeking](#seeking-scarletbooks-28)), and the DST
+   frames are decoded in parallel (one `DstDecoder` per worker thread, one frame per job).
 4. Each frame is converted from interleaved MSB-first to per-channel LSB-first once, when
    it enters the cache, so serving a read is copying.
 
@@ -633,177 +645,136 @@ there are enough frames for every thread) made no measurable difference to a str
 through the mount: a FUSE read needs only a few dozen frames at a time, so longer jobs mostly
 delay the reply.
 
-### Locating a frame
+### Seeking: scarletbook's (#28)
 
-An area's audio sectors hold frames in increasing frame number, and a fresh `Demuxer` fed
-sectors from any LSN yields correctly numbered frames from the first frame that starts
-there. sacdfs keeps, per area, a sorted index of (frame number, LSN of a sector where reading
-can start) learned from every read, and locates a frame by starting from the nearest known
-point before it, else by a search over the area's sectors, aimed with the track start LSNs of
-the area TOC. Sequential reads continue the open file's demultiplexer state, so a straight
-read never searches.
+A read that does not continue an open file's cursor starts a new one, and since 0.2.0 that
+is scarletbook's: every area of a disc keeps a scarletbook seek index (`Disc::enable_seek_index`,
+or one loaded from the persistent seek index below), its seek policy is
+`SeekPolicy::Speculative`, and a cursor is a `TrackCursor` of the frame range the read needs
+(`Disc::range_frames_cursor`), grown for later reads with `Disc::continue_range_frames`.
+sacdfs's own frame locator (a search of its own over the area's sectors, aimed with the TOC's
+track starts, with an index of (frame, LSN) points learned from every read) was removed.
 
-- **Index points.** A point (n, L) means: a fresh demultiplexer started at L first yields a
-  frame numbered at most n, and frame n starts at or after L, so starting at L never misses
-  frame n or any later frame. Points come from two places. A *probe* of the search starts a
-  demultiplexer at L and records the first frame it yields (reading at most 80 sectors). A
-  sequential scan records, at most once every 40 frames (about half a second), the second
-  frame popped after pushing a sector: every frame delivered by a push except the first
-  started in that sector. It skips points within 10 frames of a known one, which a stretch
-  read again from another start would otherwise pile up, but still checks them against the
-  others.
-- **The search.** A search for frame f starts from the nearest point numbered below f
-  (scanning forward directly when it is at most 48 frames back; the 40-frame spacing makes
-  that true anywhere in a stretch already read). Otherwise it searches, between the nearest
-  points around f (the area's first sector and its play time when there are none), for the
-  last sector where a probe yields a frame numbered below f, until 8 sectors are left, or
-  about two of the area's average frames if that is more (at most 32 sectors: scanning them
-  costs no extra call to the image, a probe does). A read 375 frames or fewer ahead of the
-  open file's demultiplexer continues it instead.
-- **Never at a point numbered f itself.** A hostile disc can store a second frame with an
-  earlier frame's timecode, which a scan from the area start discards because it has seen the
-  original, but which a demultiplexer started between the two takes for frame f (corpus cases
-  `dst-features-*`, where the frame stored for position 36 repeats timecode 35). Starting one
-  frame earlier lets the demultiplexer see the original first.
-- **Aiming.** The probes interpolate on frame numbers between the tightest of the known
-  bounds and the track starts of the area TOC that lie inside them (the TOC is only a hint:
-  every probe is checked, and TOC starts that are out of order are ignored), aimed half the
-  stop distance past the estimate, towards the farther bound, so that a good estimate closes
-  the interval from both sides. When an interpolated probe does not halve the interval, the
-  next one bisects, unless the probe found a frame within about twice the stop distance of f:
-  then the estimate was good and only its near bound moved, so the next interpolation, aimed
-  at the other side, usually closes the interval. At least every third probe bisects, so a
-  hostile disc cannot make the search linear.
-- **Contradictions.** If two points ever contradict each other (frame numbers that decrease
-  as the LSN grows; a well-formed disc never does this, a hostile one can), the area is marked
-  irregular, its points are dropped and every later search starts at the area's first sector:
-  exactly the sequential scan, only slower.
-- **Cost.** A cold seek (an empty index) costs 3.0 to 5.6 calls to the image on average on
-  real discs (3.0 for plain DSD), including reading the frames it was looking for, a millisecond
-  or two from a local disk; on a network share each call is a round trip, and on a NAS
-  with hard disks often a disk seek too. `Disc::sector_reads` and `Disc::sector_bytes` count
-  them.
+- **A cold seek is a provisional reading** (specification 4, 4.2 item 8): the library searches
+  the frame records' timecodes for a sector whose first frame is numbered below the one wanted
+  (interpolation between the TOC's track starts, then regula falsi; at most 5 read calls and
+  160 KiB to the range's first frame, scarletbook #123), and reads on from there, the first read
+  sized through the range sacdfs asks for. *Why the range is the read's frames:* the library
+  sizes its reads to the range's end (up to 1 MiB a call); a range to the area's end made the
+  first 128 KiB read of a seek fetch 494 KiB on average instead of 144.
+- **Exact where it is cheap:** a range whose exact start (the area's first sector, or a
+  checkpoint of the index, which a straight read from the area's start records) is at most 64
+  sectors before it is read exactly (`min_gap_sectors`). *Why 64, not the library's 2 048:* with
+  2 048, the seeks within 4 MiB of an area's start read every sector from the start, 32 to 67
+  calls; at 0 and at 64 the calls and bytes were the same.
+- **Suspect areas are read exactly** (`exact_when_suspect`): an area whose TOC places its audio
+  past the image's end or over the other area, or a search that saw frame numbers decrease.
+  These are only hostile or damaged images; there a seek costs a scan from the area's start.
+- **Sequential reads** continue the cursor (a read up to 375 frames ahead of it skips forward,
+  as before); each read grows its range to the frames it needs, so the library's next read is
+  sized to them.
+- **Warm seeks: seek hints.** The index records, from every cursor, sectors with the frame
+  number of their first frame record (every 8 frames, up to 2 048 per area), and after a
+  remount a provisional reading near a range read before begins at a hint, with one read call
+  (scarletbook #124). The hints are what the persistent seek index keeps.
+- **Memory:** an index per area of every listed disc, with an inline budget of 64 KiB for
+  frames under assembly at its checkpoints (the library's default is 1 MiB), the checkpoints of
+  stretches read from the area's start (about 24 bytes per 64 sectors) and the hints (8 bytes
+  each). The `parallel` window does not apply: sacdfs still decodes on its own pool.
 
-**Sizes of the reads.** Each read of the image is sized to what it is for, from the area's
-average frame size (its sectors over its play time). A probe reads about two average frames
-and a sector per call (5 to 7 sectors for DST stereo, 11 for plain DSD stereo, 29 for
-6-channel DSD), which usually finds a whole frame in one call. The first read of a cursor
-after a search covers the frames of a 128 KiB read of the DSF file (the common size of a
-player's or the kernel's random read), two more frames and the stop distance; later reads
-are 64 sectors. The cursor also starts with the sectors the last probe at its starting point
-already read. *Why:* reads of a fixed size fetched about twice the bytes a cold seek needs
-(293 KiB on average for a 128 KiB read, against 139 KiB sized). On a local disk that hardly
-shows; over a network the bytes are transfer time on top of each round trip.
+**Correctness.** A provisional reading's positions are exactly a scan's on every image whose
+frames start in increasing frame number order, which is every well-formed disc; on a hostile
+image they can differ, and only a pass of the index from the area's first sector can tell
+(the reading is then *refuted*). sacdfs's locator had the same limit, unlabelled: it too
+started a fresh reading at a sector found by frame numbers. On the image `tests/library_index.rs`
+makes for it (a copy of a corpus image with its stereo area's last 32 audio sectors written again
+near its start), sacdfs 0.1's locator differed from the exact reading at 2 of the ranges it reads,
+and the library's provisional readings differ at 2 and are refuted; sacdfs 0.2 gives the exact
+reading at every one, because the library's search sees the frame numbers decrease, marks the
+reading suspect, and sacdfs reads suspect readings exactly. So the switch is a correctness gain
+as well as one less implementation. On every corpus case, hostile ones included, and on the real
+discs, every frame read through sacdfs equals the exact reading (`tests/library_index.rs`,
+`tests/corpus.rs`, the DSF gate).
+
+- *Not done: verifying in the background.* sacdfs makes no pass of an area to settle its
+  readings (`Disc::verify_speculation`): on a network share that is a read of the whole image,
+  the cost seeking exists to avoid. So no verdict arrives, and none is acted on; on a
+  well-formed disc there is nothing to act on. Were a refuted reading to be served, the frames
+  would sit in the frame cache and the kernel's page cache until evicted. A follow-up could run
+  verification while idle on local images and then drop those frames (`notify_inval_inode`).
+- *Why not keep the locator:* the owner's offload rule (adopt scarletbook when it is exact and
+  within 15 % of sacdfs's own code on the measure that matters, here latency); the measurements
+  are below. It removes the hardest code sacdfs had (`disc.rs` went from 1 022 lines to 584, 500 fewer in all).
+
+Measured (details: [performance.md](performance.md#seeking-through-scarletbook-020-28)), (a)
+the locator, (b) scarletbook, both on scarletbook 0.5.2:
+
+| | (a) | (b) |
+|---|---|---|
+| cold seek, calls / KiB per seek, real discs | 4.44 / 137 | 3.06 / 132 |
+| warm seek after a remount, calls / KiB | 1.06 / 110 | 1.00 / 84 |
+| cold / warm seek in process, ms | 0.64 / 0.83 | 0.65 / 0.86 |
+| cold seek through the mount, local, ms (plain DSD / DST, page cache) | 0.49 / 1.38 | 0.54 / 1.36 |
+| the same, image evicted | 1.03 / 1.65 | 1.02 / 1.78 |
+| warm seek through the mount, local, evicted | 0.65 / 1.31 | 0.73 / 1.45 |
+| NFS cold seek, first touch, median ms (plain DSD / DST) | 34.4 / 41.0 | 26.3 / 29.6 |
+| NFS cold seek, NAS cache warm (plain DSD / DST) | 2.2 / 3.2 | 2.4 / 2.8 |
+
+- **Decision: switch.** Every seek time is within 15 % of (a)'s (the worst, a warm seek of an
+  evicted image through the mount, +12 %), the calls per seek are fewer or equal everywhere, and
+  the reads are exact on every image tested, with one the locator got wrong. *Alternative kept
+  in mind:* keeping the locator for cold seeks only; not needed, as (b) wins on cold calls.
+- *Trade-off accepted:* a cold seek on a plain DSD image reads about 10 % more bytes (one call in
+  six more), and a library import's sequential reads make smaller, more numerous calls; neither
+  showed in the times.
 
 ### Persistent seek index
 
-The points of each image's areas are kept across mounts in a cache directory
-(`$XDG_CACHE_HOME/sacdfs`, `--index-cache DIR`, off with `--no-index-cache`), so that a seek
-after a remount or a reboot starts from a point instead of searching: one call to the image
-instead of four or five. *Why:* client-side mounts (images on NFS or SMB, #20) pay a round
-trip for every call, plus a disk seek on a NAS whose cache does not hold that part of the
-image; without it, every seek after a remount would be cold.
+Each image's seek indexes are kept across mounts in a cache directory
+(`$XDG_CACHE_HOME/sacdfs`, `--index-cache DIR`, off with `--no-index-cache`), without their
+exact checkpoints (`AreaIndex::without_checkpoints`: the seek hints, saved confirmations and the
+TOC fingerprint, a few kilobytes per area), so that a seek after a remount or a reboot near a
+range read before starts at a hint: one call to the image instead of three or four. *Why:*
+client-side mounts (images on NFS or SMB, #20) pay a round trip for every call, plus a disk seek
+on a NAS whose cache does not hold that part of the image. *Why without checkpoints:* they cover
+only stretches read from an area's start, take about 24 bytes per 64 sectors (a few hundred
+kilobytes per area played through) and a whole library's must fit the directory's bound; a
+straight read from the start is exact and cheap without them.
 
-- *Format* (`index_cache.rs`): one file per image, named by the first 128 bits of a SHA-256 of
-  the image's canonical path, so that no path appears in the cache; it holds the full hash,
-  the image's size and modification time (seconds and nanoseconds), each area's first and
-  end LSN and channel count, and the points, delta-coded as LEB128 (about 2 to 3 bytes a
-  point; a disc played through takes a few tens of KB, a library of a hundred discs a few
-  MB). A format version and a truncated SHA-256 of the contents guard it. A file that does
-  not match in every field, or fails any check while being read (points out of order or
-  outside their area, more than 65 536 an area, a file over 4 MiB, a symbolic link), is
-  ignored and replaced by the next save. *Why the key:* size and mtime change when an image
-  is replaced or edited, and checking them costs nothing; hashing the content would read the
-  whole image, which is what the cache exists to avoid.
-- *Never trusted.* Loaded points are kept apart from the checked ones. They aim the search's
-  probes (with the TOC's track starts, whichever is closer), and a cursor may start at one
-  within 48 frames before its frame, but it checks the first frame it reads there exactly as
-  a probe would (found within 80 sectors, and numbered below the frame wanted) before it
-  returns anything. A start that passes is recorded as a checked point; one that fails makes
-  the cursor fall back to an ordinary search, and drops every loaded point of the disc. So a
-  stale, damaged or hostile cache costs only speed: the audio is always what a scan from the
-  area start gives. *Why not check every point at load:* that would cost a probe per point,
-  more than the search it saves.
-- *Writing.* Lazily: every 30 seconds for discs whose points changed, and at unmount; a
-  disc whose points did not change is only touched (its mtime set) so that it counts as
-  used. Atomically: a new temporary file (`O_EXCL`, mode 0600, not following links), then a
-  rename over the old one. Not synced: a crash can at worst lose or damage an entry, which
-  then costs speed. The directory is created on the first write (mode 0700), and bounded to
-  32 MiB in all: after a write, the least recently used files are removed until it fits.
-  Points that would make the loaded and checked points of an area contradict each other are
-  not saved.
-- *Why not more:* precomputing the index of a whole library in the background
-  (`--index-ahead`) would read every image completely, which on a network share is the cost
-  this work avoids; it is a possible follow-up as a sparse, low-priority probe pass.
+- *Format* (`index_cache.rs`, version 2; version 1, sacdfs 0.1's points, is discarded): one file
+  per image, named by the first 128 bits of a SHA-256 of the image's canonical path, so that no
+  path appears in the cache; it holds the full hash, the image's size and modification time
+  (seconds and nanoseconds), each area's first and end LSN and channel count, and each area's
+  saved index as scarletbook writes it (`AreaIndex::to_bytes`, at most 1 MiB). A format version
+  and a truncated SHA-256 guard it; a file that does not match in every field, or fails any
+  check (a file over 4 MiB, a symbolic link), is ignored and replaced by the next save.
+- *Checked by the library:* `AreaIndex::from_bytes` checks every bound before it allocates,
+  `Disc::set_seek_index` refuses an index of a disc with another TOC, and a hint whose sector no
+  longer holds its frame record is dropped (the cursor then searches). A loaded index the library
+  refuses is replaced by an empty one. *Why sacdfs keys by path, size and mtime too:* the library
+  cannot tell a re-rip with the same TOC and other audio, and asks callers to key by the file's
+  identity. `tests/index_cache.rs` checks that damaged entries and a stale one (audio sectors
+  moved under an entry with the same key) cost only speed.
+- *Writing.* Lazily: every 30 seconds for discs whose saved form changed, and at unmount. Only
+  discs whose cursors handed records to the index since the last flush have their saved form
+  built and compared with what the entry holds (*why:* building it copies and encodes the
+  index: `seek_latency`, which flushes with hundreds of discs open, measured 0.15 ms more per warm
+  seek when every disc's was built); a disc whose form did not change is only touched (its mtime set)
+  so that it counts as used. Atomically: a new temporary file (`O_EXCL`, mode 0600, not following
+  links), then a rename over the old one. Not synced: a crash can at worst lose or damage an
+  entry, which then costs speed. The directory is created on the first write (mode 0700), and
+  bounded to 32 MiB in all: after a write, the least recently used files are removed until it
+  fits. A cache shared with sacdfs 0.1 is rewritten by whichever ran last.
 
-### Why not scarletbook's seeking
+### Reading the image
 
-scarletbook (0.4 and later) can seek within an area itself, two ways, and sacdfs measured
-both against its locator (#28, #47). It keeps its locator for cold and warm seeks, and its
-own persistent seek index.
-
-- *A seek index* (`AreaIndex`, opt-in per area): the exact reading state every K sectors
-  (default 64), so that a range starts at the last checkpoint before it with results exactly
-  those of a scan from the area's first sector (specification 4, 4.2 item 7). But its
-  checkpoints run without gaps from the area's first sector: it covers a seek only once the
-  area has been read up to it, by playing from the start or by a full pass (about 9 s per GB
-  over a network share). A seek after a remount into a part of the area read only by an
-  earlier seek, which sacdfs answers with one call to the image from its saved points,
-  finds no checkpoint there.
-- *Provisional reading* (`SeekPolicy::Speculative`, the cold seek): a search of the frame
-  records' timecodes, then a scan from a checkpoint boundary at least 32 sectors before the
-  target with the range's first frame as the next acceptable frame number. Its positions are
-  exact on well-formed discs, but on a hostile image they can differ, and a reader learns
-  that only when a pass from the area's first sector reaches them (a `Refuted` verdict).
-
-Measured on the frames of a 128 KiB DSF read at 200 positions per area of the five real
-discs, each on a freshly opened disc, without FUSE
-([performance.md](performance.md#calls-and-bytes-per-seek)):
-
-| Calls to the image / KiB read per seek | cold | warm |
-|---|---|---|
-| sacdfs's locator (warm: after a remount, from the saved points of the same seek) | **4.31 / 136** | **1.01 / 103** |
-| scarletbook provisional reading, default options | 8.84 / 373 | |
-| the same, tuned (exact scan only within 64 sectors, checkpoints every 16) | 7.22 / 260 | |
-| scarletbook, from a complete exact index (K = 64; K = 16) | | 2.68 / 172; 1.99 / 128 |
-
-On a network share (NFS, every read to the server) a cold seek took 21 to 29 ms through
-scarletbook against 7 to 15 ms with sacdfs's locator, and a warm one 1.5 to 1.8 ms against
-0.6 to 1.2 ms.
-
-- *Why the cold path costs more:* the library's search makes 3.0 to 5.3 reads of 8 sectors
-  before it reads any frame; sacdfs's whole cold seek, frames included, takes 3.0 to 5.6
-  calls, its probes sized to two of the area's average frames and aimed with the TOC's track
-  starts. The library then starts 32 to 96 sectors before the target (a checkpoint boundary
-  at least 32 sectors back) and reads in fixed calls of 32 sectors, where sacdfs's first read
-  is one call sized to the frames wanted.
-- *Why the warm path costs more:* a start from a checkpoint replays up to 32 sectors and reads
-  up to K more before the range, again 32 sectors a call; sacdfs starts within 40 frames of
-  the target in one call sized to the read. And the index must have been built first.
-- *Why not provisional positions at all:* on corpus case `area-audio-past-end` provisional
-  readings return other frames than the exact ones, and are refuted only once a pass reaches
-  them (`tests/library_index.rs`). Served through FUSE, those bytes would sit in the kernel's
-  page cache and in players' buffers until then; sacdfs's locator gives the exact frames
-  there from the first read. Handling refutation (dropping cached frames,
-  `notify_inval_inode`) would only repair what was already played.
-- *Why not scarletbook's range cursor* (`TrackCursor::for_range`): it starts at the area's
-  first audio sector, so a seek at 72 % of a 50-minute disc took 90 to 132 ms, against 1 to
-  2 ms with the locator.
-- *What sacdfs takes from scarletbook instead:* the seek index as an oracle.
-  `tests/library_index.rs` reads every frame and random ranges of every corpus case (hostile
-  ones included, default and exhaustive search) located by sacdfs, and compares them with
-  reads through a complete library index and with a straight library read; on the real
-  discs, straight reads and 300 random ranges per area. They are equal everywhere, so the
-  locator's frame-number rule, which the specification's 4.2 note does not guarantee in
-  general, is checked against an exact reader on every image the tests have.
-- *Memory:* sacdfs keeps no library index or cursor, so the index's inline budget (1 MiB per
-  index by default) and the `parallel` window (up to about 48 MB per cursor) do not apply.
-- *What would change this* (requested upstream, scarletbook-rs#123 and #124; held for 0.2.0):
-  cold-search probes sized by the caller or the area's frame size, aimed with the TOC's track
-  starts; a start closer than a checkpoint boundary 32 sectors back; read calls sized by the
-  caller; a warm start that does not need the area read from its first sector, for example
-  confirmed provisional checkpoints that can be saved and checked on load. Until then sacdfs
-  keeps its locator, the hardest code it has, and the tests above keep it honest.
+scarletbook reads the image through `disc::Source`, a `ReadAt` that takes the image's handle from
+the cache of open files ([Open images](#open-images)) for each call and reads with `pread`. The
+library's disc, and the clone of its image each cursor reads through, keep one image identity for
+the whole mount, which the cursors and the seek index are bound to. *Why not a file held by the
+library's disc:* a disc is kept for every listed image, so the files would all stay open; the
+cache bounds them and closes idle ones (#26). The disc is opened through the same source, so its
+TOC is read through the handle kept for the audio reads (6 to 8 calls, as before).
 
 ## Reading a range of a WAV file
 
@@ -1000,9 +971,9 @@ open would. A disc that is dropped closes its handle.
 ### Concurrent reads of one image
 
 A handle is an `Arc<File>` read with positional reads (`pread`), through scarletbook's
-`ReadAtReader` (#28, #46). Each call to the image takes a clone of the cached `Image` (no I/O,
-no lock: the same file, a position of its own) and reads through it, so reads of one disc by
-several players, a tagger and read-ahead run at once.
+`ReadAtReader` over `disc::Source` (#28, #46). Each cursor reads through a clone of the library
+disc's `Image` (no I/O, no lock: a position of its own), and each call takes the cached handle,
+so reads of one disc by several players, a tagger and read-ahead run at once.
 
 - *Why not a lock per image:* on a local disk a read would hold it only for a copy from the
   page cache, but on a network share each read is a round trip, and on a NAS with hard disks
@@ -1010,16 +981,10 @@ several players, a tagger and read-ahead run at once.
   player's for the whole round trip. Measured: with a lock, a tagger's worst file over NFS
   took 38 to 163 ms, without it 7 to 13 ms
   ([performance.md](performance.md#concurrency-and-memory)).
-- *Why a clone per call, not one per cursor or thread:* a clone holds the file open, and
-  cursors live as long as their open file; per call, the bound on open images
-  (`--max-open-images`) still holds between reads, and an evicted handle closes when the last
-  read through it ends.
-- *Why `Image` clones, not `scarletbook::Disc::clone`:* sacdfs keeps its own TOC, frame
-  locator and seek index per disc and reads sectors through an `Image`; a `Disc` adds a parsed
-  TOC and shared seek indexes that sacdfs does not use (see
-  [Why not scarletbook's seeking](#why-not-scarletbooks-seeking)), and a reopened file would
-  need its TOC checked again. An `Image` clone is what `Disc::clone` does underneath. A clone
-  also shares the image's cancellation token, one more reference count per read.
+- *Why the handle per call, not one per cursor or thread:* cursors live as long as their open
+  file; per call, the bound on open images (`--max-open-images`) still holds between reads, and
+  an evicted handle closes when the last read through it ends. The image clones a cursor holds
+  keep no file open.
 - Images in 2064-byte raw sectors are read through a buffer per clone (scarletbook's), so
   each call allocates it again; the straight-read figures show no cost.
 
@@ -1284,31 +1249,31 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
 - **The corpus.** Integration tests run against the synthetic CC0 conformance corpus of
   [sacd-spec](https://github.com/aclater/sacd-spec) (copied into `tests/corpus/` with its
   licence). `tests/corpus.rs` reads every case through the tree and readers without
-  mounting, twice: with the default search, and with a search that runs on every read down
-  to one sector and no frame cache, so that the locator is exercised on the small corpus
-  images too (hostile timelines included), and reads every frame of every file alone from a
-  fresh reader. `tests/mount.rs` mounts the corpus with the binary, reads every file through
+  mounting, twice: with the default seeking, and with every read that does not continue its
+  cursor starting a new one, provisionally wherever the library allows (`Tuning::exhaustive`),
+  and no frame cache, so that seeking is exercised on the small corpus images too (hostile
+  timelines included), and reads every frame of every file alone from a fresh reader. `tests/mount.rs` mounts the corpus with the binary, reads every file through
   the kernel and compares per-channel hashes with the corpus manifest, then remounts and
   compares scattered reads on fresh opens; it also checks background mode, read-only refusal
   and unmounting by SIGTERM and SIGINT.
 - **Persistent seek index:** unit tests of the file format (round trip; another size, mtime,
-  path or area shape misses; every single damaged byte and every truncation is rejected;
-  proptest of random and damaged files, with the checksum recomputed after the damage so that
-  the parser itself is fuzzed), of the directory (private mode, LRU trimming, symbolic links
-  and oversized files not read). `tests/index_cache.rs` saves the index of a straight read of
-  every corpus case, then reads every frame alone and random ranges with it loaded, each
-  frame also from a fresh tree so that only the loaded points are known, and requires the
-  bytes of a straight read; the same with hostile entries (proptest of points in order but
-  anywhere, and every point too late), which must fail their checks and still give the same
-  bytes; and a changed size or mtime misses. `tests/mount_index.rs` mounts, seeks, unmounts,
-  remounts and seeks again through the kernel: the same bytes, with fewer calls to the image
-  and fewer bytes read.
-- **Against scarletbook's seek index:** `tests/library_index.rs` (see
-  [Why not scarletbook's seeking](#why-not-scarletbooks-seeking)): every frame and random
-  ranges of every corpus case located by sacdfs equal reads through a complete library index
-  and a straight library read; a provisional library reading of a hostile case is refuted
-  and differs, where the locator is exact; an ignored test, `real_discs`, does the same on
-  local real discs (`SACDFS_REAL_IMAGES`).
+  path or area shape misses; every single damaged byte and every truncation is rejected; an
+  area over its bound is not written; proptest of random and damaged files, with the checksum
+  recomputed after the damage so that the parser itself is fuzzed), of the directory (private
+  mode, LRU trimming, symbolic links and oversized files not read). `tests/index_cache.rs`
+  saves the seek hints of a straight read and seeks into every corpus case, then reads every
+  frame alone and random ranges with them loaded, each frame also from a fresh tree so that
+  only the loaded index is known, and requires the bytes of a straight read; the same with
+  damaged entries (proptest of the saved indexes' bytes changed at random) and with a stale one
+  (audio sectors moved under an entry with the image's path, size and mtime), which must cost
+  only speed; and a changed size or mtime misses. `tests/mount_index.rs` mounts, seeks,
+  unmounts, remounts and seeks again through the kernel: the same bytes, with no more calls to
+  the image and no more bytes read (on the small corpus image a cold seek is already one call).
+- **Against scarletbook's exact reading:** `tests/library_index.rs`: every frame and random
+  ranges of every corpus case read through sacdfs equal reads through a complete library index
+  and a straight library read; provisional library readings on an image made for it (late audio
+  sectors written again near an area's start) differ from the exact ones and are all refuted;
+  an ignored test, `real_discs`, does the same on local real discs (`SACDFS_REAL_IMAGES`).
 - **DSF header reads:** `tests/dsf_header.rs` reads every DSF file of the corpus as the
   kernel does for a tagger (128 KiB at 0, 128 KiB at 128 KiB, the tag's page): none of the
   reads starts read-ahead, and a player reading on starts it exactly at 256 KiB.
