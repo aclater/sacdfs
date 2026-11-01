@@ -122,3 +122,5 @@ Cargo.toml). It can be added once scarletbook is on crates.io.
   `tests/corpus/` (CC0), never audio from a real disc.
 - **Commits.** Small commits with a message that says why. Set your git identity in every clone before committing *or merging*: a merge made without one takes the machine's default, which can leak a private host name. CI's "no private names" check (`scripts/check-private-names.sh`) fails on private details in commit identities and tracked files. Actions in workflows are pinned
   by full commit SHA with a version comment.
+
+- **CI speed.** A pull request's checks finish in about 4 min, and a new push cancels the superseded run (`concurrency`; main runs are never cancelled). Rust jobs restore a cargo cache that only main writes (`Swatinem/rust-cache`, `save-if`). Every required check runs on every pull request: none is path-filtered, because a skipped required check stays pending and blocks the merge. Keep new jobs short, and put slow, rarely-failing ones on main, tags or a schedule.

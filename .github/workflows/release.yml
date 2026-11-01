@@ -34,7 +34,7 @@ permissions:
 
 # One release per tag at a time; a second run for the same ref waits instead of racing it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: false
 
 env:
