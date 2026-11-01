@@ -67,8 +67,9 @@ const KIND_FILE: u64 = 2 << 14;
 const DSF_VERSION: u32 = 1;
 
 /// Version of the bytes of WAV files: bump when a change makes the same track's WAV file
-/// differ (converter coefficients, rounding, header, tags).
-const WAV_VERSION: u32 = 1;
+/// differ (converter coefficients, rounding, header, tags). 2: the converter is
+/// scarletbook-pcm (#84), whose samples differ from sacdfs's own converter's.
+const WAV_VERSION: u32 = 2;
 
 /// Seconds a file's mtime moves forward per output version: more than any PCM offset, so
 /// that a version bump moves every file past every time it showed before.

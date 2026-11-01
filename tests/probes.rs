@@ -206,7 +206,13 @@ fn pcm_options_move_the_wav_mtime() {
     };
     let image = std::fs::metadata(images.join("dsd-stereo-mch-2048.iso")).unwrap().modified().unwrap();
     let base = stats(&[]);
-    assert!(base.iter().all(|f| f.2 == image), "default options: the image's mtime");
+    // Default options: DSF files show the image's mtime; WAV files the image's plus one
+    // output-version step (25,203 s) per WAV_VERSION after the first (2 since #84).
+    let wav = image + std::time::Duration::from_secs(25_203);
+    assert!(
+        base.iter().all(|f| f.2 == if f.0.ends_with(".wav") { wav } else { image }),
+        "default options: the image's mtime, plus the WAV output version"
+    );
     // Another mount with the same options: the same mtimes.
     assert_eq!(stats(&[]), base);
     // A gain keeps every size and moves only the WAV files' mtime, forward.
