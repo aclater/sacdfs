@@ -157,6 +157,7 @@ All settings are environment variables.
 | `SACDFS_PCM_CUTOFF` | (40) | `--pcm-cutoff`: `40`, `30` or `wide` |
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
+| `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB. On a NAS, `16` is recommended; see [Memory](#memory) |
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
@@ -374,6 +375,9 @@ host networking, on the same NAS as sacdfs.
   images are on the share, byte for byte, so Roon shows your own art instead of falling back
   to its online art (#79). With `SACDFS_FLATTEN: "1"` the art of a disc's folders sits next
   to its `Stereo` and `Multichannel` folders. `SACDFS_SIDECARS` changes which files pass.
+  The cover images are also inside each `Stereo` and `Multichannel` folder, so servers that
+  look only beside the audio find them (#95). Images, covers and playlists added to or removed
+  from the share later show up within a few seconds, with no restart (#101).
 - **Playlists** work: an `.m3u` or `.m3u8` file next to the images is on the share, so Roon,
   which imports playlist entries only from inside the same storage location, imports it
   (#75). Write its entries as relative paths inside the share, as sacdfs names its files
@@ -383,6 +387,16 @@ host networking, on the same NAS as sacdfs.
   as Roon adds it. On a NAS-class CPU, multichannel DST areas decode at about 40× real time.
   Expect a burst of CPU load after adding a large library, or set the analysis speed lower in
   Roon's settings.
+
+### Multichannel copies and music servers
+
+Navidrome, Lyrion (LMS), MPD and MinimServer all showed a disc's Stereo and Multichannel
+copies as one album: merged, with each track up to four times, or as two albums with the same
+name. So sacdfs adds ` (Multichannel)` to the album tag of the multichannel files by default
+(DSF and WAV; stereo files are unchanged), and the servers list two albums. Set
+`SACDFS_MC_ALBUM_SUFFIX: "0"` to keep the disc's album name; then rescan, since the files'
+modification times do not move when you switch. Changing this release's tags moved the files'
+mtimes and NFS generations once (output versions DSF 3, WAV 4), so servers rescan them.
 
 ## Mounting the shares on clients
 
@@ -424,6 +438,20 @@ smbclient //nas/sacd -p 10445 -U music        # or smb://nas:10445/sacd in a fil
 
 On macOS, NFS takes `port=12049` in its `-o` options and SMB takes `smb://nas:10445/sacd`.
 
+### Media servers in containers on a client host
+
+If sacdfs runs on the host and a container (Jellyfin, Plex, MPD) reads its mount, do not
+bind-mount the mount point itself: when sacdfs restarts, the container's copy goes stale and
+every read fails with "not connected". Bind the parent directory with `rslave` propagation, so
+the new mount shows up inside the container:
+
+```sh
+# sacdfs mounted at /srv/sacd/music; bind /srv/sacd, not /srv/sacd/music
+podman run -v /srv/sacd:/media:ro,rslave ...
+```
+
+In Compose: `- /srv/sacd:/media:ro,rslave`.
+
 ### macOS
 
 - **SMB:** Finder, Go, Connect to Server (⌘K), `smb://nas/sacd`; "Connect as Guest", or the
@@ -439,6 +467,23 @@ Explorer: `\\nas\sacd`, or map it to a drive letter: `net use S: \\nas\sacd /per
 Current Windows versions refuse guest access to SMB shares (Windows 11 24H2 and later, and
 the Enterprise and Education editions of Windows 10 and 11). Set `SMB_USER` and
 `SMB_PASSWORD` for Windows clients rather than relaxing that policy.
+
+### Players that scan the library (MPD, moOde, Volumio, Jellyfin, Plex)
+
+Run the container with `SACDFS_FORMATS=dsf` (`--format dsf`) for a library that MPD scans. MPD
+plays DSF natively, as DoP or native DSD depending on the output. MPD's first database scan
+(and any rebuild with a cold cache) opens every file through FFmpeg, which probes about 5 MB
+of each WAV file. Each WAV file must then be converted from the SACD image for those 5 MB,
+although its tags and duration are in the first bytes. In a test of 93 tracks the first scan
+took about 9 s with `dsf,wav` and 0.6 s with `dsf`, about 15 times as long, and used about
+27 CPU-seconds. Incremental updates are unaffected. If some other client needs WAV files, run
+a second container (or mount) with `dsf,wav` for it.
+
+Jellyfin behaves the same way: its ffprobe reads about 5 MB of each stereo WAV file and 12 to
+14 MB of each 5.1 WAV file, so its first scan took 27 to 58 % longer than on extracted files.
+Use `dsf` unless it needs WAV files. Jellyfin's LUFS normalization and Plex's nightly deep
+analysis each read every file in full (one pass for Plex, two for Jellyfin, about 110 GiB for
+a library of 186 files with 5.1 audio): turn them off, or use a 16 MiB `--cache-mb` as on a NAS.
 
 ### File names over SMB
 
