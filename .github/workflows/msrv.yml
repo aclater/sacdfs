@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+
 permissions:
   contents: read
 
@@ -22,4 +26,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install "$RUST_MSRV" --profile minimal
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - run: cargo +"$RUST_MSRV" check --all-targets --locked

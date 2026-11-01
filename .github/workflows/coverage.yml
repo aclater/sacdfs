@@ -9,6 +9,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+
 permissions:
   contents: read
 
@@ -28,6 +32,9 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal -c llvm-tools-preview && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283  # v2.87.29
         with:
           tool: cargo-llvm-cov
