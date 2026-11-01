@@ -264,3 +264,7 @@ The first release.
   leaving a dead mount (#57; 7 of 100 starts with a SIGTERM 0 to 30 ms after the start): the
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
+
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/aclater/sacdfs/releases/tag/v0.1.0
