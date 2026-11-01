@@ -17,6 +17,15 @@ All notable changes to sacdfs are recorded here. The format follows
   `--map` handles extracts kept in a tree of their own, `--resume` continues an earlier run.
   It never deletes anything. See the user guide, "Before you delete extracts".
 
+- Folder art (the jpg, jpeg, png and webp sidecars) also shows inside each area folder
+  (`Stereo/`, `Multichannel/`), as the same file with a second name and inode number, so
+  Lyrion Music Server, MPD, MinimServer and Plex find it (#95). It follows `--sidecars`; no
+  audio file changes.
+- New and removed images and sidecar files show up without a remount (#101): a folder is read
+  again, at most every 2 seconds, when its modification time in `SOURCE` changed. Unchanged
+  entries keep their inode numbers. The kernel remembers the names of such a folder for 2
+  seconds instead of 24 hours.
+
 ### Changed
 
 - Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts

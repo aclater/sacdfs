@@ -865,3 +865,73 @@ fn a_sigterm_right_after_start_leaves_no_mount() {
         }
     }
 }
+
+/// Folder art is also in the areas (#95), and files added to or removed from SOURCE show up
+/// without a remount (#101), through the kernel: its caches (names, listings) must not hold
+/// the old state for long.
+#[test]
+fn folder_art_in_the_areas_and_changes_without_a_remount() {
+    use std::os::unix::fs::MetadataExt;
+    if !fuse_available() {
+        return;
+    }
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let album = src.join("Artist/Album");
+    std::fs::create_dir_all(&album).unwrap();
+    std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), album.join("disc.iso"))
+        .unwrap();
+    std::fs::write(album.join("folder.jpg"), b"front").unwrap();
+    std::fs::write(album.join("list.m3u8"), b"#EXTM3U\n").unwrap();
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    let ls = |p: &str| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(mnt.join(p))
+            .map(|rd| rd.map(|e| e.unwrap().file_name().into_string().unwrap()).collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+    let has = |p: &str, n: &str| ls(p).iter().any(|x| x == n);
+
+    // Art in each area, the same file as in the folder; playlists only in the folder.
+    for area in ["Stereo", "Multichannel"] {
+        let p = format!("Artist/Album/disc/{area}");
+        assert!(has(&p, "folder.jpg"), "{area}");
+        assert!(!has(&p, "list.m3u8"));
+        let (a, b) = (
+            std::fs::metadata(mnt.join(&p).join("folder.jpg")).unwrap(),
+            std::fs::metadata(mnt.join("Artist/Album/folder.jpg")).unwrap(),
+        );
+        assert_eq!(a.ino(), b.ino());
+        assert_eq!(std::fs::read(mnt.join(&p).join("folder.jpg")).unwrap(), b"front");
+    }
+    // A name looked up before it exists, an open file, and a listing already read.
+    assert!(!mnt.join("Artist/Album/back.png").exists());
+    assert!(!mnt.join("Artist/Album/disc/Stereo/back.png").exists());
+    let mut open = std::fs::File::open(mnt.join("Artist/Album/folder.jpg")).unwrap();
+
+    std::fs::write(album.join("back.png"), b"back").unwrap();
+    std::fs::remove_file(album.join("folder.jpg")).unwrap();
+    std::fs::create_dir_all(src.join("Artist/Second")).unwrap();
+    std::os::unix::fs::symlink(
+        corpus().join("images/dsd-stereo-mch-2048.iso"),
+        src.join("Artist/Second/d.iso"),
+    )
+    .unwrap();
+    wait_for("the new art", || mnt.join("Artist/Album/back.png").exists());
+    wait_for("the new art in the area", || mnt.join("Artist/Album/disc/Stereo/back.png").exists());
+    assert_eq!(std::fs::read(mnt.join("Artist/Album/disc/Stereo/back.png")).unwrap(), b"back");
+    wait_for("the removal", || !mnt.join("Artist/Album/folder.jpg").exists());
+    assert!(!has("Artist/Album/disc/Stereo", "folder.jpg"));
+    assert!(std::fs::File::open(mnt.join("Artist/Album/folder.jpg")).is_err());
+    // The file opened before still reads.
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut open, &mut bytes).unwrap();
+    assert_eq!(bytes, b"front");
+    drop(open);
+    // A new image shows, with its audio.
+    wait_for("the new image", || has("Artist", "Second"));
+    assert!(ls("Artist/Second/d/Stereo").iter().any(|n| n.ends_with(".dsf")));
+    m.stop("TERM");
+}

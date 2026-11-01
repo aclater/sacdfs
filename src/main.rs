@@ -229,12 +229,12 @@ fn run(args: Args) -> io::Result<()> {
         samples_per_frame: rate.samples_per_frame() as u32,
     };
     let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
-    let tree = Arc::new(
-        Tree::with_options(root, Tuning::default(), output)
-            .with_flatten(args.flatten)
-            .with_pcm(&pcm)
-            .excluding(&mountpoint),
-    );
+    let tree = Tree::with_options(root, Tuning::default(), output)
+        .with_flatten(args.flatten)
+        .with_pcm(&pcm)
+        .excluding(&mountpoint);
+    // A directory SOURCE is re-read when it changes (#101); a single image has no directory.
+    let tree = Arc::new(if source.is_dir() { tree.watching(&args.sidecars) } else { tree });
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;

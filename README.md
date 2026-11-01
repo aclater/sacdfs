@@ -168,7 +168,9 @@ MOUNTPOINT/
 - **Sidecar files** next to the images, `folder.jpg`, `cover.png`, an `Artwork/` or `Scans/`
   folder, `.m3u`/`.m3u8` playlists, are shown where they are in `SOURCE`, read-only and byte
   for byte, with their own size and times: players and file managers find the folder art,
-  and you can delete extracted copies without losing it. `--sidecars` sets which
+  and you can delete extracted copies without losing it. The images among them (folder art)
+  also show inside `Stereo/` and `Multichannel/`, as the same file, for servers that look
+  only beside the audio. `--sidecars` sets which
   ([user guide](docs/user-guide.md#sidecar-files-art-scans-playlists)). Hidden files are never
   passed, nor a link that points outside `SOURCE`.
 
@@ -221,8 +223,9 @@ How fast each one is, against the project's targets: [docs/performance.md](docs/
 - Linux only, and read-only; other systems read the files over SMB or NFS from
   [the container](docs/deployment.md).
 - DSF and WAV output only: no DSDIFF (DFF), no FLAC, no DoP, no 44.1/48 kHz or 16-bit PCM.
-- The directory tree is read once, at mount time: images added to or removed from `SOURCE`
-  later need a remount.
+- New or removed images and sidecar files show up without a remount, within a few seconds
+  (a folder is read again when its modification time in `SOURCE` changes). A new image
+  inside a folder that was a single image's chain under `--flatten` needs a remount.
 - A DSF file's header read decodes the track's first quarter second or so (a WAV file's
   decodes nothing); a program that reads every audio file (fingerprinting, loudness scans)
   converts every WAV file, so use `--format dsf` for those.

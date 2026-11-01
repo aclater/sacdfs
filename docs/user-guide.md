@@ -208,6 +208,15 @@ player, once as the extract and once as sacdfs's file.
 **Where they appear.**
 - Next to the image's folder: `SOURCE/Artist/Album/folder.jpg` is
   `MOUNTPOINT/Artist/Album/folder.jpg`, beside `MOUNTPOINT/Artist/Album/disc/`.
+- **Folder art is also inside each area folder** (#95): the images among the sidecars
+  (`jpg`, `jpeg`, `png`, `webp`; not playlists, scans folders or other files) also show in
+  `Stereo/` and `Multichannel/` of every image in the folder, after the tracks, so that
+  Lyrion Music Server, MPD, MinimServer and Plex, which look for folder art only in the
+  audio file's own folder, find it. It is the same file with a second name: the same inode
+  number, so a server that walks both sees one image. No audio file changes, only the art is
+  added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
+  is not shown in either place, and `none` shows no art at all. A name that a track file
+  already has gets ` (2)`.
 - With `--flatten`, the sidecar files of every folder of a collapsed chain show in the folder
   that is kept, next to `Stereo` and `Multichannel`, outermost folder first. A name that is
   already taken (two `folder.jpg` in the chain, or a file named `Stereo`) gets ` (2)`, as
@@ -231,10 +240,16 @@ through a linked folder, and folder links are not followed at all. Every sidecar
 folder at a time without following links, so nothing changed in `SOURCE` after the mount can
 lead sacdfs outside it.
 
-**Changes.** The tree, sidecar files included, is read at mount time; files added later
-appear after a remount. A sidecar file whose size or modification time changed since its
-folder was listed fails to open with "stale file handle" (its size, already shown, would not
-match its bytes) until the next mount, which shows the new file under the same inode number.
+**Changes.** New and removed sidecar files appear without a remount (#101). When a folder is
+listed or looked into, and its folder in `SOURCE` has a different modification time than at the
+last reading (checked at most every 2 seconds), sacdfs reads that folder again: new images,
+sidecar files and sidecar folders show, removed ones go. Entries that did not change keep
+their inode numbers. A file removed while a program has it open still reads for that program;
+new opens fail with "no such file". A sidecar file that was replaced shows its new size and
+time under the same inode number. While a sidecar is open for the first time after being
+replaced but before its folder was read again, the open fails with "stale file handle"
+(its size, already shown, would not match its bytes), and works once the folder is read
+again. Programs that cache listings see a change after the 2 seconds.
 
 **Cost.** Mounting reads only names, as before. The first listing of a folder looks at its
 sidecar files (one `stat` each, in parallel, as images are opened); nothing else reads them
@@ -382,10 +397,13 @@ Notes:
 
 ## Images that change, and damaged images
 
-- **New or removed images** appear or disappear only after a remount: the directory tree is
-  read once, at mount time. The same goes for sidecar files; one that changes while mounted
-  fails to open with "stale file handle" until the next mount
-  ([Sidecar files](#sidecar-files-art-scans-playlists)).
+- **New or removed images and sidecar files** appear or disappear within a few seconds, with
+  no remount: a folder is read again when its modification time in `SOURCE` changes
+  ([Sidecar files](#sidecar-files-art-scans-playlists)). A subfolder that held no image
+  when its parent was last read is watched too, so an album copied in file by file shows
+  once its image is there. Not covered: a folder collapsed by `--flatten` that gains a
+  second image (it stays one image's folder until a remount), and an image file replaced
+  under the same name.
 - **An image file that changes while mounted** (another size, modification time or file) is
   opened again, at most a second after the change. An image whose size changed gives I/O
   errors until the next mount, since its directory still shows the old tracks.
@@ -418,7 +436,7 @@ Run in the foreground with logging to see what sacdfs does: `sacdfs -f -v SOURCE
   generic build; it converts with AVX2 where the CPU has it anyway.
 - **A directory or disc is missing:** files that are not SACD images, and folders with no
   `*.iso` file below them, are left out; a damaged image may be too. `-v` logs why. Images
-  added after mounting need a remount.
+  added after mounting appear without a remount.
 - **A track is missing:** a track the disc cannot play (empty, or running past the end of the
   image) is left out; `-v` logs the reason.
 - **`--pcm-cutoff wide needs --pcm-rate 176400 or 352800`:** 88.2 kHz cannot hold the wide
