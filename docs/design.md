@@ -1324,6 +1324,41 @@ the owner's NAS already used.
   grouped as MusicBrainz IDs, art, ReplayGain and other frame names. DFF text chunks
   (DIIN/DITI, DIIN/DIAR) are compared with the title and artist. *Why:* the user's decision is
   "delete, or move these tags first" (to a tag layer, #81), so the report says which.
+- **A track total is not a loss (#99).** `TRCK` of `n/N` against a served `n` (or `0n`) is
+  the same information when `N` is the track count of the served track's area; a different
+  number or a different total is still reported. *Why:* sacdfs knows the total from the TOC, so
+  nothing is lost, and 241 of 1,066 IDENTICAL extracts on a real library were reported as
+  losing it. Option 2 of the issue (serving `n/N`, a tag-byte change and output version bump)
+  was not taken: verify's rule fixes the report without changing any served byte.
+- **Images in subfolders (#98).** An extract belongs to the nearest folder above it that holds
+  images; when there is none, to every folder of images up to two levels below its own folder
+  (`Album/Album (SACD ISO)/disc.iso`), and all their tracks are candidates, as for several
+  images in one folder. *Why:* a common download layout; 17 of a real library's extracts that
+  another checker confirmed were NO-MATCH. Beside or above still wins, so an existing result
+  never changes. The limit of two keeps a file at the top of a big library from trying the whole
+  library; a match still needs the same audio, so a wider net cannot misreport. NO-MATCH now
+  says the subfolders were searched and points to `--map`.
+- **Pause-kept extracts (#93), `IDENTICAL-PAUSE`.** When no track has the extract's length but
+  one within 60 s of it does, the shorter stream (extract or served track) is looked for inside
+  the longer: a 1024-frame needle of non-idle audio from the short one is searched for in the
+  first `difference + needle` bytes of the long one (the offset can't exceed the difference),
+  each hit is confirmed by the SHA-256 of the long stream from there, and the audio outside
+  is measured by region. *Why this way:* the long stream is read once more at most (the search
+  stops early), no offset is guessed, and a hash decides, so a false hit cannot match. Silence
+  is the exact DSD idle pattern (0x69 and its rotations), or no 4096-sample window with an
+  imbalance of ones and zeros over 4 (two bits, -60.2 dB; one bit is -66.2 dB). *Why:* the
+  owner's survey of a real library (844 extra regions) found 538 non-silent regions reading
+  exactly the one- or two-bit values, noise-shaper residue and not content; exact idle patterns
+  alone would clear only a third of the files. A short last window is judged by the same
+  absolute imbalance. The cases: extract = track plus silent pauses (head, tail or both);
+  extract a prefix or inner part of the served track, where sacdfs serves only silence beyond
+  (older extractors drop the last 1/75 s frame); anything else extra is reported with its
+  length and level (NO-MATCH, "deleting would lose it" or "the extract lacks audio sacdfs
+  serves"). *Alternatives:* a new status vs. a reason on IDENTICAL: a status, so users and
+  filters see why it matched, and the exit status and reclaimable total count it. Serving
+  pauses (the issue's option 2) is not done here, and sacdfs keeps serving the TOC's length.
+  *Trade-off:* a track that is entirely idle pattern has no needle, so is not compared this
+  way; extras over 60 s are different recordings, not pauses (the longest seen is 24 s).
 - **Parallel and bounded.** `--threads N` workers (plain threads, not a rayon pool, so that a
   worker waiting for another's decode of the same track can't be handed that same work by
   work stealing) check files at once, with an engine of N DST decoder threads and a small

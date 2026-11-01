@@ -476,6 +476,19 @@ impl Audio {
         read: &std::sync::atomic::AtomicU64,
         sink: &mut dyn FnMut(&[u8]),
     ) -> Result<(), Problem> {
+        self.canonical_while(src, read, &mut |b| {
+            sink(b);
+            true
+        })
+    }
+
+    /// [`Audio::canonical`], stopping as soon as `sink` returns false.
+    pub fn canonical_while(
+        &self,
+        src: &mut dyn Source,
+        read: &std::sync::atomic::AtomicU64,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<(), Problem> {
         use std::sync::atomic::Ordering::Relaxed;
         let bpc = self.bytes_per_channel();
         let ch = u64::from(self.channels);
@@ -508,7 +521,9 @@ impl Audio {
                             *x &= tail_mask;
                         }
                     }
-                    sink(b);
+                    if !sink(b) {
+                        return Ok(());
+                    }
                 }
             }
             Data::Dsf { start, block, lsb_first } => {
@@ -576,7 +591,9 @@ impl Audio {
                             *x &= tail_mask;
                         }
                     }
-                    sink(&out);
+                    if !sink(&out) {
+                        return Ok(());
+                    }
                 }
             }
         }
