@@ -787,7 +787,7 @@ fn golden_output() {
 }
 
 /// The WAV output version (`sacdfs::ident::WAV_VERSION`) that [`GOLDEN`] was taken with.
-const GOLDEN_WAV_VERSION: u32 = 3;
+const GOLDEN_WAV_VERSION: u32 = 4;
 
 /// First 8 bytes of the SHA-256 of each configuration's output, in the order of the loops:
 /// 40 kHz at 88.2, 176.4, 352.8 kHz, then 30 kHz, then the wide filter at 176.4 and 352.8.

@@ -159,6 +159,18 @@ mp3tag), plus a `LIST`/`INFO` chunk (title, artist, album, track number, date, g
 software that reads only that. Both come after the audio. sacdfs 0.2 changed the TCOP of discs
 with a copyright text, so those files show a new modification time once.
 
+**Multichannel copies have their own album name.** The album tag of the files in a disc's
+`Multichannel` folder (DSF and WAV) ends in ` (Multichannel)`, so "Album" is the stereo copy
+and "Album (Multichannel)" the multichannel one. *Why:* in client tests, Navidrome, LMS, MPD
+and MinimServer all showed a disc's two copies as one album, either merged (each track up to
+four times) or as two albums with the same name. Stereo files are unchanged, and so is a
+disc with no album text. Only tags change: the audio is the same, and `sacdfs verify`
+compares audio only, so extracts of multichannel tracks still verify. `--no-multichannel-album-suffix`
+(`SACDFS_MC_ALBUM_SUFFIX=0` in the container) leaves the album as the disc has it. Switching
+it does not change the files' modification times, so restart the mount and have your player
+rescan. (When the tag layer, #81, can name a disc's album, that name will win and get no
+suffix, unless the tags file asks for one.)
+
 The filesystem is read-only, so tags cannot be edited in place; a tagger's changes belong in
 its own database, or in copies of the files.
 
