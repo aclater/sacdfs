@@ -265,12 +265,36 @@ impl Losses {
     pub fn between(extract: &[Frame], served: &[Frame]) -> Losses {
         let have: BTreeSet<(&str, &str)> =
             served.iter().map(|f| (f.key.as_str(), f.value.as_str())).collect();
+        let served_value = |key: &str| served.iter().find(|f| f.key == key).map(|f| f.value.as_str());
+        // ID3v2.3's date is TYER (mapped to TDRC) plus TDAT (DDMM): one date, as in v2.4.
+        let tdat = extract.iter().find(|f| f.key == "TDAT").map(|f| f.value.as_str());
         let mut l = Losses::default();
         for f in extract {
-            if have.contains(&(f.key.as_str(), f.value.as_str())) {
+            let value = f.value.as_str();
+            if value.is_empty() || have.contains(&(f.key.as_str(), value)) {
                 continue;
             }
-            l.add(&f.key);
+            // The same information written another way: not lost.
+            let same = match f.key.as_str() {
+                "TDRC" | "TDAT" => {
+                    let year = extract.iter().find(|g| g.key == "TDRC").map(|g| g.value.as_str());
+                    let date = match (year, tdat) {
+                        (Some(y), Some(d)) if d.len() == 4 && d.bytes().all(|b| b.is_ascii_digit()) => {
+                            format!("{y}-{}-{}", &d[2..4], &d[0..2])
+                        }
+                        (Some(y), _) => y.to_owned(),
+                        (None, _) => String::new(),
+                    };
+                    served_value("TDRC").is_some_and(|s| !date.is_empty() && s.starts_with(&date))
+                }
+                // A set of one disc, which sacdfs leaves out.
+                "TPOS" => value == "1/1" && served_value("TPOS").is_none(),
+                "TXXX:PERFORMER" => served_value("TPE1") == Some(value),
+                _ => false,
+            };
+            if !same {
+                l.add(&f.key);
+            }
         }
         l
     }
@@ -407,6 +431,19 @@ pub(crate) mod tests {
         assert!(l.musicbrainz && l.art && l.replaygain);
         assert_eq!(l.other.iter().collect::<Vec<_>>(), vec!["TCON"]);
         assert_eq!(Losses::parse(&l.render()), l);
+    }
+
+    #[test]
+    fn same_information_written_another_way_is_not_lost() {
+        let served = frames(&tag24(&[("TPE1", "A"), ("TDRC", "2013-04-23")], &[]));
+        let ext = frames(&tag24(
+            &[("TYER", "2013"), ("TDAT", "2304"), ("TPOS", "1/1"), ("TXXX:PERFORMER", "A"), ("TSRC", "")],
+            &[],
+        ));
+        assert!(Losses::between(&ext, &served).is_empty(), "{:?}", Losses::between(&ext, &served));
+        let ext = frames(&tag24(&[("TYER", "2014"), ("TPOS", "1/2"), ("TXXX:PERFORMER", "B")], &[]));
+        let l = Losses::between(&ext, &served);
+        assert_eq!(l.other.into_iter().collect::<Vec<_>>(), vec!["TDRC", "TPOS", "TXXX:PERFORMER"]);
     }
 
     #[test]
