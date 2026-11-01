@@ -33,9 +33,9 @@ use std::fs;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use rayon::prelude::*;
 use scarletbook::Slot;
@@ -94,6 +94,10 @@ pub const STEREO: &str = "Stereo";
 /// Name of the directory of the multichannel area.
 pub const MULTICHANNEL: &str = "Multichannel";
 
+/// How often a directory's source is looked at for changes, and so how long the kernel
+/// remembers the names of such a directory (#101).
+pub const REFRESH: Duration = Duration::from_secs(2);
+
 /// Most nested source directories followed.
 const MAX_DEPTH: usize = 64;
 
@@ -116,6 +120,9 @@ struct Scan<'a> {
     sidecars: &'a Sidecars,
     /// MOUNTPOINT, when it is inside SOURCE: nothing in it is a sidecar.
     exclude: Option<&'a Path>,
+    /// Re-reading a directory of a live mount (#101): never go into `exclude`, which would
+    /// read through sacdfs's own mount.
+    skip_exclude: bool,
 }
 
 impl SourceDir {
@@ -140,8 +147,8 @@ impl SourceDir {
                 sidecars: Vec::new(),
             });
         }
-        let scan = Scan { sidecars, exclude };
-        Ok(Self::scan_dir(source, 0, &scan, false)?.unwrap_or(SourceDir {
+        let scan = Scan { sidecars, exclude, skip_exclude: false };
+        Ok(Self::scan_dir(source, 0, &scan, false, None)?.unwrap_or(SourceDir {
             path: source.to_owned(),
             dirs: Vec::new(),
             images: Vec::new(),
@@ -156,6 +163,7 @@ impl SourceDir {
         depth: usize,
         scan: &Scan<'_>,
         everything: bool,
+        known: Option<&SourceDir>,
     ) -> io::Result<Option<SourceDir>> {
         let mut dirs = Vec::new();
         let mut images = Vec::new();
@@ -168,11 +176,27 @@ impl SourceDir {
             let path = e.path();
             let name = e.file_name();
             if ft.is_dir() {
-                if depth + 1 >= MAX_DEPTH {
+                if depth + 1 >= MAX_DEPTH
+                    || (scan.skip_exclude && scan.exclude.is_some_and(|m| path.starts_with(m)))
+                {
                     continue;
                 }
+                // A directory already known keeps what was read of it (it re-reads itself
+                // when it is listed).
+                if let Some(k) = known {
+                    if let Some((_, sub)) = k.dirs.iter().find(|(n, _)| *n == name) {
+                        dirs.push((name, sub.clone()));
+                        continue;
+                    }
+                    if let Some(f) =
+                        k.sidecars.iter().find(|s| s.name == name && matches!(s.kind, SidecarKind::Folder(_)))
+                    {
+                        sidecars.push(f.clone());
+                        continue;
+                    }
+                }
                 let folder = note && !sidecar::hidden(&name) && (everything || scan.sidecars.folder(&name));
-                match Self::scan_dir(&path, depth + 1, scan, folder) {
+                match Self::scan_dir(&path, depth + 1, scan, folder, None) {
                     Ok(Some(sub)) if sub.holds_images() => dirs.push((name, sub)),
                     Ok(Some(sub)) if folder => {
                         sidecars.push(Sidecar { name, path, kind: SidecarKind::Folder(sub.sidecars) });
@@ -195,6 +219,64 @@ impl SourceDir {
             return Ok(None);
         }
         Ok(Some(SourceDir { path: dir.to_owned(), dirs, images, sidecars }))
+    }
+
+    /// This directory read again (#101): its images and sidecar files as they are now; the
+    /// subdirectories already known are kept as they were read, new ones are scanned.
+    fn reread(&self, sidecars: &Sidecars, exclude: Option<&Path>) -> io::Result<SourceDir> {
+        let scan = Scan { sidecars, exclude, skip_exclude: true };
+        let depth = 1;
+        let mut out = Self::scan_dir(&self.path, depth, &scan, false, Some(self))?.unwrap_or(SourceDir {
+            path: self.path.clone(),
+            dirs: Vec::new(),
+            images: Vec::new(),
+            sidecars: Vec::new(),
+        });
+        out.path.clone_from(&self.path);
+        Ok(out)
+    }
+
+    /// What to watch for this directory's listing to change: its own modification time, and
+    /// those of its subdirectories that are not shown (they hold no image yet: one that
+    /// gains one changes nothing in this directory).
+    fn watch(&self, exclude: Option<&Path>) -> Vec<(PathBuf, Option<SystemTime>)> {
+        let mut out = vec![(self.path.clone(), mtime_of(&self.path))];
+        let Ok(rd) = fs::read_dir(&self.path) else { return out };
+        for e in rd.filter_map(Result::ok) {
+            let path = e.path();
+            if !e.file_type().is_ok_and(|t| t.is_dir()) || exclude.is_some_and(|m| path.starts_with(m)) {
+                continue;
+            }
+            let name = e.file_name();
+            let shown = self.dirs.iter().any(|(n, _)| *n == name)
+                || self.sidecars.iter().any(|s| s.name == name && matches!(s.kind, SidecarKind::Folder(_)));
+            if !shown {
+                let m = mtime_of(&path);
+                out.push((path, m));
+            }
+        }
+        out
+    }
+
+    /// [`SourceDir::reread`], also for each directory of a collapsed chain.
+    fn reread_chain(&self, sidecars: &Sidecars, exclude: Option<&Path>) -> io::Result<SourceDir> {
+        let mut out = self.reread(sidecars, exclude)?;
+        if let ([_], []) = (out.dirs.as_slice(), out.images.as_slice()) {
+            if let Some((name, sub)) = out.dirs.pop() {
+                let sub = sub.reread_chain(sidecars, exclude).unwrap_or(sub);
+                out.dirs.push((name, sub));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The directories of a collapsed chain, outermost first.
+    fn chain_dirs(&self) -> Vec<PathBuf> {
+        let mut out = vec![self.path.clone()];
+        if let ([(_, sub)], []) = (self.dirs.as_slice(), self.images.as_slice()) {
+            out.extend(sub.chain_dirs());
+        }
+        out
     }
 
     /// Whether it holds an image, directly or below.
@@ -230,8 +312,22 @@ impl SourceDir {
     }
 }
 
+/// The modification time of the directory `path`, if it can be read.
+fn mtime_of(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
 fn is_iso(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("iso"))
+}
+
+/// Whether a directory is re-read when its source changes (on a watching tree).
+fn live(d: &Dir) -> bool {
+    match d.kind {
+        DirKind::Source(_) | DirKind::Flat(..) | DirKind::Folder(..) => true,
+        DirKind::Area(..) => d.art.is_some(),
+        DirKind::Image(_) => false,
+    }
 }
 
 /// What a directory shows.
@@ -244,9 +340,9 @@ pub enum DirKind {
     /// A chain of source directories collapsed onto its one image (`--flatten`): shows the
     /// image's areas, like [`DirKind::Image`], once the image is opened on first use, and the
     /// sidecars of the chain's directories.
-    Flat(PathBuf, Vec<Sidecar>),
+    Flat(PathBuf, SourceDir),
     /// A sidecar folder passed through (`Artwork/`): shows its content.
-    Folder(Vec<Sidecar>),
+    Folder(PathBuf, Vec<Sidecar>),
     /// The directory of one area: one file per track.
     Area(Arc<Disc>, usize),
 }
@@ -271,7 +367,135 @@ pub struct Dir {
     pub mtime: SystemTime,
     /// Inode number of the parent directory (the root's is itself).
     pub parent: u64,
-    children: Mutex<Option<Arc<Vec<Entry>>>>,
+    /// Folder art shown in an area (#95).
+    art: Option<Arc<Art>>,
+    /// The modification time of the source directory when it was last re-read, in
+    /// nanoseconds since the epoch; 0 until then (`mtime` is shown).
+    shown: AtomicU64,
+    children: Mutex<Option<Box<Listing>>>,
+}
+
+impl Dir {
+    fn new(kind: DirKind, mtime: SystemTime, parent: u64) -> Dir {
+        Dir { kind, mtime, parent, art: None, shown: AtomicU64::new(0), children: Mutex::new(None) }
+    }
+
+    fn with_art(mut self, art: Option<Arc<Art>>) -> Dir {
+        self.art = art;
+        self
+    }
+}
+
+/// What a directory listing was made from, to tell when it is out of date (#101).
+#[derive(Debug)]
+struct Listing {
+    entries: Arc<Vec<Entry>>,
+    /// Source directories the listing depends on, with their modification time then.
+    watch: Vec<(PathBuf, Option<SystemTime>)>,
+    /// When `watch` was last compared.
+    checked: Instant,
+    /// What was read of the source directory then, for the next re-read.
+    snapshot: Option<Snapshot>,
+    /// The version of the folder art listed in an area.
+    art_version: u64,
+    /// With `--flatten`: how many leading entries are the image's own (kept on a re-read).
+    head: usize,
+}
+
+#[derive(Debug)]
+enum Snapshot {
+    /// A source directory, or the top of a collapsed chain.
+    Dir(SourceDir),
+    /// The content of a sidecar folder.
+    Folder(Vec<Sidecar>),
+}
+
+/// What a listing being made depends on.
+#[derive(Default)]
+struct Cx {
+    watch: Vec<(PathBuf, Option<SystemTime>)>,
+    snapshot: Option<Snapshot>,
+    art_version: u64,
+    head: usize,
+}
+
+/// The folder art of the directory (or chain of directories) of an image: the image files
+/// among its sidecars, shown inside each area of the image as well (#95). The directory is
+/// re-read when its modification time changes, like a listing (#101); `version` counts
+/// the changes, so that an area knows when its listing is out of date.
+#[derive(Debug)]
+pub struct Art {
+    dirs: Vec<PathBuf>,
+    state: Mutex<ArtState>,
+}
+
+#[derive(Debug)]
+struct ArtState {
+    items: Arc<Vec<Sidecar>>,
+    watch: Vec<(PathBuf, Option<SystemTime>)>,
+    checked: Instant,
+    version: u64,
+}
+
+impl Art {
+    fn new(dirs: Vec<PathBuf>, items: Vec<Sidecar>) -> Arc<Art> {
+        let watch = dirs.iter().map(|d| (d.clone(), mtime_of(d))).collect();
+        Arc::new(Art {
+            dirs,
+            state: Mutex::new(ArtState {
+                items: Arc::new(items),
+                watch,
+                checked: Instant::now(),
+                version: 0,
+            }),
+        })
+    }
+
+    /// The art now, and its version. Compares modification times at most once per
+    /// `refresh`; `watching` is false for a mount that never re-reads.
+    fn current(&self, tree: &Tree) -> (Arc<Vec<Sidecar>>, u64) {
+        let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if tree.watching && st.checked.elapsed() >= tree.refresh {
+            st.checked = Instant::now();
+            if st.watch.iter().any(|(p, m)| mtime_of(p) != *m) {
+                let watch: Vec<_> = self.dirs.iter().map(|d| (d.clone(), mtime_of(d))).collect();
+                let exclude = tree.exclude_abs();
+                let mut items = Vec::new();
+                for d in &self.dirs {
+                    if exclude.as_deref().is_some_and(|m| d.starts_with(m)) {
+                        continue;
+                    }
+                    let Ok(rd) = fs::read_dir(d) else { continue };
+                    let mut found: Vec<Sidecar> = rd
+                        .filter_map(Result::ok)
+                        .filter_map(|e| {
+                            let ft = e.file_type().ok()?;
+                            let name = e.file_name();
+                            let kind = if ft.is_file() {
+                                SidecarKind::File
+                            } else if ft.is_symlink() {
+                                SidecarKind::Link
+                            } else {
+                                return None;
+                            };
+                            (!sidecar::hidden(&name) && tree.sel.file(&name)).then(|| Sidecar {
+                                path: e.path(),
+                                name,
+                                kind,
+                            })
+                        })
+                        .filter(Sidecar::is_art)
+                        .collect();
+                    found.sort_by(|a, b| a.name.cmp(&b.name));
+                    items.extend(found);
+                }
+                st.items = Arc::new(items);
+                st.watch = watch;
+                st.version += 1;
+            }
+        }
+        (st.items.clone(), st.version)
+    }
 }
 
 /// A node of the tree.
@@ -314,6 +538,12 @@ pub struct Tree {
     root_fd: OnceLock<Option<OwnedFd>>,
     /// MOUNTPOINT relative to SOURCE, when it is inside it: no sidecar is served from there.
     exclude: Option<PathBuf>,
+    /// Whether directories are re-read when their source changes (#101).
+    watching: bool,
+    /// The sidecars selection, for re-reading.
+    sel: Sidecars,
+    /// How often a directory's source is looked at for changes.
+    refresh: Duration,
 }
 
 impl Tree {
@@ -333,8 +563,7 @@ impl Tree {
         // Hashes every name walked once (no file is opened), so that numbers made later can
         // be found again from their key.
         let ids = Ids::new(&root);
-        let node =
-            Node::Dir(Dir { kind: DirKind::Source(root), mtime, parent: ROOT, children: Mutex::new(None) });
+        let node = Node::Dir(Dir::new(DirKind::Source(root), mtime, ROOT));
         let wav_flavour =
             ident::wav_flavour(ident::pcm_flavour(&PcmConfig::default()), output.samples_per_frame);
         Tree {
@@ -348,7 +577,46 @@ impl Tree {
             wav_mtime_offset: 0,
             root_fd: OnceLock::new(),
             exclude: None,
+            watching: false,
+            sel: Sidecars::none(),
+            refresh: REFRESH,
         }
+    }
+
+    /// The same tree, re-reading a directory when its source directory changed since it
+    /// was last read (#101): new and removed images and sidecar files (those `sel` passes)
+    /// show up without a remount. Not for a single image file as SOURCE.
+    #[must_use]
+    pub fn watching(mut self, sel: &Sidecars) -> Tree {
+        self.watching = true;
+        self.sel = sel.clone();
+        self
+    }
+
+    /// The same tree, looking at a source directory for changes at most once per `every`
+    /// (default [`REFRESH`]).
+    #[must_use]
+    pub fn with_refresh(mut self, every: Duration) -> Tree {
+        self.refresh = every;
+        self
+    }
+
+    /// How long the kernel may keep what it was told about a directory that is re-read
+    /// (a name that is there or not): [`REFRESH`], else `None`.
+    pub fn live_ttl(&self, parent: u64) -> Option<Duration> {
+        self.is_live(parent).then_some(self.refresh.max(Duration::from_secs(1)))
+    }
+
+    /// Whether directory `ino` is re-read when its source changes.
+    pub fn is_live(&self, ino: u64) -> bool {
+        self.watching
+            && matches!(self.nodes.read().unwrap_or_else(|p| p.into_inner()).get(&ino).map(|n| &**n),
+            Some(Node::Dir(d)) if live(d))
+    }
+
+    /// MOUNTPOINT as a path, when it is inside SOURCE.
+    fn exclude_abs(&self) -> Option<PathBuf> {
+        self.exclude.as_ref().map(|r| self.source().join(r))
     }
 
     /// The same tree, serving no sidecar from `mountpoint` if it is inside SOURCE: a link
@@ -490,17 +758,59 @@ impl Tree {
         }
     }
 
-    /// The entries of directory `ino`, made on first use. `None` if it is not a directory.
+    /// The entries of directory `ino`, made on first use, and again when its source changed
+    /// since (on a [watching](Tree::watching) tree). `None` if it is not a directory.
     pub fn children(&self, ino: u64) -> Option<Arc<Vec<Entry>>> {
         let node = self.get(ino)?;
         let Node::Dir(dir) = &*node else { return None };
         let mut guard = dir.children.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(c) = &*guard {
-            return Some(c.clone());
+        let mut prev = guard.take();
+        if let Some(l) = prev.as_mut() {
+            if !self.stale(dir, l) {
+                let entries = l.entries.clone();
+                *guard = prev;
+                return Some(entries);
+            }
         }
-        let entries = Arc::new(self.load(dir, ino));
-        *guard = Some(entries.clone());
+        let mut cx = Cx::default();
+        let entries = Arc::new(self.load(dir, ino, prev.as_deref(), &mut cx));
+        if prev.is_some() {
+            // What the directory shows as its modification time follows its source.
+            let newest = cx.watch.iter().filter_map(|(_, m)| *m).max();
+            if let Some(n) = newest.and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok()) {
+                dir.shown.store(u64::try_from(n.as_nanos()).unwrap_or(0).max(1), Ordering::Relaxed);
+            }
+        }
+        *guard = Some(Box::new(Listing {
+            entries: entries.clone(),
+            watch: cx.watch,
+            checked: Instant::now(),
+            snapshot: cx.snapshot.or_else(|| prev.and_then(|p| p.snapshot)),
+            art_version: cx.art_version,
+            head: cx.head,
+        }));
         Some(entries)
+    }
+
+    /// Whether `l`, the listing of `dir`, is out of date: its source changed. Looks at the
+    /// source at most once per refresh interval.
+    fn stale(&self, dir: &Dir, l: &mut Listing) -> bool {
+        if !self.watching || !live(dir) {
+            return false;
+        }
+        if let (DirKind::Area(..), Some(art)) = (&dir.kind, &dir.art) {
+            return art.current(self).1 != l.art_version;
+        }
+        if l.checked.elapsed() < self.refresh {
+            return false;
+        }
+        l.checked = Instant::now();
+        l.watch.iter().any(|(p, m)| mtime_of(p) != *m)
+    }
+
+    /// Whether node `ino` exists already.
+    fn exists(&self, ino: u64) -> bool {
+        self.nodes.read().unwrap_or_else(|p| p.into_inner()).contains_key(&ino)
     }
 
     /// The parent directory of `ino` (the root for files and unknown nodes; files are
@@ -528,7 +838,10 @@ impl Tree {
     /// sidecar file, its source file's.
     pub fn mtime(&self, node: &Node) -> SystemTime {
         match node {
-            Node::Dir(d) => d.mtime,
+            Node::Dir(d) => match d.shown.load(Ordering::Relaxed) {
+                0 => d.mtime,
+                n => SystemTime::UNIX_EPOCH + Duration::from_nanos(n),
+            },
             Node::File(f) => ident::mtime(f, self.wav_mtime_offset),
             Node::Sidecar(s) => s.meta.mtime,
         }
@@ -553,62 +866,124 @@ impl Tree {
         Some(ino)
     }
 
-    fn load(&self, dir: &Dir, parent: u64) -> Vec<Entry> {
+    /// Makes the entries of `dir` (numbered `parent`), recording in `cx` what they depend on.
+    /// `prev` is the listing it replaces, if any: what is already there is kept, so that
+    /// unchanged entries keep their nodes and numbers.
+    fn load(&self, dir: &Dir, parent: u64, prev: Option<&Listing>, cx: &mut Cx) -> Vec<Entry> {
         let mut dedup = Deduper::with_reserved([".", ".."]);
         let mut out = Vec::new();
+        let exclude = self.exclude_abs();
+        // Only a watching tree re-reads, and only on a later listing.
+        let reread = self.watching && prev.is_some();
         match &dir.kind {
-            DirKind::Source(src) => {
+            DirKind::Source(first) => {
+                let known = match prev.and_then(|p| p.snapshot.as_ref()) {
+                    Some(Snapshot::Dir(d)) => d,
+                    _ => first,
+                };
+                let fresh;
+                let src = if reread {
+                    match known.reread(&self.sel, exclude.as_deref()) {
+                        Ok(n) => {
+                            fresh = n;
+                            &fresh
+                        }
+                        Err(e) => {
+                            log::warn!("{}: {e}: not re-read", known.path.display());
+                            known
+                        }
+                    }
+                } else {
+                    known
+                };
+                if self.watching {
+                    cx.watch = src.watch(exclude.as_deref());
+                    if reread {
+                        cx.snapshot = Some(Snapshot::Dir(src.clone()));
+                    }
+                }
+                let art =
+                    (!src.images.is_empty()).then(|| self.art_of(vec![src.path.clone()], &src.sidecars));
                 for (name, sub) in &src.dirs {
-                    let mtime = fs::metadata(&sub.path).and_then(|m| m.modified()).unwrap_or(dir.mtime);
                     // The top-level directories (usually artists) are never collapsed.
                     let flat = if self.flatten && parent != ROOT { sub.single_image() } else { None };
                     // A collapsed directory is the image's directory: it has its number.
-                    let (kind, ino) = match flat {
-                        Some(image) => {
-                            (DirKind::Flat(image.to_owned(), sub.chain_sidecars()), self.ids.image(image))
-                        }
-                        None => (DirKind::Source(sub.clone()), self.ids.dir(&sub.path)),
+                    let ino = match flat {
+                        Some(image) => self.ids.image(image),
+                        None => self.ids.dir(&sub.path),
                     };
-                    if !self.add(ino, Node::Dir(Dir { kind, mtime, parent, children: Mutex::new(None) })) {
-                        continue;
+                    if !self.exists(ino) {
+                        let mtime = mtime_of(&sub.path).unwrap_or(dir.mtime);
+                        let kind = match flat {
+                            Some(image) => DirKind::Flat(image.to_owned(), sub.clone()),
+                            None => DirKind::Source(sub.clone()),
+                        };
+                        if !self.add(ino, Node::Dir(Dir::new(kind, mtime, parent))) {
+                            continue;
+                        }
                     }
                     out.push(Entry { name: dedup.unique(name, false), ino, is_dir: true });
                 }
                 // Opening an image reads its master and area TOCs: a few small reads,
                 // worth doing in parallel on a slow (network) source.
-                let opened: Vec<(PathBuf, Option<Disc>)> = src
-                    .images
+                let new: Vec<&PathBuf> =
+                    src.images.iter().filter(|p| !self.exists(self.ids.image(p))).collect();
+                let mut opened: HashMap<&PathBuf, Disc> = new
                     .par_iter()
-                    .map(|p| {
+                    .filter_map(|&p| {
                         let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
                         match Disc::open(p, id, self.tuning) {
-                            Ok(d) => (p.clone(), Some(d)),
+                            Ok(d) => Some((p, d)),
                             Err(e) => {
                                 log::info!("{}: not shown: {e}", p.display());
-                                (p.clone(), None)
+                                None
                             }
                         }
                     })
                     .collect();
-                for (path, disc) in opened {
-                    let Some(disc) = disc else { continue };
-                    let stem = path.file_stem().map_or_else(|| OsString::from("disc"), OsStr::to_owned);
-                    let mtime = disc.mtime;
-                    let ino = self.ids.image(&path);
-                    let dir = Dir {
-                        kind: DirKind::Image(Arc::new(disc)),
-                        mtime,
-                        parent,
-                        children: Mutex::new(None),
-                    };
-                    if !self.add(ino, Node::Dir(dir)) {
-                        continue;
+                for path in &src.images {
+                    let ino = self.ids.image(path);
+                    if !self.exists(ino) {
+                        let Some(disc) = opened.remove(path) else { continue };
+                        let mtime = disc.mtime;
+                        let image =
+                            Dir::new(DirKind::Image(Arc::new(disc)), mtime, parent).with_art(art.clone());
+                        if !self.add(ino, Node::Dir(image)) {
+                            continue;
+                        }
                     }
+                    let stem = path.file_stem().map_or_else(|| OsString::from("disc"), OsStr::to_owned);
                     out.push(Entry { name: dedup.unique(&stem, false), ino, is_dir: true });
                 }
                 self.list_sidecars(&src.sidecars, parent, &mut dedup, &mut out);
             }
-            DirKind::Folder(list) => self.list_sidecars(list, parent, &mut dedup, &mut out),
+            DirKind::Folder(path, first) => {
+                let known = match prev.and_then(|p| p.snapshot.as_ref()) {
+                    Some(Snapshot::Folder(l)) => l,
+                    _ => first,
+                };
+                let fresh;
+                let list = if reread {
+                    let scan = Scan { sidecars: &self.sel, exclude: exclude.as_deref(), skip_exclude: true };
+                    match SourceDir::scan_dir(path, 1, &scan, true, None) {
+                        Ok(n) => {
+                            fresh = n.map(|d| d.sidecars).unwrap_or_default();
+                            cx.snapshot = Some(Snapshot::Folder(fresh.clone()));
+                            &fresh
+                        }
+                        Err(e) => {
+                            log::warn!("{}: {e}: not re-read", path.display());
+                            known
+                        }
+                    }
+                } else {
+                    known
+                };
+                if self.watching {
+                    cx.watch = vec![(path.clone(), mtime_of(path))];
+                }
+                self.list_sidecars(list, parent, &mut dedup, &mut out);
+            }
             DirKind::Image(disc) => {
                 for (i, area) in disc.toc.areas.iter().enumerate() {
                     let name = match area.slot {
@@ -616,39 +991,76 @@ impl Tree {
                         Slot::Multichannel => MULTICHANNEL,
                     };
                     let ino = ident::area(parent, area.slot);
-                    let dir = Dir {
-                        kind: DirKind::Area(disc.clone(), i),
-                        mtime: disc.mtime,
-                        parent,
-                        children: Mutex::new(None),
-                    };
-                    if !self.add(ino, Node::Dir(dir)) {
+                    let area_dir = Dir::new(DirKind::Area(disc.clone(), i), disc.mtime, parent)
+                        .with_art(dir.art.clone());
+                    if !self.add(ino, Node::Dir(area_dir)) {
                         log::info!("{}: second {} area: not shown", disc.path.display(), area.slot);
                         continue;
                     }
                     out.push(Entry { name: dedup.unique(OsStr::new(name), false), ino, is_dir: true });
                 }
             }
-            DirKind::Flat(path, sidecars) => {
-                let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
-                match Disc::open(path, id, self.tuning) {
-                    // Listed exactly as the image's own directory would be, then the
-                    // sidecars of the chain.
-                    Ok(disc) => {
-                        let image = Dir {
-                            kind: DirKind::Image(Arc::new(disc)),
-                            mtime: dir.mtime,
-                            parent: dir.parent,
-                            children: Mutex::new(None),
-                        };
-                        out = self.load(&image, parent);
+            DirKind::Flat(image, top) => {
+                let known = match prev.and_then(|p| p.snapshot.as_ref()) {
+                    Some(Snapshot::Dir(d)) => d,
+                    _ => top,
+                };
+                let fresh;
+                let chain = if reread {
+                    match known.reread_chain(&self.sel, exclude.as_deref()) {
+                        // Only the sidecars follow: what the folder is (one image) was
+                        // decided when its parent was listed.
+                        Ok(n) if n.single_image() == Some(image.as_path()) => {
+                            fresh = n;
+                            cx.snapshot = Some(Snapshot::Dir(fresh.clone()));
+                            &fresh
+                        }
+                        Ok(_) => {
+                            log::info!("{}: changed in a way that needs a remount", image.display());
+                            known
+                        }
+                        Err(e) => {
+                            log::warn!("{}: {e}: not re-read", image.display());
+                            known
+                        }
+                    }
+                } else {
+                    known
+                };
+                if self.watching {
+                    cx.watch = chain.chain_dirs().into_iter().map(|d| (d.clone(), mtime_of(&d))).collect();
+                }
+                let sidecars = chain.chain_sidecars();
+                match prev {
+                    // The image's own entries are kept: its areas were made once.
+                    Some(p) if p.head > 0 => {
+                        out = p.entries[..p.head].to_vec();
                         for e in &out {
                             dedup.unique(&e.name, false);
                         }
+                        cx.head = p.head;
                     }
-                    Err(e) => log::info!("{}: not shown: {e}", path.display()),
+                    _ => {
+                        let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
+                        match Disc::open(image, id, self.tuning) {
+                            // Listed exactly as the image's own directory would be, then the
+                            // sidecars of the chain.
+                            Ok(disc) => {
+                                let mtime = dir.mtime;
+                                let art = self.art_of(chain.chain_dirs(), &sidecars);
+                                let img = Dir::new(DirKind::Image(Arc::new(disc)), mtime, dir.parent)
+                                    .with_art(Some(art));
+                                out = self.load(&img, parent, None, &mut Cx::default());
+                                for e in &out {
+                                    dedup.unique(&e.name, false);
+                                }
+                                cx.head = out.len();
+                            }
+                            Err(e) => log::info!("{}: not shown: {e}", image.display()),
+                        }
+                    }
                 }
-                self.list_sidecars(sidecars, parent, &mut dedup, &mut out);
+                self.list_sidecars(&sidecars, parent, &mut dedup, &mut out);
             }
             DirKind::Area(disc, i) => {
                 let Some(area) = disc.toc.areas.get(*i) else { return out };
@@ -679,14 +1091,27 @@ impl Tree {
                         out.push(Entry { name: dedup.unique(OsStr::new(&name), true), ino, is_dir: false });
                     }
                 }
+                // The folder's art, as the same files as in the folder (#95), after the tracks.
+                if let Some(art) = &dir.art {
+                    let (items, version) = art.current(self);
+                    cx.art_version = version;
+                    self.list_sidecars(&items, parent, &mut dedup, &mut out);
+                }
             }
         }
         out
     }
 
+    /// The art of the directories `dirs`, from their sidecars `list`.
+    fn art_of(&self, dirs: Vec<PathBuf>, list: &[Sidecar]) -> Arc<Art> {
+        Art::new(dirs, list.iter().filter(|s| s.is_art()).cloned().collect())
+    }
+
     /// Lists the sidecars `list` in directory `parent`, after its other entries: each is
     /// looked at now (in parallel, as images are opened) and shown if it is a regular file
-    /// (or folder) where SOURCE allows; numbered by its source path.
+    /// (or folder) where SOURCE allows; numbered by its source path. A file that is there
+    /// already keeps its node if its size and time are the same, else gets a new one under
+    /// the same number (a new generation).
     fn list_sidecars(&self, list: &[Sidecar], parent: u64, dedup: &mut Deduper, out: &mut Vec<Entry>) {
         if list.is_empty() {
             return;
@@ -699,12 +1124,7 @@ impl Tree {
                 let rel = sc.path.strip_prefix(src).ok()?;
                 let node = match &sc.kind {
                     SidecarKind::Folder(inner) => sidecar::stat_dir(root, rel).map(|m| {
-                        Node::Dir(Dir {
-                            kind: DirKind::Folder(inner.clone()),
-                            mtime: m.mtime,
-                            parent,
-                            children: Mutex::new(None),
-                        })
+                        Node::Dir(Dir::new(DirKind::Folder(sc.path.clone(), inner.clone()), m.mtime, parent))
                     }),
                     SidecarKind::File | SidecarKind::Link => {
                         let link = matches!(sc.kind, SidecarKind::Link);
@@ -735,11 +1155,30 @@ impl Tree {
             let Some(node) = node else { continue };
             let is_dir = matches!(node, Node::Dir(_));
             let ino = if is_dir { self.ids.dir(&sc.path) } else { self.ids.sidecar(&sc.path) };
-            if !self.add(ino, node) {
+            if !self.publish(ino, node) {
                 continue;
             }
             out.push(Entry { name: dedup.unique(&sc.name, !is_dir), ino, is_dir });
         }
+    }
+
+    /// Makes `node`, a sidecar file or folder, the node `ino` (see [`Tree::list_sidecars`]);
+    /// `false` if that number is taken by something else.
+    fn publish(&self, ino: u64, node: Node) -> bool {
+        let mut nodes = self.nodes.write().unwrap_or_else(|p| p.into_inner());
+        match (nodes.get(&ino).map(|n| &**n), &node) {
+            (None, _) => {}
+            // A folder lists itself.
+            (Some(Node::Dir(_)), Node::Dir(_)) => return true,
+            (Some(Node::Sidecar(a)), Node::Sidecar(b)) => {
+                if a.target == b.target && a.meta.size == b.meta.size && a.meta.mtime == b.meta.mtime {
+                    return true;
+                }
+            }
+            _ => return false,
+        }
+        nodes.insert(ino, Arc::new(node));
+        true
     }
 
     /// Every track file in the tree, with its path, loading every directory (for tests and
@@ -1253,23 +1692,29 @@ mod tests {
         ]);
         for flatten in [false, true] {
             let all = numbered(&tree_sc(dir.path(), flatten));
-            let mut sidecars = 0;
+            let mut sidecars = std::collections::HashSet::new();
             for (path, ino) in &all {
                 // A fresh tree, as after a restart: only the number is known.
                 let t = tree_sc(dir.path(), flatten);
                 let node = t.get(*ino).unwrap_or_else(|| panic!("{path} ({ino:#x}) not found"));
                 assert_eq!(t.resolve(Path::new(path)), Some(*ino), "{path}");
                 if matches!(&*node, Node::Sidecar(_)) {
-                    sidecars += 1;
+                    sidecars.insert(*ino);
                     assert!(!path.ends_with(".dsf") && !path.ends_with(".wav"));
                 }
             }
-            assert_eq!(sidecars, 5, "flatten {flatten}");
-            // Every number distinct.
-            let mut inos: Vec<u64> = all.iter().map(|(_, i)| *i).collect();
-            inos.sort_unstable();
-            inos.dedup();
-            assert_eq!(inos.len(), all.len());
+            assert_eq!(sidecars.len(), 5, "flatten {flatten}");
+            // Every number distinct, but for folder art, which is also in the areas (#95).
+            let mut by_ino: HashMap<u64, Vec<&String>> = HashMap::new();
+            for (p, i) in &all {
+                by_ino.entry(*i).or_default().push(p);
+            }
+            for (i, ps) in by_ino {
+                assert!(
+                    ps.len() == 1 || ps.iter().all(|p| p.ends_with(".jpg") || p.ends_with(".webp")),
+                    "{i:#x} {ps:?}"
+                );
+            }
         }
     }
 
@@ -1324,5 +1769,192 @@ mod tests {
         let s = SourceDir::scan_with(&root, &Sidecars::standard(), Some(&root.join("mnt"))).unwrap();
         let mnt = &s.dirs.iter().find(|(n, _)| n == "mnt").unwrap().1;
         assert!(mnt.sidecars.is_empty());
+    }
+
+    fn ino_of(t: &Tree, path: &str) -> u64 {
+        t.resolve(Path::new(path)).unwrap_or_else(|| panic!("{path} not found"))
+    }
+
+    fn watching(dir: &Path, sel: &str, flatten: bool) -> Tree {
+        let sel = Sidecars::parse(sel).unwrap();
+        let root = SourceDir::scan_with(dir, &sel, None).unwrap();
+        Tree::new(root).with_flatten(flatten).watching(&sel).with_refresh(Duration::ZERO)
+    }
+
+    #[test]
+    fn folder_art_is_also_in_the_areas() {
+        let dir = source(ALBUM);
+        let t = tree_sc(dir.path(), false);
+        for area in ["Stereo", "Multichannel"] {
+            let names = names(&t, &format!("Artist/Album/x/{area}"));
+            // The images among the sidecars only (not playlists, folders or other files),
+            // after the tracks.
+            let art: Vec<_> = names.iter().filter(|n| !n.ends_with(".dsf") && !n.ends_with(".wav")).collect();
+            assert_eq!(art, ["cover.PNG", "folder.jpg"], "{area}");
+            assert!(names.iter().take(art.len()).all(|n| n.ends_with(".dsf") || n.ends_with(".wav")));
+            // The same file under a second name: the same inode number.
+            for n in ["cover.PNG", "folder.jpg"] {
+                assert_eq!(
+                    ino_of(&t, &format!("Artist/Album/x/{area}/{n}")),
+                    ino_of(&t, &format!("Artist/Album/{n}"))
+                );
+            }
+            assert_eq!(
+                read_sidecar(&t, &format!("Artist/Album/x/{area}/folder.jpg")),
+                b"Artist/Album/folder.jpg"
+            );
+        }
+        // A folder without an image of its own gets nothing.
+        assert!(!names(&t, "Artist/Album/Artwork").iter().any(|n| n.ends_with(".dsf")));
+        // --sidecars decides: no image extension, no art in the areas; none at all, no change.
+        for (sel, want) in [("default,-jpg,-jpeg", vec!["cover.PNG"]), ("m3u8", vec![]), ("none", vec![])] {
+            let r = SourceDir::scan_with(dir.path(), &Sidecars::parse(sel).unwrap(), None).unwrap();
+            let t = Tree::new(r);
+            let got: Vec<_> = names(&t, "Artist/Album/x/Stereo")
+                .into_iter()
+                .filter(|n| !n.ends_with(".dsf") && !n.ends_with(".wav"))
+                .collect();
+            assert_eq!(got, want, "{sel}");
+        }
+        // The audio files' numbers do not depend on the art.
+        let none = tree(dir.path(), false);
+        for (p, ino) in numbered(&none) {
+            assert_eq!(t.resolve(Path::new(&p)), Some(ino), "{p}");
+        }
+    }
+
+    #[test]
+    fn folder_art_in_the_areas_with_flatten_and_a_fresh_mount() {
+        let dir = source(&["Artist/Album/Rip/x.iso", "Artist/Album/folder.jpg", "Artist/Album/Rip/back.png"]);
+        let t = tree_sc(dir.path(), true);
+        let stereo = names(&t, "Artist/Album/Stereo");
+        assert!(
+            stereo.ends_with(&["back.png".to_owned(), "folder.jpg".to_owned()])
+                || stereo.ends_with(&["folder.jpg".to_owned(), "back.png".to_owned()]),
+            "{stereo:?}"
+        );
+        // Found again from the number alone, as after a restart.
+        let ino = ino_of(&t, "Artist/Album/Stereo/folder.jpg");
+        assert_eq!(ino, ino_of(&t, "Artist/Album/folder.jpg"));
+        assert!(tree_sc(dir.path(), true).get(ino).is_some());
+    }
+
+    #[test]
+    fn new_and_removed_files_show_without_a_remount() {
+        let dir = source(ALBUM);
+        let t = watching(dir.path(), "default", false);
+        let before = numbered(&t);
+        assert_eq!(names(&t, "Artist/Album"), ["x", "Artwork", "cover.PNG", "folder.jpg"]);
+        let folder = ino_of(&t, "Artist/Album/folder.jpg");
+        // Keep a file open across its removal.
+        let kept = sidecar_of(&t, "Artist/Album/cover.PNG");
+        let mut open = t.open_sidecar(&kept).unwrap();
+        let album = dir.path().join("Artist/Album");
+        fs::write(album.join("back.jpg"), b"back").unwrap();
+        fs::remove_file(album.join("cover.PNG")).unwrap();
+        fs::create_dir(album.join("Scans")).unwrap();
+        fs::write(album.join("Scans/s1.png"), b"s1").unwrap();
+        // The directory's modification time may not have moved on a coarse clock.
+        let now = std::time::SystemTime::now() + Duration::from_secs(5);
+        fs::File::open(&album).unwrap().set_modified(now).unwrap();
+        assert_eq!(names(&t, "Artist/Album"), ["x", "Artwork", "Scans", "back.jpg", "folder.jpg"]);
+        assert_eq!(read_sidecar(&t, "Artist/Album/back.jpg"), b"back");
+        assert_eq!(read_sidecar(&t, "Artist/Album/Scans/s1.png"), b"s1");
+        // Unchanged entries keep their numbers; the removed one is gone from lookups but the
+        // open file still reads.
+        assert_eq!(ino_of(&t, "Artist/Album/folder.jpg"), folder);
+        for (p, ino) in &before {
+            if p != "Artist/Album/cover.PNG" && !p.starts_with("Artist/Album/x/") {
+                assert_eq!(t.resolve(Path::new(p)), Some(*ino), "{p}");
+            }
+        }
+        assert_eq!(t.resolve(Path::new("Artist/Album/cover.PNG")), None);
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut open, &mut bytes).unwrap();
+        assert_eq!(bytes, b"Artist/Album/cover.PNG");
+        // The art in the areas follows.
+        let stereo = names(&t, "Artist/Album/x/Stereo");
+        assert!(
+            stereo.contains(&"back.jpg".to_owned()) && !stereo.contains(&"cover.PNG".to_owned()),
+            "{stereo:?}"
+        );
+        // A sidecar folder is re-read too.
+        fs::write(album.join("Artwork/extra.jpg"), b"extra").unwrap();
+        fs::File::open(album.join("Artwork")).unwrap().set_modified(now).unwrap();
+        assert_eq!(names(&t, "Artist/Album/Artwork"), ["Booklet", "extra.jpg", "front.jpg", "info.pdf"]);
+        // A replaced file gets new attributes under the same number.
+        let ino = ino_of(&t, "Artist/Album/folder.jpg");
+        fs::write(album.join("folder.jpg"), b"a longer picture").unwrap();
+        fs::File::open(&album).unwrap().set_modified(now + Duration::from_secs(5)).unwrap();
+        names(&t, "Artist/Album");
+        assert_eq!(ino_of(&t, "Artist/Album/folder.jpg"), ino);
+        assert_eq!(read_sidecar(&t, "Artist/Album/folder.jpg"), b"a longer picture");
+    }
+
+    #[test]
+    fn new_images_and_folders_show_without_a_remount() {
+        let dir = source(&["Artist/A/x.iso", "Artist/Empty/sub"]);
+        let t = watching(dir.path(), "default", false);
+        assert_eq!(names(&t, "Artist"), ["A"]);
+        let a = ino_of(&t, "Artist/A/x");
+        // A new album, a second image in a known one, and an image in a folder that was
+        // there (empty) at the first listing.
+        fs::create_dir_all(dir.path().join("Artist/B")).unwrap();
+        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/B/y.iso")).unwrap();
+        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/A/z.iso")).unwrap();
+        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/Empty/sub/w.iso")).unwrap();
+        let now = std::time::SystemTime::now() + Duration::from_secs(5);
+        for d in ["Artist", "Artist/A", "Artist/Empty"] {
+            fs::File::open(dir.path().join(d)).unwrap().set_modified(now).unwrap();
+        }
+        assert_eq!(names(&t, "Artist"), ["A", "B", "Empty"]);
+        assert_eq!(names(&t, "Artist/A"), ["x", "z"]);
+        assert_eq!(ino_of(&t, "Artist/A/x"), a);
+        assert_eq!(names(&t, "Artist/B"), ["y"]);
+        assert_eq!(names(&t, "Artist/Empty/sub"), ["w"]);
+        // Removed: not found any more, though the number still resolves.
+        fs::remove_file(dir.path().join("Artist/A/z.iso")).unwrap();
+        fs::File::open(dir.path().join("Artist/A"))
+            .unwrap()
+            .set_modified(now + Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(names(&t, "Artist/A"), ["x"]);
+        assert!(t.get(a).is_some());
+    }
+
+    #[test]
+    fn a_tree_that_does_not_watch_keeps_its_listings() {
+        let dir = source(ALBUM);
+        let t = tree_sc(dir.path(), false);
+        let first = names(&t, "Artist/Album");
+        fs::write(dir.path().join("Artist/Album/new.jpg"), b"n").unwrap();
+        fs::File::open(dir.path().join("Artist/Album"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + Duration::from_secs(9))
+            .unwrap();
+        assert_eq!(names(&t, "Artist/Album"), first);
+        assert!(!t.is_live(ino_of(&t, "Artist/Album")));
+    }
+
+    #[test]
+    fn flatten_follows_the_chains_sidecars() {
+        let dir = source(&["Artist/Album/Rip/x.iso", "Artist/Album/folder.jpg"]);
+        let t = watching(dir.path(), "default", true);
+        assert_eq!(names(&t, "Artist/Album"), ["Stereo", "Multichannel", "folder.jpg"]);
+        fs::write(dir.path().join("Artist/Album/list.m3u8"), b"#EXTM3U").unwrap();
+        fs::write(dir.path().join("Artist/Album/Rip/back.png"), b"b").unwrap();
+        let now = std::time::SystemTime::now() + Duration::from_secs(5);
+        for d in ["Artist/Album", "Artist/Album/Rip"] {
+            fs::File::open(dir.path().join(d)).unwrap().set_modified(now).unwrap();
+        }
+        assert_eq!(
+            names(&t, "Artist/Album"),
+            ["Stereo", "Multichannel", "folder.jpg", "list.m3u8", "back.png"]
+        );
+        let stereo = names(&t, "Artist/Album/Stereo");
+        assert!(
+            stereo.contains(&"back.png".to_owned()) && !stereo.contains(&"list.m3u8".to_owned()),
+            "{stereo:?}"
+        );
     }
 }

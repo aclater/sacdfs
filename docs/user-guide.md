@@ -33,8 +33,9 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
 
 **Running.**
 - Without `-f` (`--foreground`), sacdfs returns once the filesystem is mounted and keeps
-  running in the background, logging nowhere; with it, it stays in the foreground and logs to
-  standard error. `-v` logs what sacdfs found (image counts, images and tracks not shown and
+  running in the background, logging nowhere unless `--log-file FILE` is given (or under
+  systemd, where standard error is the journal and is kept); with it, it stays in the
+  foreground and logs to standard error. `-v` logs what sacdfs found (image counts, images and tracks not shown and
   why, areas without a defined speaker layout, and at exit how many reads of the images it
   made); `-vv` logs debug detail. `RUST_LOG` (for example `RUST_LOG=sacdfs=debug`) overrides
   both.
@@ -159,6 +160,18 @@ mp3tag), plus a `LIST`/`INFO` chunk (title, artist, album, track number, date, g
 software that reads only that. Both come after the audio. sacdfs 0.2 changed the TCOP of discs
 with a copyright text, so those files show a new modification time once.
 
+**Multichannel copies have their own album name.** The album tag of the files in a disc's
+`Multichannel` folder (DSF and WAV) ends in ` (Multichannel)`, so "Album" is the stereo copy
+and "Album (Multichannel)" the multichannel one. *Why:* in client tests, Navidrome, LMS, MPD
+and MinimServer all showed a disc's two copies as one album, either merged (each track up to
+four times) or as two albums with the same name. Stereo files are unchanged, and so is a
+disc with no album text. Only tags change: the audio is the same, and `sacdfs verify`
+compares audio only, so extracts of multichannel tracks still verify. `--no-multichannel-album-suffix`
+(`SACDFS_MC_ALBUM_SUFFIX=0` in the container) leaves the album as the disc has it. Switching
+it does not change the files' modification times, so restart the mount and have your player
+rescan. (When the tag layer, #81, can name a disc's album, that name will win and get no
+suffix, unless the tags file asks for one.)
+
 The filesystem is read-only, so tags cannot be edited in place; a tagger's changes belong in
 its own database, or in copies of the files.
 
@@ -178,6 +191,16 @@ its own database, or in copies of the files.
 loudness or ReplayGain scans, waveform previews) converts every WAV file it reads, which costs
 CPU and time for no new information. Point such programs at a mount with `--format dsf`, or
 mount twice: one mount for them, one with WAV files for players.
+
+**MPD, moOde, Volumio and Jellyfin.** Use `--format dsf` for any mount that MPD (which moOde
+and Volumio run) or Jellyfin scans. Jellyfin's ffprobe reads 5 MB of each stereo WAV and 12 to
+14 MB of each 5.1 WAV (a first scan 27 to 58 % slower); for MPD: MPD plays DSF natively. Its first database scan probes about 5 MB of every WAV
+file through FFmpeg, so every WAV file is converted for that probe: in a test of 93 tracks the
+first scan took about 9 s with `dsf,wav` and 0.6 s with `dsf` (about 15 times as long), and
+a library of 1,000 discs would cost about an hour of CPU. The same happens after any MPD
+database rebuild. Incremental `mpc update` reads nothing. If a player needs WAV files, mount
+twice as above. Jellyfin's LUFS normalization and Plex's nightly deep analysis read every
+file in full; turn them off, or use `--cache-mb 16`.
 
 ## Sidecar files: art, scans, playlists
 
@@ -206,6 +229,15 @@ player, once as the extract and once as sacdfs's file.
 **Where they appear.**
 - Next to the image's folder: `SOURCE/Artist/Album/folder.jpg` is
   `MOUNTPOINT/Artist/Album/folder.jpg`, beside `MOUNTPOINT/Artist/Album/disc/`.
+- **Folder art is also inside each area folder** (#95): the images among the sidecars
+  (`jpg`, `jpeg`, `png`, `webp`; not playlists, scans folders or other files) also show in
+  `Stereo/` and `Multichannel/` of every image in the folder, after the tracks, so that
+  Lyrion Music Server, MPD, MinimServer and Plex, which look for folder art only in the
+  audio file's own folder, find it. It is the same file with a second name: the same inode
+  number, so a server that walks both sees one image. No audio file changes, only the art is
+  added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
+  is not shown in either place, and `none` shows no art at all. A name that a track file
+  already has gets ` (2)`.
 - With `--flatten`, the sidecar files of every folder of a collapsed chain show in the folder
   that is kept, next to `Stereo` and `Multichannel`, outermost folder first. A name that is
   already taken (two `folder.jpg` in the chain, or a file named `Stereo`) gets ` (2)`, as
@@ -229,10 +261,16 @@ through a linked folder, and folder links are not followed at all. Every sidecar
 folder at a time without following links, so nothing changed in `SOURCE` after the mount can
 lead sacdfs outside it.
 
-**Changes.** The tree, sidecar files included, is read at mount time; files added later
-appear after a remount. A sidecar file whose size or modification time changed since its
-folder was listed fails to open with "stale file handle" (its size, already shown, would not
-match its bytes) until the next mount, which shows the new file under the same inode number.
+**Changes.** New and removed sidecar files appear without a remount (#101). When a folder is
+listed or looked into, and its folder in `SOURCE` has a different modification time than at the
+last reading (checked at most every 2 seconds), sacdfs reads that folder again: new images,
+sidecar files and sidecar folders show, removed ones go. Entries that did not change keep
+their inode numbers. A file removed while a program has it open still reads for that program;
+new opens fail with "no such file". A sidecar file that was replaced shows its new size and
+time under the same inode number. While a sidecar is open for the first time after being
+replaced but before its folder was read again, the open fails with "stale file handle"
+(its size, already shown, would not match its bytes), and works once the folder is read
+again. Programs that cache listings see a change after the 2 seconds.
 
 **Cost.** Mounting reads only names, as before. The first listing of a folder looks at its
 sidecar files (one `stat` each, in parallel, as images are opened); nothing else reads them
@@ -314,6 +352,7 @@ mounted: the files sacdfs would serve are read in-process, through the same code
 | `--threads N` | Files checked at once, and DST decoder threads; `0` (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded frames, in MiB (default `64`). |
 | `-q`, `--quiet` | No progress line on standard error. |
+| `--log-file FILE` | Append the log to `FILE` (mode 0600), at info level unless `-v` says more. |
 | `-v`, `--verbose` | Log more; `RUST_LOG` overrides it. |
 
 **How a file is matched.** An extract belongs to the images in its folder, or in the nearest
@@ -380,10 +419,13 @@ Notes:
 
 ## Images that change, and damaged images
 
-- **New or removed images** appear or disappear only after a remount: the directory tree is
-  read once, at mount time. The same goes for sidecar files; one that changes while mounted
-  fails to open with "stale file handle" until the next mount
-  ([Sidecar files](#sidecar-files-art-scans-playlists)).
+- **New or removed images and sidecar files** appear or disappear within a few seconds, with
+  no remount: a folder is read again when its modification time in `SOURCE` changes
+  ([Sidecar files](#sidecar-files-art-scans-playlists)). A subfolder that held no image
+  when its parent was last read is watched too, so an album copied in file by file shows
+  once its image is there. Not covered: a folder collapsed by `--flatten` that gains a
+  second image (it stays one image's folder until a remount), and an image file replaced
+  under the same name.
 - **An image file that changes while mounted** (another size, modification time or file) is
   opened again, at most a second after the change. An image whose size changed gives I/O
   errors until the next mount, since its directory still shows the old tracks.
@@ -391,10 +433,62 @@ Notes:
   as 0x69, invalid DST frames as 0x55, with a warning in the log) or an I/O error on one
   file. It never stops the mount: every image is treated as untrusted input.
 
+## Mounting at boot: fstab and systemd
+
+**fstab.** `mount -t fuse.sacdfs` runs `mount.fuse3`, which runs `sacdfs SOURCE MOUNTPOINT -o OPTIONS`.
+Put `sacdfs` where root finds it (`/usr/local/bin` or `/usr/bin`) and `fuse3` installed:
+
+```
+# /etc/fstab
+/srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,cache_mb=64,format=dsf,_netdev,nofail  0 0
+```
+
+`-o` takes sacdfs's own options as `name` or `name=value` with the dashes written as underscores
+(`allow_other`, `cache_mb=64`, `pcm_rate=88200`, `flatten`, `index_cache=/var/cache/sacdfs`,
+`log_file=/var/log/sacdfs.log`, `verbose=2`). A comma separates `-o` options, so a list value
+uses `+`: `format=dsf+wav`, `sidecars=default+cue`. The options of `mount(8)` and fstab (`ro`,
+`rw`, `noauto`, `nofail`, `_netdev`, `nosuid`, `nodev`, `x-systemd.*` and similar) are accepted
+and ignored by sacdfs itself; sacdfs is always read-only. Any other option is an error, so a
+typo does not pass silently. `allow_other` needs `user_allow_other` in `/etc/fuse.conf` for
+non-root users. Without `-f`, sacdfs goes to the background once mounted, which `mount` expects.
+
+**systemd unit.** sacdfs sends `READY=1` when `NOTIFY_SOCKET` is set, so `Type=notify` works.
+Run it in the foreground (`-f`) so that the service's main process is the one that serves the
+mount; its log goes to the journal.
+
+```ini
+# /etc/systemd/system/sacdfs.service
+[Unit]
+Description=SACD images as DSF and WAV files
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/sacdfs -f --cache-mb 64 --format dsf /srv/sacd /mnt/sacd
+ExecStop=/usr/bin/fusermount3 -u /mnt/sacd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`systemctl enable --now sacdfs`, `journalctl -u sacdfs` for the log. Services that read the
+mount should say `After=sacdfs.service` and `Requires=sacdfs.service`. A container that
+bind-mounts the mount point must bind its parent directory instead
+([deployment guide](deployment.md#media-servers-in-containers-on-a-client-host)). This
+recipe was written from the mount helper's and systemd's documentation and the unit tests; it
+was not run in a test VM.
+
 ## Troubleshooting
 
 Run in the foreground with logging to see what sacdfs does: `sacdfs -f -v SOURCE MOUNTPOINT`
 (`-vv` for debug detail).
+
+A background mount (the default) logs nowhere, so its read errors and damaged-image warnings
+are invisible. Start it with `--log-file /var/log/sacdfs.log` to keep the log (it records
+the `mounted` line and warnings; add `-v` for more), or run it under systemd, where the log
+goes to the journal: `journalctl -u sacdfs`.
 
 - **`fusermount3: command not found`, or `failed to open /dev/fuse`:** install FUSE 3
   (package `fuse3`). In a container, pass `--device /dev/fuse --cap-add SYS_ADMIN`.
@@ -416,7 +510,7 @@ Run in the foreground with logging to see what sacdfs does: `sacdfs -f -v SOURCE
   generic build; it converts with AVX2 where the CPU has it anyway.
 - **A directory or disc is missing:** files that are not SACD images, and folders with no
   `*.iso` file below them, are left out; a damaged image may be too. `-v` logs why. Images
-  added after mounting need a remount.
+  added after mounting appear without a remount.
 - **A track is missing:** a track the disc cannot play (empty, or running past the end of the
   image) is left out; `-v` logs the reason.
 - **`--pcm-cutoff wide needs --pcm-rate 176400 or 352800`:** 88.2 kHz cannot hold the wide
