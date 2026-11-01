@@ -593,7 +593,7 @@ on the real discs, every frame read through sacdfs equals the exact reading
   verification while idle on local images and then drop those frames (`notify_inval_inode`).
 - *Why not keep the locator:* the owner's offload rule (adopt scarletbook when it is exact and
   within 15 % of sacdfs's own code on the measure that matters, here latency); the measurements
-  are below. It removes about 1 000 lines, the hardest sacdfs had.
+  are below. It removes the hardest code sacdfs had (`disc.rs` went from 1 022 lines to 584, 500 fewer in all).
 
 MEASURE_TABLE
 
