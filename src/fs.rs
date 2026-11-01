@@ -193,6 +193,13 @@ impl SacdFs {
         })
     }
 
+    /// How long the kernel may keep an entry of `parent` numbered `ino` (a name looked up
+    /// there, or the directory's own attributes): [`TTL`], or the refresh interval when
+    /// either is re-read when its source changes.
+    fn ttl(&self, parent: u64, ino: u64) -> Duration {
+        self.tree.live_ttl(parent).or_else(|| self.tree.live_ttl(ino)).unwrap_or(TTL)
+    }
+
     fn attr(&self, ino: u64, node: &Node) -> FileAttr {
         let (kind, size, perm, nlink) = match node {
             Node::Dir(_) => (FileType::Directory, 0, 0o555, 2),
@@ -268,20 +275,23 @@ impl Filesystem for SacdFs {
         };
         match ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n))) {
             Some((ino, node)) => {
-                reply.entry(&TTL, &self.attr(ino, &node), Generation(self.tree.generation(&node)))
+                // A directory that is re-read when its source changes (#101), and what is in
+                // it, is remembered for a short time only.
+                let ttl = self.ttl(parent.0, ino);
+                reply.entry(&ttl, &self.attr(ino, &node), Generation(self.tree.generation(&node)))
             }
-            // A name missing from a directory stays missing (its listing is made once), so
-            // the kernel may remember that it is: inode 0 is a negative entry, cached for
-            // the TTL (#61). `.` and `..` of an unknown number stay errors, for the export
+            // A name missing from a directory stays missing (unless the directory is re-read,
+            // #101), so the kernel may remember that it is: inode 0 is a negative entry,
+            // cached for the TTL (#61). `.` and `..` of an unknown number stay errors, for the export
             // code.
-            None if negative => reply.entry(&TTL, &negative_attr(), Generation(0)),
+            None if negative => reply.entry(&self.ttl(parent.0, parent.0), &negative_attr(), Generation(0)),
             None => reply.error(Errno::ENOENT),
         }
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
         match self.tree.get(ino.0) {
-            Some(node) => reply.attr(&TTL, &self.attr(ino.0, &node)),
+            Some(node) => reply.attr(&self.ttl(ino.0, ino.0), &self.attr(ino.0, &node)),
             None => reply.error(Errno::ENOENT),
         }
     }
@@ -404,6 +414,10 @@ impl Filesystem for SacdFs {
 
     fn opendir(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
         match self.tree.get(ino.0).as_deref() {
+            // A listing that is re-read when its source changes is not cached by the kernel.
+            Some(Node::Dir(_)) if self.tree.is_live(ino.0) => {
+                reply.opened(FileHandle(0), FopenFlags::empty())
+            }
             Some(Node::Dir(_)) => {
                 reply.opened(FileHandle(0), FopenFlags::FOPEN_KEEP_CACHE | FopenFlags::FOPEN_CACHE_DIR)
             }

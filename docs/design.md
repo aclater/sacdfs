@@ -209,11 +209,11 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   mount:* mounting stays a walk of names (one `read_dir` per folder, which the scan already
   did); `readdir` lists only names, so the `stat` is needed anyway before a name can be shown
   without lying about it.
-- **Changes while mounted.** The tree is read once, as for images. Opening a sidecar whose
-  source size or mtime differs from what was listed fails with `ESTALE`. *Why:* the kernel
-  holds the listed size for a day (`TTL`), so new bytes would be cut off or padded; a clear
-  error until the next mount is better than wrong bytes. The next mount shows the new file
-  under the same number with a new generation.
+- **Changes while mounted.** See "Folder art in the areas" and "Re-reading changed folders"
+  below. Opening a sidecar whose source size or mtime differs from what was listed fails
+  with `ESTALE`. *Why:* the kernel may hold the listed size, so new bytes would be cut off or
+  padded; a clear error until the folder is read again is better than wrong bytes. The
+  re-read shows the new file under the same number with a new generation.
 - **Reads** go to the request threads, a `pread` of the source file opened at `open` (one
   descriptor per open file, closed at release), with `FOPEN_KEEP_CACHE`. *Why the request
   threads:* the source may be a network share, and a slow read must not hold up the FUSE
@@ -240,10 +240,55 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   generations and mtimes are untouched (`tree::tests::nothing_changes_for_images_and_their_files`,
   and the DSF hash gate of 93 tracks on real discs with a sidecar beside them); a directory
   with no sidecar costs nothing more; `--sidecars none` is 0.1.0's tree.
-- **Not done:** embedding art in the DSF and WAV tags (a separate question, #79), rewriting
-  playlist entries when `--flatten` or `--format` change paths (kept byte for byte, #75), and
-  copying folder art into the area folders (the art sits one level above the track files with
-  `--flatten`, two without, as in SOURCE).
+- **Folder art in the areas (#95).** The image sidecars of an image's folder (the jpg, jpeg,
+  png and webp items, not playlists, `Artwork/` or `Scans/`; `sidecar::is_art`) are also
+  listed inside each area folder, after the tracks, as the same node under a second name:
+  one inode number, so a library server that walks both sees one image, and an NFS handle
+  to it is the sidecar's usual one. *Why:* Lyrion Music Server, MPD (`albumart`) and
+  MinimServer look for folder art only in the audio file's own folder, and Plex treated
+  `Stereo/` as the album folder (found with real-client tests, 4 of 5 servers). *Why not
+  embed the art in the DSF and WAV tags (the issue's other option):* it changes the audio
+  files' bytes, which must stay identical (#82 requirement 3; the DSF hash gate stays
+  93/93). *Why the same inode, not a copy:* nothing is stored or made, a changed cover
+  changes in both places, and a server that walks both finds one file. *Selection:* it uses
+  the `--sidecars` list, so a removed extension is not shown in either place and `none` shows
+  no art; there is no separate option, since the owner's wish is that nothing is
+  configured client-side (#95 acceptance) and the list already gives control. *Source of the
+  list:* `Art` holds the image sidecars of the image's folder (with `--flatten`, of the chain,
+  as the collapsed folder shows them); images in one folder share it. `nlink` stays 1 (the
+  kernel does not need it, and a changing count would need an invalidation).
+- **Re-reading changed folders (#101).** A tree made `watching` (the mount, when SOURCE is a
+  directory) re-reads a folder of SOURCE when it is listed or looked up and the folder's
+  modification time differs from the one noted at its last reading (`Listing::watch`,
+  compared at most once per `REFRESH`, 2 s, so that a busy scanner costs one `stat` per
+  folder per interval). *Why mtime:* it is what a directory's change is, costs one `stat`,
+  and works over NFS and SMB sources, where inotify does not. A re-read reads that folder's
+  names again (`SourceDir::reread`), keeps the sub-folders already known as they were read
+  (they re-read themselves when listed) and scans new ones. *Unchanged entries keep their
+  nodes and numbers:* images are not opened again, sidecar folders keep their node (they list
+  themselves), a sidecar file keeps its node if its size and time are the same, else it gets a
+  new node under the same number (numbers are by path, so a new generation shows the
+  change). *Removed entries:* they leave the listing, so a lookup gives `ENOENT`, but the node
+  stays in the tree (its number still resolves, as an NFS handle needs, and a handle open
+  before keeps reading). *Folders that were skipped:* a sub-folder with no image is not in
+  the tree, and when it gains one its parent's mtime does not move, so a copy made folder first, files after would
+  be missed; the watch list of a folder therefore includes the mtimes of its skipped
+  sub-folders. Folders deeper than that are noticed when something above them changes. With
+  `--flatten`, a collapsed chain re-reads its sidecars (and the art of its areas) but keeps
+  its image: *why:* the entry was named and numbered after that image when its parent was
+  listed. The folder's shown modification time follows its source's. *Art* has its own
+  version: an area is out of date when its folder's art changed, since the area has no
+  source folder of its own. *Kernel caches:* the 24-hour `TTL` and cached listings would
+  hide all of this, so for a folder that is re-read (and for the names looked up in it)
+  entries are remembered for the refresh interval only, and its `readdir` is not cached.
+  Everything else (the audio, the images' own areas) keeps the 24 hours, and a mount that
+  does not watch (a single image as SOURCE) is as before. *Why not inotify or
+  `inval_entry` notifications:* inotify does not see changes made by other clients of a
+  network source, and a short TTL needs no notifier thread. *Not done:* a changed image file
+  under the same name (an image's changes are for `handles`), and a folder collapsed by
+  `--flatten` that gains a second image.
+- **Not done:** embedding art in the DSF and WAV tags (a separate question, #79) and rewriting
+  playlist entries when `--flatten` or `--format` change paths (kept byte for byte, #75).
 
 ## File identity and NFS export
 
@@ -914,7 +959,7 @@ Two kinds of probe are answered so that the kernel stops asking (#61):
   `ENOENT`. Players, file managers and SMB clients look for `cover.jpg`, `folder.jpg`,
   `desktop.ini` and the like in every folder, again and again; the kernel now answers the
   repeats itself. *Why it is safe:* a directory's listing is made once per mount and never
-  changes, so a name missing from it stays missing. Lookups of `.` and `..` (the NFS export
+  changes, so a name missing from it stays missing (except in a folder that is re-read, #101, whose entries are remembered for the refresh interval only). Lookups of `.` and `..` (the NFS export
   code's) still fail with `ENOENT` when the inode is unknown, so a handle to something gone
   still gets `ESTALE`. Measured with fuser's request log on a 24-track area: three `stat`s of
   each of four missing names sent 3 `LOOKUP`s each before, 1 after.

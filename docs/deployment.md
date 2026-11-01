@@ -372,6 +372,9 @@ host networking, on the same NAS as sacdfs.
   images are on the share, byte for byte, so Roon shows your own art instead of falling back
   to its online art (#79). With `SACDFS_FLATTEN: "1"` the art of a disc's folders sits next
   to its `Stereo` and `Multichannel` folders. `SACDFS_SIDECARS` changes which files pass.
+  The cover images are also inside each `Stereo` and `Multichannel` folder, so servers that
+  look only beside the audio find them (#95). Images, covers and playlists added to or removed
+  from the share later show up within a few seconds, with no restart (#101).
 - **Playlists** work: an `.m3u` or `.m3u8` file next to the images is on the share, so Roon,
   which imports playlist entries only from inside the same storage location, imports it
   (#75). Write its entries as relative paths inside the share, as sacdfs names its files
