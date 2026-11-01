@@ -319,6 +319,94 @@ fn flatten_through_the_kernel() {
     mount.stop("TERM");
 }
 
+/// Folder art, scans and playlists next to an image are served byte for byte (#79, #75),
+/// with and without `--flatten`; other files are not, nor a link into the mount (#67); the
+/// audio files are the same as without them.
+#[test]
+fn sidecars_through_the_kernel() {
+    if !fuse_available() {
+        return;
+    }
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let album = src.join("Artist/Album");
+    std::fs::create_dir_all(album.join("Artwork")).unwrap();
+    std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), album.join("disc.iso"))
+        .unwrap();
+    // Larger than one FUSE read (1 MiB), not a multiple of a page.
+    let art: Vec<u8> = (0..3_000_001u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+    std::fs::write(album.join("folder.jpg"), &art).unwrap();
+    std::fs::write(album.join("Artwork/back.png"), b"back").unwrap();
+    std::fs::write(album.join("notes.txt"), b"not passed").unwrap();
+    // The mount point inside SOURCE, and a link into it: never followed.
+    let mnt = src.join("mnt");
+    std::fs::create_dir(&mnt).unwrap();
+    std::os::unix::fs::symlink("../../mnt/Artist/Album/folder.jpg", album.join("loop.jpg")).unwrap();
+    let mount = |extra: &[&str]| {
+        let cache = tempfile::tempdir().unwrap();
+        let child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
+            .arg("-f")
+            .args(extra)
+            .arg(&src)
+            .arg(&mnt)
+            .spawn()
+            .unwrap();
+        wait_for("the mount", || is_mounted(&mnt));
+        (child, cache)
+    };
+    let stop = |(mut child, _cache): (Child, tempfile::TempDir)| {
+        let st = Command::new("kill").arg("-TERM").arg(child.id().to_string()).status().unwrap();
+        assert!(st.success());
+        assert!(child.wait().unwrap().success());
+        assert!(!is_mounted(&mnt));
+    };
+    let ls = |p: &str| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(mnt.join(p))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        v.sort();
+        v
+    };
+
+    // Without sidecars: only the image, as before; its first track, for later.
+    let m = mount(&["--sidecars", "none"]);
+    assert_eq!(ls("Artist"), ["Album"]);
+    assert_eq!(ls("Artist/Album"), ["disc"]);
+    let track = ls("Artist/Album/disc/Stereo").into_iter().find(|n| n.ends_with(".dsf")).unwrap();
+    let dsf = std::fs::read(mnt.join("Artist/Album/disc/Stereo").join(&track)).unwrap();
+    stop(m);
+    // A playlist whose entries are relative paths inside the mount.
+    std::fs::write(src.join("Artist/list.m3u8"), format!("#EXTM3U\nAlbum/disc/Stereo/{track}\n")).unwrap();
+
+    let m = mount(&[]);
+    assert_eq!(ls("Artist"), ["Album", "list.m3u8"]);
+    assert_eq!(ls("Artist/Album"), ["Artwork", "disc", "folder.jpg"]);
+    assert_eq!(ls("Artist/Album/Artwork"), ["back.png"]);
+    let shown = mnt.join("Artist/Album/folder.jpg");
+    assert_eq!(std::fs::read(&shown).unwrap(), art);
+    let (a, b) = (std::fs::metadata(&shown).unwrap(), std::fs::metadata(album.join("folder.jpg")).unwrap());
+    assert_eq!(a.len(), b.len());
+    assert_eq!(a.modified().unwrap(), b.modified().unwrap());
+    assert!(a.permissions().readonly());
+    assert_eq!(std::fs::read(mnt.join("Artist/Album/Artwork/back.png")).unwrap(), b"back");
+    let list = std::fs::read_to_string(mnt.join("Artist/list.m3u8")).unwrap();
+    for entry in list.lines().filter(|l| !l.starts_with('#')) {
+        assert!(mnt.join("Artist").join(entry).is_file(), "{entry}");
+    }
+    // The audio is the same file as without sidecars.
+    assert_eq!(std::fs::read(mnt.join("Artist/Album/disc/Stereo").join(&track)).unwrap(), dsf);
+    assert!(std::fs::File::create(mnt.join("Artist/Album/new.jpg")).is_err());
+    stop(m);
+
+    // --flatten: next to the areas of the collapsed folder.
+    let m = mount(&["--flatten"]);
+    assert_eq!(ls("Artist/Album"), ["Artwork", "Multichannel", "Stereo", "folder.jpg"]);
+    assert_eq!(std::fs::read(mnt.join("Artist/Album/folder.jpg")).unwrap(), art);
+    stop(m);
+}
+
 #[test]
 fn background_mount_and_unmount() {
     if !fuse_available() {
@@ -415,6 +503,9 @@ fn bad_arguments_fail_cleanly() {
         ["--pcm-cutoff", "80"],
         ["--pcm-gain", "30"],
         ["--pcm-gain", "NaN"],
+        ["--sidecars", "iso"],
+        ["--sidecars", "a/b"],
+        ["--sidecars", "-none"],
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
             .args(bad)

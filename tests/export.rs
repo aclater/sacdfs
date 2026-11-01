@@ -17,7 +17,7 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirEntryExt, FileExt, MetadataExt};
@@ -319,6 +319,60 @@ fn file_handles_survive_a_restart() {
     let e = open_by_handle(&m.at, &hc).unwrap_err();
     assert_eq!(e.raw_os_error(), Some(libc::ESTALE), "{e}");
     open_by_handle(&m.at, &ho).unwrap();
+    m.stop();
+}
+
+/// A passed-through sidecar file (#79) keeps its number with and without --flatten, its
+/// handle works across a restart, and goes stale when the file changes.
+#[test]
+fn sidecar_handles_survive_a_restart() {
+    if !fuse_available() {
+        return;
+    }
+    let src = source();
+    std::fs::write(src.path().join("Artist/Album/folder.jpg"), b"front").unwrap();
+    std::fs::create_dir_all(src.path().join("Artist/Album/Rip/Scans")).unwrap();
+    std::fs::write(src.path().join("Artist/Album/Rip/Scans/back.jpg"), b"back").unwrap();
+    std::fs::write(src.path().join("Artist/list.m3u"), b"Album/Stereo/01.dsf\n").unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let at = tempfile::tempdir().unwrap();
+    let ino = |m: &Mount, p: &str| std::fs::metadata(m.at.join(p)).unwrap().ino();
+    let m = Mount::new(src.path(), at.path(), cache.path(), &[]);
+    let plain = [
+        ino(&m, "Artist/Album/folder.jpg"),
+        ino(&m, "Artist/Album/Rip/Scans/back.jpg"),
+        ino(&m, "Artist/list.m3u"),
+    ];
+    m.stop();
+    let m = Mount::new(src.path(), at.path(), cache.path(), &["--flatten"]);
+    let flat = [
+        ino(&m, "Artist/Album/folder.jpg"),
+        ino(&m, "Artist/Album/Scans/back.jpg"),
+        ino(&m, "Artist/list.m3u"),
+    ];
+    assert_eq!(plain, flat, "sidecar numbers change with --flatten");
+    let files =
+        ["Artist/Album/folder.jpg", "Artist/Album/Scans/back.jpg", "Artist/list.m3u"].map(|p| m.at.join(p));
+    if !handles_available(&m.at, &files[0]) {
+        return;
+    }
+    let handles: Vec<Handle> = files.iter().map(|f| name_to_handle(f).unwrap()).collect();
+    let scans = name_to_handle(&m.at.join("Artist/Album/Scans")).unwrap();
+    m.stop();
+    let m = Mount::new(src.path(), at.path(), cache.path(), &["--flatten"]);
+    for (h, want) in handles.iter().zip([&b"front"[..], b"back", b"Album/Stereo/01.dsf\n"]) {
+        let mut got = Vec::new();
+        open_by_handle(&m.at, h).unwrap().read_to_end(&mut got).unwrap();
+        assert_eq!(got, want);
+    }
+    open_dir_by_handle(&m.at, &scans).unwrap();
+    m.stop();
+    // A changed cover: its handle goes stale; the others still open.
+    std::fs::write(src.path().join("Artist/Album/folder.jpg"), b"a new front").unwrap();
+    let m = Mount::new(src.path(), at.path(), cache.path(), &["--flatten"]);
+    let e = open_by_handle(&m.at, &handles[0]).unwrap_err();
+    assert_eq!(e.raw_os_error(), Some(libc::ESTALE), "{e}");
+    open_by_handle(&m.at, &handles[1]).unwrap();
     m.stop();
 }
 
