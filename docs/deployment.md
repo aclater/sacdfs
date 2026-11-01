@@ -155,7 +155,7 @@ All settings are environment variables.
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
-| `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB |
+| `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB. On a NAS, `16` is recommended; see [Memory](#memory) |
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
 | `SACDFS_INDEX_CACHE` | `/cache` | `--index-cache` directory (keep it on a volume so it survives updates); `off` for `--no-index-cache` |
@@ -175,6 +175,26 @@ The shares are always read-only. **Guest access** (the default) lets anyone on t
 read the files; NFS has no passwords (`sec=sys`), so limit it with `NFS_CLIENTS` or a
 firewall, or turn it off. Every NFS client is mapped to the `nobody` user (`all_squash`),
 which is all a read-only share needs.
+
+### Memory
+
+On a NAS, set `SACDFS_CACHE_MB=16` (`--cache-mb 16`). The cache holds decoded frames so that
+a client re-reading the same part of a file does not decode it again. Players read ahead, so
+a small cache costs little, and the default of 256 MiB uses much more memory than its number
+suggests during a library scan.
+
+Measured with sacdfs 0.1.0 replaying a Roon library import (271 images, 3,216 tracks; per file
+768 KiB at the start, 36 KiB at the middle and 33 KiB at the end), resident memory after all
+271 images:
+
+| `SACDFS_CACHE_MB` | memory |
+|---|---|
+| `256` (default) | about 630 MB |
+| `16` | about 90 MB |
+
+At the default, the cache grows past its limit when a scan jumps around within files
+([#73](https://github.com/aclater/sacdfs/issues/73)). Limiting open images
+(`SACDFS_MAX_OPEN_IMAGES`) makes no measurable difference: an open image costs about 30 KB.
 
 ## Running it
 
@@ -269,6 +289,7 @@ The names of screens and fields may differ between releases.
        environment:
          SACDFS_FORMATS: dsf,wav
          SACDFS_FLATTEN: "1"
+         SACDFS_CACHE_MB: "16"
          SMB_USER: music
          SMB_PASSWORD: change-me
          NFS_CLIENTS: 192.0.2.0/24
@@ -282,6 +303,7 @@ The names of screens and fields may differ between releases.
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
+   - `SACDFS_CACHE_MB: "16"` keeps memory around 90 MB during a library scan ([Memory](#memory)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and
