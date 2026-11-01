@@ -122,6 +122,8 @@ above it.
 | `-h`, `--help` | Print help (`-h` for a summary). |
 | `-V`, `--version` | Print the version. |
 
+`mount -t fuse.sacdfs` and fstab work too, with the options above as `-o` options, and `Type=notify` units are supported: see [Mounting at boot](docs/user-guide.md#mounting-at-boot-fstab-and-systemd).
+
 Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
 still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
 each option does in detail, and the seek index cache, are in the
