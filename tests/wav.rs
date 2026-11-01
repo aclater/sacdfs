@@ -560,11 +560,12 @@ fn rf64_file() {
     use std::io::{Seek, SeekFrom, Write};
     let Some(path) = std::env::var_os("SACDFS_RF64_OUT") else { return };
     let layout = wav::Layout { channels: 6, frames: 25 * 60 * 75, samples_per_frame: 2352, rate: 176_400 };
-    let mut tags = sacdfs::dsf::Tags::default();
-    tags.set(b"TIT2", Some("Long track"));
-    tags.set(b"TALB", Some("Album"));
-    tags.set(b"TRCK", Some("1/1"));
-    let t = wav::trailer(&tags);
+    use scarletbook::output::{TagItem, TagSet};
+    let mut tags = TagSet::new();
+    tags.set(TagItem::TrackTitle, "Long track");
+    tags.set(TagItem::Album, "Album");
+    tags.set(TagItem::TrackNumber, "1");
+    let t = wav::trailer(&tags, b"ID3");
     let h = wav::header(&layout, scarletbook::LoudspeakerLayout::FivePointOne, t.bytes.len() as u64);
     assert!(wav::needs_rf64(&layout, t.bytes.len() as u64));
     let mut f = std::fs::File::create(&path).unwrap();

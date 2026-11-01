@@ -21,7 +21,7 @@ All notable changes to sacdfs are recorded here. The format follows
 
 - **WAV conversion is scarletbook-rs's `scarletbook-pcm` (scarletbook 0.5.3)** (#84). sacdfs's own converter (ported from pysacd's) is deleted, together with its `SACDFS_SIMD` override and the `multiversion` and `rustversion` dependencies.
   - *Why:* the owner's decision was to switch once scarletbook's clean converter was within the 15 % offload leeway and met sacdfs's targets, and 0.5.3 does both. One thread, 176.4 kHz, 40 kHz filter: 298x real time against 315x (generic build), 273x against 316x (x86-64-v3 build). The 30 kHz and wide filters are 13 to 39 % faster. Stopband at least 109 dB from 48, 36 and 88.2 kHz. Ripple ±0.004 dB. DSD silence is exact zero, area edges included.
-  - *What changes:* the WAV files' samples. They differ from 0.1's by more than 72 dB below the signal in the audio band, an inaudible ripple difference. So the WAV output version is now 2: WAV files show new mtimes (the image's plus 25,203 s) and new NFS generations, so copies and library scanners pick up the new bytes. The DSF files are unchanged (gate 93/93).
+  - *What changes:* the WAV files' samples. They differ from 0.1's by more than 72 dB below the signal in the audio band, an inaudible ripple difference. So the WAV output version moves to 3 (#89's rule): WAV files' mtimes move forward one more version step (25,203 s) and their NFS generations change, so copies and library scanners pick up the new bytes. This change leaves the DSF files as they are (gate 93/93).
   - Details and measurements: `docs/pcm-quality.md` and `docs/performance.md`.
 
 - Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts
@@ -32,6 +32,13 @@ All notable changes to sacdfs are recorded here. The format follows
   0.1's, and output is unchanged (DSF gate 93/93). Areas whose layout scarletbook finds
   suspect are read exactly. Details and figures: `docs/design.md`, "Seeking", and
   `docs/performance.md`.
+- **Output change:** DSF files are written by scarletbook (`output::Layout`, its tag from
+  `TagSet::from_toc`), and WAV files carry that same ID3 tag in their `id3 ` chunk, their
+  `INFO` chunk built from the same items; sacdfs's own DSF header, block layout and ID3 writer
+  are gone. The audio is unchanged (DSF gate 93/93, WAV real-disc test). Of the 93 real-disc
+  tracks, 53 DSF and 53 WAV files are byte-identical; the other 40 of each differ only in
+  `TCOP`, now the year, a space and the copyright, as ID3v2.4 asks (5 bytes longer). Both
+  output versions moved to 2, so every DSF and WAV file shows a new mtime and NFS generation.
 - The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
   by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
 

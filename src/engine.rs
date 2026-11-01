@@ -15,7 +15,6 @@ use rayon::prelude::*;
 use scarletbook::{DstDecoder, FrameContent, FrameStatus, TrackFrame};
 
 use crate::disc::{Cursor, Disc, ReadError};
-use crate::dsf;
 use crate::pcm::{Converter, PcmConfig};
 
 /// How a decoded frame was produced.
@@ -29,9 +28,9 @@ pub enum Fill {
     Invalid,
 }
 
-/// One timeline position, ready to serve: decoded DSD in DSF order (`channels` planes of
-/// 4704 bytes, earliest sample in the least significant bit), or converted PCM in WAV order
-/// (interleaved 24-bit little-endian samples).
+/// One timeline position, ready to serve: decoded DSD as scarletbook gives it (interleaved,
+/// `channels x 4704` bytes, which the DSF layout lays out in blocks), or converted PCM in WAV
+/// order (interleaved 24-bit little-endian samples).
 #[derive(Debug)]
 pub struct Frame {
     /// The bytes.
@@ -42,19 +41,10 @@ pub struct Frame {
     pub clips: u32,
 }
 
-impl Frame {
-    /// Channel `c`'s 4704 bytes.
-    pub fn plane(&self, c: u8) -> &[u8] {
-        let n = dsf::FRAME_BYTES as usize;
-        let at = usize::from(c) * n;
-        self.data.get(at..at + n).unwrap_or(&[])
-    }
-}
-
 /// What a cache entry holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kind {
-    /// Decoded DSD, in DSF order.
+    /// Decoded DSD, interleaved.
     Dsd,
     /// PCM converted with the engine's settings.
     Pcm,
@@ -572,12 +562,10 @@ impl Engine {
     }
 }
 
-/// Decodes one timeline position and converts it to DSF order.
+/// Decodes one timeline position, interleaved, for the cache.
 fn decode(job: TrackFrame, channels: u8) -> Result<(u32, Frame), ReadError> {
     let (number, d) = decode_interleaved(job, channels)?;
-    let mut data = vec![0u8; d.data.len()].into_boxed_slice();
-    dsf::planarize(&d.data, channels, &mut data);
-    Ok((number, Frame { data, fill: d.fill, clips: 0 }))
+    Ok((number, Frame { data: d.data.into_boxed_slice(), fill: d.fill, clips: 0 }))
 }
 
 /// Decodes one timeline position, in scarletbook's interleaved layout.

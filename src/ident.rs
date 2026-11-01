@@ -63,13 +63,15 @@ const KIND_FILE: u64 = 2 << 14;
 
 /// Version of the bytes of DSF files: bump when a change makes the same track's DSF file
 /// differ (header, tag, padding), so that handles to the old bytes go stale and the files'
-/// mtime moves forward (#64).
-const DSF_VERSION: u32 = 1;
+/// mtime moves forward (#64). 2: written by scarletbook's DSF layout, whose tag has `TCOP`
+/// as ID3v2.4 asks (#28).
+const DSF_VERSION: u32 = 2;
 
 /// Version of the bytes of WAV files: bump when a change makes the same track's WAV file
-/// differ (converter coefficients, rounding, header, tags). 2: the converter is
-/// scarletbook-pcm (#84), whose samples differ from sacdfs's own converter's.
-const WAV_VERSION: u32 = 2;
+/// differ (converter coefficients, rounding, header, tags). 2: the `id3 ` chunk is the DSF
+/// file's scarletbook tag, the `INFO` chunk built from the same items (#28). 3: the converter
+/// is scarletbook-pcm (#84), whose samples differ from sacdfs's own converter's.
+pub const WAV_VERSION: u32 = 3;
 
 /// Seconds a file's mtime moves forward per output version: more than any PCM offset, so
 /// that a version bump moves every file past every time it showed before.
@@ -153,6 +155,16 @@ pub fn mtime(file: &TrackFile, pcm_offset: u64) -> SystemTime {
         Format::Wav => (WAV_VERSION, pcm_offset),
     };
     shown_mtime(file.disc.mtime, version, offset)
+}
+
+/// How far the output version of `format` moves its files' mtime past their image's, with
+/// the default PCM options.
+pub fn version_offset(format: Format) -> Duration {
+    let version = match format {
+        Format::Dsf => DSF_VERSION,
+        Format::Wav => WAV_VERSION,
+    };
+    Duration::from_secs(u64::from(version.saturating_sub(1)) * VERSION_STEP)
 }
 
 fn shown_mtime(image: SystemTime, version: u32, pcm_offset: u64) -> SystemTime {

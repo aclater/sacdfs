@@ -149,13 +149,15 @@ The same tracks converted to 24-bit PCM:
 
 ## Tagging behaviour
 
-Both files of a track carry the same **ID3v2.4 tag**, made from the disc's text, as far as the
-disc has it: title (TIT2), performer (TPE1, else the album artist), album artist (TPE2),
-album (TALB), track n/N (TRCK), disc n/N for multi-disc sets (TPOS), composer (TCOM), date
-(TDRC), ISRC (TSRC), genre (TCON), publisher (TPUB) and copyright (TCOP). Album fields fall
-back to the disc's text. The WAV files hold it in an `id3 ` chunk (read by FFmpeg, TagLib,
-mutagen, foobar2000 and mp3tag), plus a `LIST`/`INFO` chunk (title, artist, album, track
-number, date, genre) for software that reads only that. Both come after the audio.
+Both files of a track carry the same **ID3v2.4 tag**, made from the disc's text by scarletbook,
+as far as the disc has it: title (TIT2), performer (TPE1), album artist (TPE2), album (TALB),
+track n/N (TRCK), disc n/N for multi-disc sets (TPOS), songwriter (TEXT), composer (TCOM),
+arranger (TIPL), messages (COMM), date (TDRC), ISRC (TSRC), genres (TCON), publisher (TPUB)
+and copyright (TCOP, the year first, as ID3v2.4 asks). Album fields fall back to the disc's
+text. The WAV files hold it in an `id3 ` chunk (read by FFmpeg, TagLib, mutagen, foobar2000 and
+mp3tag), plus a `LIST`/`INFO` chunk (title, artist, album, track number, date, genre) for
+software that reads only that. Both come after the audio. sacdfs 0.2 changed the TCOP of discs
+with a copyright text, so those files show a new modification time once.
 
 The filesystem is read-only, so tags cannot be edited in place; a tagger's changes belong in
 its own database, or in copies of the files.

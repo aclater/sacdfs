@@ -22,7 +22,7 @@ within the 15 % offload leeway and meets sacdfs's targets.
   - its speed is within 5 % (generic build) and 14 % (x86-64-v3 build) with the default filter, and faster with the others;
   - it meets every target below.
 - **So sacdfs's own converter was deleted.** That converter was ported from pysacd, about 1 600 lines.
-- *Trade-off:* scarletbook's passband ripple (±0.004 dB) and noise floor (-134 dBFS) are a little worse than those of sacdfs's old converter (±0.00003 dB, -138 dBFS). Both are inaudible, far inside the targets, and below any recording's own noise. In return the code is maintained once, for sacdfs and pysacd. The WAV files' bytes changed, so their output version moved (`WAV_VERSION` 2: new mtimes and generations, [design](design.md#file-identity-and-nfs-export)).
+- *Trade-off:* scarletbook's passband ripple (±0.004 dB) and noise floor (-134 dBFS) are a little worse than those of sacdfs's old converter (±0.00003 dB, -138 dBFS). Both are inaudible, far inside the targets, and below any recording's own noise. In return the code is maintained once, for sacdfs and pysacd. The WAV files' bytes changed, so their output version moved (`WAV_VERSION` 3: new mtimes and generations, [design](design.md#file-identity-and-nfs-export)).
 
 ## Targets and results
 

@@ -29,7 +29,7 @@ use std::ops::Range;
 
 use scarletbook::{LoudspeakerLayout, Speaker};
 
-use crate::dsf::Tags;
+use scarletbook::output::{TagItem, TagSet};
 
 /// Bits per sample of the PCM output.
 pub const BITS: u16 = 24;
@@ -196,26 +196,31 @@ pub struct Trailer {
     pub tag: Range<usize>,
 }
 
-/// The INFO fields written, and the ID3v2.4 frames they come from.
-const INFO: [(&[u8; 4], &[u8; 4]); 6] = [
-    (b"INAM", b"TIT2"),
-    (b"IART", b"TPE1"),
-    (b"IPRD", b"TALB"),
-    (b"ITRK", b"TRCK"),
-    (b"ICRD", b"TDRC"),
-    (b"IGNR", b"TCON"),
+/// The INFO fields written, and the tag items they come from (the first value of each).
+const INFO: [(&[u8; 4], TagItem); 6] = [
+    (b"INAM", TagItem::TrackTitle),
+    (b"IART", TagItem::Performer),
+    (b"IPRD", TagItem::Album),
+    (b"ITRK", TagItem::TrackNumber),
+    (b"ICRD", TagItem::Date),
+    (b"IGNR", TagItem::Genre),
 ];
 
-/// The trailer of a file with `tags`: a `LIST`/`INFO` chunk with INAM, IART, IPRD, ITRK,
-/// ICRD and IGNR from TIT2, TPE1, TALB, TRCK, TDRC and TCON
-/// (UTF-8, NUL-terminated; ITRK is the track number alone), then an `id3 ` chunk holding
-/// `tags` as the same ID3v2.4 tag as the DSF file's.
-pub fn trailer(tags: &Tags) -> Trailer {
+/// The trailer of a file with the tag items `set`: a `LIST`/`INFO` chunk with INAM, IART,
+/// IPRD, ITRK, ICRD and IGNR from the first value of the track title, performer, album, track
+/// number, date and genre (UTF-8, NUL-terminated), then an `id3 ` chunk holding `id3`, the
+/// DSF file's ID3v2.4 tag of the same items. *Why both from one `TagSet`:* they cannot
+/// disagree.
+pub fn trailer(set: &TagSet, id3: &[u8]) -> Trailer {
     let mut info = b"INFO".to_vec();
-    for (field, frame) in INFO {
-        let Some(text) = tags.get(frame) else { continue };
-        let text = if field == b"ITRK" { text.split('/').next().unwrap_or(text) } else { text };
-        let mut body = text.as_bytes().to_vec();
+    for (field, item) in INFO {
+        let Some(text) = set.get(item).first() else { continue };
+        let clean: String = text.chars().filter(|&c| c != '\0').collect();
+        let clean = clean.trim();
+        if clean.is_empty() {
+            continue;
+        }
+        let mut body = clean.as_bytes().to_vec();
         body.push(0);
         chunk(&mut info, field, &body);
     }
@@ -223,12 +228,11 @@ pub fn trailer(tags: &Tags) -> Trailer {
     if info.len() > 4 {
         chunk(&mut bytes, b"LIST", &info);
     }
-    let id3 = tags.to_id3();
     let mut tag = 0..0;
     if !id3.is_empty() {
         let at = bytes.len() + 8;
         tag = at..at + id3.len();
-        chunk(&mut bytes, b"id3 ", &id3);
+        chunk(&mut bytes, b"id3 ", id3);
     }
     Trailer { bytes, tag }
 }
@@ -421,12 +425,13 @@ mod tests {
 
     #[test]
     fn trailer_chunks() {
-        let mut t = Tags::default();
-        t.set(b"TIT2", Some("Abc"));
-        t.set(b"TPE1", Some("P"));
-        t.set(b"TRCK", Some("3/12"));
-        t.set(b"TCOM", Some("C"));
-        let tr = trailer(&t);
+        let mut t = TagSet::new();
+        t.set(TagItem::TrackTitle, "Abc");
+        t.set(TagItem::Performer, "P");
+        t.set(TagItem::TrackNumber, "3");
+        t.set(TagItem::Composer, "C");
+        let id3 = b"ID3 tag bytes".to_vec();
+        let tr = trailer(&t, &id3);
         let b = &tr.bytes;
         assert_eq!(&b[0..4], b"LIST");
         let list_len = u32_at(b, 4) as usize;
@@ -441,26 +446,26 @@ mod tests {
         assert_eq!(&b[42..44], b"3\0");
         assert_eq!(list_len, 44 - 8);
         assert_eq!(&b[44..48], b"id3 ");
-        let id3 = t.to_id3();
         assert_eq!(u32_at(b, 48) as usize, id3.len());
         assert_eq!(tr.tag, 52..52 + id3.len());
         assert_eq!(&b[tr.tag.clone()], &id3[..]);
         assert_eq!(b.len(), 52 + id3.len() + id3.len() % 2);
-        // Odd strings are padded to an even chunk.
-        let mut t = Tags::default();
-        t.set(b"TCON", Some("Jazz"));
-        let tr = trailer(&t);
+        // Odd strings are padded to an even chunk; only the first genre is written.
+        let mut t = TagSet::new();
+        t.push(TagItem::Genre, "Jazz");
+        t.push(TagItem::Genre, "Blues");
+        let tr = trailer(&t, &[]);
         assert_eq!(&tr.bytes[12..16], b"IGNR");
         assert_eq!(u32_at(&tr.bytes, 16), 5);
         assert_eq!(&tr.bytes[20..26], b"Jazz\0\0");
         assert_eq!(u32_at(&tr.bytes, 4), 18);
         assert_eq!(tr.bytes.len() % 2, 0);
-        // Only text the INFO chunk does not carry: no LIST chunk.
-        let mut t = Tags::default();
-        t.set(b"TCOM", Some("C"));
-        let tr = trailer(&t);
+        // Only items the INFO chunk does not carry: no LIST chunk.
+        let mut t = TagSet::new();
+        t.set(TagItem::Composer, "C");
+        let tr = trailer(&t, b"tag");
         assert_eq!(&tr.bytes[0..4], b"id3 ");
-        // No text at all: no trailer.
-        assert_eq!(trailer(&Tags::default()), Trailer::default());
+        // Nothing at all: no trailer.
+        assert_eq!(trailer(&TagSet::new(), &[]), Trailer::default());
     }
 }

@@ -775,9 +775,19 @@ fn golden_output() {
             got.push(hex);
         }
     }
-    let want = GOLDEN;
-    assert_eq!(got, want);
+    // #89: these hashes belong to one WAV output version. A change to them (a scarletbook
+    // update included) must bump `WAV_VERSION` (src/ident.rs) and `GOLDEN_WAV_VERSION` with
+    // them, so that file times and NFS generations move with the bytes.
+    assert_eq!(
+        sacdfs::ident::WAV_VERSION,
+        GOLDEN_WAV_VERSION,
+        "WAV_VERSION moved: update GOLDEN and GOLDEN_WAV_VERSION together"
+    );
+    assert_eq!(got, GOLDEN, "PCM bytes changed: bump WAV_VERSION, then GOLDEN and GOLDEN_WAV_VERSION (#89)");
 }
+
+/// The WAV output version (`sacdfs::ident::WAV_VERSION`) that [`GOLDEN`] was taken with.
+const GOLDEN_WAV_VERSION: u32 = 3;
 
 /// First 8 bytes of the SHA-256 of each configuration's output, in the order of the loops:
 /// 40 kHz at 88.2, 176.4, 352.8 kHz, then 30 kHz, then the wide filter at 176.4 and 352.8.
