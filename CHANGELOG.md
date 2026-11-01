@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-01
+
 The first release.
 
 ### Added
