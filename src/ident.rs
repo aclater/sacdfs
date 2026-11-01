@@ -69,8 +69,9 @@ const DSF_VERSION: u32 = 2;
 
 /// Version of the bytes of WAV files: bump when a change makes the same track's WAV file
 /// differ (converter coefficients, rounding, header, tags). 2: the `id3 ` chunk is the DSF
-/// file's scarletbook tag, the `INFO` chunk built from the same items (#28).
-const WAV_VERSION: u32 = 2;
+/// file's scarletbook tag, the `INFO` chunk built from the same items (#28). 3: the converter
+/// is scarletbook-pcm (#84), whose samples differ from sacdfs's own converter's.
+pub const WAV_VERSION: u32 = 3;
 
 /// Seconds a file's mtime moves forward per output version: more than any PCM offset, so
 /// that a version bump moves every file past every time it showed before.

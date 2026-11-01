@@ -74,8 +74,8 @@ podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
 ```
 
 `--format docker` keeps the health check, which the OCI image format has no field for. The
-build compiles sacdfs for generic x86-64, whose WAV converter already uses AVX2 where the CPU
-has it. On a NAS with an AVX2 CPU (most Intel and AMD CPUs since about 2015, including the
+build compiles sacdfs for generic x86-64, whose WAV converter (scarletbook-pcm) already uses
+AVX2 where the CPU has it. On a NAS with an AVX2 CPU (most Intel and AMD CPUs since about 2015, including the
 Intel N100 family), `--build-arg RUSTFLAGS="-C target-cpu=x86-64-v3"` builds all of sacdfs
 for it ([performance.md](performance.md#converter-throughput)). Don't use that build on an
 older CPU: it stops with an illegal-instruction error.
