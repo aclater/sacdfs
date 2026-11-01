@@ -6,8 +6,6 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.2.0-rc.1] - 2026-11-01
-
 ### Added
 
 - The tag layer (#81): `--tags DIR` (`SACDFS_TAGS` in the container) serves user tags from a
@@ -19,6 +17,11 @@ All notable changes to sacdfs are recorded here. The format follows
   for byte as before. `sacdfs tags import` writes tags files from the tags of extracts that
   `sacdfs verify` matches, so they can be deleted without losing them; it writes only the tags
   directory. See the user guide, "Your own tags".
+
+## [0.2.0-rc.1] - 2026-11-01
+
+### Added
+
 - `sacdfs verify SOURCE [EXTRACTS]...` (#80): checks extracted DSF and DFF files against
   what sacdfs serves, before they are deleted. It compares the raw DSD audio (ignoring tags,
   padding, bit order and container) with the matching track of the same disc, gives each file
