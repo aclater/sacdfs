@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The persistent seek index: each image's learned (frame, LSN) points, kept in a cache
-//! directory across mounts so that a seek after a remount need not search again.
+//! The persistent seek index: each image's scarletbook seek indexes, without their exact
+//! checkpoints (seek hints, saved confirmations and the TOC fingerprint:
+//! `AreaIndex::without_checkpoints`), kept in a cache directory across mounts so that a
+//! seek after a remount near a range read before starts at a hint (#28).
 //!
 //! - One file per image, named by a hash of the image's canonical path (never the path
 //!   itself), holding that hash, the image's size and modification time, the shape of
-//!   each audio area, and the points, delta-coded. A version number and a checksum guard
-//!   it. Any mismatch or doubt discards the file: the cache only ever costs speed.
-//! - Loaded points are not trusted. [`crate::disc`] uses them to aim its searches and as
-//!   cursor starts that are checked against the first frame read before anything is
-//!   returned, exactly as a probe of the search is checked.
+//!   each audio area, and each area's saved index as scarletbook writes it
+//!   (`AreaIndex::to_bytes`). A version number and a checksum guard it. Any mismatch or
+//!   doubt discards the file: the cache only ever costs speed.
+//! - A loaded index is checked by scarletbook (`AreaIndex::from_bytes` checks every bound
+//!   before it allocates; `Disc::set_seek_index` refuses one of a disc with another TOC; a
+//!   hint whose sector does not hold its frame record is dropped). *Why the image's size and
+//!   mtime as well:* the library's checks cannot tell a re-rip with the same TOC and other
+//!   audio, so the key does, as the library asks.
 //! - Written lazily (by [`IndexCache::flush`]: periodically and at unmount, only for
-//!   discs whose points changed) and atomically (a temporary file, then a rename). The
+//!   discs whose saved form changed) and atomically (a temporary file, then a rename). The
 //!   directory is bounded in size; the least recently used files are removed first.
 
 use std::fs::{self, File, OpenOptions};
@@ -24,20 +29,23 @@ use std::time::SystemTime;
 
 use sha2::{Digest, Sha256};
 
-use crate::disc::SharedIndex;
+use scarletbook::Slot;
+
+use crate::disc::LibDisc;
 
 /// First bytes of every index file.
 const MAGIC: &[u8; 8] = b"SACDFSIX";
 
-/// Format version; a file of any other version is discarded.
-const VERSION: u32 = 1;
+/// Format version; a file of any other version is discarded. Version 1 (sacdfs 0.1)
+/// held sacdfs's own (frame, LSN) points.
+const VERSION: u32 = 2;
 
-/// Largest index file read: two areas of the most points an area keeps, at the longest
-/// encoding, fit well within it.
+/// Largest index file read.
 const MAX_FILE: u64 = 4 << 20;
 
-/// Most points per area accepted from a file (the in-memory limit of an area's index).
-pub const MAX_POINTS: usize = 1 << 16;
+/// Most bytes of one area's saved index (scarletbook's form, about 8 bytes a seek hint
+/// and 16 a confirmation, at most 2 048 of each by default).
+pub const MAX_AREA_BYTES: usize = 1 << 20;
 
 /// Default bound on the whole directory.
 pub const DEFAULT_MAX_BYTES: u64 = 32 << 20;
@@ -48,8 +56,8 @@ const SUM: usize = 16;
 /// File name suffix.
 const SUFFIX: &str = ".idx";
 
-/// A frame number and an LSN.
-pub type Point = (u32, u64);
+/// One area's saved index, as scarletbook writes it; `None` for none.
+pub type Saved = Option<Vec<u8>>;
 
 /// What identifies one image's entry: its canonical path (hashed), size and mtime.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,10 +110,11 @@ pub struct AreaShape {
     pub channels: u8,
 }
 
-/// The points of an entry, per area, if `bytes` is a valid entry for `key` and `shapes`.
-/// Anything else (another version, a bad checksum, a different image, points out of
-/// order or out of their area) is `None`.
-pub fn decode(bytes: &[u8], key: &ImageKey, shapes: &[AreaShape]) -> Option<Vec<Vec<Point>>> {
+/// The saved indexes of an entry, per area, if `bytes` is a valid entry for `key` and
+/// `shapes`. Anything else (another version, a bad checksum, a different image, an area
+/// over [`MAX_AREA_BYTES`]) is `None`. The indexes themselves are checked when they are
+/// loaded into a disc.
+pub fn decode(bytes: &[u8], key: &ImageKey, shapes: &[AreaShape]) -> Option<Vec<Saved>> {
     let body_end = bytes.len().checked_sub(SUM)?;
     let (body, sum) = bytes.split_at(body_end);
     if Sha256::digest(body)[..SUM] != *sum {
@@ -132,26 +141,10 @@ pub fn decode(bytes: &[u8], key: &ImageKey, shapes: &[AreaShape]) -> Option<Vec<
             return None;
         }
         let n = usize::try_from(r.u32()?).ok()?;
-        if n > MAX_POINTS {
+        if n > MAX_AREA_BYTES {
             return None;
         }
-        // Each point takes at least two bytes, so a short file cannot claim many.
-        let mut points = Vec::with_capacity(n.min(r.b.len() / 2));
-        let mut prev: Option<Point> = None;
-        for _ in 0..n {
-            let (df, dl) = (r.varint()?, r.varint()?);
-            let (f, l) = match prev {
-                None => (df, start.checked_add(dl)?),
-                Some((pf, pl)) => (u64::from(pf).checked_add(df)?.checked_add(1)?, pl.checked_add(dl)?),
-            };
-            let f = u32::try_from(f).ok()?;
-            if l >= end {
-                return None;
-            }
-            points.push((f, l));
-            prev = Some((f, l));
-        }
-        out.push(points);
+        out.push((n > 0).then(|| r.take(n).map(<[u8]>::to_vec)).map_or(Some(None), |b| b.map(Some))?);
     }
     if !r.b.is_empty() {
         return None;
@@ -159,9 +152,9 @@ pub fn decode(bytes: &[u8], key: &ImageKey, shapes: &[AreaShape]) -> Option<Vec<
     Some(out)
 }
 
-/// An entry for `key` holding `areas` (one list of points per shape, frames strictly and
-/// LSNs weakly increasing, LSNs within the area).
-pub fn encode(key: &ImageKey, shapes: &[AreaShape], areas: &[Vec<Point>]) -> Vec<u8> {
+/// An entry for `key` holding `areas` (one saved index per shape; one over
+/// [`MAX_AREA_BYTES`] is left out).
+pub fn encode(key: &ImageKey, shapes: &[AreaShape], areas: &[Saved]) -> Vec<u8> {
     let mut b = Vec::new();
     b.extend_from_slice(MAGIC);
     b.extend_from_slice(&VERSION.to_le_bytes());
@@ -174,52 +167,14 @@ pub fn encode(key: &ImageKey, shapes: &[AreaShape], areas: &[Vec<Point>]) -> Vec
         b.extend_from_slice(&shape.start_lsn.to_le_bytes());
         b.extend_from_slice(&shape.end_lsn.to_le_bytes());
         b.push(shape.channels);
-        let points: Vec<Point> = areas.get(i).map_or_else(Vec::new, |p| valid_points(p, shape));
-        b.extend_from_slice(&(points.len() as u32).to_le_bytes());
-        let mut prev: Option<Point> = None;
-        for &(f, l) in &points {
-            match prev {
-                None => {
-                    put_varint(&mut b, u64::from(f));
-                    put_varint(&mut b, l - shape.start_lsn);
-                }
-                Some((pf, pl)) => {
-                    put_varint(&mut b, u64::from(f - pf - 1));
-                    put_varint(&mut b, l - pl);
-                }
-            }
-            prev = Some((f, l));
-        }
+        let saved =
+            areas.get(i).and_then(Option::as_deref).filter(|s| s.len() <= MAX_AREA_BYTES).unwrap_or(&[]);
+        b.extend_from_slice(&(saved.len() as u32).to_le_bytes());
+        b.extend_from_slice(saved);
     }
     let sum = Sha256::digest(&b);
     b.extend_from_slice(&sum[..SUM]);
     b
-}
-
-/// The points that can be encoded: in order, inside the area, at most [`MAX_POINTS`].
-fn valid_points(points: &[Point], shape: &AreaShape) -> Vec<Point> {
-    let mut out: Vec<Point> = Vec::with_capacity(points.len().min(MAX_POINTS));
-    for &(f, l) in points {
-        if out.len() >= MAX_POINTS {
-            break;
-        }
-        if !(shape.start_lsn..shape.end_lsn).contains(&l) {
-            continue;
-        }
-        if out.last().is_some_and(|&(pf, pl)| f <= pf || l < pl) {
-            continue;
-        }
-        out.push((f, l));
-    }
-    out
-}
-
-fn put_varint(b: &mut Vec<u8>, mut v: u64) {
-    while v >= 0x80 {
-        b.push((v as u8) | 0x80);
-        v >>= 7;
-    }
-    b.push(v as u8);
 }
 
 /// A reader of the fields of an entry; every method is `None` past the end.
@@ -252,32 +207,30 @@ impl<'a> Cursor<'a> {
     fn i64(&mut self) -> Option<i64> {
         self.take(8).and_then(|b| b.try_into().ok()).map(i64::from_le_bytes)
     }
-
-    fn varint(&mut self) -> Option<u64> {
-        let mut v = 0u64;
-        for i in 0..10 {
-            let byte = self.u8()?;
-            let part = u64::from(byte & 0x7f);
-            if i == 9 && part > 1 {
-                return None;
-            }
-            v |= part << (7 * i);
-            if byte & 0x80 == 0 {
-                return Some(v);
-            }
-        }
-        None
-    }
 }
 
-/// A disc open in this process whose points are saved by [`IndexCache::flush`].
+/// A disc open in this process whose seek indexes are saved by [`IndexCache::flush`].
 #[derive(Debug)]
 struct Live {
     key: ImageKey,
     shapes: Vec<AreaShape>,
-    areas: Vec<Arc<SharedIndex>>,
+    disc: Arc<LibDisc>,
+    /// The slot of each area of `shapes`.
+    slots: Vec<Slot>,
+    /// What the entry holds now (loaded or last written), per area.
+    saved: Vec<Saved>,
     /// Whether this mount has saved or touched the entry, so that it counts as used.
     touched: bool,
+}
+
+impl Live {
+    /// The saved form of the disc's indexes now.
+    fn current(&self) -> Vec<Saved> {
+        self.slots
+            .iter()
+            .map(|&slot| self.disc.seek_index(slot).map(|i| i.without_checkpoints().to_bytes()))
+            .collect()
+    }
 }
 
 /// The persistent seek index of one directory.
@@ -342,25 +295,34 @@ impl IndexCache {
         self.writes.load(Ordering::Relaxed)
     }
 
-    /// The saved points of the image, per area, if its entry exists and matches. A file
+    /// The saved indexes of the image, per area, if its entry exists and matches. A file
     /// that exists but does not match is left for the next save to replace.
-    pub fn load(&self, key: &ImageKey, shapes: &[AreaShape]) -> Option<Vec<Vec<Point>>> {
+    pub fn load(&self, key: &ImageKey, shapes: &[AreaShape]) -> Option<Vec<Saved>> {
         let path = self.dir.join(key.file_name());
         let bytes = read_bounded(&path).ok()?;
-        let points = decode(&bytes, key, shapes);
-        if points.is_none() {
+        let saved = decode(&bytes, key, shapes);
+        if saved.is_none() {
             log::debug!("seek index cache: discarding a stale or damaged entry");
         }
-        points
+        saved
     }
 
-    /// Saves the points of `areas` by [`IndexCache::flush`] from now on.
-    pub(crate) fn register(&self, key: ImageKey, shapes: Vec<AreaShape>, areas: Vec<Arc<SharedIndex>>) {
+    /// Saves the seek indexes of `disc` (of `slots`, one per shape) by
+    /// [`IndexCache::flush`] from now on; `saved` is what the entry holds now (what was
+    /// loaded and used, per area).
+    pub(crate) fn register(
+        &self,
+        key: ImageKey,
+        shapes: Vec<AreaShape>,
+        disc: Arc<LibDisc>,
+        slots: Vec<Slot>,
+        saved: Vec<Saved>,
+    ) {
         let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
-        live.push(Live { key, shapes, areas, touched: false });
+        live.push(Live { key, shapes, disc, slots, saved, touched: false });
     }
 
-    /// Writes the entry of every registered disc whose points changed since its last
+    /// Writes the entry of every registered disc whose saved form changed since its last
     /// write, marks the others as used, and trims the directory to its bound. The number
     /// of entries written.
     pub fn flush(&self) -> io::Result<usize> {
@@ -369,18 +331,15 @@ impl IndexCache {
         let mut first_err = None;
         for d in live.iter_mut() {
             let path = self.dir.join(d.key.file_name());
-            // Every area's flag is cleared, so `fold`, not `any`.
-            let changed = d.areas.iter().fold(false, |c, a| crate::disc::take_dirty(a) | c);
-            if changed {
-                let points: Vec<Vec<Point>> =
-                    d.areas.iter().map(|a| crate::disc::points_for_save(a)).collect();
-                match self.store(&d.key, &d.shapes, &points) {
-                    Ok(()) => written += 1,
+            let now = d.current();
+            if now != d.saved {
+                match self.store(&d.key, &d.shapes, &now) {
+                    Ok(()) => {
+                        written += 1;
+                        d.saved = now;
+                    }
+                    // Saved again at the next flush.
                     Err(e) => {
-                        // Saved again at the next flush.
-                        for a in &d.areas {
-                            crate::disc::mark_dirty(a);
-                        }
                         first_err.get_or_insert(e);
                     }
                 }
@@ -404,7 +363,7 @@ impl IndexCache {
     }
 
     /// Writes one entry atomically: a new temporary file, then a rename over the old one.
-    pub fn store(&self, key: &ImageKey, shapes: &[AreaShape], areas: &[Vec<Point>]) -> io::Result<()> {
+    pub fn store(&self, key: &ImageKey, shapes: &[AreaShape], areas: &[Saved]) -> io::Result<()> {
         let bytes = encode(key, shapes, areas);
         if !self.dir.is_dir() {
             fs::create_dir_all(&self.dir)?;
@@ -513,23 +472,25 @@ mod tests {
         ]
     }
 
-    fn areas() -> Vec<Vec<Point>> {
-        vec![vec![(0, 600), (40, 790), (81, 980), (500, 3000)], vec![(7, 200_010), (8, 200_010)]]
+    fn areas() -> Vec<Saved> {
+        vec![Some(b"an index of the stereo area".to_vec()), None]
     }
 
     #[test]
     fn round_trip() {
         let b = encode(&key(), &shapes(), &areas());
         assert_eq!(decode(&b, &key(), &shapes()), Some(areas()));
-        // 69 bytes of key, 21 per area shape, 16 of checksum, and 16 for the six points.
-        assert_eq!(b.len(), 69 + 2 * 21 + 16 + 16);
+        // 69 bytes of key, 21 per area shape, 16 of checksum, and the 27 bytes saved.
+        assert_eq!(b.len(), 69 + 2 * 21 + 16 + 27);
+        let empty = vec![Some(Vec::new()), None];
+        assert_eq!(decode(&encode(&key(), &shapes(), &empty), &key(), &shapes()), Some(vec![None, None]));
     }
 
     #[test]
-    fn out_of_order_points_are_not_written() {
-        let bad = vec![vec![(5, 700), (4, 800), (6, 650), (7, 600), (9, 900), (10, 300_000)], vec![]];
-        let b = encode(&key(), &shapes(), &bad);
-        assert_eq!(decode(&b, &key(), &shapes()), Some(vec![vec![(5, 700), (9, 900)], vec![]]));
+    fn oversized_areas_are_not_written() {
+        let big = vec![Some(vec![7u8; MAX_AREA_BYTES + 1]), Some(vec![1, 2, 3])];
+        let b = encode(&key(), &shapes(), &big);
+        assert_eq!(decode(&b, &key(), &shapes()), Some(vec![None, Some(vec![1, 2, 3])]));
     }
 
     #[test]
@@ -564,8 +525,8 @@ mod tests {
         assert_eq!(decode(&longer, &key(), &shapes()), None);
     }
 
-    /// A file with a valid checksum but hostile content (here: version 2, points past the
-    /// area, a huge count) is rejected too.
+    /// A file with a valid checksum but hostile content (here: version 1, sacdfs 0.1's;
+    /// a length past the end; a huge length) is rejected too.
     #[test]
     fn hostile_content_with_valid_checksum() {
         let resum = |mut b: Vec<u8>| {
@@ -575,19 +536,15 @@ mod tests {
             b
         };
         let b = encode(&key(), &shapes(), &areas());
-        let mut v2 = b.clone();
-        v2[8] = 2;
-        assert_eq!(decode(&resum(v2), &key(), &shapes()), None);
-        let past_end = encode(&key(), &shapes()[..1], &[vec![(0, 600)]]);
-        let mut p = past_end.clone();
-        // The first point's LSN delta is its second varint, after the 4-byte count.
-        let at = 8 + 4 + 32 + 24 + 1 + 17 + 4 + 1;
-        p[at] = 0xff;
-        p.insert(at + 1, 0xff);
-        p.insert(at + 2, 0x7f);
-        assert_eq!(decode(&resum(p), &key(), &shapes()[..1]), None);
-        let mut huge = past_end;
+        let mut v1 = b.clone();
+        v1[8] = 1;
+        assert_eq!(decode(&resum(v1), &key(), &shapes()), None);
+        let one = encode(&key(), &shapes()[..1], &[Some(vec![9; 10])]);
         let at = 8 + 4 + 32 + 24 + 1 + 17;
+        let mut long = one.clone();
+        long[at..at + 4].copy_from_slice(&11u32.to_le_bytes());
+        assert_eq!(decode(&resum(long), &key(), &shapes()[..1]), None);
+        let mut huge = one;
         huge[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
         assert_eq!(decode(&resum(huge), &key(), &shapes()[..1]), None);
     }
@@ -595,7 +552,7 @@ mod tests {
     #[test]
     fn store_load_flush_and_trim() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = IndexCache::with_limit(&dir.path().join("c"), 300).unwrap();
+        let cache = IndexCache::with_limit(&dir.path().join("c"), 320).unwrap();
         assert!(!cache.dir().exists(), "made only when written to");
         assert_eq!(cache.load(&key(), &shapes()), None);
         cache.store(&key(), &shapes(), &areas()).unwrap();
@@ -624,7 +581,7 @@ mod tests {
         cache.trim().unwrap();
         let total: u64 =
             fs::read_dir(cache.dir()).unwrap().map(|e| e.unwrap().metadata().unwrap().len()).sum();
-        assert!(total <= 300, "{total}");
+        assert!(total <= 320, "{total}");
         let newest = ImageKey::from_parts(&[b'x', 9], 1, 2, 3);
         assert!(cache.load(&newest, &shapes()).is_some());
         assert_eq!(cache.load(&ImageKey::from_parts(&[b'x', 0], 1, 2, 3), &shapes()), None);
@@ -645,8 +602,7 @@ mod tests {
     }
 
     proptest! {
-        /// Arbitrary bytes, and arbitrary damage to a valid entry, never panic, and
-        /// anything accepted lies inside its areas, in order.
+        /// Arbitrary bytes, and arbitrary damage to a valid entry, never panic.
         #[test]
         fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..400)) {
             let _ = decode(&bytes, &key(), &shapes());
@@ -659,11 +615,9 @@ mod tests {
             edits in proptest::collection::vec((any::<usize>(), any::<u8>()), 1..8),
             cut in any::<usize>(),
             resum in any::<bool>(),
-            pts in proptest::collection::vec((0u32..100_000, 600u64..200_000), 0..50),
+            saved in proptest::collection::vec(any::<u8>(), 0..300),
         ) {
-            let mut sorted = pts.clone();
-            sorted.sort_unstable();
-            let mut b = encode(&key(), &shapes(), &[sorted, vec![]]);
+            let mut b = encode(&key(), &shapes(), &[Some(saved), None]);
             for (at, v) in edits {
                 let n = b.len();
                 b[at % n] = v;
@@ -675,24 +629,15 @@ mod tests {
                 b.extend_from_slice(&s[..SUM]);
             }
             if let Some(areas) = decode(&b, &key(), &shapes()) {
-                for (a, s) in areas.iter().zip(shapes()) {
-                    for w in a.windows(2) {
-                        prop_assert!(w[0].0 < w[1].0 && w[0].1 <= w[1].1);
-                    }
-                    for p in a {
-                        prop_assert!((s.start_lsn..s.end_lsn).contains(&p.1));
-                    }
-                }
+                prop_assert_eq!(areas.len(), 2);
             }
         }
 
         #[test]
-        fn encode_decode_round_trip(pts in proptest::collection::vec((0u32..u32::MAX, 600u64..200_000), 0..200)) {
-            let mut sorted = pts.clone();
-            sorted.sort_unstable();
-            let want = valid_points(&sorted, &shapes()[0]);
-            let b = encode(&key(), &shapes(), &[sorted, vec![]]);
-            prop_assert_eq!(decode(&b, &key(), &shapes()), Some(vec![want, vec![]]));
+        fn encode_decode_round_trip(a in proptest::collection::vec(any::<u8>(), 1..500), b in proptest::collection::vec(any::<u8>(), 0..500)) {
+            let want = vec![Some(a), (!b.is_empty()).then_some(b)];
+            let e = encode(&key(), &shapes(), &want);
+            prop_assert_eq!(decode(&e, &key(), &shapes()), Some(want));
         }
     }
 }
