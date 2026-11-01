@@ -199,9 +199,8 @@ fn main() -> ExitCode {
 /// Tells systemd the mount is ready (`READY=1` to `$NOTIFY_SOCKET`, #60), for `Type=notify`.
 /// Nothing happens without the variable. Failure is only logged: the mount works anyway.
 fn sd_notify_ready() {
-    if let Some(path) = std::env::var_os("NOTIFY_SOCKET").filter(|p| !p.is_empty())
-        && let Err(e) = send_ready(&path)
-    {
+    let Some(path) = std::env::var_os("NOTIFY_SOCKET").filter(|p| !p.is_empty()) else { return };
+    if let Err(e) = send_ready(&path) {
         log::warn!("NOTIFY_SOCKET {}: {e}", path.to_string_lossy());
     }
 }
