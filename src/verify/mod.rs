@@ -194,6 +194,10 @@ enum ExtractKind {
     Pcm(&'static str),
 }
 
+fn is_iso(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("iso"))
+}
+
 fn extract_kind(path: &Path) -> Option<ExtractKind> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
@@ -257,15 +261,19 @@ fn unescape_octal(s: &str) -> OsString {
 }
 
 /// Every extract under `root`, sorted by path.
+/// Files that are not audio (folder art, playlists, sidecars of every kind) are counted in
+/// `ignored`, not listed.
 fn walk(
     root: &Path,
     mounts: &[PathBuf],
     out: &mut Vec<(PathBuf, ExtractKind, fs::Metadata)>,
+    ignored: &mut usize,
 ) -> io::Result<()> {
     let meta = fs::metadata(root)?;
     if meta.is_file() {
-        if let Some(k) = extract_kind(root) {
-            out.push((root.to_owned(), k, meta));
+        match extract_kind(root) {
+            Some(k) => out.push((root.to_owned(), k, meta)),
+            None => *ignored += 1,
         }
         return Ok(());
     }
@@ -292,6 +300,8 @@ fn walk(
                         out.push((p, k, m));
                     }
                 }
+            } else if !is_iso(&p) {
+                *ignored += 1;
             }
         }
     }
@@ -511,6 +521,9 @@ fn losses(audio: &container::Audio, src: &mut dyn Source, served: &[id3::Frame])
 pub struct Summary {
     /// Every row, sorted by path.
     pub rows: Vec<Row>,
+    /// Files under EXTRACTS that are not audio (folder art, playlists, other sidecar files)
+    /// and not images: not checked, not listed.
+    pub ignored: usize,
 }
 
 impl Summary {
@@ -573,6 +586,13 @@ impl Summary {
         for (why, n) in reasons {
             s.push_str(&format!("UNSUPPORTED ({n}): {why}\n"));
         }
+        if self.ignored > 0 {
+            s.push_str(&format!(
+                "Not audio, not checked: {} other files (folder art, playlists and the like; sacdfs \
+                 passes its sidecar files through, see --sidecars).\n",
+                self.ignored
+            ));
+        }
         s.push_str("Nothing was deleted. Keep every file that is not IDENTICAL; see the report for each.\n");
         s
     }
@@ -631,8 +651,9 @@ pub fn run(args: &Args) -> io::Result<Summary> {
     image_folders(&scanned, &mut folders);
 
     let mut found = Vec::new();
+    let mut ignored = 0;
     for r in &roots {
-        walk(r, &mounts, &mut found).map_err(|e| with(e, r))?;
+        walk(r, &mounts, &mut found, &mut ignored).map_err(|e| with(e, r))?;
     }
     found.sort_by(|a, b| a.0.cmp(&b.0));
     found.dedup_by(|a, b| a.0 == b.0);
@@ -737,7 +758,7 @@ pub fn run(args: &Args) -> io::Result<Summary> {
     rows.extend(kept);
     rows.sort_by(|a, b| a.path.cmp(&b.path));
     out.into_inner().unwrap_or_else(|p| p.into_inner()).finish(&rows)?;
-    Ok(Summary { rows })
+    Ok(Summary { rows, ignored })
 }
 
 fn pcm_reason(what: &str) -> String {

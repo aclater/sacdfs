@@ -147,6 +147,102 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   example, not counting files that are not SACD images) would mean opening every image at
   mount, which is the cost the lazy tree exists to avoid.
 
+### Sidecar files (#79, #75)
+
+The owner's goal for sacdfs (#82, 2026-11-01): "a value of using sacdfs is reclaiming storage
+space - so that's what i want to architect for": people delete the DSF files they extracted
+and lose nothing. The first gap was everything else in the album folders. sacdfs showed only
+what it makes from images, so a player reading through it saw no local art (in a real Roon
+test on the owner's NAS, Roon fell back to its online art), and a playlist could not live on
+the share (Roon imports playlist entries only from inside the same storage location, #75).
+
+So sacdfs passes **sidecar files** of SOURCE through, read-only and byte for byte, at their
+relative path (`src/sidecar.rs`, listed by `tree.rs`):
+
+- **An allow-list, set with `--sidecars`** (`SACDFS_SIDECARS` in the container). The default
+  is `jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/`: the image formats players read as folder
+  art, playlists, and two folder names whose whole content passes (scans are often PDF or
+  TIFF, and in subfolders). Matched in any ASCII case; hidden names (`.` first, which
+  includes macOS's `._folder.jpg`) never pass. The list is applied from left to right
+  (`default`, `ext`, `Name/`, `-item`, `none`), so one option widens (`default,cue`), narrows
+  (`default,-webp`), replaces (`jpg,png`) or turns it off (`none`, exactly 0.1.0's tree).
+  *Why an allow-list, not "everything that isn't an image":* the owner's library keeps the
+  extracted DSF, DFF and FLAC files next to the images (#82 counts them); passed through,
+  every track would show twice in a player, once as the extract and once as sacdfs's file,
+  and logs, `.cue` sheets pointing at files that aren't there, or `Thumbs.db` would ride
+  along. Naming what passes keeps the tree predictable, and the option covers the rest.
+  `.iso` cannot be an item.
+- **Placement.** Next to the image's folder, at the same relative path:
+  `SOURCE/A/Album/folder.jpg` is `MOUNT/A/Album/folder.jpg`, beside `MOUNT/A/Album/disc/`.
+  Only directories that hold images (directly or below) list sidecars, plus the sidecar
+  folders inside them: the tree still leaves out folders with no image. An empty sidecar
+  folder is not shown. Sidecars are listed after the directory's subdirectories and images,
+  through the same de-duplicator, so **no existing name or number changes**: a sidecar that
+  collides (an `Artwork/` next to `Artwork.iso`) takes the ` (2)`.
+- **`--flatten`:** the sidecars of every directory of a collapsed chain show in the collapsed
+  folder, after `Stereo` and `Multichannel`, outermost directory first (`chain_sidecars`), a
+  repeated name with ` (2)`. *Why:* the collapsed folder is where the album now is; its
+  art belongs next to its areas, and nothing in the chain is lost. A collapsed image that
+  turns out not to be an SACD image still shows its sidecars, as a source folder would.
+  Sidecars don't count as "content" for collapsing (as other files didn't before), so a
+  chain collapses exactly as it did.
+- **Identity (#18).** A sidecar file's inode number is a key in its own domain (3) over its
+  relative path, entry bits 0; a sidecar folder is a directory (domain 1) over its path, so it
+  keeps its number if it later holds an image. Both are in `Ids`, the index of names made at
+  mount, with their parent directory, so a number from an NFS handle is found again after a
+  restart: the walk goes down the chain of directories, and with `--flatten` a collapsed
+  folder (numbered as its image) stands for the chain directories it covers
+  (`Tree::collapsed_over`). A sidecar's number is the same with and without `--flatten`.
+  The new domain sorts after directories and images, so on a key collision a directory or
+  image keeps its key: adding sidecars never moves an existing number (except through the
+  fallback-key case already described below, which needs about 16 million paths).
+  **Generation:** 32 bits of a hash of the source file's size and mtime, never 0, so a handle
+  to a replaced cover is stale (`ESTALE`) instead of serving other bytes; directories keep 0.
+- **Attributes pass straight through.** Size, blocks, and the access, modification and change
+  times are the source file's, read with one `fstatat` when its directory is first listed
+  (in parallel, as images are opened). Mode (0444), owner and inode number are sacdfs's, as
+  for every entry. *Why no derived mtime, unlike #64:* a sidecar's bytes are its source's and
+  depend on no option or output version, so its own mtime already moves exactly when its
+  bytes do; the generation follows the same two values. *Why read them at listing, not at
+  mount:* mounting stays a walk of names (one `read_dir` per folder, which the scan already
+  did); `readdir` lists only names, so the `stat` is needed anyway before a name can be shown
+  without lying about it.
+- **Changes while mounted.** The tree is read once, as for images. Opening a sidecar whose
+  source size or mtime differs from what was listed fails with `ESTALE`. *Why:* the kernel
+  holds the listed size for a day (`TTL`), so new bytes would be cut off or padded; a clear
+  error until the next mount is better than wrong bytes. The next mount shows the new file
+  under the same number with a new generation.
+- **Reads** go to the request threads, a `pread` of the source file opened at `open` (one
+  descriptor per open file, closed at release), with `FOPEN_KEEP_CACHE`. *Why the request
+  threads:* the source may be a network share, and a slow read must not hold up the FUSE
+  threads.
+- **Untrusted paths (#67).** Images and every other file are untrusted, and SOURCE can change
+  under a mount. Every sidecar is reached from a descriptor of SOURCE, one name at a time,
+  with `O_NOFOLLOW` (`openat`), so a directory swapped for a link after the scan cannot lead
+  outside. A sidecar that is itself a link is followed once: its target is read
+  (`readlinkat`), resolved by name against the link's directory (or, if absolute, only when
+  under SOURCE), must stay inside SOURCE and outside MOUNTPOINT, and is then opened the same
+  way, so a link to a link, or through a linked folder, is not followed. Links that leave
+  are skipped with a warning. Only regular files are served, opened with `O_NONBLOCK` so a
+  FIFO put in place cannot hold the open. Nothing under MOUNTPOINT (when it is inside SOURCE)
+  is a sidecar: reading it would be a FUSE request to sacdfs itself, the hang of #56. *Why
+  not `openat2(RESOLVE_BENEATH)`:* it needs Linux 5.6, and the oldest distributions sacdfs
+  supports run 4.18 to 5.4 (#58); it would also follow links into MOUNTPOINT inside SOURCE.
+  Directory links are never followed, as for images.
+- **NFS export and `readdir`.** Sidecar files are regular files with stable numbers, so the
+  kernel NFS server and the container's NFS-Ganesha export them like track files, and their
+  handles survive a restart (`tests/export.rs`, `tests/nfs-loopback.sh`). `readdir` lists them
+  as regular files and sidecar folders as directories; `..` of a sidecar folder is its
+  directory (with `--flatten`, the collapsed folder).
+- **Nothing changes for an image without sidecars.** The audio files' bytes, names, numbers,
+  generations and mtimes are untouched (`tree::tests::nothing_changes_for_images_and_their_files`,
+  and the DSF hash gate of 93 tracks on real discs with a sidecar beside them); a directory
+  with no sidecar costs nothing more; `--sidecars none` is 0.1.0's tree.
+- **Not done:** embedding art in the DSF and WAV tags (a separate question, #79), rewriting
+  playlist entries when `--flatten` or `--format` change paths (kept byte for byte, #75), and
+  copying folder art into the area folders (the art sits one level above the track files with
+  `--flatten`, two without, as in SOURCE).
+
 ## File identity and NFS export
 
 For the server-side deployment (#17, #18): an NFS client keeps file handles, which hold the
@@ -188,6 +284,8 @@ after every NAS reboot or app update.
   walk order, but a fallback key can change on a later mount if a new path's first key takes
   it. A second area in the same slot (only a hostile image has one) is not shown, rather than
   given a number that is not its own.
+- A passed-through sidecar file (#79) has a key of its own domain over its relative path and
+  entry bits 0; a sidecar folder is a directory ([Sidecar files](#sidecar-files-79-75)).
 - **What changes the numbers:** renaming or moving a folder or image changes its number and
   everything below it. `--flatten` changes only the folders that collapse away. `--format`
   hides files without changing the others'. `--pcm-rate`, `--pcm-cutoff` and `--pcm-gain`

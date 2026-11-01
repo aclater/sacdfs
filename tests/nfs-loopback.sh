@@ -23,6 +23,8 @@ src=$work/src mnt=$work/mnt client=$work/client
 mkdir -p "$src/Artist/Album" "$mnt" "$client"
 cp tests/corpus/images/dsd-stereo-mch-2048.iso "$src/Artist/Album/dsd.iso"
 cp tests/corpus/images/dst-stereo-5ch-2054.iso "$src/Artist/dst.iso"
+# A sidecar file passed through (#79): its handle must survive the restart too.
+head -c 300001 tests/corpus/images/dsd-stereo-mch-2048.iso > "$src/Artist/Album/folder.jpg"
 export XDG_CACHE_HOME=$work/cache
 
 pid=
@@ -87,7 +89,7 @@ for root, _, names in os.walk(client):
     for n in sorted(names):
         if n.endswith((".dsf", ".wav")):
             files.append(os.path.relpath(os.path.join(root, n), client))
-files = files[:6]
+files = ["Artist/Album/folder.jpg"] + files[:5]
 assert len(files) >= 4, files
 opened = []
 for rel in files:

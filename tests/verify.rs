@@ -218,6 +218,18 @@ fn setup(dir: &Path) -> (PathBuf, PathBuf, BTreeMap<String, Status>) {
         Status::Identical,
     );
 
+    // Sidecar files, next to the images and among the extracts kept apart: not audio,
+    // never extracts (#79).
+    for p in [
+        a.join("folder.jpg"),
+        a.join("album.m3u"),
+        a.join("Artwork").join("back.png"),
+        ext.join("b").join("cover.jpg"),
+        ext.join("b").join("list.m3u8"),
+    ] {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, b"not audio").unwrap();
+    }
     // A DST image, extracts kept apart: every track as served.
     for (p, f, b) in files.iter().filter(|(p, _, _)| p.starts_with("b")) {
         let name = format!("b-{}-{}", p.parent().unwrap().file_name().unwrap().to_string_lossy(), f.number);
@@ -274,6 +286,13 @@ fn verify_classifies_every_extract() {
     assert!(!s.all_identical());
     let text = s.render();
     assert!(text.contains("Nothing was deleted"));
+    // The sidecars are neither rows nor checked, only counted.
+    assert_eq!(s.ignored, 5, "{text}");
+    assert!(text.contains("5 other files"), "{text}");
+    assert!(s.rows.iter().all(|r| !matches!(
+        r.path.extension().and_then(|e| e.to_str()),
+        Some("jpg" | "png" | "m3u" | "m3u8")
+    )));
     // The report has every row, sorted, and parses back.
     let tsv = fs::read_to_string(&report).unwrap();
     assert_eq!(tsv.lines().count(), want.len() + 1);

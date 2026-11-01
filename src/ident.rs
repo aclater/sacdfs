@@ -12,9 +12,11 @@
 //! +---------------------------------------+-----+--+------------+--+--------+
 //! ```
 //!
-//! - The **key** names a source directory (by its path relative to SOURCE) or an image (by
-//!   its relative path): the top 48 bits of the SHA-256 of a fixed prefix, a domain byte
-//!   (directory or image) and the path's bytes.
+//! - The **key** names a source directory (by its path relative to SOURCE), an image or a
+//!   passed-through sidecar file (#79; by their relative paths): the top 48 bits of the
+//!   SHA-256 of a fixed prefix, a domain byte (directory, image or sidecar) and the path's
+//!   bytes. A passed-through sidecar folder (`Artwork/`) is a directory: its number does not
+//!   change if it later holds an image. A sidecar file's entry bits are 0.
 //! - The low 16 bits name an entry inside an image: kind 0 is the directory itself (a source
 //!   directory or an image's directory), kind 1 an area (`sl`: the slot, 0 for 2-channel, 1
 //!   for multichannel), kind 2 a track file (slot, track number 1 to 255, `wv` set for WAV,
@@ -33,7 +35,9 @@
 //! modification time, the file's format, size and output version, and for WAV the full PCM
 //! flavour: a handle to a file whose bytes may differ fails with `ESTALE` instead of serving
 //! other data. Directories have generation 0: they are named containers, and a handle to one
-//! whose content changed still finds it.
+//! whose content changed still finds it. A sidecar file's generation is a hash of its source
+//! file's size and modification time ([`sidecar_generation`]), so a handle to a replaced
+//! cover goes stale the same way.
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::ffi::OsStrExt;
@@ -44,6 +48,7 @@ use scarletbook::Slot;
 use sha2::{Digest, Sha256};
 
 use crate::pcm::{Cutoff, PcmConfig};
+use crate::sidecar::{Sidecar, SidecarKind};
 use crate::track::{Format, TrackFile};
 use crate::tree::{ROOT, SourceDir};
 
@@ -80,6 +85,8 @@ const GAINS: i64 = 8401;
 enum Domain {
     Dir = 1,
     Image = 2,
+    /// Sorts after the others: on a collision, a directory or image keeps its key.
+    Sidecar = 3,
 }
 
 /// The first 64 bits of a SHA-256 of `parts`.
@@ -157,6 +164,8 @@ fn shown_mtime(image: SystemTime, version: u32, pcm_offset: u64) -> SystemTime {
 struct Indexed {
     /// Inode number of the source directory holding it (the root for the top level).
     parent: u64,
+    /// Whether it is a sidecar file.
+    sidecar: bool,
 }
 
 /// The inode numbers of every source directory and image, made at mount from the names
@@ -185,6 +194,7 @@ impl Ids {
         let base = root.path.clone();
         let rel = |p: &Path| p.strip_prefix(&base).unwrap_or(p).as_os_str().as_bytes().to_vec();
         let mut stack: Vec<(&SourceDir, Option<usize>)> = vec![(root, None)];
+        let mut sidecars: Vec<(&[Sidecar], Option<usize>)> = Vec::new();
         while let Some((dir, me)) = stack.pop() {
             for img in &dir.images {
                 items.push((Domain::Image, rel(img), me));
@@ -192,6 +202,18 @@ impl Ids {
             for (_, sub) in &dir.dirs {
                 items.push((Domain::Dir, rel(&sub.path), me));
                 stack.push((sub, Some(items.len() - 1)));
+            }
+            sidecars.push((&dir.sidecars, me));
+        }
+        while let Some((list, me)) = sidecars.pop() {
+            for sc in list {
+                match &sc.kind {
+                    SidecarKind::Folder(inner) => {
+                        items.push((Domain::Dir, rel(&sc.path), me));
+                        sidecars.push((inner, Some(items.len() - 1)));
+                    }
+                    SidecarKind::File | SidecarKind::Link => items.push((Domain::Sidecar, rel(&sc.path), me)),
+                }
             }
         }
         let first: Vec<u64> = items.iter().map(|(d, r, _)| key_ino(*d, r, 0)).collect();
@@ -233,7 +255,9 @@ impl Ids {
         let by_ino = items
             .iter()
             .zip(&ino)
-            .map(|((_, _, parent), &k)| (k, Indexed { parent: parent.map_or(ROOT, |p| ino[p]) }))
+            .map(|((d, _, parent), &k)| {
+                (k, Indexed { parent: parent.map_or(ROOT, |p| ino[p]), sidecar: *d == Domain::Sidecar })
+            })
             .collect();
         Ids { root: base, by_ino, fallback }
     }
@@ -263,6 +287,16 @@ impl Ids {
     /// that shows it with `--flatten`).
     pub fn image(&self, path: &Path) -> u64 {
         self.of(Domain::Image, path)
+    }
+
+    /// The inode number of the passed-through sidecar file at `path`.
+    pub fn sidecar(&self, path: &Path) -> u64 {
+        self.of(Domain::Sidecar, path)
+    }
+
+    /// Whether `ino` is a sidecar file's number.
+    pub fn is_sidecar(&self, ino: u64) -> bool {
+        entry_of(ino) == 0 && self.by_ino.get(&ino).is_some_and(|i| i.sidecar)
     }
 
     /// The source root.
@@ -369,6 +403,17 @@ pub fn generation(file: &TrackFile, flavour: u64) -> u64 {
     (h & 0xffff_ffff).max(1)
 }
 
+/// The generation of a passed-through sidecar file: a hash of its source file's size and
+/// modification time, never 0. Its bytes are the source file's, so nothing else changes them.
+pub fn sidecar_generation(size: u64, mtime: SystemTime) -> u64 {
+    let (secs, nanos) = match mtime.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => (d.as_secs() as i64, d.subsec_nanos()),
+        Err(e) => (-(e.duration().as_secs() as i64), e.duration().subsec_nanos()),
+    };
+    let h = sha64(&[b"sacdfs side v1\0", &size.to_be_bytes(), &secs.to_be_bytes(), &nanos.to_be_bytes()]);
+    (h & 0xffff_ffff).max(1)
+}
+
 /// The flavour of WAV files: the PCM options' hash mixed with the samples per frame (the
 /// rate).
 pub fn wav_flavour(pcm: u64, samples_per_frame: u32) -> u64 {
@@ -422,6 +467,7 @@ mod tests {
             path: PathBuf::from(p),
             dirs: dirs.into_iter().map(|(n, d)| (n.into(), d)).collect(),
             images: images.iter().map(|i| PathBuf::from(format!("{p}/{i}"))).collect(),
+            sidecars: Vec::new(),
         };
         let make = |order: bool| {
             let a = dir("/s/a", vec![], &["x.iso"]);
