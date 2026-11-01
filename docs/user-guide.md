@@ -64,6 +64,8 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   `88200` sacdfs refuses to start, since 88.2 kHz cannot hold an 80 kHz band.
 - `--flatten` collapses folders that hold nothing but one image (see the
   [README](../README.md#layout)).
+- `--sidecars LIST` chooses which other files of `SOURCE` (folder art, scans, playlists) are
+  passed through next to the images ([Sidecar files](#sidecar-files-art-scans-playlists)).
 
 **The seek index cache** (`--index-cache DIR`, `--no-index-cache`). sacdfs learns where the
 frames are in each image as it reads, and keeps what it learnt in `$XDG_CACHE_HOME/sacdfs`
@@ -177,6 +179,65 @@ loudness or ReplayGain scans, waveform previews) converts every WAV file it read
 CPU and time for no new information. Point such programs at a mount with `--format dsf`, or
 mount twice: one mount for them, one with WAV files for players.
 
+## Sidecar files: art, scans, playlists
+
+A folder that holds images often holds what goes with them: `folder.jpg` or `cover.jpg`,
+scans of the booklet in an `Artwork/` or `Scans/` folder, playlists. sacdfs shows these
+**sidecar files** where they are in `SOURCE`, read-only and byte for byte: the mount shows the
+source file's size, modification, access and change times, and reads its bytes as they are.
+sacdfs never parses them. So Roon, Plex, foobar2000 and file managers find the folder art
+next to the albums, and a playlist can sit next to its images (Roon imports a playlist only
+from inside the same storage location). It is one of the things that let you delete the
+DSF files you extracted and keep only the images.
+
+**Which files.** `--sidecars LIST`, read from left to right:
+- an extension (`jpg` or `.jpg`): files with it, in any case (`Cover.JPG`);
+- a folder name ending in `/` (`Artwork/`): a folder of that name, any case, is shown with
+  everything in it, any file type and subfolders, so a booklet scan as PDF or TIFF passes too;
+- `default`: `jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/` (the default of the option);
+- `-item` removes an item, `none` empties the list. So `--sidecars default,cue,Covers/` adds to
+  the default, `--sidecars default,-webp` removes from it, `--sidecars jpg,png` replaces it,
+  and `--sidecars none` shows only the audio, as sacdfs 0.1.0 did.
+
+`.iso` cannot be an item: images are shown as their audio. Audio files (DSF, DFF, FLAC) are
+not in the default on purpose: extracted copies next to the images would show up twice in a
+player, once as the extract and once as sacdfs's file.
+
+**Where they appear.**
+- Next to the image's folder: `SOURCE/Artist/Album/folder.jpg` is
+  `MOUNTPOINT/Artist/Album/folder.jpg`, beside `MOUNTPOINT/Artist/Album/disc/`.
+- With `--flatten`, the sidecar files of every folder of a collapsed chain show in the folder
+  that is kept, next to `Stereo` and `Multichannel`, outermost folder first. A name that is
+  already taken (two `folder.jpg` in the chain, or a file named `Stereo`) gets ` (2)`, as
+  repeated track names do.
+- Only folders that hold images (directly or below) show sidecar files, plus the sidecar
+  folders inside them; a folder of art with no image anywhere below is not shown. Hidden
+  files and folders (a name starting with `.`, such as macOS's `._folder.jpg`) never are, nor
+  an empty sidecar folder, nor anything inside the mount point when it is inside `SOURCE`.
+- Listings are in the same order as before, with the sidecar files after the images.
+
+**Playlists** are passed as they are, never rewritten: write their entries as relative paths
+that resolve inside the mount, as sacdfs names its files (`Album/disc/Stereo/01 - Title.dsf`
+for a playlist in `Artist/`). `--flatten` and `--format` change those paths, so a playlist is
+written for one layout.
+
+**Symbolic links.** A sidecar that is a symbolic link is shown as the file it points to, if
+that is a regular file inside `SOURCE`, the link resolved by name (relative, or absolute
+under `SOURCE`), and not inside the mount point. A link that points outside `SOURCE`, or
+into the mount, is left out with a warning in the log; a link to another link, a link
+through a linked folder, and folder links are not followed at all. Every sidecar is opened one
+folder at a time without following links, so nothing changed in `SOURCE` after the mount can
+lead sacdfs outside it.
+
+**Changes.** The tree, sidecar files included, is read at mount time; files added later
+appear after a remount. A sidecar file whose size or modification time changed since its
+folder was listed fails to open with "stale file handle" (its size, already shown, would not
+match its bytes) until the next mount, which shows the new file under the same inode number.
+
+**Cost.** Mounting reads only names, as before. The first listing of a folder looks at its
+sidecar files (one `stat` each, in parallel, as images are opened); nothing else reads them
+until they are opened. A folder without sidecar files costs nothing more.
+
 ## Sharing the mount over NFS
 
 The kernel NFS server can export a sacdfs mount, so that NFS clients see the files. (On a NAS,
@@ -203,11 +264,15 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   `--pcm-cutoff` or `--pcm-gain`. Directories stay valid.
 - With `--flatten` turned on or off, images, areas and files keep their numbers (a collapsed
   folder is the image's folder); only the folders that disappear or reappear change.
+- A sidecar file (folder art, a playlist) is numbered by its path in `SOURCE`, with or
+  without `--flatten`, and its handle works across restarts while the file stays the same;
+  once its size or modification time changes, its handle is stale.
 - Adding or removing images does not change the numbers of the others. The design is in
   [design.md](design.md#file-identity-and-nfs-export).
 
 ## Times, sizes and free space
 
+- **Sidecar files** show their source file's size and times as they are.
 - **Modification times.** A DSF or WAV file shows its image's modification time, moved
   forward whenever its bytes would differ: a WAV file with a non-default `--pcm-cutoff` or
   `--pcm-gain` shows a later time (by up to 7 hours, a different time for every cutoff and
@@ -228,7 +293,9 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
 ## Images that change, and damaged images
 
 - **New or removed images** appear or disappear only after a remount: the directory tree is
-  read once, at mount time.
+  read once, at mount time. The same goes for sidecar files; one that changes while mounted
+  fails to open with "stale file handle" until the next mount
+  ([Sidecar files](#sidecar-files-art-scans-playlists)).
 - **An image file that changes while mounted** (another size, modification time or file) is
   opened again, at most a second after the change. An image whose size changed gives I/O
   errors until the next mount, since its directory still shows the old tracks.

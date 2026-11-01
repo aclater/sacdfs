@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io;
+use std::os::unix::fs::FileExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -85,12 +86,37 @@ pub struct SacdFs {
     tree: Arc<Tree>,
     engine: Arc<Engine>,
     requests: Workers,
-    handles: Mutex<HashMap<u64, Arc<Reader>>>,
+    handles: Mutex<HashMap<u64, Open>>,
     next_fh: AtomicU64,
     uid: u32,
     gid: u32,
     /// The source filesystem's size, and when it was read: see [`SacdFs::statfs`].
     source_size: Arc<Mutex<SourceSize>>,
+}
+
+/// An open file.
+#[derive(Debug, Clone)]
+enum Open {
+    /// A track file, read through the engine.
+    Track(Arc<Reader>),
+    /// A sidecar file: its source file, open.
+    Sidecar(Arc<std::fs::File>),
+}
+
+/// Reads up to `size` bytes at `offset` of `file`, fewer only at its end.
+fn read_plain(file: &std::fs::File, offset: u64, size: u32) -> io::Result<Vec<u8>> {
+    let mut buf = vec![0u8; size as usize];
+    let mut got = 0;
+    while got < buf.len() {
+        match file.read_at(&mut buf[got..], offset + got as u64) {
+            Ok(0) => break,
+            Ok(n) => got += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    buf.truncate(got);
+    Ok(buf)
 }
 
 /// The size of the source filesystem, as `statfs` reports it.
@@ -171,15 +197,22 @@ impl SacdFs {
         let (kind, size, perm, nlink) = match node {
             Node::Dir(_) => (FileType::Directory, 0, 0o555, 2),
             Node::File(f) => (FileType::RegularFile, f.size, 0o444, 1),
+            Node::Sidecar(s) => (FileType::RegularFile, s.meta.size, 0o444, 1),
         };
         let mtime = self.tree.mtime(node);
+        // A sidecar file shows its source file's times and blocks (#79); everything else
+        // one time, its mtime.
+        let (atime, ctime, blocks) = match node {
+            Node::Sidecar(s) => (s.meta.atime, s.meta.ctime, s.meta.blocks),
+            _ => (mtime, mtime, size.div_ceil(512)),
+        };
         FileAttr {
             ino: INodeNo(ino),
             size,
-            blocks: size.div_ceil(512),
-            atime: mtime,
+            blocks,
+            atime,
             mtime,
-            ctime: mtime,
+            ctime,
             crtime: mtime,
             kind,
             perm,
@@ -192,7 +225,7 @@ impl SacdFs {
         }
     }
 
-    fn reader(&self, fh: u64) -> Option<Arc<Reader>> {
+    fn handle(&self, fh: u64) -> Option<Open> {
         self.handles.lock().unwrap_or_else(|p| p.into_inner()).get(&fh).cloned()
     }
 }
@@ -219,7 +252,7 @@ impl Filesystem for SacdFs {
             b"." => self.tree.get(parent.0).map(|_| parent.0),
             b".." => match self.tree.get(parent.0).as_deref() {
                 Some(Node::Dir(d)) => Some(d.parent),
-                Some(Node::File(_)) => {
+                Some(Node::File(_) | Node::Sidecar(_)) => {
                     reply.error(Errno::ENOTDIR);
                     return;
                 }
@@ -262,15 +295,23 @@ impl Filesystem for SacdFs {
             reply.error(Errno::ENOENT);
             return;
         };
-        let Node::File(file) = &*node else {
-            reply.error(Errno::EISDIR);
-            return;
+        let open = match &*node {
+            Node::File(file) => Open::Track(Arc::new(Reader::new(file.clone()))),
+            Node::Sidecar(s) => match self.tree.open_sidecar(s) {
+                Ok(f) => Open::Sidecar(Arc::new(f)),
+                Err(e) => {
+                    log::info!("sidecar {}: open: {e}", s.target.display());
+                    reply.error(Errno::from_i32(e.raw_os_error().unwrap_or(libc::EIO)));
+                    return;
+                }
+            },
+            Node::Dir(_) => {
+                reply.error(Errno::EISDIR);
+                return;
+            }
         };
         let fh = self.next_fh.fetch_add(1, Ordering::Relaxed);
-        self.handles
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(fh, Arc::new(Reader::new(file.clone())));
+        self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(fh, open);
         reply.opened(FileHandle(fh), FopenFlags::FOPEN_KEEP_CACHE);
     }
 
@@ -285,9 +326,23 @@ impl Filesystem for SacdFs {
         _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        let Some(reader) = self.reader(fh.0) else {
-            reply.error(Errno::EBADF);
-            return;
+        let reader = match self.handle(fh.0) {
+            Some(Open::Track(r)) => r,
+            Some(Open::Sidecar(file)) => {
+                // The source may be slow (a network filesystem): read on a request thread.
+                self.requests.spawn(move || match read_plain(&file, offset, size) {
+                    Ok(data) => reply.data(&data),
+                    Err(e) => {
+                        log::warn!("sidecar read at {offset}: {e}");
+                        reply.error(Errno::EIO);
+                    }
+                });
+                return;
+            }
+            None => {
+                reply.error(Errno::EBADF);
+                return;
+            }
         };
         let engine = self.engine.clone();
         let pool = self.requests.clone();
@@ -352,7 +407,7 @@ impl Filesystem for SacdFs {
             Some(Node::Dir(_)) => {
                 reply.opened(FileHandle(0), FopenFlags::FOPEN_KEEP_CACHE | FopenFlags::FOPEN_CACHE_DIR)
             }
-            Some(Node::File(_)) => reply.error(Errno::ENOTDIR),
+            Some(Node::File(_) | Node::Sidecar(_)) => reply.error(Errno::ENOTDIR),
             None => reply.error(Errno::ENOENT),
         }
     }
@@ -380,7 +435,9 @@ impl Filesystem for SacdFs {
         match self.tree.get(ino.0).as_deref() {
             None => reply.error(Errno::ENOENT),
             Some(_) if mask.contains(AccessFlags::W_OK) => reply.error(Errno::EROFS),
-            Some(Node::File(_)) if mask.contains(AccessFlags::X_OK) => reply.error(Errno::EACCES),
+            Some(Node::File(_) | Node::Sidecar(_)) if mask.contains(AccessFlags::X_OK) => {
+                reply.error(Errno::EACCES)
+            }
             Some(_) => reply.ok(),
         }
     }

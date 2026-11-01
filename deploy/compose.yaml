@@ -37,6 +37,7 @@ services:
       # SACDFS_PCM_RATE: "176400"
       # SACDFS_PCM_CUTOFF: "40"
       # SACDFS_PCM_GAIN: "0"
+      # SACDFS_SIDECARS: default   # folder art, scans and playlists passed through
       # SMB_USER: music
       # SMB_PASSWORD_FILE: /run/secrets/smb_password
       # NFS_CLIENTS: 192.0.2.0/24

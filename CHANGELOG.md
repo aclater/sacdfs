@@ -6,6 +6,20 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Sidecar files are passed through (#79, #75): folder art (`.jpg`, `.jpeg`, `.png`,
+  `.webp`), `Artwork/` and `Scans/` folders with all their content, and `.m3u`/`.m3u8`
+  playlists next to the images show at their relative path, read-only and byte for byte,
+  with their source file's size and times. Players such as Roon find the folder art, and
+  playlists can live on the share, so extracted copies can go without losing either. With
+  `--flatten`, a collapsed chain's sidecars show in the collapsed folder. They have stable
+  inode numbers (the same with and without `--flatten`) and NFS handles that survive a
+  restart and go stale when the file changes. `--sidecars LIST` (`SACDFS_SIDECARS` in the
+  container) widens, narrows or turns off the list (`default,cue`, `default,-webp`, `none`).
+  Hidden files are never passed, and a link is followed only to a file inside SOURCE and
+  outside the mount point. The audio files are unchanged.
+
 ### Changed
 
 - scarletbook 0.5.2 (was 0.5.0), the engine for 0.2.0: sacdfs's output is unchanged (DSF
@@ -35,7 +49,7 @@ All notable changes to sacdfs are recorded here. The format follows
 ### Documentation
 
 - `docs/deployment.md`, Roon: discs also present as extracted files are merged by Roon,
-  which may play either copy; playlists can't live on the share yet (#75).
+  which may play either copy. Folder art and playlists now work (#79, #75).
 - Server-side figures from the owner's NAS (#21 part 2), in `docs/performance.md`, "On a NAS,
   server-side". The published 0.1.0 image ran as a TrueNAS SCALE 25.10 app, serving over NFS
   and SMB on the LAN:
