@@ -28,6 +28,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- A library scan's read of a file's head no longer starts read-ahead (#78): reads within the
+  first 1 MiB of a file are decoded on demand. Under Roon's import pattern a 6-channel DST
+  file costs about a quarter of the CPU (141–177 → 42–44 ms with 12 decoder threads) and
+  half the time.
+
 - **Multichannel files get their own album name** (#97). The album tag of the DSF and WAV files of a disc's multichannel area ends in ` (Multichannel)`; stereo files are unchanged. `--no-multichannel-album-suffix` (`SACDFS_MC_ALBUM_SUFFIX=0` in the container) turns it off.
   - *Why:* the owner's decision, after client tests (#82) showed Navidrome, LMS, MPD and MinimServer all treating a disc's Stereo and Multichannel copies as one album. Only the audio has to match an extract's, not the tag bytes, so a tag change is allowed. Alternatives rejected: changing nothing; a separate album-artist or comment tag (servers group by album name); hiding an area (loses content).
   - *What changes:* the tag bytes of multichannel files, so the output versions move: DSF to 3 and WAV to 4 (#89's rule). Their mtimes move forward one version step and NFS generations change. Audio is unchanged (the pinned PCM hashes keep their values; only their recorded WAV version moved), `sacdfs verify` still compares audio only, and the DSF gate compares audio, so it holds.

@@ -922,7 +922,21 @@ decoding them twice.
   the kernel asks for 128 KiB, then for 128 KiB more in the background, whatever the reader
   asked for, so a tagger reading a DSF file's first 4 KiB gets two "sequential" reads of
   audio. Counting the second made a DSF tag walk read 1.18 MB of the image per file, against
-  222 KB. A player's next read goes past 256 KiB and starts read-ahead there.
+  222 KB.
+- **Not within a scanner's read of the head** (#78): nor does a read that ends within 1 MiB
+  of where the first read of audio started (`HEAD_WINDOW`, which holds the 256 KiB above). A
+  player's reads go past 1 MiB and start read-ahead there. *Why:* Roon's import reads each
+  file's first 768 KiB, 36 KiB at its middle and the tag, then the next file. Read-ahead
+  after that head decoded 150 frames (2 s) nobody read and held the decoder threads while
+  the scan moved on. With 12 decoder threads, per 6-channel DST file: sacdfs CPU 141–177 →
+  42–44 ms, the head's reads 15.5–19.2 → 7.1–7.9 ms, the whole file 17.4–21.6 → 10.3–11.1 ms
+  (stereo DST CPU 60–84 → 46–50 ms; plain DSD 2.1–2.5 → 1.2 ms). *Why 1 MiB:* 768 KiB with
+  room for scanners that read a little more. *Trade-off:* a player's first 1 MiB (6 to 8
+  reads) is decoded on demand rather than ahead, as its first 256 KiB already was; a
+  128 KiB read of 6-channel DST decodes about 5 frames, a few ms. *Alternatives:* stopping
+  the read-ahead when the file is closed (it is one batch that starts at once, so most of
+  it would already be decoded); decoding only part of the head (the head is decoded once,
+  and it is the reads' own frames).
 
 **What a DSF header read still costs, and why it stays.** The 256 KiB the kernel reads hold
 the track's first frames (about 28 in stereo), and the first page itself holds 4004 bytes of

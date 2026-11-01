@@ -43,6 +43,13 @@ const SEQ_GAP_BEHIND: u64 = 8 << 20;
 /// DSF file's header causes as much as a player does (#32).
 pub const KERNEL_FIRST_WINDOW: u64 = 256 << 10;
 
+/// Reads that end within this many bytes of where a file's first read of audio started start
+/// no read-ahead either (#78): a library scanner reads a file's head and leaves. Roon's import
+/// reads the first 768 KiB, then 36 KiB at the middle and the tag; read-ahead after that head
+/// decoded 2 s of audio nobody read, three times the head's own decoding for a 6-channel DST
+/// file, and held the decoder threads while the scanner went on to the next file.
+pub const HEAD_WINDOW: u64 = 1 << 20;
+
 /// The file format of a track file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
@@ -492,8 +499,11 @@ impl Reader {
         }
         // Nor does the kernel's read-ahead of the first read: a DSF file's audio starts at
         // byte 92, so a tagger's read of the header is a read of audio, and the kernel
-        // follows it with a second one at once. A player's next read goes past it.
-        if s.started.is_some_and(|(_, at)| s.max_end <= at.saturating_add(KERNEL_FIRST_WINDOW)) {
+        // follows it with a second one at once. Nor a scanner's read of the head
+        // (HEAD_WINDOW, which holds KERNEL_FIRST_WINDOW). A player's reads go past it.
+        if s.started
+            .is_some_and(|(_, at)| s.max_end <= at.saturating_add(HEAD_WINDOW.max(KERNEL_FIRST_WINDOW)))
+        {
             return None;
         }
         let frames = self.file.layout.frames;
