@@ -41,6 +41,7 @@
 //! chosen at run time ([`Simd`]); all three give the same bytes.
 
 mod filters;
+pub mod sb;
 mod simd;
 
 use std::ops::{Add, Mul};

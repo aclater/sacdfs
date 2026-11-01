@@ -18,7 +18,8 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
 use sacdfs::disc::{Disc, Tuning};
 use sacdfs::engine::Engine;
-use sacdfs::pcm::{Converter, Cutoff, PcmConfig, PcmRate};
+use sacdfs::pcm::sb::{AnyConverter, selected};
+use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
 use sacdfs::track::{Format, Reader, TrackFile};
 use sacdfs::tree::{Output, SourceDir, Tree};
 use sacdfs::wav;
@@ -77,7 +78,8 @@ fn area_reference(disc: &Disc, area: usize, end: u32, area_end: u32, cfg: &PcmCo
                 .data
         })
         .collect();
-    let mut conv = Converter::new(channels, cfg);
+    // The converter the engine uses (SACDFS_PCM_ENGINE; temporary, src/pcm/sb.rs).
+    let mut conv = AnyConverter::new(selected(), channels, cfg);
     (0..end)
         .map(|t| {
             let i = t as usize;
@@ -517,7 +519,7 @@ fn real_discs() {
         let area_end = tracks[0].area_end;
         let mut cursor = disc.locate(area, 0).unwrap();
         let mut decoder = DstDecoder::new();
-        let mut conv = Converter::new(channels, &cfg);
+        let mut conv = AnyConverter::new(selected(), channels, &cfg);
         let mut decode = |t: u32| -> Vec<u8> {
             let content = cursor.content(&disc, t).unwrap();
             scarletbook::audio::decode_frame(&mut decoder, TrackFrame { number: t, content }, channels)

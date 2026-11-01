@@ -16,7 +16,8 @@ use scarletbook::{DstDecoder, FrameContent, FrameStatus, TrackFrame};
 
 use crate::disc::{Cursor, Disc, ReadError};
 use crate::dsf;
-use crate::pcm::{Converter, PcmConfig};
+use crate::pcm::PcmConfig;
+use crate::pcm::sb::AnyConverter as Converter;
 
 /// How a decoded frame was produced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -408,7 +409,7 @@ impl Engine {
             let i = match list.iter().position(|(e, ch, _)| *e == self.id && *ch == channels) {
                 Some(i) => i,
                 None => {
-                    list.push((self.id, channels, Converter::new(channels, &self.pcm)));
+                    list.push((self.id, channels, Converter::new(crate::pcm::sb::selected(), channels, &self.pcm)));
                     list.len() - 1
                 }
             };
