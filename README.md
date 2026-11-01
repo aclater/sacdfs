@@ -60,7 +60,7 @@ docker pull ghcr.io/aclater/sacdfs:0.1.1        # or :latest
 gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.1 -R aclater/sacdfs
 ```
 
-It runs sacdfs with Samba and NFS-Ganesha for a NAS, built for generic x86-64; how to run it
+It runs sacdfs with Samba and NFS-Ganesha for a NAS, for x86_64 and arm64; how to run it
 is in [docs/deployment.md](docs/deployment.md).
 
 ### From source

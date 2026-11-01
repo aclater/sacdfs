@@ -55,8 +55,10 @@ shares.
 
 ## The published image
 
-Each release publishes the image to GitHub's container registry, built for generic x86-64
-by the release workflow after the share test (SMB and NFS) passed on it:
+Each release publishes the image to GitHub's container registry, as one multi-arch tag for **x86_64 and arm64** (Synology ARM models, Raspberry Pi 5, Ampere
+hosts; the runtime picks the right one), each built for a generic CPU by the release workflow
+after the share test (SMB and NFS) passed on that very image, on a native runner of that
+architecture:
 
 ```sh
 docker pull ghcr.io/aclater/sacdfs:0.1.1       # a release; :latest is the newest
@@ -73,9 +75,10 @@ git clone https://github.com/aclater/sacdfs && cd sacdfs
 podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
 ```
 
-`--format docker` keeps the health check, which the OCI image format has no field for. The
-build compiles sacdfs for generic x86-64, whose WAV converter (scarletbook-pcm) already uses
-AVX2 where the CPU has it. On a NAS with an AVX2 CPU (most Intel and AMD CPUs since about 2015, including the
+`--format docker` keeps the health check, which the OCI image format has no field for. On arm64
+the build uses the toolchain's default target and the WAV converter (scarletbook-pcm) picks the
+code its CPU supports. On x86_64 the build compiles sacdfs for generic x86-64, whose converter
+already uses AVX2 where the CPU has it. On a NAS with an AVX2 CPU (most Intel and AMD CPUs since about 2015, including the
 Intel N100 family), `--build-arg RUSTFLAGS="-C target-cpu=x86-64-v3"` builds all of sacdfs
 for it ([performance.md](performance.md#converter-throughput)). Don't use that build on an
 older CPU: it stops with an illegal-instruction error.
