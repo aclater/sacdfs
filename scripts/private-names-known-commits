@@ -1,0 +1,9 @@
+# Commits already public in main's history (and inside the v0.1.0/v0.1.1 tags) whose
+# author or committer carried a private machine identity, from merges made in agent clones
+# without a configured git identity (2026-10-31). History is never rewritten, so they are
+# listed here. Never add new commits: fix the identity before pushing instead.
+6d85cae3b36b5bf661929d855694bf2d249cdb3b
+7fac8c8e38c26378beb5222492250783b35c9f95
+206fe3aba39b72c19edcfdfe96f688f5fbee2db3
+23e0ea5ba966fbab075ae78df5de89d2b1a874a8
+785e5dbc9ec38fb9e34694fcd76333cfa6b98c7e
