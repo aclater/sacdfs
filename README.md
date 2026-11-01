@@ -60,7 +60,7 @@ docker pull ghcr.io/aclater/sacdfs:0.1.1        # or :latest
 gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.1 -R aclater/sacdfs
 ```
 
-It runs sacdfs with Samba and NFS-Ganesha for a NAS, built for generic x86-64; how to run it
+It runs sacdfs with Samba and NFS-Ganesha for a NAS, for x86_64 and arm64; how to run it
 is in [docs/deployment.md](docs/deployment.md).
 
 ### From source
@@ -110,6 +110,7 @@ above it.
 | `--pcm-rate HZ` | Sample rate of the WAV files: `88200`, `176400` (the default) or `352800`. Always 24-bit. |
 | `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz; with `--pcm-rate 176400` or `352800` only). |
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default `0`). Samples that would clip are clamped, and the log says so once per file. |
+| `--no-multichannel-album-suffix` | Do not add ` (Multichannel)` to the album tag of the multichannel area's DSF and WAV files. By default they get it, so players and servers keep a disc's Stereo and Multichannel copies apart. |
 | `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder ([Layout](#layout)). Top-level folders of `SOURCE` are never collapsed. |
 | `--sidecars LIST` | Files passed through from `SOURCE`, byte for byte, next to the images: extensions, and folder names ending in `/` whose whole content passes. `default` (the default) is `jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/`; `default,cue` adds to it, `default,-webp` removes from it, `none` passes nothing ([Layout](#layout)). |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
@@ -171,7 +172,9 @@ MOUNTPOINT/
 - **Sidecar files** next to the images, `folder.jpg`, `cover.png`, an `Artwork/` or `Scans/`
   folder, `.m3u`/`.m3u8` playlists, are shown where they are in `SOURCE`, read-only and byte
   for byte, with their own size and times: players and file managers find the folder art,
-  and you can delete extracted copies without losing it. `--sidecars` sets which
+  and you can delete extracted copies without losing it. The images among them (folder art)
+  also show inside `Stereo/` and `Multichannel/`, as the same file, for servers that look
+  only beside the audio. `--sidecars` sets which
   ([user guide](docs/user-guide.md#sidecar-files-art-scans-playlists)). Hidden files are never
   passed, nor a link that points outside `SOURCE`.
 
@@ -224,8 +227,9 @@ How fast each one is, against the project's targets: [docs/performance.md](docs/
 - Linux only, and read-only; other systems read the files over SMB or NFS from
   [the container](docs/deployment.md).
 - DSF and WAV output only: no DSDIFF (DFF), no FLAC, no DoP, no 44.1/48 kHz or 16-bit PCM.
-- The directory tree is read once, at mount time: images added to or removed from `SOURCE`
-  later need a remount.
+- New or removed images and sidecar files show up without a remount, within a few seconds
+  (a folder is read again when its modification time in `SOURCE` changes). A new image
+  inside a folder that was a single image's chain under `--flatten` needs a remount.
 - A DSF file's header read decodes the track's first quarter second or so (a WAV file's
   decodes nothing); a program that reads every audio file (fingerprinting, loudness scans)
   converts every WAV file, so use `--format dsf` for those.

@@ -13,8 +13,16 @@ permissions:
 
 jobs:
   container:
-    name: container (SMB, NFS)
-    runs-on: ubuntu-latest
+    name: container (SMB, NFS, ${{ matrix.arch }})
+    # arm64 on GitHub's native arm64 runners, not emulation: the image is built and the share
+    # test is run on the architecture it is for (#43).
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, runner: ubuntu-latest}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

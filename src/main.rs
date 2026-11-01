@@ -65,6 +65,10 @@ struct Args {
     /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
     #[arg(long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
     pcm_gain: f32,
+    /// Do not add " (Multichannel)" to the album tag of the files of the multichannel area
+    /// (by default they get it, so players and servers show them as an album of their own).
+    #[arg(long)]
+    no_multichannel_album_suffix: bool,
     /// Collapse each chain of folders below the top level that holds a single image into
     /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
     #[arg(long)]
@@ -234,6 +238,7 @@ fn run(args: Args) -> io::Result<()> {
     // frequency is 44.1 kHz). The converter would quietly use 40 kHz instead: refuse the
     // combination before mounting.
     let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
+    sacdfs::dsf::set_mc_album_suffix(!args.no_multichannel_album_suffix);
     let pcm = PcmConfig { rate, cutoff: args.pcm_cutoff, gain_db: args.pcm_gain };
     if let Err(e) = pcm.validate() {
         return Err(io::Error::new(
@@ -297,12 +302,12 @@ fn run(args: Args) -> io::Result<()> {
         samples_per_frame: rate.samples_per_frame() as u32,
     };
     let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
-    let tree = Arc::new(
-        Tree::with_options(root, Tuning::default(), output)
-            .with_flatten(args.flatten)
-            .with_pcm(&pcm)
-            .excluding(&mountpoint),
-    );
+    let tree = Tree::with_options(root, Tuning::default(), output)
+        .with_flatten(args.flatten)
+        .with_pcm(&pcm)
+        .excluding(&mountpoint);
+    // A directory SOURCE is re-read when it changes (#101); a single image has no directory.
+    let tree = Arc::new(if source.is_dir() { tree.watching(&args.sidecars) } else { tree });
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;
