@@ -22,8 +22,6 @@ use std::os::unix::fs::FileExt;
 
 use sha2::{Digest, Sha256};
 
-use crate::dsf::REVERSE;
-
 /// Most channels a file may have to be compared (SACD has at most 6; DSF allows 6, DFF
 /// more): a larger count is reported, not read.
 pub const MAX_CHANNELS: u32 = 6;
@@ -547,18 +545,18 @@ impl Audio {
                         let blocks = &r[base..];
                         if lsb_first {
                             match cu {
-                                1 => out.extend(blocks[..n].iter().map(|&b| REVERSE[usize::from(b)])),
+                                1 => out.extend(blocks[..n].iter().map(|&b| b.reverse_bits())),
                                 2 => {
                                     let (l, rr) = (&blocks[..n], &blocks[bu..bu + n]);
                                     for (&a, &b) in l.iter().zip(rr) {
-                                        out.push(REVERSE[usize::from(a)]);
-                                        out.push(REVERSE[usize::from(b)]);
+                                        out.push(a.reverse_bits());
+                                        out.push(b.reverse_bits());
                                     }
                                 }
                                 _ => {
                                     for i in 0..n {
                                         for c in 0..cu {
-                                            out.push(REVERSE[usize::from(blocks[c * bu + i])]);
+                                            out.push(blocks[c * bu + i].reverse_bits());
                                         }
                                     }
                                 }

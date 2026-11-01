@@ -31,6 +31,13 @@ pub struct Layout {
     pub frames: u32,
 }
 
+impl Layout {
+    /// DSD samples per channel.
+    pub fn samples(&self) -> u64 {
+        u64::from(self.frames) * FRAME_BYTES * 8
+    }
+}
+
 /// The ID3 frames in the order sacdfs writes them.
 pub const FRAME_ORDER: [&[u8; 4]; 12] = [
     b"TIT2", b"TPE1", b"TPE2", b"TALB", b"TRCK", b"TPOS", b"TCOM", b"TDRC", b"TSRC", b"TCON", b"TPUB",
