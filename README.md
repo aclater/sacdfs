@@ -117,6 +117,7 @@ above it.
 | `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where frames are in each image, so that seeks after a remount skip most of their search. |
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
 | `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default `64`). The least recently used is closed first, and any image unused for 5 minutes is closed. |
+| `--log-file FILE` | Append the log to `FILE` instead of standard error, at info level unless `-v` says more. Without it, a background mount logs nowhere, except to the journal under systemd; use it (or `-f`) to see read errors and the `mounted` line ([troubleshooting](docs/user-guide.md#troubleshooting)). |
 | `-v`, `--verbose` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 | `-h`, `--help` | Print help (`-h` for a summary). |
 | `-V`, `--version` | Print the version. |
