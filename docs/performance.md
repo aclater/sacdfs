@@ -76,7 +76,7 @@ frame cache and seek index cold). 3 rounds of 3 seeks per disc, at other positio
 | Cold seek over SMB, DSF, server's page cache evicted | < 25 ms | **4.8 ms** plain DSD, **5.7 ms** DST stereo (worst 6.1 ms) | met |
 | Cold seek over SMB, WAV, the same | < 25 ms | **5.4 ms** plain DSD, **6.1 ms** DST stereo (worst 6.6 ms) | met |
 | The same with the server's page cache warm | | DSF 3.2 / 5.1 ms, WAV 4.4 / 5.5 ms | |
-| Cold seek over NFS, and over SMB from a NAS's hard disks | < 25 ms | measured on the NAS after the v0.1.0 tag ([#21](https://github.com/aclater/sacdfs/issues/21) part 2); NFS-Ganesha in the container needs a rootful container runtime, which this machine doesn't have | |
+| Cold seek over NFS and SMB, the published container on the owner's NAS (hard disks) | < 25 ms | **15 to 22 ms** with the NAS's cache warm; **31 to 61 ms** (worst 92 ms) when the audio comes from its hard disks ([below](#on-a-nas-server-side-21-part-2)) | met from the NAS's cache; not met from its hard disks |
 
 On the emulated LAN the open takes 0.6 ms (one round trip) and the read 2.1 to 5.0 ms:
 sacdfs's cold seek on the server's own disk (1.8 to 3.0 ms without netem, "loopback") plus a
@@ -274,8 +274,86 @@ cache can't be dropped from the container, so each area was read twice: from dis
 
 No default needs to change for a NAS of this class: playback, browsing and seeking are far
 inside the targets, and a bulk copy of multichannel DST is limited by DST decoding at about 40x
-real time. Server-side through the published container over NFS and SMB is measured on the NAS
-after the v0.1.0 tag (#21 part 2).
+real time.
+
+### On a NAS, server-side (#21 part 2)
+
+The same NAS, with the published image `ghcr.io/aclater/sacdfs:0.1.0` running as a TrueNAS SCALE
+25.10 custom app, set up as [deployment.md](deployment.md#truenas-scale) describes. The library
+(154 images) was read-only on local ZFS (hard disks), and clients read over the LAN through the
+container's own SMB and NFS servers.
+
+- **The setup:**
+  - **Ports:** the NAS's own SMB and NFS services hold 445 and 2049, so the container published
+    10445 and 12049.
+  - **The client:** a desktop on 2.5 Gbit/s Ethernet, 0.25 ms round trip to the NAS.
+  - **User-space clients:** a kernel mount needs root, which the client had not. NFS went
+    through libnfs (NFS 4.0) and SMB through libsmbclient (seeks) and Samba's `smbclient` (straight
+    reads), both SMB3.
+- **Cold seek:** `stat`, `open`, one 128 KiB read at a random position and `close`, each on a
+  freshly started container with `SACDFS_INDEX_CACHE=off`. There were 3 rounds, with 2 stereo
+  areas per protocol and format and 1 six-channel area per protocol in each round, every seek in
+  an image not read before.
+  - *From the disks:* the first touch of that part of the image. The TOCs were already in the
+    NAS's cache from an earlier listing.
+  - *NAS cache warm:* the same seeks again on fresh containers.
+  - *Warm:* the same seek repeated at once on the same container.
+- **The NAS's cache:** the ZFS cache (ARC) can't be dropped from an app. Each figure says
+  whether its data came from the disks or the cache.
+- **CPU and memory:** a sidecar in the app's PID namespace sampled sacdfs's CPU time and every
+  container process's resident memory once a second.
+
+| What | Target | NFS | SMB | |
+|---|---|---|---|---|
+| Cold seek, stereo DSF, from the disks | < 25 ms | **56.7 ms** (worst 91.5) | **37.3 ms** (worst 59.4) | not met |
+| Cold seek, stereo WAV, from the disks | < 25 ms | **40.9 ms** (worst 55.5) | **31.3 ms** (worst 49.9) | not met |
+| Cold seek, 6-channel DSF, from the disks | < 25 ms | **51.5 ms** (worst 55.5) | **61.4 ms** (worst 82.6) | not met |
+| Cold seek, stereo DSF / WAV, NAS cache warm | < 25 ms | **15.1 / 18.2 ms** (worst 20.6) | **17.3 / 14.5 ms** (worst 23.6) | met |
+| Cold seek, 6-channel DSF, NAS cache warm | < 25 ms | **22.3 ms** (worst 27.7) | **21.9 ms** (worst 25.4) | met on average |
+| The same seek again, warm | | 3.4 to 4.3 ms | 3.8 to 4.6 ms | |
+| Straight read, stereo DSF | | **289 MB/s** cached, 268 from the disks | **286 MB/s** cached, 151 from the disks | the client's 2.5 Gbit/s link |
+| Straight read, stereo WAV 176.4 kHz / 24-bit | | **291 MB/s** cached, 234 from the disks | **286 MB/s** cached, 237 from the disks | the link |
+| Straight read, 6-channel DST as DSF | | **83.2 MB/s** | **64.6 MB/s** | DST decoding |
+| 4 players and a tagger | no read over 50 ms | players' worst read **52 to 133 ms**, 99th percentile 1.8 to 5.1 ms; tagger's worst file 79 to 162 ms | | not met from the disks |
+| Container memory (all its processes) | | 241 to 244 MiB in the player rounds; up to 911 MiB after an hour of straight reads | | |
+
+- **Where a cold seek's time goes:**
+  - *The disks:* from the hard disks, the read itself takes 22 to 51 ms on average. The
+    cold seek reads the image 3 to 5 times (see [calls per seek](#calls-and-bytes-per-seek)),
+    and each read is a disk seek on the NAS.
+  - *From the cache:* `open`, the read and `close` take 5 to 13 ms. The `stat` takes 8 to
+    11 ms of that 15 to 22 ms: the first lookup of an image in a fresh container loads its TOCs
+    on the NAS's CPU. A player that lists the directory first (which loads the TOCs) pays that
+    once per image, not per seek.
+  - *Lookups:* the user-space clients look up the whole path on every call, which a kernel
+    client caches.
+- **Straight reads:**
+  - *Stereo:* stereo areas read at the client's link speed, and from the disks at 151 to
+    268 MB/s.
+  - *Cached:* repeated reads cost sacdfs almost no CPU, because the NAS's kernel keeps the
+    decoded files in its page cache.
+  - *From the disks:* a first pass costs 12.6 to 14.4 s of sacdfs CPU per stereo DSF area
+    (1.4 to 1.7 GB) and 67 s per stereo WAV area (2.6 GB, about 27 ms of CPU per second of
+    audio).
+  - *6 channels:* the 6-channel DST area costs 560 to 605 s of CPU per pass (4.6 to 4.9 GB),
+    which is about 9.6 of the NAS's 12 threads: the same DST limit as in part 1.
+  - *Read order:* NFS with one read in flight, in order, reached 83 MB/s. Four reads in flight
+    split across the file reached only 43 MB/s, because decoding then runs out of order.
+- **4 players and a tagger:** the scenario of [concurrency](#concurrency-and-memory), over NFS,
+  WAV files of four images not read before, 30 s per round, 3 fresh containers. The slow reads
+  are first touches of the hard disks, as on the [client side](#client-side) (#71). A
+  server-side deployment on hard disks does not meet the 50 ms worst-read target either. The 99th
+  percentile stays at 1.8 to 5.1 ms.
+- **Memory:**
+  - *sacdfs:* 172 to 176 MiB at its peak in a player round, and 783 to 791 MiB after an hour of
+    straight reads of stereo and 6-channel areas with 12 decoder threads, at the default
+    `--cache-mb 256`.
+  - *The servers:* smbd took 28 to 75 MiB and NFS-Ganesha 37 to 52 MiB.
+- **The app:** a restart (stop and start through the TrueNAS API) took 4 to 6 s, and the shares
+  answered 6 to 7 s after it began. sacdfs found the 154 images and mounted within about a second.
+- **A stall** ([#72](https://github.com/aclater/sacdfs/issues/72)): once, an SMB straight read
+  of a 6-channel DST file waited about 6 hours while sacdfs used no CPU. It was not reproduced
+  in 6 more reads of the same area or in the player rounds.
 
 ## History
 

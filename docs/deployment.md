@@ -7,7 +7,9 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
   phones, network players) sees ordinary DSF and WAV files. A seek costs sacdfs's few
   milliseconds on the NAS plus about one network round trip, because sacdfs's own reads of
   the image stay on the NAS: 5 to 6 ms for a cold seek over SMB on a gigabit LAN
-  ([performance](performance.md#nas-container-server-side)).
+  ([performance](performance.md#nas-container-server-side)). On a NAS with hard disks it is
+  15 to 22 ms when the NAS has that part of the image cached, and 31 to 61 ms when it must
+  read it from its disks ([on a NAS](performance.md#on-a-nas-server-side-21-part-2)).
 - **On a Linux client (client-side).** sacdfs runs on the client and reads the images from a
   network share, as in the [user guide](user-guide.md). Every read of an image is then a
   network round trip.
@@ -213,19 +215,34 @@ Edit its `environment:` section for the settings. It works with `podman compose`
 ### TrueNAS SCALE
 
 These steps follow TrueNAS SCALE 24.10 ("Electric Eel") and later, whose apps run on Docker.
-They are written from TrueNAS's documentation, not tested on a TrueNAS system; the names of
-screens and fields may differ between releases.
+They were tested on TrueNAS SCALE 25.10 with the published 0.1.0 image (#21). The app was
+installed through the API call behind "Install via YAML", with the YAML below and other ports
+(step 2). Both shares served a 154-image library, and the app turned healthy within a minute.
+The names of screens and fields may differ between releases.
 
 1. **The image.** Use the published one, `ghcr.io/aclater/sacdfs:<version>`. TrueNAS
    cannot build images: for a build of your own, build it elsewhere (above) and push it to
    a registry the NAS can reach, or load it from a file in a shell on the NAS
    (`docker load`).
-2. **Addresses.** TrueNAS's own SMB and NFS services use ports 445 and 2049 on all its
-   addresses. If you use them, give sacdfs an address of its own: add an alias IP address
-   to the network interface (Network, Interfaces), then bind TrueNAS's SMB and NFS services
-   to the main address only (in each service's settings, "Bind IP Addresses"), and publish
-   sacdfs's ports on the alias (below). If you don't use TrueNAS's own SMB and NFS services,
-   leave them stopped and publish on all addresses.
+2. **Ports.** TrueNAS's own SMB and NFS services hold ports 445 and 2049 on all its
+   addresses while they run, so an app can't publish those ports as well. There are three
+   ways around it:
+   - **Other ports** (the simplest; changes nothing else on the NAS): publish, for example,
+     `"10445:445"` and `"12049:2049"` in `ports`. Linux clients then mount with `port=12049`
+     (NFS) or `port=10445` (SMB), and macOS with `port=` for NFS or `smb://nas:10445/sacd` for
+     SMB ([below](#on-other-ports)). Windows can only use 445, so for Windows clients use one of
+     the other two ways.
+   - **An address of its own:** add an alias IP address to the network interface (Network,
+     Interfaces), and bind TrueNAS's SMB and NFS services to the main address only (in each
+     service's settings, "Bind IP Addresses"). Then publish sacdfs's ports on the alias, as in
+     the YAML below. This changes the NAS's network and service settings.
+   - **If you don't use TrueNAS's own SMB and NFS services:** leave them stopped and publish
+     `"445:445"` and `"2049:2049"`.
+   - **For apps on the same NAS only** (Roon, for example; see
+     [below](#roon-on-the-same-nas)): give the app's container a fixed address on a Docker
+     network of its own. Another app on the NAS reaches sacdfs there on port 445 itself, and
+     nothing clashes with TrueNAS's services. LAN clients can't reach that address; for them,
+     use one of the ways above.
 3. **Install it with YAML.** Apps, Discover Apps, Custom App, then "Install via YAML" (the
    form-based custom app may not offer every setting below). Paste a Compose file like
    this, with your dataset path and, if you use an alias address, the address in `ports`:
@@ -242,7 +259,7 @@ screens and fields may differ between releases.
          - DAC_READ_SEARCH
        security_opt:
          - apparmor=unconfined
-       ports:
+       ports:                       # with an alias address; or "10445:445", "12049:2049"
          - "192.0.2.20:445:445"
          - "192.0.2.20:2049:2049"
        volumes:
@@ -267,11 +284,72 @@ screens and fields may differ between releases.
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and
-   NFS-Ganesha starting. The app turns healthy within a minute.
+   NFS-Ganesha starting (`NFS SERVER INITIALIZED`). The app turns healthy within a minute.
+   NFS-Ganesha also logs a few `CRIT` lines about D-Bus, `Cannot register NFS V4 on UDP` and
+   a warning about `PR_SET_IO_FLUSHER`. They are harmless: the container has no D-Bus (it is
+   used only for Ganesha's admin interface), NFS 4 runs over TCP, and the flusher setting
+   matters only to a server that is written to.
+   - `NFS_CLIENTS` with the clients' own addresses works with published ports: Docker keeps
+     the client's address.
+   - A restart (stop, start) takes about 5 s, and the shares answer within about 7 s.
 
 The same YAML, without the TrueNAS paths, works on other NAS systems that run Docker
 (Unraid, Synology Container Manager, OpenMediaVault), as far as they allow `/dev/fuse` and
 the two capabilities.
+
+#### Roon on the same NAS
+
+Tested with Roon Server's official image (`ghcr.io/roonlabs/roonserver`) as a TrueNAS app with
+host networking, on the same NAS as sacdfs.
+
+- **Why a container-network address:** Roon's "Add network share" has no port field, so it
+  needs SMB on port 445, which TrueNAS's own SMB service already holds. Give sacdfs a fixed
+  address on a Docker network of its own instead. Roon, on the host network, reaches it there
+  on 445:
+
+  ```yaml
+  services:
+    sacdfs:
+      # ... as above, without the 445 port mapping ...
+      networks:
+        sacd:
+          ipv4_address: 172.31.250.10
+      environment:
+        SACDFS_FORMATS: dsf        # Roon plays DSD and converts to PCM itself
+        SACDFS_FLATTEN: "1"
+        SMB_USER: music
+        SMB_PASSWORD: change-me
+  networks:
+    sacd:
+      ipam:
+        config:
+          - subnet: 172.31.250.0/24
+  ```
+
+  Pick a subnet that nothing else on the NAS uses. In Roon, add the network share
+  `\\172.31.250.10\sacd` with `SMB_USER` and its password.
+- **Roon's container needs the right to mount SMB.** Roon on Linux mounts a network share with
+  the kernel's CIFS client inside its own container. Without the right to mount, it fails with
+  `could not mount ...; tried SMB versions 3, 2.1, 2.0, 1.0` and `Unable to apply new
+  capability set`.
+  - Fix it by adding `cap_add: [SYS_ADMIN, DAC_READ_SEARCH]` and
+    `security_opt: [apparmor=unconfined]` to the **Roon** app. Roon then mounts the share and
+    logs `[roon/cifs] Connected`.
+  - This gives Roon's container the same rights as sacdfs's. That's a trade-off: it is
+    Roon's own way of reading network shares.
+- **Show DSF only.** With both formats, every track appears twice in Roon. Roon plays DSD
+  natively and converts it to PCM where an endpoint needs that.
+- **Discs you have also extracted.** If the same disc is also in your library as extracted
+  files, Roon merges the two into one album and plays whichever copy it makes primary,
+  hiding the other. In the owner's test it chose sacdfs's copy for some albums and the
+  library's for others. So beside existing extracts you aren't always playing from sacdfs.
+  Removing the extracts (the space sacdfs saves) removes the ambiguity.
+- **Playlists** can't live on the share yet: sacdfs shows only what it makes from images, and
+  Roon imports playlist entries only from inside the same storage location (#75).
+- **Roon's background audio analysis** reads every track in full, so sacdfs decodes each one
+  as Roon adds it. On a NAS-class CPU, multichannel DST areas decode at about 40× real time.
+  Expect a burst of CPU load after adding a large library, or set the analysis speed lower in
+  Roon's settings.
 
 ## Mounting the shares on clients
 
@@ -300,6 +378,18 @@ sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3
 ```
 
 File managers open `smb://nas/sacd` directly.
+
+#### On other ports
+
+If the container publishes other ports (TrueNAS, step 2), give them to the client:
+
+```sh
+sudo mount -t nfs4 -o ro,vers=4.2,port=12049 nas:/sacd /mnt/sacd
+sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,port=10445
+smbclient //nas/sacd -p 10445 -U music        # or smb://nas:10445/sacd in a file manager
+```
+
+On macOS, NFS takes `port=12049` in its `-o` options and SMB takes `smb://nas:10445/sacd`.
 
 ### macOS
 
@@ -330,6 +420,10 @@ Over NFS the names are exactly sacdfs's. Over SMB, `SMB_NAME_MAPPING` chooses ho
   everywhere. But a title that already holds one of those look-alikes, as Japanese titles
   often do, then cannot be opened, so it is not the default.
 - `none`: Samba's own fallback, a short mangled name (`0JL0SQ~I.DSF`).
+
+Clients built on Samba's libsmbclient (`smbclient`, and many players and file managers) don't
+map them back. With `sfm` they show the private-use character, as Windows does, and must ask
+for a name in that same form: a name typed with the real `:` is not found.
 
 ## NFS and restarts
 

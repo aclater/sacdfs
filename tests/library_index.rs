@@ -10,9 +10,9 @@
 //! read without one, on every corpus case (hostile ones included) and on real discs.
 //!
 //! The library's provisional reading (`SeekPolicy::Speculative`, its cold seek) is checked
-//! too, for why sacdfs does not use it: on a hostile corpus image its provisional positions
-//! differ from the exact ones and are refuted only once a pass from the area's first sector
-//! reaches them, while sacdfs's locator gives the exact positions from the start.
+//! too: where its provisional positions differ from the exact ones (an image made so), they
+//! are refuted once a pass from the area's first sector reaches them, while sacdfs's
+//! locator gives the exact positions from the start.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -147,18 +147,15 @@ fn locator_equals_the_seek_index_on_the_corpus() {
     assert!(compared > 10_000, "too few positions compared: {compared}");
 }
 
-/// The library's cold seek on a hostile corpus image, `area-audio-past-end` (frames stored
-/// past the area's play range raise the next acceptable frame number of a scan from the
-/// first sector). Up to scarletbook 0.5.0 its provisional readings there returned frames
-/// that a scan does not, refuted only when the seek index's pass reached them; on 0.5.2
-/// every one of them equals the exact reading. This keeps what matters either way: every provisional
-/// reading that differs is refuted, and sacdfs's locator gives the exact positions at once.
-#[test]
-fn provisional_readings_that_differ_are_refuted() {
-    let case = cases().into_iter().find(|c| c["id"] == "area-audio-past-end").expect("corpus case");
-    let disc = Disc::open_with(&image(&case), 1, Tuning::default(), None).unwrap();
+/// Provisional (cold) readings of every 4-frame range of every area of `path`, each compared
+/// with the exact reading, then a pass of the seek index that settles them: the readings
+/// made, those whose positions differ from the exact ones, and whether every one of those
+/// was refuted (and how many were refuted in all); and the ranges where sacdfs's locator
+/// differs from the exact reading, which fails the test if `locator_exact`.
+fn provisional_readings(path: &Path, locator_exact: bool) -> (usize, usize, bool, usize, usize) {
+    let disc = Disc::open_with(path, 1, Tuning::default(), None).unwrap();
     let mut image = library_image(&disc);
-    let (mut provisional, mut differ, mut refuted) = (0, 0, 0);
+    let (mut provisional, mut differ, mut all_refuted, mut refuted, mut located_differ) = (0, 0, true, 0, 0);
     for (a, area) in disc.toc.areas.iter().enumerate() {
         let p = area.playtime_frames();
         if p < 2 {
@@ -166,7 +163,7 @@ fn provisional_readings_that_differ_are_refuted() {
         }
         let mut index = AreaIndex::new(area, disc.toc.sectors, IndexOptions::new().with_interval(1)).unwrap();
         let options = SpeculativeOptions::new().with_min_gap_sectors(0);
-        let mut ids = Vec::new();
+        let mut differing = Vec::new();
         for first in 1..p {
             let end = (first + 4).min(p);
             let mut c =
@@ -178,25 +175,82 @@ fn provisional_readings_that_differ_are_refuted() {
             }
             let exact =
                 read_all(TrackCursor::for_range(area, first, end, disc.toc.sectors).unwrap(), &mut image);
-            assert!(located(&disc, a, first, end) == exact, "sacdfs's locator differs at {first}");
+            if located(&disc, a, first, end) != exact {
+                assert!(!locator_exact, "sacdfs's locator differs at {first}");
+                located_differ += 1;
+            }
             if matches!(c.speculation(), Speculation::Pending { .. }) {
                 provisional += 1;
-                differ += usize::from(got != exact);
-                ids.push(c.speculation_id());
+                if got != exact {
+                    differ += 1;
+                    differing.push(c.speculation_id().unwrap());
+                }
                 index.absorb(&mut c).unwrap();
             }
         }
         while !index.extend(&mut image, 4096).unwrap() {}
+        let mut settled = Vec::new();
         for e in index.take_events() {
             if let Speculation::Refuted { exact_from, .. } = e.speculation {
-                assert!(ids.contains(&Some(e.claim)));
                 assert!(exact_from > 0);
+                settled.push(e.claim);
                 refuted += 1;
             }
         }
+        all_refuted &= differing.iter().all(|id| settled.contains(id));
     }
+    (provisional, differ, all_refuted, refuted, located_differ)
+}
+
+/// The library's cold seek on a hostile corpus image, `area-audio-past-end` (frames stored
+/// past the area's play range raise the next acceptable frame number of a scan from the
+/// first sector). Up to scarletbook 0.5.0 its provisional readings there returned frames
+/// that a scan does not; on 0.5.2 none of them differ (no corpus image gives a differing
+/// provisional reading on 0.5.2: `provisional_readings_that_differ_are_refuted` makes one).
+/// Any that differed would have to be refuted; sacdfs's locator gives the exact positions.
+#[test]
+fn provisional_readings_on_area_audio_past_end() {
+    let case = cases().into_iter().find(|c| c["id"] == "area-audio-past-end").expect("corpus case");
+    let (provisional, differ, all_refuted, refuted, _) = provisional_readings(&image(&case), true);
+    eprintln!("provisional {provisional}, differing {differ}, refuted {refuted}");
     assert!(provisional > 0, "no provisional reading was made");
-    assert!(refuted >= differ, "{refuted} refuted, {differ} differing");
+    assert!(all_refuted, "{differ} differing, not all refuted");
+}
+
+/// A provisional reading that really differs, and is refuted: a copy of a corpus image whose
+/// stereo area has a run of its last audio sectors written again over sectors near its
+/// start. A scan from the area's first sector then accepts those late frames early, and so
+/// discards every frame numbered below them that follows (specification 4, 4.5): the exact
+/// positions in between are missing. A provisional reading that begins past the copy never
+/// sees it and returns the frames stored there, so it differs, and the seek index's pass
+/// must refute every such reading. (The refuted count may be larger: a refuted reading's
+/// positions are only *possibly* different.) sacdfs's locator, which starts a fresh reading
+/// at a sector found by frame numbers too, cannot see the copy either and differs from the
+/// exact reading there as well: its count is printed, not asserted.
+#[test]
+fn provisional_readings_that_differ_are_refuted() {
+    use std::os::unix::fs::FileExt;
+    let case = cases().into_iter().find(|c| c["id"] == "dsd-stereo-mch-2048").expect("corpus case");
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("late-frames-early.iso");
+    std::fs::copy(image(&case), &copy).unwrap();
+    let (start, end) = {
+        let d = Disc::open_with(&copy, 1, Tuning::default(), None).unwrap();
+        let st = d.areas.iter().find(|a| a.slot == scarletbook::Slot::TwoChannel).unwrap();
+        (st.start_lsn, st.end_lsn)
+    };
+    let run = 32.min((end - start) / 4);
+    let f = File::options().read(true).write(true).open(&copy).unwrap();
+    let mut late = vec![0u8; run as usize * 2048];
+    f.read_exact_at(&mut late, (end - run) * 2048).unwrap();
+    f.write_all_at(&late, (start + 4) * 2048).unwrap();
+    drop(f);
+    let (provisional, differ, all_refuted, refuted, located_differ) = provisional_readings(&copy, false);
+    eprintln!(
+        "provisional {provisional}, differing {differ}, refuted {refuted}; sacdfs's locator differs in {located_differ}"
+    );
+    assert!(differ > 0, "no provisional reading differs ({provisional} made)");
+    assert!(all_refuted && refuted >= differ, "{differ} differing, {refuted} refuted, not all of them");
 }
 
 /// The same checks on real discs, run locally: `SACDFS_REAL_IMAGES=DIR cargo test --release
