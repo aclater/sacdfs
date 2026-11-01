@@ -14,6 +14,7 @@
 
 pub mod container;
 pub mod id3;
+mod pause;
 mod report;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -463,6 +464,11 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
     let mut shape: Vec<&Arc<Candidate>> =
         same_ch.iter().copied().filter(|c| c.file.layout.samples() == audio.samples).collect();
     if shape.is_empty() {
+        // No track has its length: the extract may be a track with pauses kept, or a track cut
+        // short (#93).
+        if with_pauses(&mut row, &audio, &mut src, &same_ch, ctx) {
+            return row;
+        }
         let why = match same_ch.iter().min_by_key(|c| c.file.layout.samples().abs_diff(audio.samples)) {
             None => format!("no area of the images in {where_} has {} channels", audio.channels),
             Some(c) => {
@@ -524,6 +530,102 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
     row.with(status, reason)
 }
 
+/// An extract of the right channel count whose length is no track's (#93): the served track
+/// inside it with pauses around it, or inside the served track (a track cut short). `Ok` is
+/// the row finished and true: IDENTICAL-PAUSE if everything beyond the common audio is silence, else
+/// NO-MATCH with the length and level of what is not; false leaves the row as it was when no track of
+/// about the extract's length is in it or contains it.
+fn with_pauses(
+    row: &mut Row,
+    audio: &container::Audio,
+    src: &mut FileSource,
+    same_ch: &[&Arc<Candidate>],
+    ctx: &Ctx<'_>,
+) -> bool {
+    let max_extra = pause::MAX_EXTRA_SECS * u64::from(SACD_RATE);
+    let mut near: Vec<&Arc<Candidate>> = same_ch
+        .iter()
+        .copied()
+        .filter(|c| c.file.layout.samples().abs_diff(audio.samples) <= max_extra)
+        .collect();
+    // The track the name points at first, then by length.
+    let n = leading_number(&row.path);
+    near.sort_by_key(|c| {
+        (Some(u32::from(c.file.number)) != n, c.file.layout.samples().abs_diff(audio.samples), c.area.clone())
+    });
+    let mut extract_digest = None;
+    let mut audio_found: Option<(&Arc<Candidate>, pause::Found)> = None;
+    for c in near {
+        let mut tsrc = TrackSource::new(c.file.clone(), ctx.engine);
+        let Ok(served) = container::parse(&mut tsrc) else { continue };
+        let extract_longer = audio.samples > served.samples;
+        let found = if extract_longer {
+            let Ok(sd) = c.digest(ctx.engine, &ctx.read) else { continue };
+            pause::locate((audio, src), (&served, &mut tsrc), &sd, &ctx.read).map(|f| f.map(|f| (f, sd)))
+        } else {
+            let ed = match extract_digest {
+                Some(d) => d,
+                None => match audio.digest(src, &ctx.read) {
+                    Ok(d) => *extract_digest.insert(d),
+                    Err(p) => return decided(row, Status::Error, problem_text(p)),
+                },
+            };
+            pause::locate((&served, &mut tsrc), (audio, src), &ed, &ctx.read).map(|f| f.map(|f| (f, ed)))
+        };
+        let (f, digest) = match found {
+            Ok(Some(x)) => x,
+            Ok(None) => continue,
+            Err(p) => {
+                // The extract is unreadable (served tracks read fine or fail alike above).
+                return decided(row, Status::Error, problem_text(p));
+            }
+        };
+        if f.head.is_silence() && f.tail.is_silence() {
+            row.sha256 = id3::hex(&digest);
+            row.image = Some(c.image().to_owned());
+            row.area = c.area.clone();
+            row.track = Some(c.file.number);
+            row.loses = losses(audio, src, c.tag(ctx.engine), c.area_tracks);
+            let reason = pause_reason(c, &f, extract_longer);
+            return decided(row, Status::IdenticalPause, reason);
+        }
+        audio_found.get_or_insert((c, f));
+    }
+    let Some((c, f)) = audio_found else { return false };
+    row.image = Some(c.image().to_owned());
+    row.area = c.area.clone();
+    row.track = Some(c.file.number);
+    let longer = audio.samples > c.file.layout.samples();
+    let reason = format!(
+        "{}; that is not silence, so {}",
+        pause_reason(c, &f, longer),
+        if longer { "deleting the extract would lose it" } else { "the extract lacks audio sacdfs serves" }
+    );
+    decided(row, Status::NoMatch, reason)
+}
+
+fn decided(row: &mut Row, status: Status, reason: String) -> bool {
+    row.status = status;
+    row.reason = reason;
+    true
+}
+
+/// "holds track 3 of Stereo (image) plus 2.350 s of digital silence before it and ...".
+fn pause_reason(c: &Candidate, f: &pause::Found, extract_longer: bool) -> String {
+    let parts: Vec<String> = [("before", &f.head), ("after", &f.tail)]
+        .iter()
+        .filter(|(_, r)| r.samples > 0)
+        .map(|(where_, r)| format!("{} {where_} it", r.describe()))
+        .collect();
+    let extras = parts.join(" and ");
+    let track = format!("{} track {} of {}", c.area, c.file.number, c.image().display());
+    if extract_longer {
+        format!("the extract holds {track} plus {extras}")
+    } else {
+        format!("the extract is part of {track}; sacdfs serves {extras} besides")
+    }
+}
+
 /// What the extract's tags hold that the served file's tag does not.
 fn losses(
     audio: &container::Audio,
@@ -563,7 +665,7 @@ pub struct Summary {
 impl Summary {
     /// Whether every DSF and DFF file is IDENTICAL.
     pub fn all_identical(&self) -> bool {
-        self.rows.iter().all(|r| matches!(r.status, Status::Identical | Status::NotComparable))
+        self.rows.iter().all(|r| r.status.is_match() || r.status == Status::NotComparable)
     }
 
     /// The human summary.
@@ -581,13 +683,23 @@ impl Summary {
             let (n, b) = by.get(&st).copied().unwrap_or_default();
             s.push_str(&format!("  {:<15} {n:>7}  {:>10}\n", st.as_str(), human(b)));
         }
-        let ident: Vec<&Row> = self.rows.iter().filter(|r| r.status == Status::Identical).collect();
+        let ident: Vec<&Row> = self.rows.iter().filter(|r| r.status.is_match()).collect();
         let reclaim: u64 = ident.iter().map(|r| r.bytes).sum();
-        s.push_str(&format!(
-            "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio).\n",
-            human(reclaim),
-            ident.len()
-        ));
+        let pauses = ident.iter().filter(|r| r.status == Status::IdenticalPause).count();
+        if pauses == 0 {
+            s.push_str(&format!(
+                "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio).\n",
+                human(reclaim),
+                ident.len()
+            ));
+        } else {
+            s.push_str(&format!(
+                "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio; {pauses} of them \
+                 IDENTICAL-PAUSE: also silence around the track, which sacdfs does not serve).\n",
+                human(reclaim),
+                ident.len()
+            ));
+        }
         let count = |f: &dyn Fn(&Losses) -> bool| ident.iter().filter(|r| f(&r.loses)).count();
         let (mb, art, rg) = (count(&|l| l.musicbrainz), count(&|l| l.art), count(&|l| l.replaygain));
         let other = count(&|l| !l.other.is_empty() || l.unread.is_some());

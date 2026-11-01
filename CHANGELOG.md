@@ -19,6 +19,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- `sacdfs verify` recognises pause-kept extracts (#93): a served track with pauses before and/or
+  after it, or a track cut short, is `IDENTICAL-PAUSE` when everything extra is silence (the DSD
+  idle pattern, or residue at or below -60.2 dB), and otherwise `NO-MATCH` with the length and
+  level of the extra audio. Serving pauses is not part of this change.
 - `sacdfs verify` looks for images up to two levels below the extract's folder when none is
   beside or above it, trying every candidate (#98).
 - `sacdfs verify` no longer lists `TRCK` as lost when the extract's `n/N` matches the served

@@ -282,7 +282,9 @@ fn verify_classifies_every_extract() {
     assert_eq!(by("01 - msb.dsf").sha256, r.sha256);
     assert!(by("01 - truncated.dsf").reason.contains("truncated"), "{}", by("01 - truncated.dsf").reason);
     assert!(by("01 - dst.dff").reason.contains("DST"));
-    assert!(by("01 - short.dsf").reason.contains("longer"), "{}", by("01 - short.dsf").reason);
+    // Cut short: found inside the track (#93); what sacdfs serves beyond it is audio.
+    assert!(by("01 - short.dsf").reason.contains("part of"), "{}", by("01 - short.dsf").reason);
+    assert!(by("01 - short.dsf").reason.contains("audio at"), "{}", by("01 - short.dsf").reason);
     assert!(!s.all_identical());
     let text = s.render();
     assert!(text.contains("Nothing was deleted"));
@@ -399,4 +401,57 @@ fn image_in_a_subfolder_is_found() {
     assert_eq!(by("deep").status, Status::Identical, "{}", by("deep").reason);
     assert_eq!(by("toodeep").status, Status::NoMatch);
     assert!(by("toodeep").reason.contains("subfolders"), "{}", by("toodeep").reason);
+}
+
+/// #93: extracts that are a served track with pauses around it, or a track cut short.
+#[test]
+fn pause_kept_extracts() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = dir.path().join("lib");
+    fs::create_dir_all(lib.join("a")).unwrap();
+    std::os::unix::fs::symlink(
+        common::corpus().join("images").join("dsd-stereo-mch-2048.iso"),
+        lib.join("a").join("dsd-stereo-mch-2048.iso"),
+    )
+    .unwrap();
+    let files = served(&lib);
+    let (_, f, b) = files.iter().find(|(p, _, _)| p.starts_with("a/dsd-stereo-mch-2048/Stereo")).unwrap();
+    let (h, d, _) = split(b, f);
+    let canon = canonical(&h, &d);
+    // Whole 1/75 s frames of two channels: 4704 bytes per channel.
+    let idle = |frames: usize| vec![0x69u8; frames * 4704 * 2];
+    let x = lib.join("a").join("x");
+    fs::create_dir_all(&x).unwrap();
+    let put = |name: &str, canon: Vec<u8>| fs::write(x.join(name), dff(&canon, 2, b"DSD ")).unwrap();
+    put("01 - idle both.dff", [idle(3), canon.clone(), idle(2)].concat());
+    put("01 - head only.dff", [idle(1), canon.clone()].concat());
+    put("01 - residue tail.dff", [canon.clone(), [0x0F, 0xF0, 0x3C, 0xC3].repeat(4704 / 2)].concat());
+    put("01 - loud tail.dff", [canon.clone(), vec![0xFF; 4704 * 2]].concat());
+    put("01 - cut short.dff", canon[..canon.len() - 10].to_vec());
+    let mut other = canon.clone();
+    other[canon.len() / 2] ^= 0x10;
+    put("01 - other audio.dff", [idle(1), other].concat());
+    let s = run(&args(&lib, vec![x.clone()], Vec::new(), None)).unwrap();
+    let by =
+        |n: &str| s.rows.iter().find(|r| r.path.file_name().unwrap().to_str().unwrap().contains(n)).unwrap();
+    for n in ["idle both", "head only", "residue tail"] {
+        assert_eq!(by(n).status, Status::IdenticalPause, "{n}: {}", by(n).reason);
+        assert_eq!(by(n).track, Some(1));
+        assert!(by(n).loses.is_empty() || !by(n).loses.musicbrainz);
+    }
+    assert!(by("idle both").reason.contains("digital silence"), "{}", by("idle both").reason);
+    assert!(by("idle both").reason.contains("0.040 s"), "{}", by("idle both").reason);
+    assert!(by("residue tail").reason.contains("residue at"), "{}", by("residue tail").reason);
+    assert_eq!(by("idle both").sha256, by("head only").sha256);
+    let loud = by("loud tail");
+    assert_eq!(loud.status, Status::NoMatch);
+    assert!(loud.reason.contains("audio at 0.0 dB") && loud.reason.contains("would lose"), "{}", loud.reason);
+    // Cut short: part of the track; whether it matches depends on whether the track ends in silence.
+    let cut = by("cut short");
+    assert!(cut.reason.contains("part of"), "{}", cut.reason);
+    assert_eq!(by("other audio").status, Status::NoMatch);
+    assert!(!by("other audio").reason.contains("holds"), "{}", by("other audio").reason);
+    let text = s.render();
+    assert!(text.contains("IDENTICAL-PAUSE"), "{text}");
+    assert!(text.contains("3 of them IDENTICAL-PAUSE"), "{text}");
 }
