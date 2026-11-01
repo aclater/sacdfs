@@ -79,7 +79,9 @@ never moved.
 3. **Release pull request:** bump `version` in `Cargo.toml` (and `Cargo.lock`, with
    `cargo update -p sacdfs --offline`), and rename `## [Unreleased]` in CHANGELOG.md to
    `## [X.Y.Z] - YYYY-MM-DD`, with a new empty `## [Unreleased]` above it. That section
-   becomes the release notes. Merge it once its checks pass.
+   becomes the release notes. At the end of the file, point `[Unreleased]` at
+   `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: .../compare/v<previous>...vX.Y.Z`, so every
+   heading links to its changes. Merge it once its checks pass.
 4. **Tag** the merge commit on `main`: `git tag -a vX.Y.Z -m "sacdfs X.Y.Z" && git push origin vX.Y.Z`.
    The workflow stops before building anything if the tag isn't `v` plus Cargo.toml's
    version, or CHANGELOG.md has no section for it.
