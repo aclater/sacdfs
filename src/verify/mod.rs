@@ -14,6 +14,7 @@
 
 pub mod container;
 pub mod id3;
+mod pause;
 mod report;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -114,6 +115,8 @@ struct Candidate {
     file: Arc<TrackFile>,
     /// "Stereo" or "Multichannel".
     area: String,
+    /// How many tracks the area has.
+    area_tracks: usize,
     digest: OnceLock<Result<[u8; 32], String>>,
     tag: OnceLock<Vec<id3::Frame>>,
 }
@@ -215,8 +218,8 @@ struct Item {
     kind: ExtractKind,
     bytes: u64,
     mtime: String,
-    /// The folder of images it belongs to.
-    folder: Option<PathBuf>,
+    /// The folders of images it belongs to: one beside or above it, or those below it.
+    folders: Vec<PathBuf>,
 }
 
 /// The file's modification time as the report writes it.
@@ -318,14 +321,19 @@ fn image_folders(dir: &SourceDir, out: &mut HashSet<PathBuf>) {
     }
 }
 
-/// The folder of images that `path` belongs to: after mapping, the nearest folder above it
-/// that holds images, within `root`.
+/// How many levels below an extract's folder are searched for images when none is beside or
+/// above it (#98): `Album/Album (SACD ISO)/disc.iso`.
+const SUBFOLDER_DEPTH: usize = 2;
+
+/// The folders of images that `path` belongs to: after mapping, the nearest folder above it
+/// that holds images, within `root`; failing that, every folder of images up to
+/// [`SUBFOLDER_DEPTH`] levels below the folder the extract is in, sorted.
 fn folder_of(
     path: &Path,
     maps: &[(PathBuf, PathBuf)],
     root: &Path,
     folders: &HashSet<PathBuf>,
-) -> Option<PathBuf> {
+) -> Vec<PathBuf> {
     let mapped = maps
         .iter()
         .filter(|(from, _)| path.starts_with(from))
@@ -337,10 +345,19 @@ fn folder_of(
             break;
         }
         if folders.contains(anc) {
-            return Some(anc.to_owned());
+            return vec![anc.to_owned()];
         }
     }
-    None
+    let Some(dir) = mapped.parent().filter(|d| d.starts_with(root)) else { return Vec::new() };
+    let mut below: Vec<PathBuf> = folders
+        .iter()
+        .filter(|f| {
+            f.strip_prefix(dir).is_ok_and(|rest| (1..=SUBFOLDER_DEPTH).contains(&rest.components().count()))
+        })
+        .cloned()
+        .collect();
+    below.sort();
+    below
 }
 
 /// The DSF files sacdfs shows for the images directly in `folder`.
@@ -367,17 +384,23 @@ fn folder_candidates(tree: &Tree, root: &Path, folder: &Path) -> Vec<Arc<Candida
             continue;
         }
         for area in tree.children(image.ino).iter().flat_map(|c| c.iter()).filter(|e| e.is_dir) {
-            for f in tree.children(area.ino).iter().flat_map(|c| c.iter()) {
-                if let Some(Node::File(file)) = tree.get(f.ino).as_deref() {
-                    if file.format() == Format::Dsf {
-                        out.push(Arc::new(Candidate {
-                            file: file.clone(),
-                            area: area.name.to_string_lossy().into_owned(),
-                            digest: OnceLock::new(),
-                            tag: OnceLock::new(),
-                        }));
-                    }
-                }
+            let files: Vec<Arc<TrackFile>> = tree
+                .children(area.ino)
+                .iter()
+                .flat_map(|c| c.iter())
+                .filter_map(|f| match tree.get(f.ino).as_deref() {
+                    Some(Node::File(file)) if file.format() == Format::Dsf => Some(file.clone()),
+                    _ => None,
+                })
+                .collect();
+            for file in &files {
+                out.push(Arc::new(Candidate {
+                    file: file.clone(),
+                    area: area.name.to_string_lossy().into_owned(),
+                    area_tracks: files.len(),
+                    digest: OnceLock::new(),
+                    tag: OnceLock::new(),
+                }));
             }
         }
     }
@@ -417,25 +440,37 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
         return row
             .with(Status::NoMatch, format!("sampled at {} Hz; SACD audio is {SACD_RATE} Hz", audio.rate));
     }
-    let Some(folder) = &item.folder else {
+    if item.folders.is_empty() {
         return row.with(
             Status::NoMatch,
-            "no image in its folder or the folders above it in SOURCE (for extracts kept apart, see --map)"
+            "no image in its folder, the folders above it in SOURCE, or its subfolders (two levels); \
+             for extracts kept apart, or an image deeper down, see --map"
                 .into(),
         );
+    }
+    let all: Vec<&Arc<Candidate>> =
+        item.folders.iter().filter_map(|f| ctx.candidates.get(f)).flatten().collect();
+    let folder = &item.folders[0];
+    let where_ = if item.folders.len() == 1 {
+        folder.display().to_string()
+    } else {
+        format!("{} and {} other folders", folder.display(), item.folders.len() - 1)
     };
-    let all = ctx.candidates.get(folder).map_or(&[][..], Vec::as_slice);
     if all.is_empty() {
-        return row
-            .with(Status::NoMatch, format!("sacdfs shows no track for the images in {}", folder.display()));
+        return row.with(Status::NoMatch, format!("sacdfs shows no track for the images in {where_}"));
     }
     let same_ch: Vec<&Arc<Candidate>> =
-        all.iter().filter(|c| c.file.layout.channels == audio.channels).collect();
+        all.iter().copied().filter(|c| c.file.layout.channels == audio.channels).collect();
     let mut shape: Vec<&Arc<Candidate>> =
         same_ch.iter().copied().filter(|c| c.file.layout.samples() == audio.samples).collect();
     if shape.is_empty() {
+        // No track has its length: the extract may be a track with pauses kept, or a track cut
+        // short (#93).
+        if with_pauses(&mut row, &audio, &mut src, &same_ch, ctx) {
+            return row;
+        }
         let why = match same_ch.iter().min_by_key(|c| c.file.layout.samples().abs_diff(audio.samples)) {
-            None => format!("no area of the images in {} has {} channels", folder.display(), audio.channels),
+            None => format!("no area of the images in {where_} has {} channels", audio.channels),
             Some(c) => {
                 let d = c.file.layout.samples() as f64 - audio.samples as f64;
                 format!(
@@ -491,14 +526,115 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
     row.image = Some(cand.image().to_owned());
     row.area = cand.area.clone();
     row.track = Some(cand.file.number);
-    row.loses = losses(&audio, &mut src, cand.tag(ctx.engine));
+    row.loses = losses(&audio, &mut src, cand.tag(ctx.engine), cand.area_tracks);
     row.with(status, reason)
 }
 
+/// An extract of the right channel count whose length is no track's (#93): the served track
+/// inside it with pauses around it, or inside the served track (a track cut short). `Ok` is
+/// the row finished and true: IDENTICAL-PAUSE if everything beyond the common audio is silence, else
+/// NO-MATCH with the length and level of what is not; false leaves the row as it was when no track of
+/// about the extract's length is in it or contains it.
+fn with_pauses(
+    row: &mut Row,
+    audio: &container::Audio,
+    src: &mut FileSource,
+    same_ch: &[&Arc<Candidate>],
+    ctx: &Ctx<'_>,
+) -> bool {
+    let max_extra = pause::MAX_EXTRA_SECS * u64::from(SACD_RATE);
+    let mut near: Vec<&Arc<Candidate>> = same_ch
+        .iter()
+        .copied()
+        .filter(|c| c.file.layout.samples().abs_diff(audio.samples) <= max_extra)
+        .collect();
+    // The track the name points at first, then by length.
+    let n = leading_number(&row.path);
+    near.sort_by_key(|c| {
+        (Some(u32::from(c.file.number)) != n, c.file.layout.samples().abs_diff(audio.samples), c.area.clone())
+    });
+    let mut extract_digest = None;
+    let mut audio_found: Option<(&Arc<Candidate>, pause::Found)> = None;
+    for c in near {
+        let mut tsrc = TrackSource::new(c.file.clone(), ctx.engine);
+        let Ok(served) = container::parse(&mut tsrc) else { continue };
+        let extract_longer = audio.samples > served.samples;
+        let found = if extract_longer {
+            let Ok(sd) = c.digest(ctx.engine, &ctx.read) else { continue };
+            pause::locate((audio, src), (&served, &mut tsrc), &sd, &ctx.read).map(|f| f.map(|f| (f, sd)))
+        } else {
+            let ed = match extract_digest {
+                Some(d) => d,
+                None => match audio.digest(src, &ctx.read) {
+                    Ok(d) => *extract_digest.insert(d),
+                    Err(p) => return decided(row, Status::Error, problem_text(p)),
+                },
+            };
+            pause::locate((&served, &mut tsrc), (audio, src), &ed, &ctx.read).map(|f| f.map(|f| (f, ed)))
+        };
+        let (f, digest) = match found {
+            Ok(Some(x)) => x,
+            Ok(None) => continue,
+            Err(p) => {
+                // The extract is unreadable (served tracks read fine or fail alike above).
+                return decided(row, Status::Error, problem_text(p));
+            }
+        };
+        if f.head.is_silence() && f.tail.is_silence() {
+            row.sha256 = id3::hex(&digest);
+            row.image = Some(c.image().to_owned());
+            row.area = c.area.clone();
+            row.track = Some(c.file.number);
+            row.loses = losses(audio, src, c.tag(ctx.engine), c.area_tracks);
+            let reason = pause_reason(c, &f, extract_longer);
+            return decided(row, Status::IdenticalPause, reason);
+        }
+        audio_found.get_or_insert((c, f));
+    }
+    let Some((c, f)) = audio_found else { return false };
+    row.image = Some(c.image().to_owned());
+    row.area = c.area.clone();
+    row.track = Some(c.file.number);
+    let longer = audio.samples > c.file.layout.samples();
+    let reason = format!(
+        "{}; that is not silence, so {}",
+        pause_reason(c, &f, longer),
+        if longer { "deleting the extract would lose it" } else { "the extract lacks audio sacdfs serves" }
+    );
+    decided(row, Status::NoMatch, reason)
+}
+
+fn decided(row: &mut Row, status: Status, reason: String) -> bool {
+    row.status = status;
+    row.reason = reason;
+    true
+}
+
+/// "holds track 3 of Stereo (image) plus 2.350 s of digital silence before it and ...".
+fn pause_reason(c: &Candidate, f: &pause::Found, extract_longer: bool) -> String {
+    let parts: Vec<String> = [("before", &f.head), ("after", &f.tail)]
+        .iter()
+        .filter(|(_, r)| r.samples > 0)
+        .map(|(where_, r)| format!("{} {where_} it", r.describe()))
+        .collect();
+    let extras = parts.join(" and ");
+    let track = format!("{} track {} of {}", c.area, c.file.number, c.image().display());
+    if extract_longer {
+        format!("the extract holds {track} plus {extras}")
+    } else {
+        format!("the extract is part of {track}; sacdfs serves {extras} besides")
+    }
+}
+
 /// What the extract's tags hold that the served file's tag does not.
-fn losses(audio: &container::Audio, src: &mut dyn Source, served: &[id3::Frame]) -> Losses {
+fn losses(
+    audio: &container::Audio,
+    src: &mut dyn Source,
+    served: &[id3::Frame],
+    area_tracks: usize,
+) -> Losses {
     let mut l = match audio.read_id3(src) {
-        Ok(Some(t)) => Losses::between(&id3::frames(&t), served),
+        Ok(Some(t)) => Losses::between(&id3::frames(&t), served, area_tracks),
         Ok(None) => Losses::default(),
         Err(size) => Losses { unread: Some(format!("a tag of {size} bytes")), ..Losses::default() },
     };
@@ -529,7 +665,7 @@ pub struct Summary {
 impl Summary {
     /// Whether every DSF and DFF file is IDENTICAL.
     pub fn all_identical(&self) -> bool {
-        self.rows.iter().all(|r| matches!(r.status, Status::Identical | Status::NotComparable))
+        self.rows.iter().all(|r| r.status.is_match() || r.status == Status::NotComparable)
     }
 
     /// The human summary.
@@ -547,13 +683,23 @@ impl Summary {
             let (n, b) = by.get(&st).copied().unwrap_or_default();
             s.push_str(&format!("  {:<15} {n:>7}  {:>10}\n", st.as_str(), human(b)));
         }
-        let ident: Vec<&Row> = self.rows.iter().filter(|r| r.status == Status::Identical).collect();
+        let ident: Vec<&Row> = self.rows.iter().filter(|r| r.status.is_match()).collect();
         let reclaim: u64 = ident.iter().map(|r| r.bytes).sum();
-        s.push_str(&format!(
-            "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio).\n",
-            human(reclaim),
-            ident.len()
-        ));
+        let pauses = ident.iter().filter(|r| r.status == Status::IdenticalPause).count();
+        if pauses == 0 {
+            s.push_str(&format!(
+                "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio).\n",
+                human(reclaim),
+                ident.len()
+            ));
+        } else {
+            s.push_str(&format!(
+                "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio; {pauses} of them \
+                 IDENTICAL-PAUSE: also silence around the track, which sacdfs does not serve).\n",
+                human(reclaim),
+                ident.len()
+            ));
+        }
         let count = |f: &dyn Fn(&Losses) -> bool| ident.iter().filter(|r| f(&r.loses)).count();
         let (mb, art, rg) = (count(&|l| l.musicbrainz), count(&|l| l.art), count(&|l| l.replaygain));
         let other = count(&|l| !l.other.is_empty() || l.unread.is_some());
@@ -672,8 +818,8 @@ pub fn run(args: &Args) -> io::Result<Summary> {
                 continue;
             }
         }
-        let folder = folder_of(&path, &maps, &root, &folders);
-        items.push(Item { path, kind, bytes: meta.len(), mtime, folder });
+        let of = folder_of(&path, &maps, &root, &folders);
+        items.push(Item { path, kind, bytes: meta.len(), mtime, folders: of });
     }
 
     let threads = if args.threads == 0 { default_threads() } else { args.threads };
@@ -686,7 +832,7 @@ pub fn run(args: &Args) -> io::Result<Summary> {
         let mut f: Vec<PathBuf> = items
             .iter()
             .filter(|i| i.kind == ExtractKind::Dsd)
-            .filter_map(|i| i.folder.clone())
+            .flat_map(|i| i.folders.clone())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
@@ -806,19 +952,55 @@ mod tests {
         let folders: HashSet<PathBuf> = ["/lib/a/x", "/lib/b"].iter().map(PathBuf::from).collect();
         let root = Path::new("/lib");
         let none: Vec<(PathBuf, PathBuf)> = Vec::new();
-        assert_eq!(
-            folder_of(Path::new("/lib/a/x/Stereo/01.dsf"), &none, root, &folders),
-            Some("/lib/a/x".into())
-        );
-        assert_eq!(folder_of(Path::new("/lib/a/y/01.dsf"), &none, root, &folders), None);
-        assert_eq!(folder_of(Path::new("/lib/b/01.dsf"), &none, root, &folders), Some("/lib/b".into()));
+        let one = |s: &str| vec![PathBuf::from(s)];
+        assert_eq!(folder_of(Path::new("/lib/a/x/Stereo/01.dsf"), &none, root, &folders), one("/lib/a/x"));
+        assert_eq!(folder_of(Path::new("/lib/a/y/01.dsf"), &none, root, &folders), Vec::<PathBuf>::new());
+        assert_eq!(folder_of(Path::new("/lib/b/01.dsf"), &none, root, &folders), one("/lib/b"));
         let maps = vec![
             (PathBuf::from("/ext"), PathBuf::from("/lib")),
             (PathBuf::from("/ext/z"), PathBuf::from("/lib/b")),
         ];
-        assert_eq!(folder_of(Path::new("/ext/a/x/01.dsf"), &maps, root, &folders), Some("/lib/a/x".into()));
-        assert_eq!(folder_of(Path::new("/ext/z/q/01.dsf"), &maps, root, &folders), Some("/lib/b".into()));
-        assert_eq!(folder_of(Path::new("/elsewhere/01.dsf"), &maps, root, &folders), None);
+        assert_eq!(folder_of(Path::new("/ext/a/x/01.dsf"), &maps, root, &folders), one("/lib/a/x"));
+        assert_eq!(folder_of(Path::new("/ext/z/q/01.dsf"), &maps, root, &folders), one("/lib/b"));
+        assert!(folder_of(Path::new("/elsewhere/01.dsf"), &maps, root, &folders).is_empty());
+    }
+
+    #[test]
+    fn images_in_subfolders() {
+        // #98: Album/01.dsf with the image in Album/Album (SACD ISO)/, or two levels down.
+        let folders: HashSet<PathBuf> =
+            ["/lib/Album/Album (SACD ISO)", "/lib/Two/Disc 1/ISO", "/lib/Two/Disc 2/ISO"]
+                .iter()
+                .map(PathBuf::from)
+                .collect();
+        let root = Path::new("/lib");
+        let none: Vec<(PathBuf, PathBuf)> = Vec::new();
+        assert_eq!(
+            folder_of(Path::new("/lib/Album/01.dsf"), &none, root, &folders),
+            vec![PathBuf::from("/lib/Album/Album (SACD ISO)")]
+        );
+        // Every candidate, sorted; three levels down is too deep (from /lib, Two's are); a sibling's
+        // subfolder is not ours.
+        assert_eq!(
+            folder_of(Path::new("/lib/Two/01.dsf"), &none, root, &folders),
+            vec![PathBuf::from("/lib/Two/Disc 1/ISO"), PathBuf::from("/lib/Two/Disc 2/ISO")]
+        );
+        assert_eq!(
+            folder_of(Path::new("/lib/01.dsf"), &none, root, &folders),
+            vec![PathBuf::from("/lib/Album/Album (SACD ISO)")]
+        );
+        assert!(folder_of(Path::new("/lib/Two/Disc 1/x/01.dsf"), &none, root, &folders).is_empty());
+        assert!(folder_of(Path::new("/lib/Other/01.dsf"), &none, root, &folders).is_empty());
+        // A folder or parent with an image wins over subfolders.
+        let mut more = folders.clone();
+        more.insert(PathBuf::from("/lib/Album"));
+        assert_eq!(
+            folder_of(Path::new("/lib/Album/01.dsf"), &none, root, &more),
+            vec![PathBuf::from("/lib/Album")]
+        );
+        // Mapped extracts look below the mapped folder.
+        let maps = vec![(PathBuf::from("/ext"), PathBuf::from("/lib"))];
+        assert_eq!(folder_of(Path::new("/ext/Album/01.dsf"), &maps, root, &folders).len(), 1);
     }
 
     #[test]
