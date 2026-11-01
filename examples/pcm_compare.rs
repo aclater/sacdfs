@@ -351,7 +351,11 @@ fn impulse(which: Which, cfg: &PcmConfig, k: usize, exact: bool) -> Vec<f64> {
         let mut acc = vec![0.0f64; per];
         for _ in 0..reps {
             let (prev, mut cur, next) = if exact {
-                (vec![DSD_SILENCE; FRAME_BYTES], vec![DSD_SILENCE; FRAME_BYTES], vec![DSD_SILENCE; FRAME_BYTES])
+                (
+                    vec![DSD_SILENCE; FRAME_BYTES],
+                    vec![DSD_SILENCE; FRAME_BYTES],
+                    vec![DSD_SILENCE; FRAME_BYTES],
+                )
             } else {
                 let bg = &pool[rng.next() as usize % pool.len()];
                 let f = |i: usize| bg[i * FRAME_BYTES..(i + 1) * FRAME_BYTES].to_vec();
@@ -463,7 +467,9 @@ fn analyse(h: &[f64], cfg: &PcmConfig, own_stop: f64) -> Resp {
 
 fn quality() {
     let k: usize = std::env::var("K").ok().and_then(|v| v.parse().ok()).unwrap_or(256);
-    println!("## Response from impulses (24-bit output at +24 dB gain, +12 dB for wide, one flipped bit averaged over {k} faint modulated backgrounds)\n");
+    println!(
+        "## Response from impulses (24-bit output at +24 dB gain, +12 dB for wide, one flipped bit averaged over {k} faint modulated backgrounds)\n"
+    );
     println!(
         "| Config | Converter | Ripple to 20 kHz | Ripple to pass edge | -0.1 dB at | -3 dB at | Stopband from own edge | Stopband from sacdfs's edge (#5) | DC gain | Asymmetry | Centre (DSD samples) |"
     );
@@ -513,10 +519,12 @@ fn quality() {
         return;
     }
     // ---- Sweep: modulated sines at -6 dBFS, level and phase per tone, both converters.
-    println!("\n## Stepped sweep (modulated sine, -6 dBFS): level error (dB) and alignment (output samples)\n");
+    println!(
+        "\n## Stepped sweep (modulated sine, -6 dBFS): level error (dB) and alignment (output samples)\n"
+    );
     let tones = [
-        20.0, 50.0, 100.0, 200.0, 500.0, 1e3, 2e3, 5e3, 10e3, 15e3, 20e3, 25e3, 29e3, 35e3, 39e3, 50e3, 60e3, 70e3,
-        79e3,
+        20.0, 50.0, 100.0, 200.0, 500.0, 1e3, 2e3, 5e3, 10e3, 15e3, 20e3, 25e3, 29e3, 35e3, 39e3, 50e3, 60e3,
+        70e3, 79e3,
     ];
     // (config, converter) -> (max |level| to 20k, max |level| to pass edge, max |offset| to 20k, max level diff between converters)
     let mut sweep: BTreeMap<String, Vec<(f64, f64, f64)>> = BTreeMap::new();
@@ -575,7 +583,9 @@ fn quality() {
     }
 
     // ---- Out-of-band tones.
-    println!("\n## Out-of-band tones at -12 dBFS: rejection at the alias (dB); DSD's own content there in brackets\n");
+    println!(
+        "\n## Out-of-band tones at -12 dBFS: rejection at the alias (dB); DSD's own content there in brackets\n"
+    );
     println!("| Config | Tone | Lands at | sacdfs | scarletbook | DSD itself there |");
     println!("|---|---|---|---|---|---|");
     let amp = 0.25;
@@ -629,13 +639,17 @@ fn quality() {
     ];
     let quiet = mono(32, |_| 0.0);
     let src_of = |dsd: &[u8]| -> Vec<f64> {
-        (start_bit..start_bit + bits).map(|n| if dsd[n / 8] & (0x80 >> (n % 8)) != 0 { 1.0 } else { -1.0 }).collect()
+        (start_bit..start_bit + bits)
+            .map(|n| if dsd[n / 8] & (0x80 >> (n % 8)) != 0 { 1.0 } else { -1.0 })
+            .collect()
     };
     print!("| Config | Converter |");
     for s in &sigs {
         print!(" {} |", s.0);
     }
-    println!(" Noise 20 Hz-20 kHz (modulated silence) | Noise 20 kHz-pass edge | DC on 1 kHz -6 dBFS | DSD silence 0x69: peak |");
+    println!(
+        " Noise 20 Hz-20 kHz (modulated silence) | Noise 20 kHz-pass edge | DC on 1 kHz -6 dBFS | DSD silence 0x69: peak |"
+    );
     println!("|---|---|---|---|---|---|---|---|---|");
     print!("| (all) | DSD source |");
     for s in &sigs {
@@ -665,7 +679,8 @@ fn quality() {
             let p = spectrum(&x[start_bit / d..(start_bit + bits) / d]);
             let (sil, _) = convert_all(which, &cfg, 1, &silence, None, None);
             let sil_peak = sil.iter().map(|v| v.unsigned_abs()).max().unwrap();
-            let sil_mid = sil[sil.len() / 4..3 * sil.len() / 4].iter().map(|v| v.unsigned_abs()).max().unwrap();
+            let sil_mid =
+                sil[sil.len() / 4..3 * sil.len() / 4].iter().map(|v| v.unsigned_abs()).max().unwrap();
             println!(
                 " {:.1} | {:.1} | {:.1} dBFS | {sil_peak} LSB (mid-area {sil_mid} LSB) |",
                 db(band_power(&p, fs, 20.0, 20_000.0)),
@@ -754,7 +769,8 @@ fn residual(a: &[i32], b: &[i32], ch: usize, c: usize, fs: f64, pass: f64, from:
     let mms = matched.map(|v| v * v).sum::<f64>() / x.len() as f64;
     let seg = &diff[from..(from + len).min(diff.len())];
     let p = welch(seg);
-    let sigp = welch(&x[from..(from + len).min(x.len())].iter().map(|&v| f64::from(v) / FULL).collect::<Vec<_>>());
+    let sigp =
+        welch(&x[from..(from + len).min(x.len())].iter().map(|&v| f64::from(v) / FULL).collect::<Vec<_>>());
     Res {
         rms: db(ms),
         peak: 20.0 * peak.max(1e-15).log10(),
@@ -782,7 +798,9 @@ fn decode(disc: &Disc, area: usize, t0: u32, n: u32, area_end: u32) -> (Vec<Vec<
     let frames = (first..end)
         .map(|t| {
             let content = cursor.content(disc, t).unwrap();
-            scarletbook::audio::decode_frame(&mut decoder, TrackFrame { number: t, content }, channels).unwrap().data
+            scarletbook::audio::decode_frame(&mut decoder, TrackFrame { number: t, content }, channels)
+                .unwrap()
+                .data
         })
         .collect();
     (frames, first)
@@ -816,7 +834,9 @@ fn windows(dir: &Path, secs: u32) -> Vec<(String, Arc<Disc>, usize, u32, u32, u3
 }
 
 fn disc(dir: &Path, secs: u32) {
-    println!("## Residual sacdfs - scarletbook on real discs ({secs} s from the middle of each area; dBFS)\n");
+    println!(
+        "## Residual sacdfs - scarletbook on real discs ({secs} s from the middle of each area; dBFS)\n"
+    );
     println!(
         "| Area | Config | Channel | Signal 20 Hz-20 kHz | Full band RMS | Full band peak | 20 Hz-20 kHz RMS | Pass band RMS | After level match | Level difference | Samples differing | Largest | Clips (sacdfs/sb) |"
     );
@@ -875,6 +895,7 @@ fn label(i: Impl) -> String {
 
 /// Converts every frame of `frames` once (runs of `run` frames with neighbours): seconds.
 fn time_one(i: Impl, cfg: &PcmConfig, ch: u8, frames: &[&[u8]], run: usize) -> f64 {
+    #[allow(clippy::large_enum_variant)]
     enum C {
         A(Converter),
         B(Box<SbConverter>),
@@ -904,7 +925,8 @@ fn time_one(i: Impl, cfg: &PcmConfig, ch: u8, frames: &[&[u8]], run: usize) -> f
 fn speed(dir: &Path, secs: u32, threads: usize) {
     // The first stereo area found: `secs` seconds of decoded frames.
     let w = windows(dir, secs);
-    let (label_area, disc, area, t0, n, area_end) = w.iter().find(|w| w.1.areas[w.2].channels == 2).unwrap().clone();
+    let (label_area, disc, area, t0, n, area_end) =
+        w.iter().find(|w| w.1.areas[w.2].channels == 2).unwrap().clone();
     let (frames, _) = decode(&disc, area, t0, n, area_end);
     let refs: Vec<&[u8]> = frames.iter().map(Vec::as_slice).collect();
     let audio = (refs.len() - 2) as f64 / 75.0;
@@ -915,8 +937,12 @@ fn speed(dir: &Path, secs: u32, threads: usize) {
         impls.push(Impl::Sacdfs(Simd::Baseline));
     }
     impls.push(Impl::Scarletbook);
-    println!("## Converter throughput, stereo, × real time ({audio:.0} s of a real area, frames in memory)\n");
-    println!("| Config | Converter | 1 thread, frame by frame | 1 thread, runs of 4 | {threads} threads, runs of 4 (total) | per thread |");
+    println!(
+        "## Converter throughput, stereo, × real time ({audio:.0} s of a real area, frames in memory)\n"
+    );
+    println!(
+        "| Config | Converter | 1 thread, frame by frame | 1 thread, runs of 4 | {threads} threads, runs of 4 (total) | per thread |"
+    );
     println!("|---|---|---|---|---|---|");
     for cfg in configs() {
         for &i in &impls {
@@ -951,7 +977,9 @@ fn speed(dir: &Path, secs: u32, threads: usize) {
 fn determinism() {
     let mut rng = Rng(777);
     println!("## Determinism (scarletbook-pcm through sacdfs's adapter)\n");
-    println!("| Config | Channels | Frame by frame = whole area | Random runs = whole area | Short last frame = padded |");
+    println!(
+        "| Config | Channels | Frame by frame = whole area | Random runs = whole area | Short last frame = padded |"
+    );
     println!("|---|---|---|---|---|");
     for cfg in configs() {
         for ch in [1u8, 2, 5, 6] {
@@ -1037,9 +1065,12 @@ fn gain_clips() {
 fn limit_cycles() {
     println!("## Test modulator: discrete tones in 30 Hz-40 kHz (limit cycles) and noise modulation\n");
     println!(
-        "| Input | Dither (TPDF at the input, peak) | DC x fs | Strongest tone | Above floor | Tone level | Tone / (DC x fs) | Bins > 10 dB above floor | Noise floor 20 Hz-20 kHz |"
+        "| Input | Dither (TPDF at the input, peak) | Exact period P of the bits (fs/P) | DC x fs | Strongest tone | Above floor | Tone level | Tone / (DC x fs) | Bins > 10 dB above floor | Noise floor 20 Hz-20 kHz |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|---|");
+    // Sanity check of the periodicity test: DSD silence (0x69) repeats every 8 bits.
+    let sil: Vec<bool> = (0..1 << 20).map(|n| 0x69u8 & (0x80 >> (n % 8)) != 0).collect();
+    println!("| DSD silence pattern 0x69 (sanity check) | | {} | | | | | | | |", period_text(&sil));
     let seg = 1usize << 19;
     let bits = seg * 9 / 2;
     let frames = bits / (FRAME_BYTES * 8) + 4;
@@ -1061,8 +1092,9 @@ fn limit_cycles() {
                 .collect();
             let dsd = Modulator::new().run(frames * FRAME_BYTES, |n| dc + tone(n) + d[n]);
             let start = 2 * FRAME_BYTES * 8;
-            let x: Vec<f64> =
-                (start..start + bits).map(|n| if dsd[n / 8] & (0x80 >> (n % 8)) != 0 { 1.0 } else { -1.0 }).collect();
+            let x: Vec<f64> = (start..start + bits)
+                .map(|n| if dsd[n / 8] & (0x80 >> (n % 8)) != 0 { 1.0 } else { -1.0 })
+                .collect();
             let mut acc = vec![0.0; seg / 2 + 1];
             for k in 0..8 {
                 for (a, p) in acc.iter_mut().zip(spectrum(&x[k * seg / 2..k * seg / 2 + seg])) {
@@ -1104,9 +1136,11 @@ fn limit_cycles() {
                 }
             }
             let dcfs = dc * FS;
+            let bitsv: Vec<bool> = x.iter().map(|v| *v > 0.0).collect();
             println!(
-                "| {label} | {} | {} | {:.0} Hz | {:.1} dB | {:.1} dBFS | {} | {count} | {:.1} dBFS |",
+                "| {label} | {} | {} | {} | {:.0} Hz | {:.1} dB | {:.1} dBFS | {} | {count} | {:.1} dBFS |",
                 dither_db.map_or("none".into(), |d| format!("{d} dBFS")),
+                period_text(&bitsv),
                 if *dc > 0.0 { format!("{dcfs:.0} Hz") } else { "".into() },
                 best.1,
                 best.0,
@@ -1116,6 +1150,15 @@ fn limit_cycles() {
             );
         }
     }
+}
+
+/// The smallest P <= 2^16 with bits[n] == bits[n + P] over the whole run (Reiss and Sandler,
+/// AES 116th Conv. 2004: a periodic bitstream has its first harmonic at fs/P), as text.
+fn period_text(bits: &[bool]) -> String {
+    let max = (1usize << 16).min(bits.len() / 4);
+    (1..=max)
+        .find(|&p| (0..bits.len() - p).all(|n| bits[n] == bits[n + p]))
+        .map_or(format!("none up to {max}"), |p| format!("{p} ({:.1} kHz)", FS / p as f64 / 1e3))
 }
 
 fn yes(b: bool) -> &'static str {
@@ -1137,6 +1180,8 @@ fn main() {
             determinism();
             gain_clips();
         }
-        _ => panic!("usage: pcm_compare quality | disc DIR [SECS] | speed DIR [SECS] [THREADS] | determinism"),
+        _ => {
+            panic!("usage: pcm_compare quality | disc DIR [SECS] | speed DIR [SECS] [THREADS] | determinism")
+        }
     }
 }

@@ -409,7 +409,11 @@ impl Engine {
             let i = match list.iter().position(|(e, ch, _)| *e == self.id && *ch == channels) {
                 Some(i) => i,
                 None => {
-                    list.push((self.id, channels, Converter::new(crate::pcm::sb::selected(), channels, &self.pcm)));
+                    list.push((
+                        self.id,
+                        channels,
+                        Converter::new(crate::pcm::sb::selected(), channels, &self.pcm),
+                    ));
                     list.len() - 1
                 }
             };

@@ -184,6 +184,8 @@ impl SbConverter {
 
 /// Either converter, as the engine holds it.
 #[derive(Debug)]
+// One per thread, long-lived: the size difference does not matter.
+#[allow(clippy::large_enum_variant)]
 pub enum AnyConverter {
     /// sacdfs's.
     Sacdfs(Converter),
