@@ -16,6 +16,16 @@ All notable changes to sacdfs are recorded here. The format follows
   of a corpus image with late audio sectors written again near the area's start) and checks
   that every provisional reading that differs is refuted.
 
+- Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts
+  a scarletbook provisional (cold) reading or, after a remount, one from the saved seek hints;
+  sacdfs's own frame locator is gone. Cold seeks make fewer calls to the image (3.06 a seek on
+  average on the real discs, was 4.44; DST areas 3.0 to 3.4, were 4.8 to 5.5), warm ones one
+  call with fewer bytes (84 KiB, was 110). Seek times through the mount are within 15 % of
+  0.1's, and output is unchanged (DSF gate 93/93). Areas whose layout scarletbook finds
+  suspect are read exactly. Details and figures: `docs/design.md`, "Seeking", and
+  `docs/performance.md`.
+- The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
+  by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
 - Cheaper probes (#61): `getxattr` and `listxattr` answer `ENOSYS`, so the kernel stops
   asking (a second `ls -l` of a 48-file area sent 49 `LISTXATTR` requests, now none), and a
   missing name gets a negative entry cached for 24 hours (repeated `stat`s of `cover.jpg`,
