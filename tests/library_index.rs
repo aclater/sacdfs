@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! sacdfs's frame locator against scarletbook's seek index (#28).
+//! sacdfs's reads against scarletbook's exact reading (#28).
 //!
-//! scarletbook 0.4's `AreaIndex` starts a range from saved reading state, with results
-//! exactly those of a scan from the area's first sector by the specification (4.2 item 7).
-//! That makes it an oracle for sacdfs's own locator, which starts a fresh demultiplexer at
-//! a sector it found by frame numbers: every frame and random ranges located by sacdfs
-//! must equal the same positions read through a complete library index, and a straight
-//! read without one, on every corpus case (hostile ones included) and on real discs.
+//! scarletbook's `AreaIndex` starts a range from saved reading state, with results exactly
+//! those of a scan from the area's first sector by the specification (4.2 item 7). That makes
+//! it an oracle for sacdfs's seeking (scarletbook's provisional readings, since 0.2.0): every
+//! frame and random ranges read by sacdfs must equal the same positions read through a
+//! complete library index, and a straight read without one, on every corpus case (hostile
+//! ones included) and on real discs.
 //!
-//! The library's provisional reading (`SeekPolicy::Speculative`, its cold seek) is checked
-//! too: where its provisional positions differ from the exact ones (an image made so), they
-//! are refuted once a pass from the area's first sector reaches them, while sacdfs's
-//! locator gives the exact positions from the start.
+//! The library's provisional reading on its own is checked too: where its positions differ
+//! from the exact ones (an image made so), they are refuted once a pass from the area's first
+//! sector reaches them, and sacdfs, which reads suspect readings exactly, gives the exact
+//! positions from the start.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -150,8 +150,8 @@ fn locator_equals_the_seek_index_on_the_corpus() {
 /// Provisional (cold) readings of every 4-frame range of every area of `path`, each compared
 /// with the exact reading, then a pass of the seek index that settles them: the readings
 /// made, those whose positions differ from the exact ones, and whether every one of those
-/// was refuted (and how many were refuted in all); and the ranges where sacdfs's locator
-/// differs from the exact reading, which fails the test if `locator_exact`.
+/// was refuted (and how many were refuted in all); and the ranges where sacdfs differs from the
+/// exact reading, which fails the test if `locator_exact`.
 fn provisional_readings(path: &Path, locator_exact: bool) -> (usize, usize, bool, usize, usize) {
     let disc = Disc::open_with(path, 1, Tuning::default(), None).unwrap();
     let mut image = library_image(&disc);
@@ -176,7 +176,7 @@ fn provisional_readings(path: &Path, locator_exact: bool) -> (usize, usize, bool
             let exact =
                 read_all(TrackCursor::for_range(area, first, end, disc.toc.sectors).unwrap(), &mut image);
             if located(&disc, a, first, end) != exact {
-                assert!(!locator_exact, "sacdfs's locator differs at {first}");
+                assert!(!locator_exact, "sacdfs differs at {first}");
                 located_differ += 1;
             }
             if matches!(c.speculation(), Speculation::Pending { .. }) {
@@ -207,7 +207,7 @@ fn provisional_readings(path: &Path, locator_exact: bool) -> (usize, usize, bool
 /// first sector). Up to scarletbook 0.5.0 its provisional readings there returned frames
 /// that a scan does not; on 0.5.2 none of them differ (no corpus image gives a differing
 /// provisional reading on 0.5.2: `provisional_readings_that_differ_are_refuted` makes one).
-/// Any that differed would have to be refuted; sacdfs's locator gives the exact positions.
+/// Any that differed would have to be refuted; sacdfs gives the exact positions.
 #[test]
 fn provisional_readings_on_area_audio_past_end() {
     let case = cases().into_iter().find(|c| c["id"] == "area-audio-past-end").expect("corpus case");
@@ -224,9 +224,10 @@ fn provisional_readings_on_area_audio_past_end() {
 /// positions in between are missing. A provisional reading that begins past the copy never
 /// sees it and returns the frames stored there, so it differs, and the seek index's pass
 /// must refute every such reading. (The refuted count may be larger: a refuted reading's
-/// positions are only *possibly* different.) sacdfs's locator, which starts a fresh reading
-/// at a sector found by frame numbers too, cannot see the copy either and differs from the
-/// exact reading there as well: its count is printed, not asserted.
+/// positions are only *possibly* different.) sacdfs reads that image exactly: the library's
+/// search there sees frame numbers decrease, marks the reading suspect, and sacdfs reads suspect
+/// readings exactly (`exact_when_suspect`). sacdfs 0.1's own locator, which also started a
+/// fresh reading at a sector found by frame numbers, differed from the exact reading at 2 ranges.
 #[test]
 fn provisional_readings_that_differ_are_refuted() {
     use std::os::unix::fs::FileExt;
@@ -245,10 +246,8 @@ fn provisional_readings_that_differ_are_refuted() {
     f.read_exact_at(&mut late, (end - run) * 2048).unwrap();
     f.write_all_at(&late, (start + 4) * 2048).unwrap();
     drop(f);
-    let (provisional, differ, all_refuted, refuted, located_differ) = provisional_readings(&copy, false);
-    eprintln!(
-        "provisional {provisional}, differing {differ}, refuted {refuted}; sacdfs's locator differs in {located_differ}"
-    );
+    let (provisional, differ, all_refuted, refuted, _) = provisional_readings(&copy, true);
+    eprintln!("provisional {provisional}, differing {differ}, refuted {refuted}");
     assert!(differ > 0, "no provisional reading differs ({provisional} made)");
     assert!(all_refuted && refuted >= differ, "{differ} differing, {refuted} refuted, not all of them");
 }

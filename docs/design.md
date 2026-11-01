@@ -576,14 +576,16 @@ track starts, with an index of (frame, LSN) points learned from every read) was 
 **Correctness.** A provisional reading's positions are exactly a scan's on every image whose
 frames start in increasing frame number order, which is every well-formed disc; on a hostile
 image they can differ, and only a pass of the index from the area's first sector can tell
-(the reading is then *refuted*). sacdfs's locator had the same limit: it too started a fresh
-reading at a sector found by frame numbers. On `tests/library_index.rs`'s image made for it (a
-copy of a corpus image with its stereo area's last sectors written again near its start), both
-differ from the exact reading at the same ranges, and the library's readings there are refuted.
-What changes is that the doubt is now the library's, explicit (`Speculation::Pending`), with a
-suspect mark that sacdfs uses to read exactly. On every corpus case, hostile ones included, and
-on the real discs, every frame read through sacdfs equals the exact reading
-(`tests/library_index.rs`, `tests/corpus.rs`, the DSF gate).
+(the reading is then *refuted*). sacdfs's locator had the same limit, unlabelled: it too
+started a fresh reading at a sector found by frame numbers. On the image `tests/library_index.rs`
+makes for it (a copy of a corpus image with its stereo area's last 32 audio sectors written again
+near its start), sacdfs 0.1's locator differed from the exact reading at 2 of the ranges it reads,
+and the library's provisional readings differ at 2 and are refuted; sacdfs 0.2 gives the exact
+reading at every one, because the library's search sees the frame numbers decrease, marks the
+reading suspect, and sacdfs reads suspect readings exactly. So the switch is a correctness gain
+as well as one less implementation. On every corpus case, hostile ones included, and on the real
+discs, every frame read through sacdfs equals the exact reading (`tests/library_index.rs`,
+`tests/corpus.rs`, the DSF gate).
 
 - *Not done: verifying in the background.* sacdfs makes no pass of an area to settle its
   readings (`Disc::verify_speculation`): on a network share that is a read of the whole image,
