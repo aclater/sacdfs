@@ -79,10 +79,10 @@ fn spare_cap(cap: usize) -> usize {
 /// that format.
 ///
 /// The buffers of evicted frames are not freed but handed out again for new frames
-/// ([`FrameCache::buffers`]). *Why (#73):* freeing them left holes between the cached frames
+/// (`FrameCache::buffers`). *Why (#73):* freeing them left holes between the cached frames
 /// and the short-lived allocations of decoding, which the allocator could neither give back
 /// nor always reuse, so the process held about 20 % more than the cap; reusing them keeps
-/// the cache's memory, frames and spare buffers together, within its cap ([`spare_cap`]).
+/// the cache's memory, frames and spare buffers together, within its cap (`spare_cap`).
 #[derive(Debug)]
 pub struct FrameCache {
     inner: Mutex<CacheInner>,
