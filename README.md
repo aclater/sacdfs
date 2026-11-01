@@ -24,7 +24,7 @@ depends on a git repository. `cargo install` from crates.io comes once scarletbo
 ### Binaries
 
 - `sacdfs-<version>-x86_64-linux.tar.gz`: generic x86-64, for any x86_64 CPU. Its WAV
-  converter already uses AVX2 where the CPU has it.
+  converter (scarletbook-pcm) already uses AVX2 where the CPU has it.
 - `sacdfs-<version>-x86_64-v3-linux.tar.gz`: for x86-64-v3 CPUs (AVX2, BMI2, FMA: most Intel
   and AMD CPUs since about 2015, the Intel N100 family included), with all of sacdfs built for
   them: DST areas read 10 to 18 % faster ([performance](docs/performance.md#straight-reads)).
@@ -194,9 +194,9 @@ an ID3v2.4 tag from the disc's text. The **WAV files** are the same tracks conve
 PCM at 176.4 kHz (or 88.2 or 352.8 kHz), band-limited to 40 kHz by default (30 kHz, or about
 80 kHz with `--pcm-cutoff wide`), gapless from one track to the next, with the same tag in an
 `id3 ` chunk and a `LIST`/`INFO` chunk; channel masks follow the disc's speaker layout
-(stereo, 5.0, 5.1), and files over 4 GiB are RF64. The converter's pass band is flat to
-±0.00003 dB, its stopband at least 114.9 dB down, and it adds nothing measurable above the
-24-bit step ([docs/pcm-quality.md](docs/pcm-quality.md)). Sizes are exact; listing, `stat`
+(stereo, 5.0, 5.1), and files over 4 GiB are RF64. The conversion is scarletbook-rs's
+`scarletbook-pcm`: its pass band is flat to ±0.004 dB, its stopband at least 109 dB down, and
+DSD silence comes out as digital silence ([docs/pcm-quality.md](docs/pcm-quality.md)). Sizes are exact; listing, `stat`
 and reading a WAV file's header or tags never decode anything. Details, and how taggers and
 scanners are served: [user guide](docs/user-guide.md#formats).
 
@@ -243,11 +243,11 @@ sacdfs is free software: you can redistribute it and/or modify it under the term
 version 3 of the License, or (at your option) any later version.
 
 - **[scarletbook](https://github.com/aclater/scarletbook-rs)** (MIT OR Apache-2.0) does all
-  SACD parsing and DST decoding; sacdfs uses its public API only.
-- **[pysacd](https://github.com/aclater/pysacd)** (GPL-2.0-or-later): the DSD-to-PCM
-  converter's structure is ported from its `csrc/dsp.c`, and its `pysacd-extract` made the
-  reference hashes the DSF files are checked against.
-- **dsd2pcm** by Sebastian Gesemann (BSD-3-Clause): the converter's first stage uses its
-  technique of filter lookup tables indexed by whole DSD bytes.
+  SACD parsing and DST decoding, and its `scarletbook-pcm` the DSD-to-PCM conversion; sacdfs
+  uses their public APIs only.
+- **[pysacd](https://github.com/aclater/pysacd)** (GPL-2.0-or-later): its `pysacd-extract`
+  made the reference hashes the DSF files are checked against. sacdfs 0.1's own converter
+  (replaced by scarletbook-pcm, #84) was ported from its `csrc/dsp.c`, with a first stage
+  using the byte lookup-table technique of Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
 - The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec),
   is dedicated to the public domain under CC0 1.0 (see its [licence](tests/corpus/LICENSE)).

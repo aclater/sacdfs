@@ -19,6 +19,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- **WAV conversion is scarletbook-rs's `scarletbook-pcm` (scarletbook 0.5.3)** (#84). sacdfs's own converter (ported from pysacd's) is deleted, together with its `SACDFS_SIMD` override and the `multiversion` and `rustversion` dependencies.
+  - *Why:* the owner's decision was to switch once scarletbook's clean converter was within the 15 % offload leeway and met sacdfs's targets, and 0.5.3 does both. One thread, 176.4 kHz, 40 kHz filter: 298x real time against 315x (generic build), 273x against 316x (x86-64-v3 build). The 30 kHz and wide filters are 13 to 39 % faster. Stopband at least 109 dB from 48, 36 and 88.2 kHz. Ripple ±0.004 dB. DSD silence is exact zero, area edges included.
+  - *What changes:* the WAV files' samples. They differ from 0.1's by more than 72 dB below the signal in the audio band, an inaudible ripple difference. So the WAV output version moves to 3 (#89's rule): WAV files' mtimes move forward one more version step (25,203 s) and their NFS generations change, so copies and library scanners pick up the new bytes. This change leaves the DSF files as they are (gate 93/93).
+  - Details and measurements: `docs/pcm-quality.md` and `docs/performance.md`.
+
 - Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts
   a scarletbook provisional (cold) reading or, after a remount, one from the saved seek hints;
   sacdfs's own frame locator is gone. Cold seeks make fewer calls to the image (3.06 a seek on
