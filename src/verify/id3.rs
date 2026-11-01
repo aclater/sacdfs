@@ -262,7 +262,10 @@ pub struct Losses {
 
 impl Losses {
     /// Classifies the frames of `extract` that `served` does not have with the same value.
-    pub fn between(extract: &[Frame], served: &[Frame]) -> Losses {
+    ///
+    /// `area_tracks` is the track count of the served track's area: a `TRCK` of `n/N` is
+    /// the served `n` (or `0n`) with its total when `N` is that count.
+    pub fn between(extract: &[Frame], served: &[Frame], area_tracks: usize) -> Losses {
         let have: BTreeSet<(&str, &str)> =
             served.iter().map(|f| (f.key.as_str(), f.value.as_str())).collect();
         let served_value = |key: &str| served.iter().find(|f| f.key == key).map(|f| f.value.as_str());
@@ -290,6 +293,15 @@ impl Losses {
                         (None, _) => Vec::new(),
                     };
                     served_value("TDRC").is_some_and(|s| dates.iter().any(|d| s.starts_with(d.as_str())))
+                }
+                // "n/N" against a served "n": the same track, with the area's track count.
+                "TRCK" => {
+                    let number = |v: &str| v.trim().parse::<usize>().ok();
+                    value.split_once('/').is_some_and(|(n, total)| {
+                        number(total) == Some(area_tracks)
+                            && number(n).is_some()
+                            && number(n) == served_value("TRCK").and_then(|s| number(s))
+                    })
                 }
                 // A set of one disc, which sacdfs leaves out.
                 "TPOS" => value == "1/1" && served_value("TPOS").is_none(),
@@ -419,7 +431,7 @@ pub(crate) mod tests {
                 Frame { key: "TRCK".into(), value: "1/9".into() }
             ]
         );
-        assert!(Losses::between(&f, &f).is_empty());
+        assert!(Losses::between(&f, &f, 9).is_empty());
     }
 
     #[test]
@@ -434,7 +446,7 @@ pub(crate) mod tests {
             ],
             &[("APIC", b"\x00image/jpeg\x00\x03\x00jpegdata")],
         ));
-        let l = Losses::between(&ext, &served);
+        let l = Losses::between(&ext, &served, 9);
         assert!(l.musicbrainz && l.art && l.replaygain);
         assert_eq!(l.other.iter().collect::<Vec<_>>(), vec!["TCON"]);
         assert_eq!(Losses::parse(&l.render()), l);
@@ -447,12 +459,29 @@ pub(crate) mod tests {
             &[("TYER", "2013"), ("TDAT", "2304"), ("TPOS", "1/1"), ("TXXX:PERFORMER", "A"), ("TSRC", "")],
             &[],
         ));
-        assert!(Losses::between(&ext, &served).is_empty(), "{:?}", Losses::between(&ext, &served));
+        assert!(Losses::between(&ext, &served, 9).is_empty(), "{:?}", Losses::between(&ext, &served, 9));
         let mmdd = frames(&tag24(&[("TYER", "2013"), ("TDAT", "0423")], &[]));
-        assert!(Losses::between(&mmdd, &served).is_empty());
+        assert!(Losses::between(&mmdd, &served, 9).is_empty());
         let ext = frames(&tag24(&[("TYER", "2014"), ("TPOS", "1/2"), ("TXXX:PERFORMER", "B")], &[]));
-        let l = Losses::between(&ext, &served);
+        let l = Losses::between(&ext, &served, 9);
         assert_eq!(l.other.into_iter().collect::<Vec<_>>(), vec!["TDRC", "TPOS", "TXXX:PERFORMER"]);
+    }
+
+    #[test]
+    fn track_total_of_the_area_is_not_lost() {
+        let served = frames(&tag24(&[("TRCK", "3")], &[]));
+        let lost = |trck: &str, served: &[Frame], n| {
+            Losses::between(&frames(&tag24(&[("TRCK", trck)], &[])), served, n).other.len()
+        };
+        assert_eq!(lost("3/12", &served, 12), 0);
+        assert_eq!(lost("03/12", &served, 12), 0);
+        // A different total, a different track, or no number to compare: lost.
+        assert_eq!(lost("3/12", &served, 11), 1);
+        assert_eq!(lost("4/12", &served, 12), 1);
+        assert_eq!(lost("3/x", &served, 12), 1);
+        assert_eq!(lost("3/12", &[], 12), 1);
+        // A served "03" matches too.
+        assert_eq!(lost("3/12", &frames(&tag24(&[("TRCK", "03")], &[])), 12), 0);
     }
 
     #[test]

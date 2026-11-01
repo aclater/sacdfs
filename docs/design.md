@@ -1305,6 +1305,12 @@ the owner's NAS already used.
   grouped as MusicBrainz IDs, art, ReplayGain and other frame names. DFF text chunks
   (DIIN/DITI, DIIN/DIAR) are compared with the title and artist. *Why:* the user's decision is
   "delete, or move these tags first" (to a tag layer, #81), so the report says which.
+- **A track total is not a loss (#99).** `TRCK` of `n/N` against a served `n` (or `0n`) is
+  the same information when `N` is the track count of the served track's area; a different
+  number or a different total is still reported. *Why:* sacdfs knows the total from the TOC, so
+  nothing is lost, and 241 of 1,066 IDENTICAL extracts on a real library were reported as
+  losing it. Option 2 of the issue (serving `n/N`, a tag-byte change and output version bump)
+  was not taken: verify's rule fixes the report without changing any served byte.
 - **Parallel and bounded.** `--threads N` workers (plain threads, not a rayon pool, so that a
   worker waiting for another's decode of the same track can't be handed that same work by
   work stealing) check files at once, with an engine of N DST decoder threads and a small

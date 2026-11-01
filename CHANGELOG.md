@@ -19,6 +19,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- `sacdfs verify` no longer lists `TRCK` as lost when the extract's `n/N` matches the served
+  track number `n` and `N` is the area's track count (#99).
+
 - Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts
   a scarletbook provisional (cold) reading or, after a remount, one from the saved seek hints;
   sacdfs's own frame locator is gone. Cold seeks make fewer calls to the image (3.06 a seek on
