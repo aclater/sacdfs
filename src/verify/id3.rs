@@ -369,12 +369,17 @@ impl Losses {
 pub(crate) mod tests {
     use super::*;
 
+    /// A 28-bit value as an ID3v2 syncsafe integer.
+    fn syncsafe(v: u32) -> [u8; 4] {
+        [((v >> 21) & 0x7F) as u8, ((v >> 14) & 0x7F) as u8, ((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8]
+    }
+
     /// An ID3v2.4 tag of UTF-8 frames (TXXX as `TXXX:desc`) and raw frames.
     pub(crate) fn tag24(text: &[(&str, &str)], raw: &[(&str, &[u8])]) -> Vec<u8> {
         let mut body = Vec::new();
         let mut put = |id: &str, data: &[u8]| {
             body.extend_from_slice(id.as_bytes());
-            body.extend_from_slice(&crate::dsf::syncsafe(data.len() as u32));
+            body.extend_from_slice(&syncsafe(data.len() as u32));
             body.extend_from_slice(&[0, 0]);
             body.extend_from_slice(data);
         };
@@ -398,17 +403,15 @@ pub(crate) mod tests {
         }
         body.extend_from_slice(&[0; 16]); // padding
         let mut t = b"ID3\x04\x00\x00".to_vec();
-        t.extend_from_slice(&crate::dsf::syncsafe(body.len() as u32));
+        t.extend_from_slice(&syncsafe(body.len() as u32));
         t.extend_from_slice(&body);
         t
     }
 
     #[test]
-    fn reads_what_sacdfs_writes() {
-        let mut tags = crate::dsf::Tags::default();
-        tags.set(b"TIT2", Some("Title"));
-        tags.set(b"TRCK", Some("1/9"));
-        let f = frames(&tags.to_id3());
+    fn reads_utf8_text_frames() {
+        // UTF-8 text frames in an ID3v2.4 tag, as sacdfs serves them (scarletbook's writer).
+        let f = frames(&tag24(&[("TIT2", "Title"), ("TRCK", "1/9")], &[]));
         assert_eq!(
             f,
             vec![
@@ -464,7 +467,7 @@ pub(crate) mod tests {
         body.extend_from_slice(&[0, 0]);
         body.extend_from_slice(&d);
         let mut t = b"ID3\x03\x00\x00".to_vec();
-        t.extend_from_slice(&crate::dsf::syncsafe(body.len() as u32));
+        t.extend_from_slice(&syncsafe(body.len() as u32));
         t.extend_from_slice(&body);
         assert_eq!(frames(&t), vec![Frame { key: "TIT2".into(), value: "Title".into() }]);
         // v2.2.
