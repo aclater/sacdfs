@@ -1059,9 +1059,15 @@ mod tests {
         let base = files(PcmConfig::default(), 2352);
         // The same options on another mount: the same numbers, generations and mtimes.
         assert_eq!(files(PcmConfig::default(), 2352), base);
-        // With the default options, every file shows its image's mtime (issue #64).
+        // With the default options, every file shows its image's mtime moved by its format's
+        // output version (issue #64).
         let image = fs::metadata(dir.path().join("Artist/x.iso")).unwrap().modified().unwrap();
-        assert!(base.iter().all(|f| f.3 == image));
+        let shown = |p: &str| {
+            let format =
+                if p.ends_with(".dsf") { crate::track::Format::Dsf } else { crate::track::Format::Wav };
+            image + ident::version_offset(format)
+        };
+        assert!(base.iter().all(|f| f.3 == shown(&f.0)));
         // Options that keep the size move the WAV files' mtime; the rate changes the size.
         for (other, mtime_moves) in [
             (files(PcmConfig { gain_db: -3.0, ..PcmConfig::default() }, 2352), true),

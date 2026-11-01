@@ -16,6 +16,13 @@ All notable changes to sacdfs are recorded here. The format follows
   0.1's, and output is unchanged (DSF gate 93/93). Areas whose layout scarletbook finds
   suspect are read exactly. Details and figures: `docs/design.md`, "Seeking", and
   `docs/performance.md`.
+- **Output change:** DSF files are written by scarletbook (`output::Layout`, its tag from
+  `TagSet::from_toc`), and WAV files carry that same ID3 tag in their `id3 ` chunk, their
+  `INFO` chunk built from the same items; sacdfs's own DSF header, block layout and ID3 writer
+  are gone. The audio is unchanged (DSF gate 93/93, WAV real-disc test). Of the 93 real-disc
+  tracks, 53 DSF and 53 WAV files are byte-identical; the other 40 of each differ only in
+  `TCOP`, now the year, a space and the copyright, as ID3v2.4 asks (5 bytes longer). Both
+  output versions moved to 2, so every DSF and WAV file shows a new mtime and NFS generation.
 - The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
   by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
 
