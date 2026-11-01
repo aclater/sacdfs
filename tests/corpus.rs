@@ -247,3 +247,39 @@ fn tags_carry_text() {
         assert!(text.contains(id), "{id} in tag");
     }
 }
+
+/// The DSF bytes of the whole corpus, pinned (#89): one SHA-256 over every shown file's
+/// path and bytes, in tree order, with the tags removed (their changes belong to the tag
+/// code; the audio and the headers are scarletbook's and ours). It catches a scarletbook
+/// update that changes DSF output without the real discs; a change needs a `DSF_VERSION`
+/// bump (src/ident.rs) and `GOLDEN_DSF_VERSION` with it.
+#[test]
+fn golden_dsf_corpus() {
+    use sha2::{Digest, Sha256};
+    let engine = Engine::new(2, 16 << 20).unwrap();
+    let mut all = Sha256::new();
+    let mut n = 0;
+    for case in cases() {
+        let tree = Tree::new(SourceDir::scan(&image(&case)).unwrap());
+        let mut files = tree.all_files();
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        for (path, f) in files.into_iter().filter(|(p, _)| p.extension().is_some_and(|e| e == "dsf")) {
+            let whole = read_all(&engine, &f, 1 << 20);
+            // Header, audio and padding only: up to the metadata chunk, if any.
+            let meta = u64::from_le_bytes(whole[20..28].try_into().unwrap()) as usize;
+            let body = if meta != 0 { &whole[..meta] } else { &whole[..] };
+            all.update(case["id"].as_str().unwrap().as_bytes());
+            all.update(path.to_string_lossy().as_bytes());
+            all.update(sha256(body).as_bytes());
+            n += 1;
+        }
+    }
+    let hex: String = all.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect();
+    println!("{n} files: {hex}");
+    assert_eq!(sacdfs::ident::DSF_VERSION, GOLDEN_DSF_VERSION, "DSF_VERSION moved: update the golden");
+    assert_eq!((n, hex.as_str()), GOLDEN_DSF, "DSF bytes changed: bump DSF_VERSION, then the golden (#89)");
+}
+
+/// The DSF output version (`sacdfs::ident::DSF_VERSION`) that [`GOLDEN_DSF`] was taken with.
+const GOLDEN_DSF_VERSION: u32 = 3;
+const GOLDEN_DSF: (usize, &str) = (457, "ad8dd50d1f81c966df7f472467311aba");

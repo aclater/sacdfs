@@ -113,7 +113,9 @@ Cargo.toml). It can be added once scarletbook is on crates.io.
   (#84), and scarletbook patch releases may change its bytes without changing its API. So a
   scarletbook bump, or any change, that alters the pinned PCM hashes in `tests/pcm.rs` must also
   bump `WAV_VERSION` in `src/ident.rs` (and the test's `GOLDEN_WAV_VERSION`), and the CHANGELOG
-  records it as an output change. Likewise for the DSF files and `DSF_VERSION`. The version
+  records it as an output change. Likewise for the DSF files and `DSF_VERSION`, pinned by
+  `golden_dsf_corpus` in `tests/corpus.rs`. The PCM pins cover 1, 2 and 6 channels at gains of
+  -3, 0 and +6 dB (`golden_output_channels_and_gains`). The version
   moves each file's mtime and NFS generation, so players, taggers and rsync see the change.
 - **Hostile input.** Every image is untrusted. Nothing an image contains may panic, hang or
   grow memory without bound; `clippy::unwrap_used`, `expect_used` and `panic` are warnings,

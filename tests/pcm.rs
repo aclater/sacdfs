@@ -801,3 +801,107 @@ const GOLDEN: [&str; 8] = [
     "ae37dd43cfbb5cff",
     "7b0c0170cc01b27e",
 ];
+
+/// The same pinning for 1, 2 and 6 channels and for gains of -3, 0 and +6 dB (#89): the
+/// gain path and the multichannel interleave are scarletbook-pcm's too, so a change there
+/// must show up here. Noise input at 3 frames, seeded; one entry per (channels, gain,
+/// cutoff, rate) in loop order, valid combinations only.
+#[test]
+fn golden_output_channels_and_gains() {
+    use sha2::{Digest, Sha256};
+    let mut got = Vec::new();
+    for ch in [1u8, 2, 6] {
+        let dsd = noise(3 * usize::from(ch) * FRAME_BYTES, 17 + u64::from(ch));
+        for gain_db in [-3.0f32, 0.0, 6.0] {
+            for cutoff in CUTOFFS {
+                for rate in RATES {
+                    if !valid(rate, cutoff) {
+                        continue;
+                    }
+                    let (pcm, _) = convert_area(ch, &PcmConfig { rate, cutoff, gain_db }, &dsd);
+                    let hex: String =
+                        Sha256::digest(&pcm).iter().take(8).map(|b| format!("{b:02x}")).collect();
+                    println!("{ch}ch {gain_db:+} dB {} {cutoff:?}: {hex}", rate.hz());
+                    got.push(hex);
+                }
+            }
+        }
+    }
+    assert_eq!(sacdfs::ident::WAV_VERSION, GOLDEN_WAV_VERSION, "WAV_VERSION moved: update the goldens");
+    assert_eq!(got, GOLDEN_CH_GAIN, "PCM bytes changed: bump WAV_VERSION, then the goldens (#89)");
+}
+
+const GOLDEN_CH_GAIN: [&str; 72] = [
+    "ed81a13523f1ea66",
+    "e295cd7182a5bf54",
+    "df86a4f83bc17117",
+    "2186c68080189cff",
+    "e1f28e4650fd95d1",
+    "3fd11cd8d525146c",
+    "b29a6a172f17be51",
+    "db479f0150eee4d1",
+    "7b5ae085cad32170",
+    "c0c9b08202c78fac",
+    "d04578f8173a91fd",
+    "8ff835b3b9ff2e8f",
+    "31fc83ca5ce093af",
+    "24b791d104c3b911",
+    "b8b45c563ea6491d",
+    "80c90593b551eb4b",
+    "476a836a9b04d01a",
+    "fad177b5726ce7a5",
+    "edfd5afb5d8419d7",
+    "7fa82cdcb4e628c1",
+    "65a66c6ea2fe3f9b",
+    "c54eb2a8c123ce2a",
+    "2294a95c72208ffe",
+    "952e5f90601c0bcb",
+    "c11b6b7328fe844d",
+    "378bf9dfd429d8a7",
+    "8ae52f1e3dde6dbc",
+    "73caec74ddf4fdec",
+    "ef8787d4aa767d69",
+    "4c7fbd948671903b",
+    "a0197b10d8f4ed4c",
+    "1b75b3217c12c99a",
+    "3b9b280db8f8d945",
+    "f55ff6d05afc6c0d",
+    "31c1d772a89c76bd",
+    "b01d4680d26cdad3",
+    "9635456f243c896c",
+    "410acb2d9ea70737",
+    "30628b0fcf88b0e7",
+    "95cb5c1ca4d73f64",
+    "9f525afe609fe5c2",
+    "ba55e3f5035303f2",
+    "ca7880031f2544ed",
+    "edf8b58d832d38b4",
+    "23089c26725c8b47",
+    "fc8a2d47b0f94810",
+    "85c0bb07f9cb4686",
+    "78db2cdd12587138",
+    "b56f199af289d4e2",
+    "06d77c91a7b84a14",
+    "44de76f13fd1ff45",
+    "6b4578e9ae2391ab",
+    "d9b3d479e57a35f5",
+    "01d1e8db00bb1830",
+    "01cbcd91b638810f",
+    "835d2ee45eb23e58",
+    "1113b5558547ae6d",
+    "592f7e907c908495",
+    "931c366099469a70",
+    "28f086ba16db3864",
+    "93b21e52d2707aea",
+    "ce79d378eb0c5879",
+    "77fd88f9b1ea93a4",
+    "ce71a5f1eedbf59f",
+    "4b6a2f8b272caef6",
+    "17eae794c4f6d220",
+    "a3874fb21862424d",
+    "2ed4ae2b9758b9e8",
+    "369c00f4d82b7e73",
+    "403072b38780ee1d",
+    "39e79cb18fd90a06",
+    "ab1ebdd9c6fac3a2",
+];
