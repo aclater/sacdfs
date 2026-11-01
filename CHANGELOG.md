@@ -24,7 +24,7 @@ All notable changes to sacdfs are recorded here. The format follows
 - `df` and SMB clients saw a 0-byte filesystem (#62): `statfs` now reports the size of the
   filesystem holding SOURCE, with nothing free.
 
-## [0.1.0]
+## [0.1.0] - 2026-11-01
 
 The first release.
 
@@ -33,7 +33,7 @@ The first release.
 - `sacdfs SOURCE MOUNTPOINT`: a read-only FUSE filesystem showing SACD images (one file, or a
   directory searched recursively for `*.iso`) as DSF files with ID3v2.4 tags, and WAV files
   next to them, decoded on demand by scarletbook 0.5.0. Options `-f`, `--threads`,
-  `--cache-mb`, `--allow-other`, `-v`; unmounts on SIGINT and SIGTERM, and detaches a busy
+  `--cache-mb`, `--allow-other`, `-v`; unmounts on SIGINT, SIGTERM and SIGHUP, and detaches a busy
   mount (open files, an NFS export), stopping when the last open file is closed.
 - WAV files (#7, #8, plan #11): each track also appears as `NN - title.wav`, 24-bit PCM
   converted on demand. RIFF/WAVE with `WAVE_FORMAT_EXTENSIBLE`, RF64 for files over 4 GiB; the
@@ -100,6 +100,12 @@ The first release.
 
 ### Documentation
 
+- The oldest distributions the README names were tested (#58): RHEL 8.10, Debian 10,
+  Ubuntu 20.04 and Fedora 29, each on its own kernel (4.18 to 5.4) with its own
+  `fusermount3` (3.3.0 to 3.9.0), using the generic release build. Mounting with `-f` and
+  in the background, with and without `--allow-other`, reads identical to a current
+  system's, SIGTERM with a file open and `fusermount3 -u` all pass; nothing needed fixing
+  and the README's claim stands. Results in `docs/design.md`, "Oldest distributions".
 - README as a user guide (install, quick start, options, layout, formats, deployment,
   limits, credits); `docs/user-guide.md` (options in detail, formats, tagging behaviour,
   sharing over NFS, troubleshooting); `docs/design.md` with the current design and the reason
@@ -117,3 +123,22 @@ The first release.
   A sacdfs started while the old mount is still there waits for it to go (up to 10 s) instead
   of mounting over it, where the old one's unmount removed the new mount (as root) or the
   restart failed (as a user). Regression tests in `tests/mount.rs`.
+- A SOURCE path holding a comma could not be mounted (#55): fuser 0.18 passes the
+  filesystem name to `fusermount3` unescaped, so `Bach, J.S.` failed with "unknown option",
+  and a name such as `x,allow_other` would have added the option. The mount is now always
+  named `sacdfs` (in `df`, `mount`, `/proc/mounts`); `-v` logs the source.
+- Mounting at or above SOURCE (`sacdfs X X`, `sacdfs X/sub X`) hung the mount on its first
+  access, beyond SIGKILL (#56): sacdfs read its images through its own mount. It now refuses
+  to start when SOURCE is or lies inside MOUNTPOINT, when MOUNTPOINT lies inside SOURCE and
+  holds images, and when `--index-cache` lies inside MOUNTPOINT (the default cache directory
+  there only turns the cache off, with a warning). A non-empty MOUNTPOINT is allowed, as in
+  FUSE 3, with a warning.
+- After sacdfs was killed or crashed, a restart on the same mount point waited 10 s and then
+  failed with "already a FUSE mount (another sacdfs?)" (#57). A dead sacdfs mount of the same
+  user (ENOTCONN, found with a bounded `statfs`) is now detached at once and the restart
+  mounts in milliseconds; another dead mount, or another user's FUSE mount, fails at once
+  with an accurate message.
+- A SIGINT, SIGTERM or SIGHUP right after start could kill sacdfs with its mount in place,
+  leaving a dead mount (#57; 7 of 100 starts with a SIGTERM 0 to 30 ms after the start): the
+  signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
+  (unmount and stop, like SIGTERM) is documented.

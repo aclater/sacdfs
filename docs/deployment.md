@@ -6,7 +6,7 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
   container, and shares its mount over SMB and NFS. Every client (Linux, macOS, Windows,
   phones, network players) sees ordinary DSF and WAV files. A seek costs sacdfs's few
   milliseconds on the NAS plus about one network round trip, because sacdfs's own reads of
-  the image stay on the NAS: about 5 ms for a cold seek over SMB on a gigabit LAN
+  the image stay on the NAS: 5 to 6 ms for a cold seek over SMB on a gigabit LAN
   ([performance](performance.md#nas-container-server-side)).
 - **On a Linux client (client-side).** sacdfs runs on the client and reads the images from a
   network share, as in the [user guide](user-guide.md). Every read of an image is then a
@@ -45,7 +45,8 @@ shares.
   - A restart never mounts over the old mount (#51): sacdfs is started only once per
     container, each container start has a new mount namespace, and the entry point clears a
     stale mount before starting sacdfs. sacdfs itself also waits for a FUSE mount still on
-    its mount point to go before mounting.
+    its mount point to go before mounting, and detaches a dead sacdfs mount there at once
+    (#57).
   - The NFS export has the same fixed filesystem id (`Filesystem_Id = 101.1`) on every
     start, because FUSE has no stable device number. A changing id would also invalidate
     every client's handles.
@@ -96,6 +97,10 @@ or move it as a file: `podman save sacdfs | gzip > sacdfs.tar.gz`, then
   - Fedora carries all three; CentOS was not needed.
 - sacdfs links only glibc and libgcc_s, so the binary built on UBI 10 (glibc 2.39) runs on
   Fedora's newer glibc.
+- The image brings its own `fusermount3` (Fedora 44's); only the FUSE side of the kernel
+  is the host's. The release binary was tested on kernels back to 4.18 (RHEL 8's and Fedora
+  29's) with their own old `fusermount3` ([design.md](design.md#oldest-distributions-58));
+  the container itself was tested on current kernels only.
 - Both bases are pinned by digest in `Containerfile`, so a rebuild gets the same base until
   the pin is updated (Dependabot proposes updates).
 

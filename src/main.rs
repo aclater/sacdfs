@@ -5,11 +5,11 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use fuser::{Config, MountOption, Session, SessionACL};
@@ -28,13 +28,14 @@ use sacdfs::tree::{Output, SourceDir, Tree};
 /// SOURCE is an image file or a directory searched recursively for *.iso files. Each image
 /// appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN - title.dsf,
 /// with NN - title.wav (24-bit PCM, converted on demand) next to it.
-/// Unmount with `fusermount3 -u MOUNTPOINT`, or stop sacdfs with SIGINT or SIGTERM.
+/// Unmount with `fusermount3 -u MOUNTPOINT`, or stop sacdfs with SIGINT, SIGTERM or SIGHUP.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Args {
     /// An SACD image file, or a directory of them.
     source: PathBuf,
-    /// An empty directory to mount on.
+    /// A directory to mount on, normally empty (its files are hidden while mounted); not
+    /// SOURCE or a directory above it.
     mountpoint: PathBuf,
     /// Stay in the foreground and log to standard error.
     #[arg(short, long)]
@@ -176,12 +177,20 @@ fn run(args: Args) -> io::Result<()> {
             format!("{}: not a directory", mountpoint.display()),
         ));
     }
+    // Nothing sacdfs reads may lie under its own mount (#56): before the scan, which can
+    // take a while on a large library.
+    refuse_source_under_mountpoint(&source, &mountpoint)?;
+    let cache_dir = index_cache_dir(&args, &mountpoint)?;
+    warn_if_not_empty(&mountpoint);
     // Only names are read here; images are opened when their directory is first listed.
     let root = SourceDir::scan(&source).map_err(|e| with_path(e, &source))?;
     log::info!("{}: {} image files", source.display(), root.image_count());
+    refuse_images_under_mountpoint(&root, &mountpoint)?;
 
     // Before daemonizing, which changes the working directory.
-    open_index_cache(&args);
+    if let Some(dir) = cache_dir {
+        open_index_cache(&dir);
+    }
 
     // Become a daemon before any thread exists; the parent waits for the mount.
     let notify = if args.foreground { None } else { Some(daemonize()?) };
@@ -210,7 +219,8 @@ fn run(args: Args) -> io::Result<()> {
     let mut config = Config::default();
     config.mount_options = vec![
         MountOption::RO,
-        MountOption::FSName(source.display().to_string()),
+        // A fixed name, not the source path (#55): see FSNAME.
+        MountOption::FSName(FSNAME.to_owned()),
         MountOption::Subtype("sacdfs".to_owned()),
         MountOption::NoDev,
         MountOption::NoSuid,
@@ -221,6 +231,17 @@ fn run(args: Args) -> io::Result<()> {
         config.acl = SessionACL::All;
     }
     config.n_threads = Some(4);
+    // The signal handlers go in before mounting (#57): a SIGINT, SIGTERM or SIGHUP from
+    // here on is held until the signal thread below handles it, which unmounts. Registered
+    // after mounting, as before, a signal in between killed sacdfs and left a dead mount.
+    let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
+    if let Some(sig) = signals.pending().next() {
+        log::info!("signal {sig} before mounting: not mounting");
+        if let Some(n) = notify {
+            n.fail(&io::Error::other(format!("stopped by signal {sig} before mounting")));
+        }
+        return Ok(());
+    }
     let session = match Session::new(fs, &mountpoint, &config) {
         Ok(s) => s,
         Err(e) => {
@@ -234,7 +255,6 @@ fn run(args: Args) -> io::Result<()> {
     // This mount's identity: its device number, unique while the mount exists. Read from
     // the mount table, which asks the file system nothing (a stat would wait for the session).
     let own = top_mount_device(&mountpoint);
-    let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
     let at = mountpoint.clone();
     let mine = own.clone();
     let detached = Arc::new(AtomicBool::new(false));
@@ -321,23 +341,140 @@ fn run(args: Args) -> io::Result<()> {
 /// How often the persistent seek index is saved, if it changed.
 const FLUSH_EVERY: Duration = Duration::from_secs(30);
 
-/// Installs the persistent seek index the options ask for. A cache that cannot be used is
-/// only a warning: it costs speed, never the mount.
-fn open_index_cache(args: &Args) {
+/// The directory of the persistent seek index the options ask for, if any.
+///
+/// One under the mount point would be written through sacdfs's own mount (#56): an
+/// `--index-cache` there is refused; the default directory there (a mount point at or above
+/// the cache directory, such as the home directory) only turns the cache off, since a cache
+/// that cannot be used is only a warning elsewhere too.
+fn index_cache_dir(args: &Args, mountpoint: &Path) -> io::Result<Option<PathBuf>> {
     if args.no_index_cache {
-        return;
+        return Ok(None);
     }
     let Some(dir) = args.index_cache.clone().or_else(index_cache::default_dir) else {
         log::warn!("no seek index cache: neither XDG_CACHE_HOME nor HOME is set");
-        return;
+        return Ok(None);
     };
-    let opened = std::path::absolute(&dir).and_then(|d| IndexCache::open(&d));
-    match opened {
+    let dir = std::path::absolute(&dir).map_err(|e| with_path(e, &dir))?;
+    if !canonical_prefix(&dir).starts_with(mountpoint) {
+        return Ok(Some(dir));
+    }
+    let why = format!(
+        "seek index cache {} is inside the mount point {}: sacdfs would write it through its own mount",
+        dir.display(),
+        mountpoint.display()
+    );
+    if args.index_cache.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{why}; choose another --index-cache"),
+        ));
+    }
+    log::warn!("{why}; no seek index cache (use --index-cache DIR)");
+    Ok(None)
+}
+
+/// Installs the persistent seek index in `dir`. A cache that cannot be used is only a
+/// warning: it costs speed, never the mount.
+fn open_index_cache(dir: &Path) {
+    match IndexCache::open(dir) {
         Ok(cache) => {
             log::debug!("seek index cache in {}", cache.dir().display());
             index_cache::install(Arc::new(cache));
         }
         Err(e) => log::warn!("no seek index cache in {}: {e}", dir.display()),
+    }
+}
+
+/// The name the mount is listed under (the source field of `/proc/self/mountinfo`, and
+/// what `df` and `mount` show), for every mount.
+///
+/// Not the source path (#55). fuser 0.18 passes the name to `fusermount3` unescaped in its
+/// `-o` list, so a comma in the path ended the name and the rest became mount options
+/// (`fsname=/music/Bach, J.S.` failed; `.../x,allow_other` would have applied it). Escaping
+/// it as libfuse's `fuse_opt_add_opt_escaped` does is right only for that path: as root,
+/// fuser calls mount(2) itself with the name as the source argument, unescaped, so the
+/// same escaped name would show its backslashes; and fuser chooses between the two inside
+/// `Session::new`, so sacdfs cannot know which to escape for. A fixed name is safe on both
+/// paths, needs no escaping, keeps the library's path out of the mount table that every
+/// user can read, and lets a dead mount be recognised as sacdfs's as root too, where the
+/// type is plain `fuse` (the `sacdfs` subtype is a fusermount3 option): see
+/// [`MountEntry::is_sacdfs`]. The source is logged at mount instead. Revisit when a fuser
+/// release escapes the name (fuser #424, unreleased in 0.18).
+const FSNAME: &str = "sacdfs";
+
+/// Refuses a source at or below the mount point (#56).
+///
+/// sacdfs reads the images through their source paths. Under the mount point, after
+/// mounting, those paths lead into sacdfs's own mount: each read becomes a FUSE request to
+/// sacdfs itself, which waits for itself. The first `ls` hung in D state, and not even
+/// SIGKILL freed it (only an abort through /sys/fs/fuse/connections did). Both paths are
+/// canonical, so symbolic links cannot hide it.
+fn refuse_source_under_mountpoint(source: &Path, mountpoint: &Path) -> io::Result<()> {
+    if !source.starts_with(mountpoint) {
+        return Ok(());
+    }
+    let place = if source == mountpoint { "is the mount point" } else { "is inside the mount point" };
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "SOURCE {} {place} {}: sacdfs would read its images through its own mount and hang; \
+             mount somewhere else",
+            source.display(),
+            mountpoint.display()
+        ),
+    ))
+}
+
+/// Refuses images found inside the mount point, which can happen when the mount point lies
+/// inside the source (#56): the mount would hide them, and reading them would go through
+/// sacdfs's own mount. An empty mount point inside the source is fine.
+fn refuse_images_under_mountpoint(root: &SourceDir, mountpoint: &Path) -> io::Result<()> {
+    fn find<'a>(d: &'a SourceDir, at: &Path) -> Option<&'a Path> {
+        d.images
+            .iter()
+            .map(PathBuf::as_path)
+            .find(|p| p.starts_with(at))
+            .or_else(|| d.dirs.iter().find_map(|(_, sub)| find(sub, at)))
+    }
+    let Some(image) = find(root, mountpoint) else { return Ok(()) };
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "the mount point {} is inside SOURCE and holds images ({}): the mount would hide \
+             them and sacdfs would read them through its own mount; mount on an empty directory",
+            mountpoint.display(),
+            image.display()
+        ),
+    ))
+}
+
+/// Warns when the mount point is not empty: its files are hidden while mounted. Not
+/// refused, as libfuse 3 and fusermount3 allow it (libfuse 3.0 dropped the `nonempty`
+/// check), and a service's mount point can hold a placeholder; the cases that can hang are
+/// refused above, precisely.
+fn warn_if_not_empty(mountpoint: &Path) {
+    if std::fs::read_dir(mountpoint).is_ok_and(|mut d| d.next().is_some()) {
+        log::warn!("{} is not empty: its files are hidden while sacdfs is mounted", mountpoint.display());
+    }
+}
+
+/// `path` (absolute) with its longest existing ancestor made canonical and the rest kept as
+/// given: what `canonicalize` would give for a path that may not exist yet.
+fn canonical_prefix(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(c) = at.canonicalize() {
+            return rest.iter().rev().fold(c, |p, name| p.join(name));
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_owned());
+                at = parent;
+            }
+            _ => return path.to_owned(),
+        }
     }
 }
 
@@ -348,33 +485,167 @@ fn with_path(e: io::Error, path: &std::path::Path) -> io::Error {
 /// How long a new mount waits for an earlier FUSE mount on the same mount point to go away.
 const EARLIER_MOUNT_WAIT: Duration = Duration::from_secs(10);
 
-/// Waits until no FUSE file system is mounted on `at`, for up to [`EARLIER_MOUNT_WAIT`].
+/// How long a probe of the mount point may take before its server counts as not answering.
+const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// How often a mount being waited for is probed again (its server may die meanwhile).
+const PROBE_EVERY: Duration = Duration::from_millis(250);
+
+/// Waits until no FUSE file system is mounted on `at`, for up to [`EARLIER_MOUNT_WAIT`], and
+/// clears a dead sacdfs mount of this user's at once.
 ///
 /// A sacdfs restarted at the same path (by a service manager, a container, a script) can
 /// start before the previous one has unmounted. Mounted on top, the new mount would sit
 /// inside the old one: the old one's unmount (by path) would then remove the new mount, or
 /// its detach (`MNT_DETACH`, which takes every mount below too) would take it along (#51).
-fn wait_for_earlier_mount(at: &std::path::Path) -> io::Result<()> {
-    if !fuse_mounted_on(at) {
-        return Ok(());
-    }
-    log::info!("{} is a FUSE mount: waiting for it to be unmounted", at.display());
-    let start = std::time::Instant::now();
-    while fuse_mounted_on(at) {
-        if start.elapsed() >= EARLIER_MOUNT_WAIT {
+///
+/// A mount whose server has died (killed, crashed) never goes by itself, and every access
+/// to it fails with ENOTCONN (#57). A bounded probe tells it apart from a live one: a dead
+/// sacdfs mount of the same user is detached, as nothing can be using it; any other dead
+/// mount, and another user's FUSE mount, fail at once with what is there, since waiting
+/// cannot help. A live mount of this user's is waited for, as before.
+fn wait_for_earlier_mount(at: &Path) -> io::Result<()> {
+    let uid = ids().0;
+    let start = Instant::now();
+    let mut next_probe = start;
+    let mut answers = true;
+    let mut logged = false;
+    loop {
+        let Some(m) = top_mount(at).filter(MountEntry::is_fuse) else { return Ok(()) };
+        if m.owner.is_some_and(|o| o != uid) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                format!("{}: already a FUSE mount (another sacdfs?); unmount it first", at.display()),
+                format!("{}: {} is mounted there; unmount it first", at.display(), m.describe(uid)),
+            ));
+        }
+        if Instant::now() >= next_probe {
+            let found = probe(at, PROBE_TIMEOUT);
+            log::debug!("{}: {} is mounted there; probe: {found:?}", at.display(), m.describe(uid));
+            match found {
+                Probe::Dead => {
+                    detach_dead_mount(at, &m, uid)?;
+                    continue;
+                }
+                Probe::Answers => answers = true,
+                Probe::NoAnswer => answers = false,
+            }
+            next_probe = Instant::now() + PROBE_EVERY;
+        }
+        if !std::mem::replace(&mut logged, true) {
+            log::info!(
+                "{}: {} is mounted there: waiting for it to be unmounted",
+                at.display(),
+                m.describe(uid)
+            );
+        }
+        if start.elapsed() >= EARLIER_MOUNT_WAIT {
+            let how = if answers { "" } else { ", not answering," };
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "{}: {}{how} is still mounted there after {} s (another sacdfs?); stop it or \
+                     unmount it first (fusermount3 -u {})",
+                    at.display(),
+                    m.describe(uid),
+                    EARLIER_MOUNT_WAIT.as_secs(),
+                    at.display()
+                ),
             ));
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Detaches the dead mount `m` on `at` if it is a sacdfs mount of user `uid`'s; else fails
+/// with what is there. Detached only while it is still the mount on top at `at`, as the
+/// unmount goes by path: a mount put over it meanwhile is left alone (#51).
+fn detach_dead_mount(at: &Path, m: &MountEntry, uid: u32) -> io::Result<()> {
+    let dead = |hint: &str| {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "{}: {} is mounted there and its server has exited (\"Transport endpoint is not \
+                 connected\"); {hint}",
+                at.display(),
+                m.describe(uid)
+            ),
+        )
+    };
+    if !m.is_sacdfs() || m.owner != Some(uid) {
+        return Err(dead(&format!("unmount it first (fusermount3 -u {})", at.display())));
+    }
+    if top_mount(at).as_ref().map(|t| &t.dev) != Some(&m.dev) {
+        // Gone or covered meanwhile: look again.
+        return Ok(());
+    }
+    lazy_unmount(at).map_err(|e| dead(&format!("detaching it: {e}")))?;
+    log::warn!("{}: detached a dead sacdfs mount (its sacdfs had exited without unmounting)", at.display());
     Ok(())
+}
+
+/// What asking a mount point's file system found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Probe {
+    /// It returned (with or without an error other than ENOTCONN): a live mount.
+    Answers,
+    /// ENOTCONN: the FUSE connection is gone, its server has exited.
+    Dead,
+    /// No answer within the timeout (a stopped or busy server), or the probe failed.
+    NoAnswer,
+}
+
+/// Asks the file system on `at` something, with `statfs`, waiting at most `timeout`.
+///
+/// `statfs` rather than `stat`: the kernel answers a `stat` from its attribute cache
+/// (sacdfs's attributes are valid for a day) without asking the server, so a dead mount
+/// can still `stat` fine; a FUSE `statfs` always goes to the server. On a dead connection
+/// it fails with ENOTCONN at once, but on a live one it waits for the server, which may
+/// never answer (stopped, hung), and that wait cannot be interrupted. So it runs in a
+/// child process, which is left behind if it does not finish in time (it is killed, and
+/// exits once the server answers or dies). A child rather than a thread: this runs before
+/// [`daemonize`] forks, which needs a process with a single thread.
+#[allow(unsafe_code)]
+fn probe(at: &Path, timeout: Duration) -> Probe {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(at.as_os_str().as_bytes()) else { return Probe::NoAnswer };
+    // SAFETY: the process has a single thread here, and the child only calls stat and
+    // _exit, both async-signal-safe.
+    let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        let mut st = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: a valid NUL-terminated path and a buffer for one `struct statfs`.
+        let r = unsafe { libc::statfs(c.as_ptr(), st.as_mut_ptr()) };
+        let code =
+            if r == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::ENOTCONN) { 0 } else { 1 };
+        // SAFETY: ends the child at once, running nothing of the parent's.
+        unsafe { libc::_exit(code) }
+    }
+    if pid < 0 {
+        return Probe::NoAnswer;
+    }
+    let start = Instant::now();
+    loop {
+        let mut status = 0;
+        // SAFETY: waits for the child just forked, without blocking.
+        match unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } {
+            0 if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(1)),
+            p if p == pid && libc::WIFEXITED(status) => {
+                return if libc::WEXITSTATUS(status) == 1 { Probe::Dead } else { Probe::Answers };
+            }
+            0 => {
+                // SAFETY: signals the child, which has not been waited for, so its pid is
+                // still its own.
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+                return Probe::NoAnswer;
+            }
+            _ => return Probe::NoAnswer,
+        }
+    }
 }
 
 /// `path` made absolute and canonical without looking at `path` itself (only at its parent,
 /// which is outside any mount on it). The mount point's own name is kept as given.
-fn outside_path(path: &std::path::Path) -> PathBuf {
+fn outside_path(path: &Path) -> PathBuf {
     let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
     match (abs.parent(), abs.file_name()) {
         (Some(parent), Some(name)) => parent.canonicalize().map_or_else(|_| abs.clone(), |p| p.join(name)),
@@ -382,31 +653,75 @@ fn outside_path(path: &std::path::Path) -> PathBuf {
     }
 }
 
-/// Whether the mount on top at `at` is a FUSE file system (`at` is its mount point, not
-/// just inside one). Read from the mount table, which asks the file system nothing.
-fn fuse_mounted_on(at: &std::path::Path) -> bool {
-    top_mount(at).is_some_and(|(_, fstype)| fstype == "fuse" || fstype.starts_with("fuse."))
-}
-
 /// The device number (`major:minor`) of the mount on top at `at`, if `at` is a mount point.
-fn top_mount_device(at: &std::path::Path) -> Option<String> {
-    top_mount(at).map(|(dev, _)| dev)
+fn top_mount_device(at: &Path) -> Option<String> {
+    top_mount(at).map(|m| m.dev)
 }
 
-/// The device number and file system type of the mount on top at `at`, from
-/// `/proc/self/mountinfo`: of the mounts on that path, the last listed, which is the one
-/// mounted last, over the others.
-fn top_mount(at: &std::path::Path) -> Option<(String, String)> {
+/// A mount, as `/proc/self/mountinfo` lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MountEntry {
+    /// The device number, `major:minor`: unique while the mount exists.
+    dev: String,
+    /// The file system type: `fuse.sacdfs` when mounted through fusermount3, `fuse` when
+    /// mounted by root with mount(2).
+    fstype: String,
+    /// The source field (a FUSE mount's fsname).
+    source: Vec<u8>,
+    /// The user who mounted it, for a FUSE mount (its `user_id=` option).
+    owner: Option<u32>,
+}
+
+impl MountEntry {
+    /// Parses one line: its mount point and the mount.
+    fn parse(line: &str) -> Option<(Vec<u8>, MountEntry)> {
+        let mut f = line.split(' ');
+        let (_, _, dev, _, mp) = (f.next()?, f.next()?, f.next()?, f.next()?, f.next()?);
+        let mut tail = line.split(" - ").nth(1)?.split(' ');
+        let (fstype, source, options) = (tail.next()?, tail.next()?, tail.next().unwrap_or(""));
+        let owner = options.split(',').find_map(|o| o.strip_prefix("user_id=")).and_then(|u| u.parse().ok());
+        let m = MountEntry {
+            dev: dev.to_owned(),
+            fstype: fstype.to_owned(),
+            source: unescape_mountinfo(source),
+            owner,
+        };
+        Some((unescape_mountinfo(mp), m))
+    }
+
+    fn is_fuse(&self) -> bool {
+        self.fstype == "fuse" || self.fstype.starts_with("fuse.")
+    }
+
+    /// A sacdfs mount: of type `fuse.sacdfs`, or (mounted by root, without the subtype)
+    /// `fuse` named [`FSNAME`].
+    fn is_sacdfs(&self) -> bool {
+        self.fstype == "fuse.sacdfs" || (self.fstype == "fuse" && self.source == FSNAME.as_bytes())
+    }
+
+    /// For messages, as seen by user `uid`: "a sacdfs mount of this user's", "a FUSE mount
+    /// (fuse.sshfs) of another user's". User ids are kept out of messages and logs.
+    fn describe(&self, uid: u32) -> String {
+        let what = if self.is_sacdfs() {
+            "a sacdfs mount".to_owned()
+        } else {
+            format!("a FUSE mount ({})", self.fstype)
+        };
+        match self.owner {
+            Some(o) if o == uid => format!("{what} of this user's"),
+            Some(_) => format!("{what} of another user's"),
+            None => what,
+        }
+    }
+}
+
+/// The mount on top at `at`, from `/proc/self/mountinfo`: of the mounts on that path, the
+/// last listed, which is the one mounted last, over the others. Reading the mount table
+/// asks no file system anything, so it cannot block on a stopping or dead one.
+fn top_mount(at: &Path) -> Option<MountEntry> {
     let info = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
     let want = at.as_os_str().as_encoded_bytes();
-    info.lines()
-        .filter_map(|l| {
-            let mut f = l.split(' ');
-            let (_, _, dev, _, mp) = (f.next()?, f.next()?, f.next()?, f.next()?, f.next()?);
-            let fstype = l.split(" - ").nth(1)?.split(' ').next()?;
-            (unescape_mountinfo(mp) == want).then(|| (dev.to_owned(), fstype.to_owned()))
-        })
-        .next_back()
+    info.lines().filter_map(MountEntry::parse).filter(|(mp, _)| mp == want).map(|(_, m)| m).next_back()
 }
 
 /// A path from `/proc/self/mountinfo`, where space, tab, newline and backslash are written
@@ -557,5 +872,74 @@ fn redirect_stdio() {
     for fd in 0..3 {
         // SAFETY: dup2 onto the standard descriptors; `null` stays open for the call.
         unsafe { libc::dup2(null.as_raw_fd(), fd) };
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    const USER: &str = "123 45 0:61 / /home/u/mnt\\040x rw,nosuid,nodev,relatime shared:1 - fuse.sacdfs \
+                        sacdfs ro,user_id=1000,group_id=1000,max_read=1048576";
+    const ROOT: &str = "123 45 0:62 / /mnt rw,nosuid,nodev,noexec - fuse sacdfs ro,user_id=0,group_id=0";
+    const OTHER: &str = "9 8 0:63 / /mnt rw - fuse.sshfs host:/x rw,user_id=1000,group_id=1000";
+    const OLD_ROOT: &str = "9 8 0:64 / /mnt rw - fuse /music/a\\054b rw,user_id=0,group_id=0";
+
+    #[test]
+    fn mount_entries() {
+        let (mp, m) = MountEntry::parse(USER).unwrap();
+        assert_eq!(mp, b"/home/u/mnt x");
+        assert_eq!(m.dev, "0:61");
+        assert_eq!(m.owner, Some(1000));
+        assert!(m.is_fuse() && m.is_sacdfs());
+        assert_eq!(m.describe(1000), "a sacdfs mount of this user's");
+        let (_, m) = MountEntry::parse(ROOT).unwrap();
+        assert!(m.is_sacdfs());
+        assert_eq!(m.owner, Some(0));
+        let (_, m) = MountEntry::parse(OTHER).unwrap();
+        assert!(m.is_fuse() && !m.is_sacdfs());
+        assert_eq!(m.describe(0), "a FUSE mount (fuse.sshfs) of another user's");
+        // A plain `fuse` mount with another name is not taken for sacdfs's.
+        let (_, m) = MountEntry::parse(OLD_ROOT).unwrap();
+        assert!(!m.is_sacdfs());
+        let (_, m) = MountEntry::parse("1 0 8:1 / / rw - ext4 /dev/sda1 rw").unwrap();
+        assert!(!m.is_fuse() && m.owner.is_none());
+    }
+
+    #[test]
+    fn source_under_mountpoint() {
+        let r = |s: &str, m: &str| refuse_source_under_mountpoint(Path::new(s), Path::new(m));
+        assert!(r("/a/b", "/a/b").is_err());
+        assert!(r("/a/b/c", "/a/b").is_err());
+        assert!(r("/a/b/c.iso", "/a").is_err());
+        assert!(r("/a/bc", "/a/b").is_ok());
+        assert!(r("/a", "/a/b").is_ok());
+        assert!(r("/x", "/a").is_ok());
+        assert!(r("/a/b", "/a/b").unwrap_err().to_string().contains("is the mount point"));
+    }
+
+    #[test]
+    fn images_under_mountpoint() {
+        let leaf = SourceDir { path: "/s/m".into(), dirs: vec![], images: vec!["/s/m/x.iso".into()] };
+        let root =
+            SourceDir { path: "/s".into(), dirs: vec![("m".into(), leaf)], images: vec!["/s/a.iso".into()] };
+        assert!(refuse_images_under_mountpoint(&root, Path::new("/s/m")).is_err());
+        assert!(refuse_images_under_mountpoint(&root, Path::new("/s/n")).is_ok());
+    }
+
+    #[test]
+    fn canonical_prefix_of_a_missing_path() {
+        let d = tempfile::tempdir().unwrap();
+        let c = d.path().canonicalize().unwrap();
+        assert_eq!(canonical_prefix(&d.path().join("x/y")), c.join("x/y"));
+        assert_eq!(canonical_prefix(d.path()), c);
+    }
+
+    #[test]
+    fn probe_of_a_plain_directory_answers() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(probe(d.path(), PROBE_TIMEOUT), Probe::Answers);
+        assert_eq!(probe(&d.path().join("missing"), PROBE_TIMEOUT), Probe::Answers);
     }
 }
