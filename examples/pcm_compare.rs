@@ -324,6 +324,7 @@ fn channel(x: &[i32], ch: usize, c: usize) -> Vec<f64> {
 /// for every phase within an output sample. `exact` uses sacdfs's f32 output on silence
 /// instead (the method check).
 const R: usize = 4096;
+const IMPULSE_GAIN_DB: f64 = 24.0;
 fn impulse(which: Which, cfg: &PcmConfig, k: usize, exact: bool) -> Vec<f64> {
     let d = cfg.rate.decimation();
     let per = cfg.rate.samples_per_frame();
@@ -331,7 +332,13 @@ fn impulse(which: Which, cfg: &PcmConfig, k: usize, exact: bool) -> Vec<f64> {
     let p0 = n0 * d;
     let mut h = vec![0.0f64; 2 * R + 1];
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
-    let mut conv = AnyConverter::new(which, 1, cfg);
+    // +24 dB (the most both allow) lifts the response 24 dB above the 24-bit rounding; the
+    // faint backgrounds stay far from clipping.
+    // The wide filter passes the backgrounds' ultrasonic noise, so less there.
+    let gain_db = if cfg.cutoff == Cutoff::Wide80 { IMPULSE_GAIN_DB / 2.0 } else { IMPULSE_GAIN_DB };
+    let boosted = PcmConfig { gain_db: gain_db as f32, ..*cfg };
+    let g = 10f64.powf(gain_db / 20.0);
+    let mut conv = AnyConverter::new(which, 1, &boosted);
     let mut ours = Converter::new(1, cfg);
     let mut a = vec![0u8; conv.frame_bytes()];
     let mut b = vec![0u8; conv.frame_bytes()];
@@ -361,11 +368,12 @@ fn impulse(which: Which, cfg: &PcmConfig, k: usize, exact: bool) -> Vec<f64> {
                     acc[i] += f64::from(fb[i] - fa[i]) / sign;
                 }
             } else {
-                conv.convert(Some(&prev), &cur, Some(&next), &mut a);
+                let c1 = conv.convert(Some(&prev), &cur, Some(&next), &mut a);
                 cur[p / 8] ^= mask;
-                conv.convert(Some(&prev), &cur, Some(&next), &mut b);
+                let c2 = conv.convert(Some(&prev), &cur, Some(&next), &mut b);
+                assert!(c1 + c2 == 0, "{cfg:?}: the impulse measurement clipped");
                 for (i, (x, y)) in unpack(&a).zip(unpack(&b)).enumerate() {
-                    acc[i] += f64::from(y - x) / FULL / sign;
+                    acc[i] += f64::from(y - x) / FULL / sign / g;
                 }
             }
         }
@@ -455,7 +463,7 @@ fn analyse(h: &[f64], cfg: &PcmConfig, own_stop: f64) -> Resp {
 
 fn quality() {
     let k: usize = std::env::var("K").ok().and_then(|v| v.parse().ok()).unwrap_or(256);
-    println!("## Response from impulses (24-bit output, flipped bit averaged over {k} random backgrounds)\n");
+    println!("## Response from impulses (24-bit output at +24 dB gain, +12 dB for wide, one flipped bit averaged over {k} faint modulated backgrounds)\n");
     println!(
         "| Config | Converter | Ripple to 20 kHz | Ripple to pass edge | -0.1 dB at | -3 dB at | Stopband from own edge | Stopband from sacdfs's edge (#5) | DC gain | Asymmetry | Centre (DSD samples) |"
     );
@@ -501,6 +509,9 @@ fn quality() {
         }
     }
 
+    if std::env::var_os("IMPULSE_ONLY").is_some() {
+        return;
+    }
     // ---- Sweep: modulated sines at -6 dBFS, level and phase per tone, both converters.
     println!("\n## Stepped sweep (modulated sine, -6 dBFS): level error (dB) and alignment (output samples)\n");
     let tones = [
@@ -984,6 +995,129 @@ fn determinism() {
     }
 }
 
+/// `--pcm-gain` semantics: a -6 dBFS 1 kHz tone at +9 dB clips; both clamp and count.
+fn gain_clips() {
+    println!("\n## Gain and clipping: 1 kHz at -6 dBFS with +9 dB gain, 4 frames in the middle of 8\n");
+    println!("| Config | Converter | Clips counted | Samples at the rails | Samples per channel |");
+    println!("|---|---|---|---|---|");
+    let dsd = mono(8, sine(0.5, 1e3, 0.3));
+    for cfg in configs() {
+        let cfg = PcmConfig { gain_db: 9.0, ..cfg };
+        for (which, label) in WHICH {
+            let (pcm, clips) = convert_all(which, &cfg, 1, &dsd, None, None);
+            let spf = cfg.rate.samples_per_frame();
+            let mid = &pcm[2 * spf..6 * spf];
+            let (pcm4, clips4) = {
+                let n = FRAME_BYTES;
+                let f: Vec<&[u8]> = dsd.chunks_exact(n).collect();
+                let mut c = AnyConverter::new(which, 1, &cfg);
+                let mut out = vec![0u8; 4 * c.frame_bytes()];
+                let mut k = vec![0u32; 4];
+                let total = c.convert_run(Some(f[1]), &f[2..6], Some(f[6]), &mut out, &mut k);
+                (unpack(&out).collect::<Vec<_>>(), total)
+            };
+            assert_eq!(pcm4, mid, "{label}: a run differs from frame by frame");
+            let rails = mid.iter().filter(|v| **v == 8_388_607 || **v == -8_388_608).count();
+            let _ = clips;
+            println!("| {} | {label} | {clips4} | {rails} | {} |", name(&cfg), mid.len());
+        }
+    }
+}
+
+/// Limit cycles of the test modulator (the coordinator's check). The bitstream itself is
+/// ideally decimated (its spectrum at 2.8224 MHz, read only in 20 Hz-40 kHz), for inputs
+/// where a plain 1-bit loop can lock into periodic patterns: silence, a fine sweep of small
+/// DC values (Perez Gonzalez and Reiss, AES 122nd Conv. 2007: the idle tone's fundamental is
+/// proportional to the DC input), and tones from -80 to -6 dBFS (noise modulation: Reiss and
+/// Sandler, AES 115th Conv. 2003). Each without and with TPDF dither added to the
+/// modulator's *input* (not at the quantiser, per Reiss and Sandler), at -120, -100 and
+/// -80 dBFS peak. A tone shows as a bin far above the local floor (the median of +-100 bins
+/// of a Welch average of 8 segments of 2^19, 5.4 Hz bins); the floor's sum over 20 Hz-20 kHz
+/// is the noise without the tones.
+fn limit_cycles() {
+    println!("## Test modulator: discrete tones in 30 Hz-40 kHz (limit cycles) and noise modulation\n");
+    println!(
+        "| Input | Dither (TPDF at the input, peak) | DC x fs | Strongest tone | Above floor | Tone level | Tone / (DC x fs) | Bins > 10 dB above floor | Noise floor 20 Hz-20 kHz |"
+    );
+    println!("|---|---|---|---|---|---|---|---|---|");
+    let seg = 1usize << 19;
+    let bits = seg * 9 / 2;
+    let frames = bits / (FRAME_BYTES * 8) + 4;
+    let mut inputs: Vec<(String, f64, f64)> = vec![("silence".into(), 0.0, 0.0)];
+    for i in 0..13 {
+        let dc = 1e-5 * 10f64.powf(i as f64 * 3.0 / 12.0);
+        inputs.push((format!("DC {dc:.2e}"), dc, 0.0));
+    }
+    for lvl in [-80.0, -60.0, -40.0, -20.0, -6.0] {
+        inputs.push((format!("1 kHz {lvl} dBFS"), 0.0, 10f64.powf(lvl / 20.0)));
+    }
+    for (label, dc, amp) in &inputs {
+        for dither_db in [None, Some(-120.0), Some(-100.0), Some(-80.0)] {
+            let peak = dither_db.map_or(0.0, |d: f64| 10f64.powf(d / 20.0));
+            let mut rng = Rng(0xD17E_u64);
+            let tone = sine(*amp, 1e3, 0.3);
+            let d: Vec<f64> = (0..frames * FRAME_BYTES * 8)
+                .map(|_| if peak > 0.0 { (rng.f() - 0.5 + rng.f() - 0.5) * peak } else { 0.0 })
+                .collect();
+            let dsd = Modulator::new().run(frames * FRAME_BYTES, |n| dc + tone(n) + d[n]);
+            let start = 2 * FRAME_BYTES * 8;
+            let x: Vec<f64> =
+                (start..start + bits).map(|n| if dsd[n / 8] & (0x80 >> (n % 8)) != 0 { 1.0 } else { -1.0 }).collect();
+            let mut acc = vec![0.0; seg / 2 + 1];
+            for k in 0..8 {
+                for (a, p) in acc.iter_mut().zip(spectrum(&x[k * seg / 2..k * seg / 2 + seg])) {
+                    *a += p / 8.0;
+                }
+            }
+            let bin = FS / seg as f64;
+            let (lo, hi) = ((30.0 / bin).ceil() as usize, (40_000.0 / bin) as usize);
+            let mut best = (0.0f64, 0.0f64, 0.0f64);
+            let mut count = 0;
+            let mut floor20 = 0.0;
+            let (mut in20, mut used20) = (0usize, 0usize);
+            for k in lo..=hi {
+                let f = k as f64 * bin;
+                let w0 = k.saturating_sub(100).max(lo);
+                let mut w: Vec<f64> = acc[w0..=w0 + 200].to_vec();
+                w.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let med = w[100] * 1.44; // mean of an averaged noise bin above its median, roughly
+                // The test tone and its harmonics, with the window's skirts (a -6 dBFS tone
+                // leaks about -100 dBFS 8 bins away): distortion and leakage, not limit cycles.
+                let near = *amp > 0.0 && (1..=40).any(|h| (f - 1e3 * h as f64).abs() < 25.0 * bin);
+                if f <= 20_000.0 {
+                    in20 += 1;
+                    if !near {
+                        floor20 += med;
+                        used20 += 1;
+                    }
+                }
+                if near {
+                    continue;
+                }
+                let r = db(acc[k] / med);
+                if r > 10.0 {
+                    count += 1;
+                }
+                if r > best.0 {
+                    let p: f64 = acc[k.saturating_sub(4)..=k + 4].iter().sum();
+                    best = (r, f, db(p));
+                }
+            }
+            let dcfs = dc * FS;
+            println!(
+                "| {label} | {} | {} | {:.0} Hz | {:.1} dB | {:.1} dBFS | {} | {count} | {:.1} dBFS |",
+                dither_db.map_or("none".into(), |d| format!("{d} dBFS")),
+                if *dc > 0.0 { format!("{dcfs:.0} Hz") } else { "".into() },
+                best.1,
+                best.0,
+                best.2,
+                if *dc > 0.0 && best.0 > 10.0 { format!("{:.2}", best.1 / dcfs) } else { "".into() },
+                db(floor20 * in20 as f64 / used20.max(1) as f64)
+            );
+        }
+    }
+}
+
 fn yes(b: bool) -> &'static str {
     if b { "yes" } else { "**NO**" }
 }
@@ -998,7 +1132,11 @@ fn main() {
             args.get(3).map_or(30, |s| s.parse().unwrap()),
             args.get(4).map_or(sacdfs::engine::default_threads(), |s| s.parse().unwrap()),
         ),
-        Some("determinism") => determinism(),
+        Some("limitcycles") => limit_cycles(),
+        Some("determinism") => {
+            determinism();
+            gain_clips();
+        }
         _ => panic!("usage: pcm_compare quality | disc DIR [SECS] | speed DIR [SECS] [THREADS] | determinism"),
     }
 }
