@@ -519,7 +519,12 @@ Notes:
 ## Mounting at boot: fstab and systemd
 
 **fstab.** `mount -t fuse.sacdfs` runs `mount.fuse3`, which runs `sacdfs SOURCE MOUNTPOINT -o OPTIONS`.
-Put `sacdfs` where root finds it (`/usr/local/bin` or `/usr/bin`) and `fuse3` installed:
+Put `sacdfs` where root finds it (`/usr/local/bin` or `/usr/bin`) and `fuse3` installed. `mount`
+looks for a helper named `mount.fuse.sacdfs` or `mount.fuse`; Fedora's `fuse3` package has only
+`mount.fuse3`, so without a `mount.fuse` (package `fuse`, or a link:
+`ln -s /usr/sbin/mount.fuse3 /usr/sbin/mount.fuse`) the mount fails with "fuse: Unknown
+parameter 'cache_mb'". (`fuse3.sacdfs` as the type does not work: `mount.fuse3` takes it for a
+command name.)
 
 ```
 # /etc/fstab
@@ -548,20 +553,27 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/sacdfs -f --cache-mb 64 --format dsf /srv/sacd /mnt/sacd
-ExecStop=/usr/bin/fusermount3 -u /mnt/sacd
+CacheDirectory=sacdfs
+ExecStart=/usr/local/bin/sacdfs -f --cache-mb 64 --format dsf --index-cache %C/sacdfs /srv/sacd /mnt/sacd
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 ```
 
+sacdfs unmounts on SIGTERM, which is how systemd stops it, so the unit has no `ExecStop`
+(`fusermount3` there failed under SELinux on Fedora 44 and left the unit "failed" after every
+stop). `CacheDirectory=sacdfs` gives the service `/var/cache/sacdfs` for the seek index cache
+(a service has no `HOME`, so sacdfs would otherwise run without one).
+
 `systemctl enable --now sacdfs`, `journalctl -u sacdfs` for the log. Services that read the
 mount should say `After=sacdfs.service` and `Requires=sacdfs.service`. A container that
 bind-mounts the mount point must bind its parent directory instead
 ([deployment guide](deployment.md#media-servers-in-containers-on-a-client-host)). This
-recipe was written from the mount helper's and systemd's documentation and the unit tests; it
-was not run in a test VM.
+recipe was run in a Fedora 44 VM: mounted from fstab and from the unit, after a reboot, with
+`log_file` and the journal. A service runs as root without `allow_other`, so other users see
+"Permission denied" on the mount; add `--allow-other` (and `user_allow_other` in
+`/etc/fuse.conf` if the service runs as a user) when other users read it.
 
 ## Troubleshooting
 
