@@ -8,6 +8,41 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts
+  a scarletbook provisional (cold) reading or, after a remount, one from the saved seek hints;
+  sacdfs's own frame locator is gone. Cold seeks make fewer calls to the image (3.06 a seek on
+  average on the real discs, was 4.44; DST areas 3.0 to 3.4, were 4.8 to 5.5), warm ones one
+  call with fewer bytes (84 KiB, was 110). Seek times through the mount are within 15 % of
+  0.1's, and output is unchanged (DSF gate 93/93). Areas whose layout scarletbook finds
+  suspect are read exactly. Details and figures: `docs/design.md`, "Seeking", and
+  `docs/performance.md`.
+- The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
+  by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
+
+### Documentation
+
+- CI: a "no private names" check of commit identities and tracked files (`scripts/check-private-names.sh`, adapted from pysacd's). The Roon example in `docs/deployment.md` uses an arbitrary container subnet.
+
+## [0.1.1] - 2026-11-01
+
+Folder art, scans and playlists for players such as Roon, and far fewer requests per file. These come from a real-world Roon test on a NAS. scarletbook 0.5.2. The audio files are byte-identical to 0.1.0's.
+
+### Added
+
+- Sidecar files are passed through (#79, #75): folder art (`.jpg`, `.jpeg`, `.png`,
+  `.webp`), `Artwork/` and `Scans/` folders with all their content, and `.m3u`/`.m3u8`
+  playlists next to the images show at their relative path, read-only and byte for byte,
+  with their source file's size and times. Players such as Roon find the folder art, and
+  playlists can live on the share, so extracted copies can go without losing either. With
+  `--flatten`, a collapsed chain's sidecars show in the collapsed folder. They have stable
+  inode numbers (the same with and without `--flatten`) and NFS handles that survive a
+  restart and go stale when the file changes. `--sidecars LIST` (`SACDFS_SIDECARS` in the
+  container) widens, narrows or turns off the list (`default,cue`, `default,-webp`, `none`).
+  Hidden files are never passed, and a link is followed only to a file inside SOURCE and
+  outside the mount point. The audio files are unchanged.
+
+### Changed
+
 - scarletbook 0.5.2 (was 0.5.0), the engine for 0.2.0: sacdfs's output is unchanged (DSF
   files bit-identical to the reference extractor on all 93 tracks of the real discs, the same
   WAV bytes). One test changed: on the hostile corpus image `area-audio-past-end`,
@@ -35,7 +70,7 @@ All notable changes to sacdfs are recorded here. The format follows
 ### Documentation
 
 - `docs/deployment.md`, Roon: discs also present as extracted files are merged by Roon,
-  which may play either copy; playlists can't live on the share yet (#75).
+  which may play either copy. Folder art and playlists now work (#79, #75).
 - Server-side figures from the owner's NAS (#21 part 2), in `docs/performance.md`, "On a NAS,
   server-side". The published 0.1.0 image ran as a TrueNAS SCALE 25.10 app, serving over NFS
   and SMB on the LAN:

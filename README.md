@@ -56,8 +56,8 @@ Sigstore) shows that this repository's release workflow built it, from which com
 ### Container image
 
 ```sh
-docker pull ghcr.io/aclater/sacdfs:0.1.0        # or :latest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.0 -R aclater/sacdfs
+docker pull ghcr.io/aclater/sacdfs:0.1.1        # or :latest
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.1 -R aclater/sacdfs
 ```
 
 It runs sacdfs with Samba and NFS-Ganesha for a NAS, built for generic x86-64; how to run it
@@ -69,7 +69,7 @@ sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through
 and mounts with `fusermount3`, without linking libfuse.
 
 ```sh
-cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.1.0
+cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.1.1
 # or, in a clone:
 cargo build --release && target/release/sacdfs --help
 ```
@@ -111,6 +111,7 @@ above it.
 | `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz; with `--pcm-rate 176400` or `352800` only). |
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default `0`). Samples that would clip are clamped, and the log says so once per file. |
 | `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder ([Layout](#layout)). Top-level folders of `SOURCE` are never collapsed. |
+| `--sidecars LIST` | Files passed through from `SOURCE`, byte for byte, next to the images: extensions, and folder names ending in `/` whose whole content passes. `default` (the default) is `jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/`; `default,cue` adds to it, `default,-webp` removes from it, `none` passes nothing ([Layout](#layout)). |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
 | `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where frames are in each image, so that seeks after a remount skip most of their search. |
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
@@ -145,6 +146,12 @@ MOUNTPOINT/
   get ` (2)`, ` (3)`.
 - Files that are not SACD images, folders with no `*.iso` file below them, and tracks the
   disc cannot play are left out.
+- **Sidecar files** next to the images, `folder.jpg`, `cover.png`, an `Artwork/` or `Scans/`
+  folder, `.m3u`/`.m3u8` playlists, are shown where they are in `SOURCE`, read-only and byte
+  for byte, with their own size and times: players and file managers find the folder art,
+  and you can delete extracted copies without losing it. `--sidecars` sets which
+  ([user guide](docs/user-guide.md#sidecar-files-art-scans-playlists)). Hidden files are never
+  passed, nor a link that points outside `SOURCE`.
 
 With `--flatten`, a folder whose only content is one image, directly or through a chain of
 folders that each hold nothing else, holds that image's `Stereo` and `Multichannel` folders
@@ -156,7 +163,8 @@ SOURCE/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc.iso
 
 shows as `MOUNTPOINT/Artist/2001 - Album [SACD]/Stereo/01 - Title.dsf` instead of
 `MOUNTPOINT/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc/Stereo/01 - Title.dsf`.
-It is decided from the file names alone, so it does not slow down mounting.
+It is decided from the file names alone, so it does not slow down mounting. The sidecar files
+of the collapsed folders all show in the one that is kept, next to `Stereo`.
 
 ## Formats and quality
 
@@ -205,7 +213,7 @@ How fast each one is, against the project's targets: [docs/performance.md](docs/
 ## How it works
 
 [docs/design.md](docs/design.md) describes the architecture and the reason for each decision:
-the layout, the DSF and WAV mappings, the frame locator and seek index, caching, concurrency,
+the layout, the DSF and WAV mappings, seeking and the seek index, caching, concurrency,
 the converter, the container and the release builds.
 
 ## Licence and credits

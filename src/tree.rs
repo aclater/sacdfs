@@ -20,14 +20,21 @@
 //! content is one image is shown as its outermost directory holding the image's areas. The
 //! chains are found from the names walked at mount time ([`SourceDir::single_image`]); the
 //! image is still opened only when that directory is first looked into.
+//!
+//! Sidecar files ([`crate::sidecar`]: folder art, scans, playlists) in a directory that holds
+//! images are listed after its images, at their relative path; with `--flatten`, those of
+//! every directory of a collapsed chain are listed in the collapsed directory, outermost
+//! first. Their names are found by the walk at mount time; they are looked at (`fstatat`)
+//! when their directory is first listed, and opened when they are.
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::SystemTime;
 
 use rayon::prelude::*;
@@ -38,6 +45,7 @@ use crate::disc::{Disc, Tuning};
 use crate::ident::{self, Ids};
 use crate::names::{Deduper, track_file_name};
 use crate::pcm::PcmConfig;
+use crate::sidecar::{self, Meta, Sidecar, SidecarKind, Sidecars};
 use crate::track::{Format, TrackFile};
 
 /// Which files an area directory shows.
@@ -98,50 +106,110 @@ pub struct SourceDir {
     pub dirs: Vec<(OsString, SourceDir)>,
     /// Image files directly in it, sorted by name.
     pub images: Vec<PathBuf>,
+    /// Sidecar files and folders directly in it, sorted by name (none unless scanned with
+    /// [`SourceDir::scan_with`]).
+    pub sidecars: Vec<Sidecar>,
+}
+
+/// What a scan looks for besides images.
+struct Scan<'a> {
+    sidecars: &'a Sidecars,
+    /// MOUNTPOINT, when it is inside SOURCE: nothing in it is a sidecar.
+    exclude: Option<&'a Path>,
 }
 
 impl SourceDir {
     /// Scans `source`: a single image file, or a directory searched recursively for
     /// `*.iso` files (any case). Symbolic links to files are followed; symbolic links to
-    /// directories are not.
+    /// directories are not. Finds no sidecar files.
     pub fn scan(source: &Path) -> io::Result<SourceDir> {
+        Self::scan_with(source, &Sidecars::none(), None)
+    }
+
+    /// [`SourceDir::scan`], also noting the `sidecars` of the directories that hold images
+    /// (from their names: nothing more is read), except in `exclude` (the mount point). A
+    /// single image file has none.
+    pub fn scan_with(source: &Path, sidecars: &Sidecars, exclude: Option<&Path>) -> io::Result<SourceDir> {
         let meta = fs::metadata(source)?;
         if meta.is_file() {
             let parent = source.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-            return Ok(SourceDir { path: parent, dirs: Vec::new(), images: vec![source.to_owned()] });
+            return Ok(SourceDir {
+                path: parent,
+                dirs: Vec::new(),
+                images: vec![source.to_owned()],
+                sidecars: Vec::new(),
+            });
         }
-        Ok(Self::scan_dir(source, 0)?.unwrap_or(SourceDir {
+        let scan = Scan { sidecars, exclude };
+        Ok(Self::scan_dir(source, 0, &scan, false)?.unwrap_or(SourceDir {
             path: source.to_owned(),
             dirs: Vec::new(),
             images: Vec::new(),
+            sidecars: Vec::new(),
         }))
     }
 
-    fn scan_dir(dir: &Path, depth: usize) -> io::Result<Option<SourceDir>> {
+    /// Scans `dir`; `everything` inside a sidecar folder, whose every file and folder is a
+    /// sidecar. `None` if it holds neither image nor sidecar.
+    fn scan_dir(
+        dir: &Path,
+        depth: usize,
+        scan: &Scan<'_>,
+        everything: bool,
+    ) -> io::Result<Option<SourceDir>> {
         let mut dirs = Vec::new();
         let mut images = Vec::new();
+        let mut sidecars = Vec::new();
+        let note = !scan.sidecars.is_empty() && !scan.exclude.is_some_and(|m| dir.starts_with(m));
         let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             let Ok(ft) = e.file_type() else { continue };
             let path = e.path();
+            let name = e.file_name();
             if ft.is_dir() {
                 if depth + 1 >= MAX_DEPTH {
                     continue;
                 }
-                match Self::scan_dir(&path, depth + 1) {
-                    Ok(Some(sub)) => dirs.push((e.file_name(), sub)),
-                    Ok(None) => {}
+                let folder = note && !sidecar::hidden(&name) && (everything || scan.sidecars.folder(&name));
+                match Self::scan_dir(&path, depth + 1, scan, folder) {
+                    Ok(Some(sub)) if sub.holds_images() => dirs.push((name, sub)),
+                    Ok(Some(sub)) if folder => {
+                        sidecars.push(Sidecar { name, path, kind: SidecarKind::Folder(sub.sidecars) });
+                    }
+                    Ok(_) => {}
                     Err(err) => log::warn!("{}: {err}", path.display()),
                 }
             } else if is_iso(&path) && (ft.is_file() || (ft.is_symlink() && path.is_file())) {
                 images.push(path);
+            } else if note
+                && (ft.is_file() || ft.is_symlink())
+                && !sidecar::hidden(&name)
+                && (everything || scan.sidecars.file(&name))
+            {
+                let kind = if ft.is_symlink() { SidecarKind::Link } else { SidecarKind::File };
+                sidecars.push(Sidecar { name, path, kind });
             }
         }
-        if dirs.is_empty() && images.is_empty() {
+        if dirs.is_empty() && images.is_empty() && sidecars.is_empty() {
             return Ok(None);
         }
-        Ok(Some(SourceDir { path: dir.to_owned(), dirs, images }))
+        Ok(Some(SourceDir { path: dir.to_owned(), dirs, images, sidecars }))
+    }
+
+    /// Whether it holds an image, directly or below.
+    fn holds_images(&self) -> bool {
+        !self.dirs.is_empty() || !self.images.is_empty()
+    }
+
+    /// The sidecars of a chain collapsed by `--flatten` ([`SourceDir::single_image`]): this
+    /// directory's, then those of each directory down the chain.
+    fn chain_sidecars(&self) -> Vec<Sidecar> {
+        let mut out = self.sidecars.clone();
+        if let ([(_, sub)], []) = (self.dirs.as_slice(), self.images.as_slice()) {
+            out.extend(sub.chain_sidecars());
+        }
+        out
     }
 
     /// The one image of this directory and its subdirectories, if that is all they hold:
@@ -174,8 +242,11 @@ pub enum DirKind {
     /// The directory of one image: one subdirectory per area.
     Image(Arc<Disc>),
     /// A chain of source directories collapsed onto its one image (`--flatten`): shows the
-    /// image's areas, like [`DirKind::Image`], once the image is opened on first use.
-    Flat(PathBuf),
+    /// image's areas, like [`DirKind::Image`], once the image is opened on first use, and the
+    /// sidecars of the chain's directories.
+    Flat(PathBuf, Vec<Sidecar>),
+    /// A sidecar folder passed through (`Artwork/`): shows its content.
+    Folder(Vec<Sidecar>),
     /// The directory of one area: one file per track.
     Area(Arc<Disc>, usize),
 }
@@ -210,6 +281,20 @@ pub enum Node {
     Dir(Dir),
     /// A track file.
     File(Arc<TrackFile>),
+    /// A sidecar file passed through from SOURCE.
+    Sidecar(Arc<SidecarFile>),
+}
+
+/// A sidecar file passed through: its bytes are its source file's.
+#[derive(Debug)]
+pub struct SidecarFile {
+    /// The file whose bytes it shows, relative to SOURCE: its own path, or for a link the
+    /// path it names.
+    pub target: PathBuf,
+    /// Its attributes when its directory was listed: shown as they are.
+    pub meta: Meta,
+    /// Its generation ([`ident::sidecar_generation`]).
+    pub generation: u64,
 }
 
 /// The tree: every node made so far, by inode number.
@@ -225,6 +310,10 @@ pub struct Tree {
     wav_flavour: u64,
     /// Seconds added to the WAV files' mtime for the PCM options (issue #64).
     wav_mtime_offset: u64,
+    /// SOURCE, opened when a sidecar is first looked at.
+    root_fd: OnceLock<Option<OwnedFd>>,
+    /// MOUNTPOINT relative to SOURCE, when it is inside it: no sidecar is served from there.
+    exclude: Option<PathBuf>,
 }
 
 impl Tree {
@@ -257,7 +346,41 @@ impl Tree {
             flatten: false,
             wav_flavour,
             wav_mtime_offset: 0,
+            root_fd: OnceLock::new(),
+            exclude: None,
         }
+    }
+
+    /// The same tree, serving no sidecar from `mountpoint` if it is inside SOURCE: a link
+    /// into it would make sacdfs read through its own mount (#67).
+    #[must_use]
+    pub fn excluding(mut self, mountpoint: &Path) -> Tree {
+        self.exclude = mountpoint.strip_prefix(self.ids.source()).ok().map(Path::to_path_buf);
+        self
+    }
+
+    /// SOURCE's directory, opened on first use.
+    fn root_fd(&self) -> Option<&OwnedFd> {
+        self.root_fd
+            .get_or_init(|| match sidecar::open_root(self.source()) {
+                Ok(fd) => Some(fd),
+                Err(e) => {
+                    log::warn!("{}: {e}: no sidecar files", self.source().display());
+                    None
+                }
+            })
+            .as_ref()
+    }
+
+    /// Opens a sidecar file for reading. `ESTALE` if its source file changed (size or mtime)
+    /// since it was listed: its attributes, already shown, would no longer match its bytes.
+    pub fn open_sidecar(&self, f: &SidecarFile) -> io::Result<fs::File> {
+        let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(libc::EIO))?;
+        let (file, now) = sidecar::open_file(root, &f.target)?;
+        if now.size != f.meta.size || now.mtime != f.meta.mtime {
+            return Err(io::Error::from_raw_os_error(libc::ESTALE));
+        }
+        Ok(file)
     }
 
     /// The same tree, its WAV files converted with `pcm` (whose rate must be the one of the
@@ -293,21 +416,32 @@ impl Tree {
     /// path goes through (matching inode numbers, not names, so that `--flatten` and
     /// de-duplicated names do not matter), then into the image's area and file.
     fn find(&self, ino: u64) -> Option<Arc<Node>> {
-        let chain = self.ids.chain(ino)?;
+        let mut chain = self.ids.chain(ino)?;
+        // A sidecar file is found in its directory's listing.
+        let sidecar = self.ids.is_sidecar(ino);
+        if sidecar {
+            chain.pop();
+        }
         let mut cur = ROOT;
         let mut rest = chain.as_slice();
         while !rest.is_empty() {
             let children = self.children(cur)?;
             // The deepest directory of the chain listed here: with --flatten, a collapsed
             // directory carries its image's number, skipping the directories in between.
-            let (at, e) = children
-                .iter()
-                .filter(|e| e.is_dir)
-                .find_map(|e| rest.iter().position(|&c| c == e.ino).map(|j| (j, e.ino)))?;
+            let (at, e) = children.iter().filter(|e| e.is_dir).find_map(|e| {
+                rest.iter()
+                    .position(|&c| c == e.ino)
+                    .or_else(|| self.collapsed_over(e.ino, rest))
+                    .map(|j| (j, e.ino))
+            })?;
             cur = e;
             rest = &rest[at + 1..];
         }
-        if ident::entry_of(ino) != 0 {
+        if sidecar {
+            if !self.children(cur)?.iter().any(|e| e.ino == ino) {
+                return None;
+            }
+        } else if ident::entry_of(ino) != 0 {
             // An area, or a file of the area with the same key and slot.
             let area = ident::area_of(ino)?;
             if !self.children(cur)?.iter().any(|e| e.ino == area) {
@@ -320,6 +454,17 @@ impl Tree {
             return None;
         }
         self.nodes.read().unwrap_or_else(|p| p.into_inner()).get(&ino).cloned()
+    }
+
+    /// With `--flatten`, a collapsed directory (numbered as its image) stands for the source
+    /// directories of its chain, whose sidecars it shows: the index in `rest` of the last of
+    /// them that `rest` starts with, if it starts with any.
+    fn collapsed_over(&self, ino: u64, rest: &[u64]) -> Option<usize> {
+        if !self.flatten || ident::entry_of(ino) != 0 {
+            return None;
+        }
+        let chain = self.ids.chain(ino)?;
+        rest.iter().take_while(|r| chain.contains(r)).count().checked_sub(1)
     }
 
     /// Number of nodes made so far.
@@ -368,20 +513,24 @@ impl Tree {
     }
 
     /// The generation number of `node`: 0 for a directory; for a track file, a hash of what
-    /// its bytes depend on (see [`crate::ident`]).
+    /// its bytes depend on (see [`crate::ident`]); for a sidecar file, of its source file's
+    /// size and mtime.
     pub fn generation(&self, node: &Node) -> u64 {
         match node {
             Node::Dir(_) => 0,
             Node::File(f) => ident::generation(f, self.wav_flavour),
+            Node::Sidecar(s) => s.generation,
         }
     }
 
     /// The modification time shown for `node`: a directory's own; for a track file, its
-    /// image's, moved by the output version and PCM options (see [`ident::mtime`]).
+    /// image's, moved by the output version and PCM options (see [`ident::mtime`]); for a
+    /// sidecar file, its source file's.
     pub fn mtime(&self, node: &Node) -> SystemTime {
         match node {
             Node::Dir(d) => d.mtime,
             Node::File(f) => ident::mtime(f, self.wav_mtime_offset),
+            Node::Sidecar(s) => s.meta.mtime,
         }
     }
 
@@ -415,7 +564,9 @@ impl Tree {
                     let flat = if self.flatten && parent != ROOT { sub.single_image() } else { None };
                     // A collapsed directory is the image's directory: it has its number.
                     let (kind, ino) = match flat {
-                        Some(image) => (DirKind::Flat(image.to_owned()), self.ids.image(image)),
+                        Some(image) => {
+                            (DirKind::Flat(image.to_owned(), sub.chain_sidecars()), self.ids.image(image))
+                        }
                         None => (DirKind::Source(sub.clone()), self.ids.dir(&sub.path)),
                     };
                     if !self.add(ino, Node::Dir(Dir { kind, mtime, parent, children: Mutex::new(None) })) {
@@ -455,7 +606,9 @@ impl Tree {
                     }
                     out.push(Entry { name: dedup.unique(&stem, false), ino, is_dir: true });
                 }
+                self.list_sidecars(&src.sidecars, parent, &mut dedup, &mut out);
             }
+            DirKind::Folder(list) => self.list_sidecars(list, parent, &mut dedup, &mut out),
             DirKind::Image(disc) => {
                 for (i, area) in disc.toc.areas.iter().enumerate() {
                     let name = match area.slot {
@@ -476,10 +629,11 @@ impl Tree {
                     out.push(Entry { name: dedup.unique(OsStr::new(name), false), ino, is_dir: true });
                 }
             }
-            DirKind::Flat(path) => {
+            DirKind::Flat(path, sidecars) => {
                 let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
                 match Disc::open(path, id, self.tuning) {
-                    // Listed exactly as the image's own directory would be.
+                    // Listed exactly as the image's own directory would be, then the
+                    // sidecars of the chain.
                     Ok(disc) => {
                         let image = Dir {
                             kind: DirKind::Image(Arc::new(disc)),
@@ -487,10 +641,14 @@ impl Tree {
                             parent: dir.parent,
                             children: Mutex::new(None),
                         };
-                        return self.load(&image, parent);
+                        out = self.load(&image, parent);
+                        for e in &out {
+                            dedup.unique(&e.name, false);
+                        }
                     }
                     Err(e) => log::info!("{}: not shown: {e}", path.display()),
                 }
+                self.list_sidecars(sidecars, parent, &mut dedup, &mut out);
             }
             DirKind::Area(disc, i) => {
                 let Some(area) = disc.toc.areas.get(*i) else { return out };
@@ -524,6 +682,64 @@ impl Tree {
             }
         }
         out
+    }
+
+    /// Lists the sidecars `list` in directory `parent`, after its other entries: each is
+    /// looked at now (in parallel, as images are opened) and shown if it is a regular file
+    /// (or folder) where SOURCE allows; numbered by its source path.
+    fn list_sidecars(&self, list: &[Sidecar], parent: u64, dedup: &mut Deduper, out: &mut Vec<Entry>) {
+        if list.is_empty() {
+            return;
+        }
+        let Some(root) = self.root_fd() else { return };
+        let src = self.source();
+        let found: Vec<Option<Node>> = list
+            .par_iter()
+            .map(|sc| {
+                let rel = sc.path.strip_prefix(src).ok()?;
+                let node = match &sc.kind {
+                    SidecarKind::Folder(inner) => sidecar::stat_dir(root, rel).map(|m| {
+                        Node::Dir(Dir {
+                            kind: DirKind::Folder(inner.clone()),
+                            mtime: m.mtime,
+                            parent,
+                            children: Mutex::new(None),
+                        })
+                    }),
+                    SidecarKind::File | SidecarKind::Link => {
+                        let link = matches!(sc.kind, SidecarKind::Link);
+                        sidecar::target(root, src, rel, link, self.exclude.as_deref()).and_then(|target| {
+                            let meta = sidecar::stat_file(root, &target)?;
+                            let generation = ident::sidecar_generation(meta.size, meta.mtime);
+                            Ok(Node::Sidecar(Arc::new(SidecarFile { target, meta, generation })))
+                        })
+                    }
+                };
+                match node {
+                    Ok(n) => Some(n),
+                    Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                        log::warn!(
+                            "{}: link not followed: it points outside SOURCE or into the mount",
+                            sc.path.display()
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        log::info!("{}: not passed through: {e}", sc.path.display());
+                        None
+                    }
+                }
+            })
+            .collect();
+        for (sc, node) in list.iter().zip(found) {
+            let Some(node) = node else { continue };
+            let is_dir = matches!(node, Node::Dir(_));
+            let ino = if is_dir { self.ids.dir(&sc.path) } else { self.ids.sidecar(&sc.path) };
+            if !self.add(ino, node) {
+                continue;
+            }
+            out.push(Entry { name: dedup.unique(&sc.name, !is_dir), ino, is_dir });
+        }
     }
 
     /// Every track file in the tree, with its path, loading every directory (for tests and
@@ -561,7 +777,8 @@ mod tests {
     }
 
     /// Builds a source tree in a temporary directory: each path ending in `.iso` is a link
-    /// to a corpus image, `.txt` an ordinary file, anything else a directory.
+    /// to a corpus image, one with another extension an ordinary file holding its path,
+    /// anything else a directory.
     fn source(paths: &[&str]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for p in paths {
@@ -569,9 +786,9 @@ mod tests {
             if p.ends_with(".iso") {
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
                 std::os::unix::fs::symlink(corpus_image(), &path).unwrap();
-            } else if p.ends_with(".txt") {
+            } else if Path::new(p).extension().is_some() {
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
-                fs::write(&path, b"x").unwrap();
+                fs::write(&path, p.as_bytes()).unwrap();
             } else {
                 fs::create_dir_all(&path).unwrap();
             }
@@ -889,5 +1106,217 @@ mod tests {
         // Directories keep generation 0.
         let t = tree(dir.path(), false);
         assert_eq!(t.generation(&t.get(ROOT).unwrap()), 0);
+    }
+
+    /// A tree passing the default sidecars through.
+    fn tree_sc(dir: &Path, flatten: bool) -> Tree {
+        Tree::new(SourceDir::scan_with(dir, &Sidecars::standard(), None).unwrap()).with_flatten(flatten)
+    }
+
+    fn sidecar_of(t: &Tree, path: &str) -> Arc<SidecarFile> {
+        let node = t.get(t.resolve(Path::new(path)).unwrap_or_else(|| panic!("{path} not found"))).unwrap();
+        let Node::Sidecar(s) = &*node else { panic!("{path}: not a sidecar") };
+        s.clone()
+    }
+
+    fn read_sidecar(t: &Tree, path: &str) -> Vec<u8> {
+        use std::io::Read;
+        let mut v = Vec::new();
+        t.open_sidecar(&sidecar_of(t, path)).unwrap().read_to_end(&mut v).unwrap();
+        v
+    }
+
+    const ALBUM: &[&str] = &[
+        "Artist/Album/x.iso",
+        "Artist/Album/folder.jpg",
+        "Artist/Album/cover.PNG",
+        "Artist/Album/notes.txt",
+        "Artist/Album/._folder.jpg",
+        "Artist/Album/.hidden/a.jpg",
+        "Artist/Album/Artwork/front.jpg",
+        "Artist/Album/Artwork/info.pdf",
+        "Artist/Album/Artwork/Booklet/p1.tif",
+        "Artist/Album/Lyrics/x.jpg",
+        "Artist/list.m3u8",
+        "Artist/NoImages/cover.jpg",
+    ];
+
+    #[test]
+    fn sidecars_are_listed_after_the_images() {
+        let dir = source(ALBUM);
+        let t = tree_sc(dir.path(), false);
+        assert_eq!(names(&t, ""), ["Artist"]);
+        assert_eq!(names(&t, "Artist"), ["Album", "list.m3u8"]);
+        // Folders without images are not shown unless allowed by name (Artwork, whose whole
+        // content passes); hidden names and other extensions never are.
+        assert_eq!(names(&t, "Artist/Album"), ["x", "Artwork", "cover.PNG", "folder.jpg"]);
+        assert_eq!(names(&t, "Artist/Album/Artwork"), ["Booklet", "front.jpg", "info.pdf"]);
+        assert_eq!(names(&t, "Artist/Album/Artwork/Booklet"), ["p1.tif"]);
+        for p in ["Artist/Album/folder.jpg", "Artist/Album/Artwork/Booklet/p1.tif", "Artist/list.m3u8"] {
+            assert_eq!(read_sidecar(&t, p), p.as_bytes(), "{p}");
+            let s = sidecar_of(&t, p);
+            let src = fs::metadata(dir.path().join(p)).unwrap();
+            assert_eq!(s.meta.size, src.len());
+            assert_eq!(s.meta.mtime, src.modified().unwrap());
+            assert_eq!(t.mtime(&Node::Sidecar(s.clone())), src.modified().unwrap());
+            assert_ne!(t.generation(&Node::Sidecar(s)), 0);
+        }
+        // A sidecar folder is a directory, generation 0, its parent the album.
+        let art = t.resolve(Path::new("Artist/Album/Artwork")).unwrap();
+        assert_eq!(t.parent_of(art), t.resolve(Path::new("Artist/Album")).unwrap());
+        assert_eq!(t.generation(&t.get(art).unwrap()), 0);
+        // Nothing is passed through without the option.
+        let plain = tree(dir.path(), false);
+        assert_eq!(names(&plain, "Artist"), ["Album"]);
+        assert_eq!(names(&plain, "Artist/Album"), ["x"]);
+    }
+
+    #[test]
+    fn nothing_changes_for_images_and_their_files() {
+        // With sidecars present: every entry of the tree without them keeps its name and
+        // number; and with none present, the trees are the same.
+        let dir = source(ALBUM);
+        for flatten in [false, true] {
+            let plain = numbered(&tree(dir.path(), flatten));
+            let t = tree_sc(dir.path(), flatten);
+            for (p, ino) in &plain {
+                assert_eq!(t.resolve(Path::new(p)), Some(*ino), "{p}");
+            }
+            assert!(numbered(&t).len() > plain.len());
+        }
+        let dir = source(&["Artist/Album/Rip/x.iso", "Artist/Box/a.iso", "Artist/Box/notes.txt", "y.iso"]);
+        for flatten in [false, true] {
+            assert_eq!(numbered(&tree_sc(dir.path(), flatten)), numbered(&tree(dir.path(), flatten)));
+        }
+    }
+
+    #[test]
+    fn flatten_shows_the_chains_sidecars_in_the_collapsed_folder() {
+        let dir = source(&[
+            "Artist/Album/Rip/Disc/x.iso",
+            "Artist/Album/folder.jpg",
+            "Artist/Album/Rip/folder.jpg",
+            "Artist/Album/Rip/Disc/Scans/back.jpg",
+            "Artist/Album/Rip/Disc/list.m3u",
+            "Artist/Album/Rip/Disc/Stereo.png",
+        ]);
+        let flat = tree_sc(dir.path(), true);
+        // The areas first, then the chain's sidecars from the outermost directory in; a
+        // name taken gets a number.
+        assert_eq!(
+            names(&flat, "Artist/Album"),
+            ["Stereo", "Multichannel", "folder.jpg", "folder (2).jpg", "Scans", "Stereo.png", "list.m3u"]
+        );
+        assert_eq!(read_sidecar(&flat, "Artist/Album/folder (2).jpg"), b"Artist/Album/Rip/folder.jpg");
+        assert_eq!(names(&flat, "Artist/Album/Scans"), ["back.jpg"]);
+        // Without --flatten each sits in its own directory, with the same number.
+        let plain = tree_sc(dir.path(), false);
+        assert_eq!(names(&plain, "Artist/Album"), ["Rip", "folder.jpg"]);
+        assert_eq!(names(&plain, "Artist/Album/Rip/Disc"), ["x", "Scans", "Stereo.png", "list.m3u"]);
+        for (p, f) in [
+            ("Artist/Album/folder.jpg", "Artist/Album/folder.jpg"),
+            ("Artist/Album/Rip/folder.jpg", "Artist/Album/folder (2).jpg"),
+            ("Artist/Album/Rip/Disc/Scans", "Artist/Album/Scans"),
+            ("Artist/Album/Rip/Disc/Scans/back.jpg", "Artist/Album/Scans/back.jpg"),
+            ("Artist/Album/Rip/Disc/list.m3u", "Artist/Album/list.m3u"),
+        ] {
+            assert_eq!(plain.resolve(Path::new(p)), flat.resolve(Path::new(f)), "{p} / {f}");
+        }
+        // `..` of a sidecar folder in the collapsed directory is that directory.
+        let scans = flat.resolve(Path::new("Artist/Album/Scans")).unwrap();
+        assert_eq!(flat.parent_of(scans), flat.resolve(Path::new("Artist/Album")).unwrap());
+        // A collapsed image that is not an SACD image still shows its sidecars.
+        let bad = tempfile::tempdir().unwrap();
+        fs::create_dir_all(bad.path().join("Artist/Album/Rip")).unwrap();
+        fs::write(bad.path().join("Artist/Album/Rip/x.iso"), vec![0u8; 4096]).unwrap();
+        fs::write(bad.path().join("Artist/Album/folder.jpg"), b"art").unwrap();
+        assert_eq!(names(&tree_sc(bad.path(), true), "Artist/Album"), ["folder.jpg"]);
+    }
+
+    #[test]
+    fn sidecar_numbers_are_found_on_a_fresh_mount() {
+        let dir = source(&[
+            "Artist/Album/Rip/Disc/x.iso",
+            "Artist/Album/folder.jpg",
+            "Artist/Album/Rip/Disc/Scans/Inner/back.jpg",
+            "Artist/Box/a.iso",
+            "Artist/Box/b.iso",
+            "Artist/Box/cover.webp",
+            "Artist/Box/Artwork/a.jpg",
+            "top.m3u",
+        ]);
+        for flatten in [false, true] {
+            let all = numbered(&tree_sc(dir.path(), flatten));
+            let mut sidecars = 0;
+            for (path, ino) in &all {
+                // A fresh tree, as after a restart: only the number is known.
+                let t = tree_sc(dir.path(), flatten);
+                let node = t.get(*ino).unwrap_or_else(|| panic!("{path} ({ino:#x}) not found"));
+                assert_eq!(t.resolve(Path::new(path)), Some(*ino), "{path}");
+                if matches!(&*node, Node::Sidecar(_)) {
+                    sidecars += 1;
+                    assert!(!path.ends_with(".dsf") && !path.ends_with(".wav"));
+                }
+            }
+            assert_eq!(sidecars, 5, "flatten {flatten}");
+            // Every number distinct.
+            let mut inos: Vec<u64> = all.iter().map(|(_, i)| *i).collect();
+            inos.sort_unstable();
+            inos.dedup();
+            assert_eq!(inos.len(), all.len());
+        }
+    }
+
+    #[test]
+    fn a_changed_sidecar_is_stale() {
+        let dir = source(&["Artist/x.iso", "Artist/folder.jpg"]);
+        let t = tree_sc(dir.path(), false);
+        let before = sidecar_of(&t, "Artist/folder.jpg");
+        let ino = t.resolve(Path::new("Artist/folder.jpg")).unwrap();
+        fs::write(dir.path().join("Artist/folder.jpg"), b"a new and longer cover").unwrap();
+        let err = t.open_sidecar(&before).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::ESTALE));
+        // The next mount shows the new file under the same number, in a new generation.
+        let t2 = tree_sc(dir.path(), false);
+        assert_eq!(t2.resolve(Path::new("Artist/folder.jpg")), Some(ino));
+        let after = sidecar_of(&t2, "Artist/folder.jpg");
+        assert_ne!(after.generation, before.generation);
+        assert_eq!(read_sidecar(&t2, "Artist/folder.jpg"), b"a new and longer cover");
+    }
+
+    #[test]
+    fn links_are_followed_only_inside_source() {
+        use std::os::unix::fs::symlink;
+        let outer = tempfile::tempdir().unwrap();
+        let root = outer.path().canonicalize().unwrap().join("src");
+        fs::create_dir_all(root.join("Artist/Album/Artwork")).unwrap();
+        fs::create_dir_all(root.join("Shared")).unwrap();
+        fs::create_dir_all(root.join("mnt")).unwrap();
+        symlink(corpus_image(), root.join("Artist/Album/x.iso")).unwrap();
+        fs::write(root.join("Shared/art.jpg"), b"shared art").unwrap();
+        fs::write(root.join("mnt/m.jpg"), b"in the mount").unwrap();
+        fs::write(outer.path().join("secret.jpg"), b"secret").unwrap();
+        let link = |to: &Path, name: &str| symlink(to, root.join("Artist/Album").join(name)).unwrap();
+        link(Path::new("../../Shared/art.jpg"), "inside.jpg");
+        link(&root.join("Shared/art.jpg"), "absolute.jpg");
+        link(Path::new("../../../secret.jpg"), "outside.jpg");
+        link(&outer.path().join("secret.jpg"), "outside-abs.jpg");
+        link(Path::new("../../mnt/m.jpg"), "mount.jpg");
+        link(Path::new("/etc"), "etc.jpg");
+        // A folder link named Artwork is not followed either (directory links never are).
+        symlink(root.join("Shared"), root.join("Artist/Scans")).unwrap();
+        let t = Tree::new(SourceDir::scan_with(&root, &Sidecars::standard(), None).unwrap())
+            .excluding(&root.join("mnt"));
+        assert_eq!(names(&t, "Artist"), ["Album"]);
+        // (An empty sidecar folder is not shown.)
+        assert_eq!(names(&t, "Artist/Album"), ["x", "absolute.jpg", "inside.jpg"]);
+        assert_eq!(read_sidecar(&t, "Artist/Album/inside.jpg"), b"shared art");
+        assert_eq!(read_sidecar(&t, "Artist/Album/absolute.jpg"), b"shared art");
+        // Nothing in the mount point is a sidecar.
+        fs::write(root.join("mnt/x.iso"), b"").unwrap();
+        fs::write(root.join("mnt/folder.jpg"), b"").unwrap();
+        let s = SourceDir::scan_with(&root, &Sidecars::standard(), Some(&root.join("mnt"))).unwrap();
+        let mnt = &s.dirs.iter().find(|(n, _)| n == "mnt").unwrap().1;
+        assert!(mnt.sidecars.is_empty());
     }
 }

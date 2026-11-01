@@ -21,6 +21,7 @@ use sacdfs::engine::{Engine, default_threads};
 use sacdfs::fs::{MAX_READ, SacdFs};
 use sacdfs::index_cache::{self, IndexCache};
 use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
+use sacdfs::sidecar::Sidecars;
 use sacdfs::tree::{Output, SourceDir, Tree};
 
 /// Show the audio of SACD disc images as DSF and WAV files, decoded on demand.
@@ -63,6 +64,12 @@ struct Args {
     /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
     #[arg(long)]
     flatten: bool,
+    /// Files passed through from SOURCE, byte for byte, next to the images' folders: a
+    /// comma-separated list of extensions and folder names ending in / (whose whole content
+    /// passes). `default` is jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/; `-item` removes an
+    /// item (default,-webp), `none` passes nothing.
+    #[arg(long, default_value = "default", value_name = "LIST", value_parser = Sidecars::parse)]
+    sidecars: Sidecars,
     /// Let other users see the mount (needs `user_allow_other` in /etc/fuse.conf).
     #[arg(long)]
     allow_other: bool,
@@ -183,8 +190,14 @@ fn run(args: Args) -> io::Result<()> {
     let cache_dir = index_cache_dir(&args, &mountpoint)?;
     warn_if_not_empty(&mountpoint);
     // Only names are read here; images are opened when their directory is first listed.
-    let root = SourceDir::scan(&source).map_err(|e| with_path(e, &source))?;
-    log::info!("{}: {} image files", source.display(), root.image_count());
+    let root = SourceDir::scan_with(&source, &args.sidecars, Some(&mountpoint))
+        .map_err(|e| with_path(e, &source))?;
+    log::info!(
+        "{}: {} image files; sidecar files: {}",
+        source.display(),
+        root.image_count(),
+        args.sidecars.describe()
+    );
     refuse_images_under_mountpoint(&root, &mountpoint)?;
 
     // Before daemonizing, which changes the working directory.
@@ -210,7 +223,10 @@ fn run(args: Args) -> io::Result<()> {
     };
     let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
     let tree = Arc::new(
-        Tree::with_options(root, Tuning::default(), output).with_flatten(args.flatten).with_pcm(&pcm),
+        Tree::with_options(root, Tuning::default(), output)
+            .with_flatten(args.flatten)
+            .with_pcm(&pcm)
+            .excluding(&mountpoint),
     );
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
@@ -921,9 +937,18 @@ mod tests {
 
     #[test]
     fn images_under_mountpoint() {
-        let leaf = SourceDir { path: "/s/m".into(), dirs: vec![], images: vec!["/s/m/x.iso".into()] };
-        let root =
-            SourceDir { path: "/s".into(), dirs: vec![("m".into(), leaf)], images: vec!["/s/a.iso".into()] };
+        let leaf = SourceDir {
+            path: "/s/m".into(),
+            dirs: vec![],
+            images: vec!["/s/m/x.iso".into()],
+            sidecars: vec![],
+        };
+        let root = SourceDir {
+            path: "/s".into(),
+            dirs: vec![("m".into(), leaf)],
+            images: vec!["/s/a.iso".into()],
+            sidecars: vec![],
+        };
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/m")).is_err());
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/n")).is_ok());
     }

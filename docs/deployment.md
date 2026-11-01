@@ -59,8 +59,8 @@ Each release publishes the image to GitHub's container registry, built for gener
 by the release workflow after the share test (SMB and NFS) passed on it:
 
 ```sh
-docker pull ghcr.io/aclater/sacdfs:0.1.0       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.0 -R aclater/sacdfs
+docker pull ghcr.io/aclater/sacdfs:0.1.1       # a release; :latest is the newest
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.1 -R aclater/sacdfs
 ```
 
 The attestation shows which commit and workflow built it. In the commands below, use
@@ -154,6 +154,7 @@ All settings are environment variables.
 | `SACDFS_PCM_CUTOFF` | (40) | `--pcm-cutoff`: `40`, `30` or `wide` |
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
+| `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB |
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
@@ -250,7 +251,7 @@ The names of screens and fields may differ between releases.
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.1.0
+       image: ghcr.io/aclater/sacdfs:0.1.1
        restart: unless-stopped
        devices:
          - /dev/fuse
@@ -313,7 +314,7 @@ host networking, on the same NAS as sacdfs.
       # ... as above, without the 445 port mapping ...
       networks:
         sacd:
-          ipv4_address: 172.31.250.10
+          ipv4_address: 172.29.42.10
       environment:
         SACDFS_FORMATS: dsf        # Roon plays DSD and converts to PCM itself
         SACDFS_FLATTEN: "1"
@@ -323,11 +324,11 @@ host networking, on the same NAS as sacdfs.
     sacd:
       ipam:
         config:
-          - subnet: 172.31.250.0/24
+          - subnet: 172.29.42.0/24
   ```
 
   Pick a subnet that nothing else on the NAS uses. In Roon, add the network share
-  `\\172.31.250.10\sacd` with `SMB_USER` and its password.
+  `\\172.29.42.10\sacd` with `SMB_USER` and its password.
 - **Roon's container needs the right to mount SMB.** Roon on Linux mounts a network share with
   the kernel's CIFS client inside its own container. Without the right to mount, it fails with
   `could not mount ...; tried SMB versions 3, 2.1, 2.0, 1.0` and `Unable to apply new
@@ -344,8 +345,15 @@ host networking, on the same NAS as sacdfs.
   hiding the other. In the owner's test it chose sacdfs's copy for some albums and the
   library's for others. So beside existing extracts you aren't always playing from sacdfs.
   Removing the extracts (the space sacdfs saves) removes the ambiguity.
-- **Playlists** can't live on the share yet: sacdfs shows only what it makes from images, and
-  Roon imports playlist entries only from inside the same storage location (#75).
+- **Folder art** works: `folder.jpg`, `cover.jpg` and the other sidecar files next to the
+  images are on the share, byte for byte, so Roon shows your own art instead of falling back
+  to its online art (#79). With `SACDFS_FLATTEN: "1"` the art of a disc's folders sits next
+  to its `Stereo` and `Multichannel` folders. `SACDFS_SIDECARS` changes which files pass.
+- **Playlists** work: an `.m3u` or `.m3u8` file next to the images is on the share, so Roon,
+  which imports playlist entries only from inside the same storage location, imports it
+  (#75). Write its entries as relative paths inside the share, as sacdfs names its files
+  (`Album/Stereo/01 - Title.dsf` with `--flatten`, for a playlist in the artist's folder);
+  sacdfs never rewrites them.
 - **Roon's background audio analysis** reads every track in full, so sacdfs decodes each one
   as Roon adds it. On a NAS-class CPU, multichannel DST areas decode at about 40× real time.
   Expect a burst of CPU load after adding a large library, or set the analysis speed lower in
