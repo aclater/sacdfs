@@ -300,7 +300,7 @@ impl Losses {
                     value.split_once('/').is_some_and(|(n, total)| {
                         number(total) == Some(area_tracks)
                             && number(n).is_some()
-                            && number(n) == served_value("TRCK").and_then(|s| number(s))
+                            && number(n) == served_value("TRCK").and_then(number)
                     })
                 }
                 // A set of one disc, which sacdfs leaves out.
