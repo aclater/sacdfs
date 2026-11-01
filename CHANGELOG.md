@@ -6,6 +6,24 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Cheaper probes (#61): `getxattr` and `listxattr` answer `ENOSYS`, so the kernel stops
+  asking (a second `ls -l` of a 48-file area sent 49 `LISTXATTR` requests, now none), and a
+  missing name gets a negative entry cached for 24 hours (repeated `stat`s of `cover.jpg`,
+  `desktop.ini` and the like reached sacdfs every time, now once). Extended attribute calls
+  now fail with "Operation not supported" instead of "No data available".
+- A track file's modification time moves when its bytes do (#64): WAV files with a
+  non-default `--pcm-cutoff` or `--pcm-gain` show their image's time plus a fixed offset per
+  option set (up to 7 hours), and a future output-version bump moves the times of that
+  format forward again, so that rsync and library scanners see the change. With the default
+  options, the times stay the images' own; NFS generations are unchanged.
+
+### Fixed
+
+- `df` and SMB clients saw a 0-byte filesystem (#62): `statfs` now reports the size of the
+  filesystem holding SOURCE, with nothing free.
+
 ### Documentation
 
 - Server-side figures from the owner's NAS (#21 part 2), in `docs/performance.md`, "On a NAS,

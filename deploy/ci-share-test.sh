@@ -45,11 +45,19 @@ endgroup
 group "Read the corpus over SMB and NFS"
 docker run --rm --network sacdfs-ci --privileged \
     -v "$PWD:/repo:ro" sacdfs-client:ci bash -euxc '
+      # The share has the size of the source filesystem, all of it used (#62).
+      full() {
+        read -r size avail < <(df -B1 --output=size,avail "$1" | tail -n 1)
+        echo "$1: size $size, available $avail"
+        [ "$size" -gt 0 ] && [ "$avail" -eq 0 ]
+      }
       mkdir -p /mnt/smb /mnt/nfs
       mount -t cifs //sacdfs/sacd /mnt/smb -o ro,guest,vers=3.1.1
+      full /mnt/smb
       python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/smb --min 400 --wav
       umount /mnt/smb
       mount -t nfs4 sacdfs:/sacd /mnt/nfs -o ro,vers=4.2
+      full /mnt/nfs
       python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/nfs --min 400 --wav
       umount /mnt/nfs'
 endgroup
