@@ -368,11 +368,24 @@ are decoded, so a library is read about once.
 | Status | Meaning | Delete? |
 |---|---|---|
 | `IDENTICAL` | sacdfs serves the same audio (the `image`, `area` and `track` columns say which track). | Safe for the audio; see `loses` for tags. |
+| `IDENTICAL-PAUSE` | The extract is a served track plus pauses: the track's audio is inside it with silence before and/or after, up to 60 s in all, or it is a track cut short where sacdfs serves only silence beyond the end. The reason says what surrounds the track and how it was measured. | Safe for the audio: the silence is not served, nothing else is lost. |
 | `DIFFERENT` | A track of the same length and channels exists, but its audio differs. | Keep it. |
-| `NO-MATCH` | No track of those images has the file's channel count and length, or the file isn't at SACD's 2.8224 MHz, or no image is in its folder, above it, or in its subfolders (two levels down). The reason names the nearest track by length. | Keep it. |
+| `NO-MATCH` | No track of those images has the file's channel count and length, or the file isn't at SACD's 2.8224 MHz, or no image is in its folder, above it, or in its subfolders (two levels down). The reason names the nearest track by length. It also holds a track plus audio that is not silence (a hidden track, applause, the next track's start), or a track cut short with audio missing: the reason gives the length and level of the extra audio. | Keep it. |
 | `UNSUPPORTED` | A file that can't be compared, such as a DST-compressed DFF; the reason says why. Decompress it (to a plain DSD DFF or DSF) and check again. | Keep it. |
 | `ERROR` | The file is truncated, broken or unreadable, or sacdfs could not read its track. | Keep it until you know why. |
 | `NOT-COMPARABLE` | FLAC or WAV. A CD-layer rip isn't in the SACD image at all, and a PCM conversion of the SACD layer made by another converter never matches sacdfs's WAV bit for bit. | Your call: sacdfs's WAV replaces it only if you prefer it. |
+
+**Pauses and silence.** Extracts made with the pauses kept (`sacd_extract -p`, `pysacd-extract -b`)
+hold the track plus the pause audio before or after it, and older extractors drop the last frame
+of a disc or side. verify looks for the served track inside such an extract (or the extract
+inside the served track) and measures the audio outside the common part, per region. A region is
+**silence** if it is the DSD idle pattern exactly, or the balanced residue of a noise shaper: no
+window of 4096 samples with more than two bits of imbalance between ones and zeros, that is,
+at or below -60.2 dB (one bit reads -66.2 dB). When everything extra is silence the status is
+`IDENTICAL-PAUSE`; otherwise `NO-MATCH` with the length and level of the extra audio (a level
+above -60.2 dB). A person decides about those. Up to 60 s of difference in length is
+considered; sacdfs does not serve pauses, so deleting an `IDENTICAL-PAUSE` extract drops its
+silence. The summary counts these files in the reclaimable space.
 
 **What a deletion would lose.** The `loses` column lists what the extract's tags hold that
 sacdfs's own tag for the track doesn't: `musicbrainz` (MusicBrainz IDs), `art` (embedded
