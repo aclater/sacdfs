@@ -55,8 +55,10 @@ shares.
 
 ## The published image
 
-Each release publishes the image to GitHub's container registry, built for generic x86-64
-by the release workflow after the share test (SMB and NFS) passed on it:
+Each release publishes the image to GitHub's container registry, as one multi-arch tag for **x86_64 and arm64** (Synology ARM models, Raspberry Pi 5, Ampere
+hosts; the runtime picks the right one), each built for a generic CPU by the release workflow
+after the share test (SMB and NFS) passed on that very image, on a native runner of that
+architecture:
 
 ```sh
 docker pull ghcr.io/aclater/sacdfs:0.1.1       # a release; :latest is the newest
@@ -73,7 +75,9 @@ git clone https://github.com/aclater/sacdfs && cd sacdfs
 podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
 ```
 
-`--format docker` keeps the health check, which the OCI image format has no field for. The
+`--format docker` keeps the health check, which the OCI image format has no field for. On arm64 it builds
+with the toolchain's default target, and the converter uses its portable path (there is no
+SIMD kernel for arm64 yet, so WAV conversion costs more CPU there than on x86-64). On x86_64 the
 build compiles sacdfs for generic x86-64, whose WAV converter already uses AVX2 where the CPU
 has it. On a NAS with an AVX2 CPU (most Intel and AMD CPUs since about 2015, including the
 Intel N100 family), `--build-arg RUSTFLAGS="-C target-cpu=x86-64-v3"` builds all of sacdfs
