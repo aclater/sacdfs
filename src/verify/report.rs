@@ -27,6 +27,10 @@ pub const COLUMNS: [&str; 12] = [
 pub enum Status {
     /// sacdfs serves the same audio.
     Identical,
+    /// sacdfs serves the same audio, and the extract differs only by silent pauses: the
+    /// served track inside it, with silence before and after (or a track cut short, where
+    /// sacdfs serves only silence beyond the end) (#93).
+    IdenticalPause,
     /// A track of the same channel and sample counts exists, with other audio.
     Different,
     /// No track of the disc has the file's channel and sample counts.
@@ -41,8 +45,9 @@ pub enum Status {
 
 impl Status {
     /// Every status, in the order the summary lists them.
-    pub const ALL: [Status; 6] = [
+    pub const ALL: [Status; 7] = [
         Status::Identical,
+        Status::IdenticalPause,
         Status::Different,
         Status::NoMatch,
         Status::Unsupported,
@@ -54,12 +59,18 @@ impl Status {
     pub fn as_str(self) -> &'static str {
         match self {
             Status::Identical => "IDENTICAL",
+            Status::IdenticalPause => "IDENTICAL-PAUSE",
             Status::Different => "DIFFERENT",
             Status::NoMatch => "NO-MATCH",
             Status::Unsupported => "UNSUPPORTED",
             Status::Error => "ERROR",
             Status::NotComparable => "NOT-COMPARABLE",
         }
+    }
+
+    /// Whether sacdfs serves the extract's audio (the files whose deletion is safe for audio).
+    pub fn is_match(self) -> bool {
+        matches!(self, Status::Identical | Status::IdenticalPause)
     }
 
     fn parse(s: &str) -> Option<Status> {
@@ -88,11 +99,11 @@ pub struct Row {
     pub channels: Option<u8>,
     /// The extract's samples per channel.
     pub samples: Option<u64>,
-    /// The SHA-256 of its canonical audio, in hex.
+    /// The SHA-256 of its canonical audio, in hex (for IDENTICAL-PAUSE, of the served track's).
     pub sha256: String,
     /// What deleting it would lose.
     pub loses: Losses,
-    /// Why, for any status but IDENTICAL.
+    /// Why, for any status but IDENTICAL (for IDENTICAL-PAUSE, what surrounds the track).
     pub reason: String,
 }
 
