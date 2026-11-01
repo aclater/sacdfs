@@ -369,3 +369,34 @@ fn walkdir(p: &Path) -> Vec<PathBuf> {
     }
     out
 }
+
+/// #98: the image is in a subfolder of the extract's folder, not beside or above it.
+#[test]
+fn image_in_a_subfolder_is_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let corpus = common::corpus().join("images").join("dsd-stereo-mch-2048.iso");
+    let lib = dir.path().join("lib");
+    let link = |rel: &str| {
+        let d = lib.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        std::os::unix::fs::symlink(&corpus, d.join("disc.iso")).unwrap();
+    };
+    link("near/Album (SACD ISO)");
+    link("deep/Disc 1/ISO");
+    link("toodeep/a/b/c");
+    let files = served(&lib);
+    let (_, _, bytes) = files
+        .iter()
+        .find(|(p, _, _)| p.starts_with("near") && p.to_string_lossy().contains("/Stereo/"))
+        .unwrap();
+    for folder in ["near", "deep", "toodeep"] {
+        fs::write(lib.join(folder).join("01 - track.dsf"), bytes).unwrap();
+    }
+    let s = run(&args(&lib, vec![lib.clone()], Vec::new(), None)).unwrap();
+    let by =
+        |folder: &str| s.rows.iter().find(|r| r.path == lib.join(folder).join("01 - track.dsf")).unwrap();
+    assert_eq!(by("near").status, Status::Identical, "{}", by("near").reason);
+    assert_eq!(by("deep").status, Status::Identical, "{}", by("deep").reason);
+    assert_eq!(by("toodeep").status, Status::NoMatch);
+    assert!(by("toodeep").reason.contains("subfolders"), "{}", by("toodeep").reason);
+}

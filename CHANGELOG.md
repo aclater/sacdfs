@@ -19,6 +19,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- `sacdfs verify` looks for images up to two levels below the extract's folder when none is
+  beside or above it, trying every candidate (#98).
 - `sacdfs verify` no longer lists `TRCK` as lost when the extract's `n/N` matches the served
   track number `n` and `N` is the area's track count (#99).
 

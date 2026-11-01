@@ -1311,6 +1311,14 @@ the owner's NAS already used.
   nothing is lost, and 241 of 1,066 IDENTICAL extracts on a real library were reported as
   losing it. Option 2 of the issue (serving `n/N`, a tag-byte change and output version bump)
   was not taken: verify's rule fixes the report without changing any served byte.
+- **Images in subfolders (#98).** An extract belongs to the nearest folder above it that holds
+  images; when there is none, to every folder of images up to two levels below its own folder
+  (`Album/Album (SACD ISO)/disc.iso`), and all their tracks are candidates, as for several
+  images in one folder. *Why:* a common download layout; 17 of a real library's extracts that
+  another checker confirmed were NO-MATCH. Beside or above still wins, so an existing result
+  never changes. The limit of two keeps a file at the top of a big library from trying the whole
+  library; a match still needs the same audio, so a wider net cannot misreport. NO-MATCH now
+  says the subfolders were searched and points to `--map`.
 - **Parallel and bounded.** `--threads N` workers (plain threads, not a rayon pool, so that a
   worker waiting for another's decode of the same track can't be handed that same work by
   work stealing) check files at once, with an engine of N DST decoder threads and a small
