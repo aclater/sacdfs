@@ -46,10 +46,13 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Demuxer`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is tag v0.5.0**, the latest release when 0.1.0's release preparation started
-  (#45). *Why:* the release ships against the newest scarletbook, taken while it passes the
-  correctness gates, and then frozen so that the performance round measures the code that
-  ships. Later releases move the pin in a change of their own.
+- **The pin is tag v0.5.2** (0.1.0 shipped with v0.5.0, the latest release when its release
+  preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
+  while it passes the correctness gates, and then frozen so that the performance round
+  measures the code that ships; each move of the pin is a change of its own, gated like a
+  release (DSF 93/93, the real-disc and corpus comparisons with scarletbook's exact seek
+  index). 0.5.2 was taken for 0.2.0 because its seeking (#28), DSF output and DSD-to-PCM
+  conversion are what sacdfs may offload to it next; the move itself changes no output.
 - **Not used: scarletbook's cursors, seek indexes and cold seeks** (`SeekPolicy::Speculative`),
   nor 0.5.0's cancellation (`CancelToken`) and progress (`Progress`), which work on those
   cursors. *Why:* sacdfs's own frame locator measured faster ([below](#why-not-scarletbooks-seeking)).
