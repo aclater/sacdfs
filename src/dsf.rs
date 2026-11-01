@@ -8,7 +8,9 @@ use scarletbook::output::{
     AlbumArtistFrame, DateFrame, Format, Id3Options, Layout as LibLayout, OutputOptions, PositionSource,
     RegionKind, SourceTrack, TagItem, TagSet, Tags, TextSource,
 };
-use scarletbook::{Area, Toc, Track};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use scarletbook::{Area, Slot, Toc, Track};
 
 /// DSD bytes per channel in one SACD frame (1/75 s at 2.8224 MHz).
 pub const FRAME_BYTES: u64 = 4704;
@@ -67,10 +69,44 @@ pub fn options(area: &Area, track: &Track) -> OutputOptions {
         )
 }
 
+/// Whether multichannel files get [`MC_ALBUM_SUFFIX`] on their album tag (#97). On by default;
+/// `--no-multichannel-album-suffix` turns it off. *Why a process-wide switch:* it is set once
+/// at startup, before any file exists, and it keeps the option out of the tree's and the
+/// handles' signatures, which other work is changing.
+static MC_ALBUM_SUFFIX_ON: AtomicBool = AtomicBool::new(true);
+
+/// Set whether multichannel files get the album suffix (once, at startup).
+pub fn set_mc_album_suffix(on: bool) {
+    MC_ALBUM_SUFFIX_ON.store(on, Ordering::Relaxed);
+}
+
+/// The suffix of the album tag of multichannel files (#97).
+pub const MC_ALBUM_SUFFIX: &str = " (Multichannel)";
+
+/// The album tag of `set` for an area in slot `slot`, with the multichannel suffix if `on`.
+/// A stereo area, or a set without an album, is unchanged.
+///
+/// *Why:* in client tests, Navidrome, LMS, MPD and MinimServer all showed a disc's Stereo and
+/// Multichannel copies as one album (merged, tracks up to 4 times, or two albums with the same
+/// name). Only the audio must match an extract's, not the tag (#82, #97).
+///
+/// Hook for the tag layer (#81): an album name it supplies for the disc wins and gets no
+/// suffix, unless its tags file asks for one; apply that before calling this.
+fn apply_mc_album_suffix(set: &mut TagSet, slot: Slot, on: bool) {
+    if !on || slot != Slot::Multichannel {
+        return;
+    }
+    let Some(album) = set.get(TagItem::Album).first().filter(|a| !a.trim().is_empty()).cloned() else {
+        return;
+    };
+    set.set(TagItem::Album, &format!("{album}{MC_ALBUM_SUFFIX}"));
+}
+
 /// The tag items of a track: the library's from the TOC, with two choices of sacdfs's:
 /// - the album title, artist, publisher and copyright come from the album text, else the disc
 ///   text (the library takes one source, or the disc's first). *Why:* a set's discs share the
 ///   album title, so players group them as one album; a disc title ("Disc 2") would split it.
+/// - the album gets [`MC_ALBUM_SUFFIX`] in a multichannel area (#97), unless turned off.
 /// - no album set for a one-disc set. *Why:* "1/1" says nothing, and sacdfs 0.1 left it out.
 pub fn tag_set(toc: &Toc, area: &Area, track: &Track, options: &OutputOptions) -> TagSet {
     let album = options.clone().with_text_source(TextSource::Album);
@@ -83,6 +119,7 @@ pub fn tag_set(toc: &Toc, area: &Area, track: &Track, options: &OutputOptions) -
             }
         }
     }
+    apply_mc_album_suffix(&mut set, area.slot, MC_ALBUM_SUFFIX_ON.load(Ordering::Relaxed));
     if set.get(TagItem::DiscCount).first().is_some_and(|c| c == "1") {
         set.remove(TagItem::DiscNumber);
         set.remove(TagItem::DiscCount);
@@ -143,6 +180,26 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+
+    #[test]
+    fn album_suffix_only_for_multichannel() {
+        let mk = || {
+            let mut s = TagSet::default();
+            s.set(TagItem::Album, "Title");
+            s
+        };
+        let mut mc = mk();
+        apply_mc_album_suffix(&mut mc, Slot::Multichannel, true);
+        assert_eq!(mc.get(TagItem::Album), ["Title (Multichannel)"]);
+        for (slot, on) in [(Slot::TwoChannel, true), (Slot::Multichannel, false)] {
+            let mut s = mk();
+            apply_mc_album_suffix(&mut s, slot, on);
+            assert_eq!(s.get(TagItem::Album), ["Title"]);
+        }
+        let mut none = TagSet::default();
+        apply_mc_album_suffix(&mut none, Slot::Multichannel, true);
+        assert!(none.get(TagItem::Album).is_empty());
+    }
 
     #[test]
     fn channel_types() {

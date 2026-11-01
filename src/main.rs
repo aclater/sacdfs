@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+mod mount_opts;
+
 use fuser::{Config, MountOption, Session, SessionACL};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
@@ -63,6 +65,10 @@ struct Args {
     /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
     #[arg(long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
     pcm_gain: f32,
+    /// Do not add " (Multichannel)" to the album tag of the files of the multichannel area
+    /// (by default they get it, so players and servers show them as an album of their own).
+    #[arg(long)]
+    no_multichannel_album_suffix: bool,
     /// Collapse each chain of folders below the top level that holds a single image into
     /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
     #[arg(long)]
@@ -88,6 +94,10 @@ struct Args {
     #[arg(long, default_value_t = sacdfs::handles::DEFAULT_MAX_OPEN, value_name = "N",
           value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=1024))]
     max_open_images: usize,
+    /// Append the log to FILE instead of standard error, at info level unless -v says more.
+    /// Without it a background mount logs nowhere, except to the journal under systemd.
+    #[arg(long, value_name = "FILE")]
+    log_file: Option<PathBuf>,
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -149,14 +159,38 @@ fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_some_and(|a| a == "verify") {
         return sacdfs::verify::main(std::env::args_os().skip(1));
     }
-    let args = Args::parse();
+    // `-o` options, as `mount -t fuse.sacdfs` and fstab pass them (#60).
+    let argv = match mount_opts::expand(std::env::args_os().collect()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("sacdfs: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let args = Args::parse_from(argv);
     let level = match args.verbose {
+        // With a log file the `mounted` line and the like are the point of it.
+        0 if args.log_file.is_some() => "info",
         0 => "warn",
         1 => "info",
         2 => "debug",
         _ => "trace",
     };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    let mut logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level));
+    if let Some(path) = &args.log_file {
+        // Opened here, before the fork: a bad path fails the command, and the daemon's
+        // change to / does not matter.
+        match open_log_file(path) {
+            Ok(f) => {
+                logger.target(env_logger::Target::Pipe(Box::new(f)));
+            }
+            Err(e) => {
+                eprintln!("sacdfs: --log-file {}: {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    logger.init();
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -166,11 +200,45 @@ fn main() -> ExitCode {
     }
 }
 
+/// Tells systemd the mount is ready (`READY=1` to `$NOTIFY_SOCKET`, #60), for `Type=notify`.
+/// Nothing happens without the variable. Failure is only logged: the mount works anyway.
+fn sd_notify_ready() {
+    let Some(path) = std::env::var_os("NOTIFY_SOCKET").filter(|p| !p.is_empty()) else { return };
+    if let Err(e) = send_ready(&path) {
+        log::warn!("NOTIFY_SOCKET {}: {e}", path.to_string_lossy());
+    }
+}
+
+/// Sends `READY=1` to the socket at `path` (an `@` first makes it an abstract address).
+fn send_ready(path: &std::ffi::OsStr) -> io::Result<()> {
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::net::{SocketAddr, UnixDatagram};
+    let addr = match path.as_bytes().strip_prefix(b"@") {
+        Some(name) => SocketAddr::from_abstract_name(name)?,
+        None => SocketAddr::from_pathname(Path::new(path))?,
+    };
+    UnixDatagram::unbound()?.send_to_addr(b"READY=1", &addr).map(drop)
+}
+
+/// Opens `path` for appending, creating it with mode 0600 (it can hold file names).
+fn open_log_file(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(path)
+}
+
+/// Whether the daemon keeps standard error: under systemd, with a journal stream and no log
+/// file, it is the journal (#59). `journal_stream` is `$JOURNAL_STREAM`.
+fn keeps_stderr(log_file: bool, journal_stream: bool) -> bool {
+    journal_stream && !log_file
+}
+
 fn run(args: Args) -> io::Result<()> {
     // The wide filter passes up to about 80 kHz, which 88.2 kHz PCM cannot hold (its Nyquist
     // frequency is 44.1 kHz). The converter would quietly use 40 kHz instead: refuse the
     // combination before mounting.
     let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
+    sacdfs::dsf::set_mc_album_suffix(!args.no_multichannel_album_suffix);
     let pcm = PcmConfig { rate, cutoff: args.pcm_cutoff, gain_db: args.pcm_gain };
     if let Err(e) = pcm.validate() {
         return Err(io::Error::new(
@@ -214,7 +282,11 @@ fn run(args: Args) -> io::Result<()> {
     }
 
     // Become a daemon before any thread exists; the parent waits for the mount.
-    let notify = if args.foreground { None } else { Some(daemonize()?) };
+    let notify = if args.foreground {
+        None
+    } else {
+        Some(daemonize(keeps_stderr(args.log_file.is_some(), std::env::var_os("JOURNAL_STREAM").is_some()))?)
+    };
 
     sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
 
@@ -230,12 +302,12 @@ fn run(args: Args) -> io::Result<()> {
         samples_per_frame: rate.samples_per_frame() as u32,
     };
     let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
-    let tree = Arc::new(
-        Tree::with_options(root, Tuning::default(), output)
-            .with_flatten(args.flatten)
-            .with_pcm(&pcm)
-            .excluding(&mountpoint),
-    );
+    let tree = Tree::with_options(root, Tuning::default(), output)
+        .with_flatten(args.flatten)
+        .with_pcm(&pcm)
+        .excluding(&mountpoint);
+    // A directory SOURCE is re-read when it changes (#101); a single image has no directory.
+    let tree = Arc::new(if source.is_dir() { tree.watching(&args.sidecars) } else { tree });
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;
@@ -333,6 +405,7 @@ fn run(args: Args) -> io::Result<()> {
     if let Some(n) = notify {
         n.ok();
     }
+    sd_notify_ready();
     log::info!("mounted {} on {}", source.display(), mountpoint.display());
     let result = serve(session);
     let failed = result.as_ref().err().filter(|e| e.raw_os_error() != Some(libc::ECONNABORTED));
@@ -859,12 +932,12 @@ fn ids() -> (u32, u32) {
 }
 
 /// The daemon side of the pipe to the waiting parent.
-struct Notify(File);
+struct Notify(File, bool);
 
 impl Notify {
     fn ok(mut self) {
         let _ = self.0.write_all(b"\0");
-        redirect_stdio();
+        redirect_stdio(self.1);
     }
 
     fn fail(mut self, e: &io::Error) {
@@ -875,7 +948,7 @@ impl Notify {
 /// Forks. The parent waits until the child reports the mount, then exits; the child
 /// continues in a new session.
 #[allow(unsafe_code)]
-fn daemonize() -> io::Result<Notify> {
+fn daemonize(keep_stderr: bool) -> io::Result<Notify> {
     let mut fds = [0 as libc::c_int; 2];
     // SAFETY: fds is a valid array of two ints for pipe to fill.
     if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
@@ -893,7 +966,7 @@ fn daemonize() -> io::Result<Notify> {
             // a fresh child is not.
             unsafe { libc::setsid() };
             let _ = std::env::set_current_dir("/");
-            Ok(Notify(File::from(w)))
+            Ok(Notify(File::from(w), keep_stderr))
         }
         _ => {
             drop(w);
@@ -914,11 +987,11 @@ fn daemonize() -> io::Result<Notify> {
     }
 }
 
-/// Points standard input, output and error at /dev/null.
+/// Points standard input, output and (unless `keep_stderr`) error at /dev/null.
 #[allow(unsafe_code)]
-fn redirect_stdio() {
+fn redirect_stdio(keep_stderr: bool) {
     let Ok(null) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/null") else { return };
-    for fd in 0..3 {
+    for fd in 0..if keep_stderr { 2 } else { 3 } {
         // SAFETY: dup2 onto the standard descriptors; `null` stays open for the call.
         unsafe { libc::dup2(null.as_raw_fd(), fd) };
     }
@@ -984,6 +1057,38 @@ mod tests {
         };
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/m")).is_err());
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/n")).is_ok());
+    }
+
+    #[test]
+    fn ready_reaches_the_notify_socket() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("notify");
+        let sock = std::os::unix::net::UnixDatagram::bind(&p).unwrap();
+        send_ready(p.as_os_str()).unwrap();
+        let mut buf = [0u8; 16];
+        let n = sock.recv(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"READY=1");
+        assert!(send_ready(d.path().join("none").as_os_str()).is_err());
+    }
+
+    #[test]
+    fn stderr_kept_only_for_the_journal() {
+        assert!(keeps_stderr(false, true));
+        assert!(!keeps_stderr(true, true));
+        assert!(!keeps_stderr(false, false));
+    }
+
+    #[test]
+    fn log_file_is_appended_privately() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("log");
+        writeln!(open_log_file(&p).unwrap(), "one").unwrap();
+        writeln!(open_log_file(&p).unwrap(), "two").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "one\ntwo\n");
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(open_log_file(&d.path().join("no/such/log")).is_err());
     }
 
     #[test]
