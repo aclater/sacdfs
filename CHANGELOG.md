@@ -26,6 +26,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- `docs/deployment.md`, Roon: discs also present as extracted files are merged by Roon,
+  which may play either copy; playlists can't live on the share yet (#75).
 - Server-side figures from the owner's NAS (#21 part 2), in `docs/performance.md`, "On a NAS,
   server-side". The published 0.1.0 image ran as a TrueNAS SCALE 25.10 app, serving over NFS
   and SMB on the LAN:
