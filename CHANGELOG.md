@@ -19,6 +19,10 @@ All notable changes to sacdfs are recorded here. The format follows
 - The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
   by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
 
+### Documentation
+
+- CI: a "no private names" check of commit identities and tracked files (`scripts/check-private-names.sh`, adapted from pysacd's). The Roon example in `docs/deployment.md` uses an arbitrary container subnet.
+
 ## [0.1.1] - 2026-11-01
 
 Folder art, scans and playlists for players such as Roon, and far fewer requests per file. These come from a real-world Roon test on a NAS. scarletbook 0.5.2. The audio files are byte-identical to 0.1.0's.

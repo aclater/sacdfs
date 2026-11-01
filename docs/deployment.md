@@ -314,7 +314,7 @@ host networking, on the same NAS as sacdfs.
       # ... as above, without the 445 port mapping ...
       networks:
         sacd:
-          ipv4_address: 172.31.250.10
+          ipv4_address: 172.29.42.10
       environment:
         SACDFS_FORMATS: dsf        # Roon plays DSD and converts to PCM itself
         SACDFS_FLATTEN: "1"
@@ -324,11 +324,11 @@ host networking, on the same NAS as sacdfs.
     sacd:
       ipam:
         config:
-          - subnet: 172.31.250.0/24
+          - subnet: 172.29.42.0/24
   ```
 
   Pick a subnet that nothing else on the NAS uses. In Roon, add the network share
-  `\\172.31.250.10\sacd` with `SMB_USER` and its password.
+  `\\172.29.42.10\sacd` with `SMB_USER` and its password.
 - **Roon's container needs the right to mount SMB.** Roon on Linux mounts a network share with
   the kernel's CIFS client inside its own container. Without the right to mount, it fails with
   `could not mount ...; tried SMB versions 3, 2.1, 2.0, 1.0` and `Unable to apply new
