@@ -21,4 +21,5 @@ pub mod pcm;
 pub mod sidecar;
 pub mod track;
 pub mod tree;
+pub mod verify;
 pub mod wav;

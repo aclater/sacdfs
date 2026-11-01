@@ -125,6 +125,25 @@ still open, the mount is detached instead, and sacdfs stops when the last one is
 each option does in detail, and the seek index cache, are in the
 [user guide](docs/user-guide.md#options).
 
+## Before you delete extracted files
+
+Already have DSF or DFF files extracted from your images? `sacdfs verify` checks, file by
+file, whether sacdfs serves the same audio, so that you can delete the extracts and keep only
+the images. It never deletes or changes anything.
+
+```sh
+sacdfs verify -o report.tsv ~/music/sacd-images                 # extracts next to the images
+sacdfs verify -o report.tsv --map ~/music/dsf ~/music/sacd-images \
+    ~/music/sacd-images ~/music/dsf                              # extracts in a tree of their own
+```
+
+Each file gets a status, IDENTICAL, DIFFERENT, NO-MATCH, UNSUPPORTED (such as DST-compressed
+DFF), ERROR, or NOT-COMPARABLE (FLAC and WAV), with the reason; the summary gives the space
+that deleting the IDENTICAL files would free, and which of them carry tags sacdfs doesn't
+serve (MusicBrainz IDs, embedded art, ReplayGain, others). Tags, padding and the container
+don't count: only the audio is compared. Details are in the
+[user guide](docs/user-guide.md#before-you-delete-extracts).
+
 ## Layout
 
 ```
