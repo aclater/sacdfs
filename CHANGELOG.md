@@ -6,6 +6,19 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts
+  a scarletbook provisional (cold) reading or, after a remount, one from the saved seek hints;
+  sacdfs's own frame locator is gone. Cold seeks make fewer calls to the image (3.06 a seek on
+  average on the real discs, was 4.44; DST areas 3.0 to 3.4, were 4.8 to 5.5), warm ones one
+  call with fewer bytes (84 KiB, was 110). Seek times through the mount are within 15 % of
+  0.1's, and output is unchanged (DSF gate 93/93). Areas whose layout scarletbook finds
+  suspect are read exactly. Details and figures: `docs/design.md`, "Seeking", and
+  `docs/performance.md`.
+- The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
+  by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
+
 ## [0.1.1] - 2026-11-01
 
 Folder art, scans and playlists for players such as Roon, and far fewer requests per file. These come from a real-world Roon test on a NAS. scarletbook 0.5.2. The audio files are byte-identical to 0.1.0's.

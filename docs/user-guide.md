@@ -67,18 +67,18 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
 - `--sidecars LIST` chooses which other files of `SOURCE` (folder art, scans, playlists) are
   passed through next to the images ([Sidecar files](#sidecar-files-art-scans-playlists)).
 
-**The seek index cache** (`--index-cache DIR`, `--no-index-cache`). sacdfs learns where the
-frames are in each image as it reads, and keeps what it learnt in `$XDG_CACHE_HOME/sacdfs`
-(else `~/.cache/sacdfs`), so that a seek after a remount or a reboot needs about one read of
-the image instead of four or five. That matters most when the images are on a network share,
-where each read is a round trip.
-- One small file per image (a few tens of KB for a disc played through), named by a hash of
-  the image's path, never the path itself; 32 MiB in all, the least recently used files
-  removed first. Written every 30 seconds if something changed, and at unmount. It never
-  leaves the machine.
-- An image whose size or modification time changes misses its entry. sacdfs never trusts the
-  cache: every saved position is checked when it is used, so a stale or damaged cache can only
-  make a seek slower, never wrong. Deleting the directory is always safe.
+**The seek index cache** (`--index-cache DIR`, `--no-index-cache`). As it reads, sacdfs (through
+scarletbook) records where frames are in each image, and keeps those seek hints in
+`$XDG_CACHE_HOME/sacdfs` (else `~/.cache/sacdfs`), so that a seek after a remount or a reboot
+near a place read before needs one read of the image instead of three or four. That matters
+most when the images are on a network share, where each read is a round trip.
+- One small file per image (a few KB per area), named by a hash of the image's path, never the
+  path itself; 32 MiB in all, the least recently used files removed first. Written every 30
+  seconds if something changed, and at unmount. It never leaves the machine. sacdfs 0.2 writes
+  a new format and ignores 0.1's files (and 0.1 ignores 0.2's): each costs only a cold seek.
+- An image whose size or modification time changes misses its entry. A loaded entry is
+  checked as it is used, so a stale or damaged cache can only make a seek slower, never wrong.
+  Deleting the directory is always safe.
 - `--no-index-cache` starts every mount with an empty index (used for measurements).
 
 **Unmounting.** `fusermount3 -u MOUNTPOINT`, or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
