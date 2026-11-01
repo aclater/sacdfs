@@ -238,6 +238,11 @@ The names of screens and fields may differ between releases.
      the YAML below. This changes the NAS's network and service settings.
    - **If you don't use TrueNAS's own SMB and NFS services:** leave them stopped and publish
      `"445:445"` and `"2049:2049"`.
+   - **For apps on the same NAS only** (Roon, for example; see
+     [below](#roon-on-the-same-nas)): give the app's container a fixed address on a Docker
+     network of its own. Another app on the NAS reaches sacdfs there on port 445 itself, and
+     nothing clashes with TrueNAS's services. LAN clients can't reach that address; for them,
+     use one of the ways above.
 3. **Install it with YAML.** Apps, Discover Apps, Custom App, then "Install via YAML" (the
    form-based custom app may not offer every setting below). Paste a Compose file like
    this, with your dataset path and, if you use an alias address, the address in `ports`:
@@ -291,6 +296,53 @@ The names of screens and fields may differ between releases.
 The same YAML, without the TrueNAS paths, works on other NAS systems that run Docker
 (Unraid, Synology Container Manager, OpenMediaVault), as far as they allow `/dev/fuse` and
 the two capabilities.
+
+#### Roon on the same NAS
+
+Tested with Roon Server's official image (`ghcr.io/roonlabs/roonserver`) as a TrueNAS app with
+host networking, on the same NAS as sacdfs.
+
+- **Why a container-network address:** Roon's "Add network share" has no port field, so it
+  needs SMB on port 445, which TrueNAS's own SMB service already holds. Give sacdfs a fixed
+  address on a Docker network of its own instead. Roon, on the host network, reaches it there
+  on 445:
+
+  ```yaml
+  services:
+    sacdfs:
+      # ... as above, without the 445 port mapping ...
+      networks:
+        sacd:
+          ipv4_address: 172.31.250.10
+      environment:
+        SACDFS_FORMATS: dsf        # Roon plays DSD and converts to PCM itself
+        SACDFS_FLATTEN: "1"
+        SMB_USER: music
+        SMB_PASSWORD: change-me
+  networks:
+    sacd:
+      ipam:
+        config:
+          - subnet: 172.31.250.0/24
+  ```
+
+  Pick a subnet that nothing else on the NAS uses. In Roon, add the network share
+  `\\172.31.250.10\sacd` with `SMB_USER` and its password.
+- **Roon's container needs the right to mount SMB.** Roon on Linux mounts a network share with
+  the kernel's CIFS client inside its own container. Without the right to mount, it fails with
+  `could not mount ...; tried SMB versions 3, 2.1, 2.0, 1.0` and `Unable to apply new
+  capability set`.
+  - Fix it by adding `cap_add: [SYS_ADMIN, DAC_READ_SEARCH]` and
+    `security_opt: [apparmor=unconfined]` to the **Roon** app. Roon then mounts the share and
+    logs `[roon/cifs] Connected`.
+  - This gives Roon's container the same rights as sacdfs's. That's a trade-off: it is
+    Roon's own way of reading network shares.
+- **Show DSF only.** With both formats, every track appears twice in Roon. Roon plays DSD
+  natively and converts it to PCM where an endpoint needs that.
+- **Roon's background audio analysis** reads every track in full, so sacdfs decodes each one
+  as Roon adds it. On a NAS-class CPU, multichannel DST areas decode at about 40× real time.
+  Expect a burst of CPU load after adding a large library, or set the analysis speed lower in
+  Roon's settings.
 
 ## Mounting the shares on clients
 

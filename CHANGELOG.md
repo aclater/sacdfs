@@ -42,6 +42,10 @@ All notable changes to sacdfs are recorded here. The format follows
     (the simplest) or give the app an alias address. Client mounts on other ports are added.
   - **Logs:** NFS-Ganesha's harmless D-Bus and UDP lines are explained.
   - **libsmbclient:** a note on how clients built on libsmbclient show mapped names.
+  - **Roon on the same NAS:** tested. sacdfs gets a fixed address on its own Docker network,
+    so Roon reaches its SMB share on port 445 without clashing with the NAS's own SMB.
+    Roon's container needs `SYS_ADMIN`, `DAC_READ_SEARCH` and AppArmor unconfined to mount
+    the share. DSF only, so tracks don't appear twice.
 
 ## [0.1.0] - 2026-11-01
 
