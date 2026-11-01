@@ -6,6 +6,25 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- Server-side figures from the owner's NAS (#21 part 2), in `docs/performance.md`, "On a NAS,
+  server-side". The published 0.1.0 image ran as a TrueNAS SCALE 25.10 app, serving over NFS
+  and SMB on the LAN:
+  - **Cold seeks:** 15 to 22 ms from the NAS's cache, and 31 to 61 ms (worst 92 ms) from its
+    hard disks, against a target of 25 ms.
+  - **Straight reads:** stereo at the client's 2.5 Gbit/s link, and 6-channel DST at 65 to
+    83 MB/s.
+  - **4 players and a tagger over NFS:** worst reads 52 to 133 ms, all of them first touches
+    of the disks.
+  - **A stall:** one SMB read waited about 6 hours, not reproduced since (#72).
+- `docs/deployment.md`, TrueNAS steps:
+  - **Tested:** they were tested on a real system and worked as written.
+  - **Ports:** when the NAS's own SMB and NFS services hold 445 and 2049, publish other ports
+    (the simplest) or give the app an alias address. Client mounts on other ports are added.
+  - **Logs:** NFS-Ganesha's harmless D-Bus and UDP lines are explained.
+  - **libsmbclient:** a note on how clients built on libsmbclient show mapped names.
+
 ## [0.1.0] - 2026-11-01
 
 The first release.
