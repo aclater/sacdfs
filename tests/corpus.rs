@@ -51,8 +51,9 @@ fn files_of(tree: &Tree) -> BTreeMap<(String, u32), (PathBuf, Arc<TrackFile>)> {
 #[derive(Debug, Default)]
 struct Stats {
     tracks: usize,
-    index_points: usize,
-    irregular_areas: usize,
+    seek_hints: usize,
+    provisional_readings: u64,
+    exact_readings: u64,
 }
 
 /// Checks one case with one search tuning and cache size.
@@ -102,9 +103,11 @@ fn check_case(case: &Value, tuning: Tuning, cache: usize, stats: &mut Stats) {
     }
     if let Some((_, (_, f))) = files.iter().next() {
         for a in 0..f.disc.areas.len() {
-            stats.index_points += f.disc.index_points(a);
-            stats.irregular_areas += usize::from(f.disc.is_irregular(a));
+            stats.seek_hints += f.disc.seek_hints(a);
         }
+        let (provisional, exact) = f.disc.readings();
+        stats.provisional_readings += provisional;
+        stats.exact_readings += exact;
     }
 }
 
@@ -118,8 +121,9 @@ fn corpus_with_default_search() {
     assert!(stats.tracks > 100, "{stats:?}");
 }
 
-/// Every read that does not continue its cursor searches, down to one sector, and nothing
-/// is cached: the search must find every frame of every track, hostile images included.
+/// Every read that does not continue its cursor starts a new reading, provisionally wherever
+/// the library allows it, and nothing is cached: every frame of every track must be found,
+/// hostile images included.
 #[test]
 fn corpus_with_exhaustive_search_and_no_cache() {
     let mut stats = Stats::default();
@@ -127,7 +131,7 @@ fn corpus_with_exhaustive_search_and_no_cache() {
         check_case(&case, Tuning::exhaustive(), 0, &mut stats);
     }
     eprintln!("{stats:?}");
-    assert!(stats.index_points > 100, "{stats:?}");
+    assert!(stats.provisional_readings > 100 && stats.seek_hints > 100, "{stats:?}");
 }
 
 /// Random reads, each from a fresh reader (so every one locates its frames), equal the same
