@@ -66,7 +66,7 @@ const KIND_FILE: u64 = 2 << 14;
 /// mtime moves forward (#64). 2: written by scarletbook's DSF layout, whose tag has `TCOP`
 /// as ID3v2.4 asks (#28).
 /// 3: multichannel files' album tag has the suffix " (Multichannel)" (#97).
-const DSF_VERSION: u32 = 3;
+pub const DSF_VERSION: u32 = 3;
 
 /// Version of the bytes of WAV files: bump when a change makes the same track's WAV file
 /// differ (converter coefficients, rounding, header, tags). 2: the `id3 ` chunk is the DSF
