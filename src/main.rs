@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+mod mount_opts;
+
 use fuser::{Config, MountOption, Session, SessionACL};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
@@ -157,7 +159,15 @@ fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_some_and(|a| a == "verify") {
         return sacdfs::verify::main(std::env::args_os().skip(1));
     }
-    let args = Args::parse();
+    // `-o` options, as `mount -t fuse.sacdfs` and fstab pass them (#60).
+    let argv = match mount_opts::expand(std::env::args_os().collect()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("sacdfs: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let args = Args::parse_from(argv);
     let level = match args.verbose {
         // With a log file the `mounted` line and the like are the point of it.
         0 if args.log_file.is_some() => "info",
@@ -188,6 +198,27 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Tells systemd the mount is ready (`READY=1` to `$NOTIFY_SOCKET`, #60), for `Type=notify`.
+/// Nothing happens without the variable. Failure is only logged: the mount works anyway.
+fn sd_notify_ready() {
+    let Some(path) = std::env::var_os("NOTIFY_SOCKET").filter(|p| !p.is_empty()) else { return };
+    if let Err(e) = send_ready(&path) {
+        log::warn!("NOTIFY_SOCKET {}: {e}", path.to_string_lossy());
+    }
+}
+
+/// Sends `READY=1` to the socket at `path` (an `@` first makes it an abstract address).
+fn send_ready(path: &std::ffi::OsStr) -> io::Result<()> {
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::net::{SocketAddr, UnixDatagram};
+    let addr = match path.as_bytes().strip_prefix(b"@") {
+        Some(name) => SocketAddr::from_abstract_name(name)?,
+        None => SocketAddr::from_pathname(Path::new(path))?,
+    };
+    UnixDatagram::unbound()?.send_to_addr(b"READY=1", &addr).map(drop)
 }
 
 /// Opens `path` for appending, creating it with mode 0600 (it can hold file names).
@@ -374,6 +405,7 @@ fn run(args: Args) -> io::Result<()> {
     if let Some(n) = notify {
         n.ok();
     }
+    sd_notify_ready();
     log::info!("mounted {} on {}", source.display(), mountpoint.display());
     let result = serve(session);
     let failed = result.as_ref().err().filter(|e| e.raw_os_error() != Some(libc::ECONNABORTED));
@@ -1025,6 +1057,18 @@ mod tests {
         };
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/m")).is_err());
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/n")).is_ok());
+    }
+
+    #[test]
+    fn ready_reaches_the_notify_socket() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("notify");
+        let sock = std::os::unix::net::UnixDatagram::bind(&p).unwrap();
+        send_ready(p.as_os_str()).unwrap();
+        let mut buf = [0u8; 16];
+        let n = sock.recv(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"READY=1");
+        assert!(send_ready(d.path().join("none").as_os_str()).is_err());
     }
 
     #[test]

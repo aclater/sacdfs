@@ -114,6 +114,8 @@ struct Candidate {
     file: Arc<TrackFile>,
     /// "Stereo" or "Multichannel".
     area: String,
+    /// How many tracks the area has.
+    area_tracks: usize,
     digest: OnceLock<Result<[u8; 32], String>>,
     tag: OnceLock<Vec<id3::Frame>>,
 }
@@ -367,17 +369,23 @@ fn folder_candidates(tree: &Tree, root: &Path, folder: &Path) -> Vec<Arc<Candida
             continue;
         }
         for area in tree.children(image.ino).iter().flat_map(|c| c.iter()).filter(|e| e.is_dir) {
-            for f in tree.children(area.ino).iter().flat_map(|c| c.iter()) {
-                if let Some(Node::File(file)) = tree.get(f.ino).as_deref() {
-                    if file.format() == Format::Dsf {
-                        out.push(Arc::new(Candidate {
-                            file: file.clone(),
-                            area: area.name.to_string_lossy().into_owned(),
-                            digest: OnceLock::new(),
-                            tag: OnceLock::new(),
-                        }));
-                    }
-                }
+            let files: Vec<Arc<TrackFile>> = tree
+                .children(area.ino)
+                .iter()
+                .flat_map(|c| c.iter())
+                .filter_map(|f| match tree.get(f.ino).as_deref() {
+                    Some(Node::File(file)) if file.format() == Format::Dsf => Some(file.clone()),
+                    _ => None,
+                })
+                .collect();
+            for file in &files {
+                out.push(Arc::new(Candidate {
+                    file: file.clone(),
+                    area: area.name.to_string_lossy().into_owned(),
+                    area_tracks: files.len(),
+                    digest: OnceLock::new(),
+                    tag: OnceLock::new(),
+                }));
             }
         }
     }
@@ -491,14 +499,19 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
     row.image = Some(cand.image().to_owned());
     row.area = cand.area.clone();
     row.track = Some(cand.file.number);
-    row.loses = losses(&audio, &mut src, cand.tag(ctx.engine));
+    row.loses = losses(&audio, &mut src, cand.tag(ctx.engine), cand.area_tracks);
     row.with(status, reason)
 }
 
 /// What the extract's tags hold that the served file's tag does not.
-fn losses(audio: &container::Audio, src: &mut dyn Source, served: &[id3::Frame]) -> Losses {
+fn losses(
+    audio: &container::Audio,
+    src: &mut dyn Source,
+    served: &[id3::Frame],
+    area_tracks: usize,
+) -> Losses {
     let mut l = match audio.read_id3(src) {
-        Ok(Some(t)) => Losses::between(&id3::frames(&t), served),
+        Ok(Some(t)) => Losses::between(&id3::frames(&t), served, area_tracks),
         Ok(None) => Losses::default(),
         Err(size) => Losses { unread: Some(format!("a tag of {size} bytes")), ..Losses::default() },
     };
