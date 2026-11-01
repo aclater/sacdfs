@@ -56,8 +56,8 @@ Sigstore) shows that this repository's release workflow built it, from which com
 ### Container image
 
 ```sh
-docker pull ghcr.io/aclater/sacdfs:0.1.0        # or :latest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.0 -R aclater/sacdfs
+docker pull ghcr.io/aclater/sacdfs:0.1.1        # or :latest
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.1 -R aclater/sacdfs
 ```
 
 It runs sacdfs with Samba and NFS-Ganesha for a NAS, built for generic x86-64; how to run it
@@ -69,7 +69,7 @@ sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through
 and mounts with `fusermount3`, without linking libfuse.
 
 ```sh
-cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.1.0
+cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.1.1
 # or, in a clone:
 cargo build --release && target/release/sacdfs --help
 ```
