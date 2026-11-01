@@ -75,6 +75,14 @@ All notable changes to sacdfs are recorded here. The format follows
 - The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
   by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
 
+### Known issues
+
+- Reading plain-DSD WAV files is about 29 % slower than in 0.1.1 (a whole stereo area,
+  2.07 s against 2.68 s on a Zen 5 machine). This comes from the PCM conversion, which is now
+  scarletbook-pcm's. DST WAV files are about 10 % slower and DSF files are faster. It is still
+  about 1,000x real time per stream. The fix is being worked on upstream
+  (scarletbook-rs#216), and sacdfs will pick it up in a later release.
+
 ### Documentation
 
 - CI: a "no private names" check of commit identities and tracked files (`scripts/check-private-names.sh`, adapted from pysacd's). The Roon example in `docs/deployment.md` uses an arbitrary container subnet.
