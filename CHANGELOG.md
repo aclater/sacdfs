@@ -12,7 +12,9 @@ All notable changes to sacdfs are recorded here. The format follows
   files bit-identical to the reference extractor on all 93 tracks of the real discs, the same
   WAV bytes). One test changed: on the hostile corpus image `area-audio-past-end`,
   scarletbook's provisional (cold) readings now all equal its exact ones, where 0.5.0's
-  differed; the test still checks that any that differ are refuted.
+  differed, and no corpus image gives a differing one on 0.5.2. A new test makes one (a copy
+  of a corpus image with late audio sectors written again near the area's start) and checks
+  that every provisional reading that differs is refuted.
 
 - Cheaper probes (#61): `getxattr` and `listxattr` answer `ENOSYS`, so the kernel stops
   asking (a second `ls -l` of a 48-file area sent 49 `LISTXATTR` requests, now none), and a
