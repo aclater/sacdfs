@@ -104,10 +104,8 @@ its own mount, never one started on the same path since.
 - A dead mount of another file system, or any FUSE mount of another user, is left alone:
   sacdfs fails at once and says what is there.
 
-**CPU code paths.** The WAV converter picks its code when it starts: AVX2 (x86-64-v3) where the
-CPU has it, SSE2 otherwise, with the same output bit for bit. `SACDFS_SIMD=baseline`, `v3` or
-`v4` forces a path, for tests and measurements; the AVX-512 path (`v4`) is not the default
-because it measured slower.
+**CPU code paths.** The WAV converter (scarletbook-pcm) picks its code when it starts: AVX2 and
+FMA where the CPU has them, SSE2 otherwise, with the same output bit for bit.
 
 ## Formats
 
