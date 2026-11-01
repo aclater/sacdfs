@@ -45,8 +45,8 @@ The images on a local disk, in the page cache unless noted; the targets of #6.
 | The same, image evicted from the page cache | < 20 ms | DST stereo **2.20 ms**, plain DSD **1.48 ms** | | met |
 | Cold seek, WAV (DST stereo) | < 20 ms | **2.7 ms** (worst 3.3 ms); the same seeks in DSF 1.7 ms | 2.5 ms | met |
 | Seek with a warm seek index (after a remount) | | DST stereo **1.61 ms**, plain DSD **0.48 ms** | | |
-| DSD-to-PCM conversion, stereo, 176.4 kHz, default 40 kHz filter, one core | at least 100x real time | **308x** (AVX2 code, chosen at run time); 247x with SSE2 only | 309x | met |
-| The same with the wide (80 kHz) filter | at least 100x real time | **149x**; 108x with SSE2 only | 149x | met |
+| DSD-to-PCM conversion, stereo, 176.4 kHz, default 40 kHz filter, one core | at least 100x real time | **298x** (scarletbook-pcm 0.5.3, #84; sacdfs 0.1's own converter: 308x) | 273x | met |
+| The same with the wide (80 kHz) filter | at least 100x real time | **210x** (0.1: 149x) | 190x | met |
 | `ls -l`, `stat`, reading tags | no decoding or conversion | `stat` of all 186 files: 13 ms. WAV header and tags: no read of the image. A DSF file's header read decodes the track's first frames (222 KB of the image per file, [why](design.md#read-ahead)) | | met for WAV; DSF headers decode |
 | Memory | bounded by `--cache-mb` | peak resident memory **169 to 356 MiB** with the default 256 MiB cache, during 4 players and a tagger | 169 to 356 MiB | met |
 | 4 players and a tagger walking the library | no read over 50 ms | worst read **36.2 ms**, 99th percentile 0.24 to 3.2 ms; the tagger's worst file 26.9 ms | worst 23.6 ms | met |
@@ -254,54 +254,54 @@ in the page cache; seconds, means of 3, and sacdfs's CPU time:
   decoding, so the copy sets the pace; on DST areas decoding dominates, and conversion adds
   about 20 % CPU.
 - **The x86-64-v3 build** reads DST areas 10 % (stereo) to 18 % (6 channels) faster, since
-  scarletbook's DST decoder is then compiled for AVX2 too; its converter is the same AVX2 code
-  a generic build already chooses at run time ([below](#converter-throughput)). Plain DSD WAV
-  reads are the same in both.
+  scarletbook's DST decoder is then compiled for AVX2 too; the converter chooses its AVX2 code
+  at run time in either build ([below](#converter-throughput)). Plain DSD WAV reads are the
+  same in both.
 
 ## Converter throughput
 
-The DSD-to-PCM converter alone: `cargo bench --bench pcm` (criterion, one frame at a time with
-both neighbours, noise-like DSD, 1 s warm-up and 3 s measurement per case), pinned to one core
-whose other hardware thread was idle, 3 rounds. The generic build with each of its three code
-paths forced by `SACDFS_SIMD`: *baseline* (SSE2), *v3* (AVX2, what runs on an AVX2 CPU by
-default) and *v4* (AVX-512, built and tested but not the default); and the x86-64-v3 build. µs
-per frame (1/75 s), and in brackets the multiple of real time per stereo stream; for 6 channels
-per stereo pair.
+Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (0.5.3); the figures of
+sacdfs's own converter, which it replaced, are kept for comparison.
 
-| Ch | Filter | Rate | baseline | **v3 (default)** | v4 | v3 build |
-|---|---|---|---|---|---|---|
-| 2 | 40 kHz | 88.2 kHz | 43.3 (308x) | **36.4 (367x)** | 44.2 (302x) | 36.1 (370x) |
-| 2 | 40 kHz | 176.4 kHz | 54.0 (247x) | **43.3 (308x)** | 49.5 (269x) | 43.1 (309x) |
-| 2 | 40 kHz | 352.8 kHz | 66.2 (201x) | **53.0 (252x)** | 58.1 (230x) | 53.0 (252x) |
-| 2 | 30 kHz | 88.2 kHz | 64.6 (207x) | **48.5 (275x)** | 53.3 (250x) | 48.6 (274x) |
-| 2 | 30 kHz | 176.4 kHz | 95.0 (140x) | **68.0 (196x)** | 66.4 (201x) | 67.7 (197x) |
-| 2 | 30 kHz | 352.8 kHz | 107.5 (124x) | **78.4 (170x)** | 75.4 (177x) | 78.0 (171x) |
-| 2 | wide 80 kHz | 176.4 kHz | 123.5 (108x) | **89.6 (149x)** | 92.4 (144x) | 89.5 (149x) |
-| 2 | wide 80 kHz | 352.8 kHz | 115.4 (116x) | **85.9 (155x)** | 96.8 (138x) | 84.2 (158x) |
-| 6 | 40 kHz | 88.2 kHz | 130.4 (307x) | **109.0 (367x)** | 132.6 (302x) | 108.7 (368x) |
-| 6 | 40 kHz | 176.4 kHz | 161.7 (247x) | **129.5 (309x)** | 148.4 (270x) | 129.6 (309x) |
-| 6 | 40 kHz | 352.8 kHz | 198.5 (201x) | **159.4 (251x)** | 174.0 (230x) | 159.1 (251x) |
-| 6 | 30 kHz | 88.2 kHz | 193.1 (207x) | **145.2 (275x)** | 159.9 (250x) | 145.6 (275x) |
-| 6 | 30 kHz | 176.4 kHz | 284.5 (141x) | **204.0 (196x)** | 199.4 (201x) | 203.0 (197x) |
-| 6 | 30 kHz | 352.8 kHz | 321.8 (124x) | **235.1 (170x)** | 226.0 (177x) | 233.7 (171x) |
-| 6 | wide 80 kHz | 176.4 kHz | 369.6 (108x) | **268.7 (149x)** | 276.8 (145x) | 268.6 (149x) |
-| 6 | wide 80 kHz | 352.8 kHz | 345.3 (116x) | **257.7 (155x)** | 290.2 (138x) | 252.7 (158x) |
+**How it was measured** (`examples/pcm_compare.rs speed` of #85):
+- 60 s of a real stereo area, decoded and held in memory;
+- converted through `sacdfs::pcm::Converter`, which reads the frames in place and writes 24-bit bytes;
+- in runs of 4 frames with both neighbours, as the WAV path converts plain DSD;
+- best of 3 on one thread, then 32 threads at once;
+- under the benchmark lock, on 2026-11-01.
 
-- Every path meets the 100x bar of #6, the SSE2 path included, and all give the same bytes.
-- **v4 against v3:** faster only with the 30 kHz filter at 176.4 and 352.8 kHz (2 to 4 %),
-  slower everywhere else (up to 22 %). With both hardware threads of a core converting, as
-  the decoder pool does under load, v4 measured 25 to 35 % slower than v3 in #40 (not measured
-  again). So v3 stays the default on this AVX-512 CPU.
-- **The v3 build** converts at the speed of the generic build's v3 path, within 2 %: the
-  converter's hot code is already compiled for AVX2 in every build.
-- **Runs of frames** (#42): plain DSD frames are converted four at a time. The converter alone
-  then costs 41.7 µs per frame against 43.3 µs one at a time (stereo, 176.4 kHz, v3 path);
-  through the mount the gain is fewer, larger jobs on the pool.
-- Making a converter (designing its filters) takes 27 to 41 µs (24 to 36 µs with the v3
-  build), once per worker thread.
-- The 30 kHz filter is not a half-band, so its last stage costs more than the default's; the
-  wide filter at 176.4 kHz is the costliest (a 337-tap stage).
+Multiples of real time per stereo stream:
 
+| Filter | Rate | scarletbook-pcm, generic build | old converter, generic build (AVX2 at run time) | change | scarletbook-pcm, v3 build | old converter, v3 build | change |
+|---|---|---|---|---|---|---|---|
+| 40 kHz | 88.2 kHz | **405x** | 375x | +8 % | 354x | 369x | -4 % |
+| 40 kHz | 176.4 kHz | **298x** | 315x | -5 % | 273x | 316x | -14 % |
+| 40 kHz | 352.8 kHz | **233x** | 257x | -9 % | 219x | 257x | -15 % |
+| 30 kHz | 88.2 kHz | **363x** | 286x | +27 % | 326x | 282x | +16 % |
+| 30 kHz | 176.4 kHz | **259x** | 200x | +30 % | 240x | 201x | +19 % |
+| 30 kHz | 352.8 kHz | **211x** | 175x | +21 % | 198x | 175x | +13 % |
+| wide 80 kHz | 176.4 kHz | **210x** | 151x | +39 % | 190x | 150x | +27 % |
+| wide 80 kHz | 352.8 kHz | **189x** | 158x | +20 % | 173x | 159x | +9 % |
+
+- **All 32 threads**, 176.4 kHz, 40 kHz filter: 3641x in total (generic build) and 3118x (v3 build), against the old converter's 3939x and 3985x.
+- **The 100x bar of #6** is met everywhere, with 89 % margin or more.
+- **The v3 build is slower than the generic one**, by 6 to 13 %. scarletbook-pcm chooses AVX2 and FMA at run time, so a generic build already runs its fastest code, and the x86-64-v3 build compiles it differently. The v3 build still helps sacdfs overall: DST decoding gets 10 to 18 % faster ([straight reads](#straight-reads)).
+- **Frame by frame** (no runs), 176.4 kHz with the 40 kHz filter: 287x (generic) and 265x (v3).
+
+**Through the mount.** The method:
+- WAV files read with `cat` on a fresh mount with `--no-index-cache`, images in the page cache, means of 3;
+- cold WAV seeks as above, 40 per mount on 3 mounts;
+- the same build with either converter (#85's switch), at 176.4 kHz with the 40 kHz filter.
+
+| What | Generic build: old converter | Generic build: scarletbook-pcm | v3 build: old converter | v3 build: scarletbook-pcm |
+|---|---|---|---|---|
+| WAV straight read, DST stereo | 5.06 s, 117 s CPU | 5.33 s (+5 %), 121 s CPU | 4.70 s, 108 s | 4.86 s (+3 %), 113 s |
+| WAV straight read, plain DSD stereo | 2.30 s, 35 s CPU | 2.53 s (+10 %), 39 s CPU | 2.34 s, 36 s | 2.50 s (+7 %), 41 s |
+| WAV straight read, DST 6 channels | 16.42 s, 377 s CPU | 16.84 s (+3 %), 386 s CPU | 14.08 s, 319 s | 14.62 s (+4 %), 334 s |
+| Cold WAV seek, DST stereo, mean (worst) | 0.95 ms (1.63) | 0.97 ms (1.62) | 0.93 ms (1.95) | 0.96 ms (2.31) |
+| Cold WAV seek, plain DSD stereo, mean (worst) | 0.40 ms (1.16) | 0.41 ms (0.93) | 0.38 ms (0.90) | 0.42 ms (1.11) |
+
+Everything is within the owner's 15 % leeway. The largest gap is the plain DSD WAV read, where conversion is the only CPU work: +10 %.
 ## Concurrency and memory
 
 The scenario of #6, for 30 s: four players each reading 128 KiB at a time in real time with a
@@ -463,6 +463,7 @@ against its own "before", on the code of its day).
 | #42 | Plain DSD frames converted four at a time | plain DSD WAV straight read 2.42 → 2.07 s, CPU 48 → 34 s, 1.40x → 1.20x the DSF read |
 | #46 | Concurrent reads of one image (positional reads, an image clone per read) | NFS: tagger's worst file 38–163 → 7–13 ms; players on one image, 99th percentile 13–118 → 2–10 ms |
 | #47 | scarletbook 0.4's seeking measured, sacdfs's locator kept | cold seek 8.84 calls / 373 KiB through scarletbook against 4.31 / 136 with the locator; NFS 21–29 ms against 7–15 ms |
+| #85 | WAV conversion by scarletbook-pcm 0.5.3, sacdfs's converter removed (#84) | converter alone, 176.4 kHz stereo, 40 kHz filter: 315x → 298x (wide 151x → 210x); WAV straight reads +3 to +10 %; cold WAV seeks within 3 % (generic build) |
 | #88 | Seeking moved to scarletbook 0.5.2, the locator removed | cold seek 4.44 → 3.06 calls (DST 4.8–5.5 → 3.0–3.4), 137 → 132 KiB; warm 1.06 → 1.00 calls, 110 → 84 KiB; NFS first-touch DST cold seek median 41 → 30 ms; through the mount within ±12 % locally |
 | (#73) | One malloc arena; the frame cache reuses evicted frames' buffers within its cap | library-import replay, 60 images, peak memory at `--cache-mb` 256 / 16: 473 → 271 MiB, 125 → 58 MiB; after straight reads 965–1 066 → 327 MiB; 6-channel DST straight read DSF 11.11 → 11.55 s, WAV 13.52 → 13.98 s, plain DSD 1.69 → 1.59 s |
 
@@ -476,7 +477,7 @@ time cat /mnt/x/*/Stereo/*.dsf > /dev/null      # or *.wav
 fusermount3 -u /mnt/x
 # calls, bytes and time per seek without FUSE, cold and with a warm seek index
 cargo run --release --example seek_latency -- --seeks 200 --cache /tmp/idx IMAGE...
-# the converter alone; CI runs every case once (-- --test)
+# the converter alone (criterion); CI runs every case once (-- --test)
 RUSTFLAGS="-C target-cpu=x86-64" cargo bench --bench pcm
 ```
 

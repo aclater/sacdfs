@@ -5,8 +5,8 @@
 #     sacdfs-<version>-x86_64-linux.tar.gz (generic x86-64) and
 #     sacdfs-<version>-x86_64-v3-linux.tar.gz (x86-64-v3: AVX2 CPUs), each with COPYING,
 #     README.md and CHANGELOG.md, a .sha256 checksum and a build provenance attestation;
-#   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, attested, after the
-#     container share test passed on that very image.
+#   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
+#     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
 #
 # Dry run: run by hand (workflow_dispatch), or on a pull request that changes the release's
 # files, it builds and tests everything and publishes nothing. Every job or step that
@@ -207,20 +207,30 @@ jobs:
   # The image is built and tested here without any write permission; publishing it (below,
   # on a tag) loads the very image tested.
   image:
-    name: container image
+    name: container image (${{ matrix.arch }})
     needs: preflight
-    runs-on: ubuntu-latest
+    # Native runners for both architectures (#43): each image is tested where it runs.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # RUSTFLAGS is set explicitly (never a toolchain default); arm64 takes none.
+          - {arch: amd64, runner: ubuntu-latest, rustflags: "-C target-cpu=x86-64"}
+          - {arch: arm64, runner: ubuntu-24.04-arm, rustflags: ""}
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+      IMAGE_RUSTFLAGS: ${{ matrix.rustflags }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: Build the image (generic x86-64)
+      - name: Build the image (generic CPU)
         run: |
           docker build -f Containerfile \
-            --build-arg RUSTFLAGS="-C target-cpu=x86-64" \
+            --build-arg RUSTFLAGS="$IMAGE_RUSTFLAGS" \
             --label org.opencontainers.image.version="$VERSION" \
             --label org.opencontainers.image.revision="$GITHUB_SHA" \
             -t sacdfs:release .
@@ -230,11 +240,11 @@ jobs:
         if: always()
         run: docker logs sacdfs 2>&1 | grep -v ' INFO  sacdfs::' | tail -n 200 || true
       - name: Save the tested image
-        run: docker save sacdfs:release | gzip > sacdfs-image.tar.gz && ls -l sacdfs-image.tar.gz
+        run: docker save sacdfs:release | gzip > "sacdfs-image-$ARCH.tar.gz" && ls -l sacdfs-image-*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: image
-          path: sacdfs-image.tar.gz
+          name: image-${{ matrix.arch }}
+          path: sacdfs-image-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
           retention-days: 3
 
@@ -328,7 +338,7 @@ jobs:
             echo "- \`sacdfs-$VERSION-x86_64-linux.tar.gz\`: generic x86-64, for any x86_64 CPU."
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
             echo
-            echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic x86-64)."
+            echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic CPU; amd64 and arm64)."
             echo
             echo "Verify a download: \`sha256sum -c <asset>.sha256\` and \`gh attestation verify <asset> -R $GITHUB_REPOSITORY\`; the image: \`gh attestation verify oci://$IMAGE:$VERSION -R $GITHUB_REPOSITORY\`. See the README, \"Install\"."
             echo
@@ -355,31 +365,53 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          name: image
-      - name: Push
+          pattern: image-*
+      - name: Push both images and the multi-arch manifest
         id: push
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          docker load < sacdfs-image.tar.gz
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # Each architecture's tested image is pushed under <version>-<arch>, then
+          # <version> (and :latest) become a manifest list of the two.
+          for arch in amd64 arm64; do
+            docker load < "image-$arch/sacdfs-image-$arch.tar.gz"
+            docker tag sacdfs:release "$IMAGE:$VERSION-$arch"
+            docker push "$IMAGE:$VERSION-$arch"
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION-$arch")
+            echo "digest_$arch=${digest#*@}" >> "$GITHUB_OUTPUT"
+            docker rmi sacdfs:release
+          done
           tags=("$IMAGE:$VERSION")
           # A pre-release (0.2.0-rc.1) doesn't move :latest.
           [[ "$VERSION" == *-* ]] || tags+=("$IMAGE:latest")
           for t in "${tags[@]}"; do
-            docker tag sacdfs:release "$t"
-            docker push "$t"
+            docker buildx imagetools create -t "$t" "$IMAGE:$VERSION-amd64" "$IMAGE:$VERSION-arm64"
           done
-          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION")
-          echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "pushed ${tags[*]} ($digest)"
-      - name: Attest build provenance
+      - name: Attest build provenance (manifest list)
         if: github.ref_type == 'tag'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Attest build provenance (amd64 image)
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest_amd64 }}
+          push-to-registry: true
+      - name: Attest build provenance (arm64 image)
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest_arm64 }}
           push-to-registry: true
       - name: Log out
         if: always()

@@ -23,8 +23,11 @@ COPY examples examples
 # told otherwise, and many NAS CPUs (Atom, Celeron, Pentium Silver) have no AVX2. The PCM
 # converter still uses AVX2 where the CPU has it (runtime dispatch, #23). Pass
 # --build-arg RUSTFLAGS="-C target-cpu=x86-64-v3" for an AVX2 NAS (about 20 % less CPU for PCM).
-ARG RUSTFLAGS="-C target-cpu=x86-64"
-RUN RUSTFLAGS="$RUSTFLAGS" cargo build --release --locked --bin sacdfs \
+# On arm64 (aarch64) the default is empty: the converter takes its portable path there (#43),
+# and an x86 target-cpu would not build.
+ARG RUSTFLAGS=""
+RUN if [ -z "$RUSTFLAGS" ] && [ "$(uname -m)" = x86_64 ]; then RUSTFLAGS="-C target-cpu=x86-64"; fi \
+ && RUSTFLAGS="$RUSTFLAGS" cargo build --release --locked --bin sacdfs \
  && install -D -m 0755 target/release/sacdfs /out/sacdfs
 
 # Runtime stage: Fedora, for Samba, NFS-Ganesha and fusermount3.

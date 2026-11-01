@@ -10,7 +10,7 @@
 //!
 //! AREA is `Stereo` or `Multichannel`, TRACK the track number. Writes `OUTDIR/track.dsf`
 //! and `OUTDIR/sacdfs-RATE-CUTOFF.wav` (24-bit) for every rate and cutoff, plus
-//! `OUTDIR/sacdfs-RATE-CUTOFF.f32.wav` (32-bit float, before quantisation). The track is
+//! `OUTDIR/sacdfs-RATE-CUTOFF.f32.wav` (the same samples as 32-bit float). The track is
 //! converted frame by frame, as the filesystem will: DSD silence before its first and after
 //! its last frame.
 

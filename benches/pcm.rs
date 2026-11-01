@@ -91,7 +91,7 @@ fn bench(c: &mut Criterion) {
     }
     g.finish();
 
-    // Making a converter designs its filters (Kaiser windows, Bessel series, stage 1 tables).
+    // Making a converter (scarletbook-pcm's plan and buffers).
     let mut g = c.benchmark_group("pcm-new");
     for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
         let cfg = PcmConfig { cutoff, ..PcmConfig::default() };

@@ -46,14 +46,27 @@ jobs:
         env:
           SACDFS_FUSE_TESTS: "1"
         run: cargo test --locked
-      - name: Converter tests on each instruction set's code (#23; v4 only where the runner has AVX-512)
-        run: |
-          grep -o -w -E 'avx512f|avx2' /proc/cpuinfo | sort -u || true
-          for s in baseline v3 v4; do
-            SACDFS_SIMD=$s cargo test --locked --lib --test pcm --test wav
-          done
       - name: Converter benchmark (smoke test, each case once)
         run: cargo bench --locked --bench pcm -- --test
+
+  # The same tests on aarch64 (#43), on a native arm64 runner.
+  test-arm64:
+    name: tests (arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+          ls -l /dev/fuse
+      - name: Tests (FUSE tests required)
+        env:
+          SACDFS_FUSE_TESTS: "1"
+        run: cargo test --locked
 
   readme-options:
     name: readme options

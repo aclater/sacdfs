@@ -24,7 +24,7 @@ depends on a git repository. `cargo install` from crates.io comes once scarletbo
 ### Binaries
 
 - `sacdfs-<version>-x86_64-linux.tar.gz`: generic x86-64, for any x86_64 CPU. Its WAV
-  converter already uses AVX2 where the CPU has it.
+  converter (scarletbook-pcm) already uses AVX2 where the CPU has it.
 - `sacdfs-<version>-x86_64-v3-linux.tar.gz`: for x86-64-v3 CPUs (AVX2, BMI2, FMA: most Intel
   and AMD CPUs since about 2015, the Intel N100 family included), with all of sacdfs built for
   them: DST areas read 10 to 18 % faster ([performance](docs/performance.md#straight-reads)).
@@ -60,7 +60,7 @@ docker pull ghcr.io/aclater/sacdfs:0.1.1        # or :latest
 gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.1 -R aclater/sacdfs
 ```
 
-It runs sacdfs with Samba and NFS-Ganesha for a NAS, built for generic x86-64; how to run it
+It runs sacdfs with Samba and NFS-Ganesha for a NAS, for x86_64 and arm64; how to run it
 is in [docs/deployment.md](docs/deployment.md).
 
 ### From source
@@ -110,15 +110,19 @@ above it.
 | `--pcm-rate HZ` | Sample rate of the WAV files: `88200`, `176400` (the default) or `352800`. Always 24-bit. |
 | `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz; with `--pcm-rate 176400` or `352800` only). |
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default `0`). Samples that would clip are clamped, and the log says so once per file. |
+| `--no-multichannel-album-suffix` | Do not add ` (Multichannel)` to the album tag of the multichannel area's DSF and WAV files. By default they get it, so players and servers keep a disc's Stereo and Multichannel copies apart. |
 | `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder ([Layout](#layout)). Top-level folders of `SOURCE` are never collapsed. |
 | `--sidecars LIST` | Files passed through from `SOURCE`, byte for byte, next to the images: extensions, and folder names ending in `/` whose whole content passes. `default` (the default) is `jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/`; `default,cue` adds to it, `default,-webp` removes from it, `none` passes nothing ([Layout](#layout)). |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
 | `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where frames are in each image, so that seeks after a remount skip most of their search. |
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
 | `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default `64`). The least recently used is closed first, and any image unused for 5 minutes is closed. |
+| `--log-file FILE` | Append the log to `FILE` instead of standard error, at info level unless `-v` says more. Without it, a background mount logs nowhere, except to the journal under systemd; use it (or `-f`) to see read errors and the `mounted` line ([troubleshooting](docs/user-guide.md#troubleshooting)). |
 | `-v`, `--verbose` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 | `-h`, `--help` | Print help (`-h` for a summary). |
 | `-V`, `--version` | Print the version. |
+
+`mount -t fuse.sacdfs` and fstab work too, with the options above as `-o` options, and `Type=notify` units are supported: see [Mounting at boot](docs/user-guide.md#mounting-at-boot-fstab-and-systemd).
 
 Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
 still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
@@ -168,7 +172,9 @@ MOUNTPOINT/
 - **Sidecar files** next to the images, `folder.jpg`, `cover.png`, an `Artwork/` or `Scans/`
   folder, `.m3u`/`.m3u8` playlists, are shown where they are in `SOURCE`, read-only and byte
   for byte, with their own size and times: players and file managers find the folder art,
-  and you can delete extracted copies without losing it. `--sidecars` sets which
+  and you can delete extracted copies without losing it. The images among them (folder art)
+  also show inside `Stereo/` and `Multichannel/`, as the same file, for servers that look
+  only beside the audio. `--sidecars` sets which
   ([user guide](docs/user-guide.md#sidecar-files-art-scans-playlists)). Hidden files are never
   passed, nor a link that points outside `SOURCE`.
 
@@ -193,9 +199,9 @@ an ID3v2.4 tag from the disc's text. The **WAV files** are the same tracks conve
 PCM at 176.4 kHz (or 88.2 or 352.8 kHz), band-limited to 40 kHz by default (30 kHz, or about
 80 kHz with `--pcm-cutoff wide`), gapless from one track to the next, with the same tag in an
 `id3 ` chunk and a `LIST`/`INFO` chunk; channel masks follow the disc's speaker layout
-(stereo, 5.0, 5.1), and files over 4 GiB are RF64. The converter's pass band is flat to
-±0.00003 dB, its stopband at least 114.9 dB down, and it adds nothing measurable above the
-24-bit step ([docs/pcm-quality.md](docs/pcm-quality.md)). Sizes are exact; listing, `stat`
+(stereo, 5.0, 5.1), and files over 4 GiB are RF64. The conversion is scarletbook-rs's
+`scarletbook-pcm`: its pass band is flat to ±0.004 dB, its stopband at least 109 dB down, and
+DSD silence comes out as digital silence ([docs/pcm-quality.md](docs/pcm-quality.md)). Sizes are exact; listing, `stat`
 and reading a WAV file's header or tags never decode anything. Details, and how taggers and
 scanners are served: [user guide](docs/user-guide.md#formats).
 
@@ -221,8 +227,9 @@ How fast each one is, against the project's targets: [docs/performance.md](docs/
 - Linux only, and read-only; other systems read the files over SMB or NFS from
   [the container](docs/deployment.md).
 - DSF and WAV output only: no DSDIFF (DFF), no FLAC, no DoP, no 44.1/48 kHz or 16-bit PCM.
-- The directory tree is read once, at mount time: images added to or removed from `SOURCE`
-  later need a remount.
+- New or removed images and sidecar files show up without a remount, within a few seconds
+  (a folder is read again when its modification time in `SOURCE` changes). A new image
+  inside a folder that was a single image's chain under `--flatten` needs a remount.
 - A DSF file's header read decodes the track's first quarter second or so (a WAV file's
   decodes nothing); a program that reads every audio file (fingerprinting, loudness scans)
   converts every WAV file, so use `--format dsf` for those.
@@ -242,11 +249,11 @@ sacdfs is free software: you can redistribute it and/or modify it under the term
 version 3 of the License, or (at your option) any later version.
 
 - **[scarletbook](https://github.com/aclater/scarletbook-rs)** (MIT OR Apache-2.0) does all
-  SACD parsing and DST decoding; sacdfs uses its public API only.
-- **[pysacd](https://github.com/aclater/pysacd)** (GPL-2.0-or-later): the DSD-to-PCM
-  converter's structure is ported from its `csrc/dsp.c`, and its `pysacd-extract` made the
-  reference hashes the DSF files are checked against.
-- **dsd2pcm** by Sebastian Gesemann (BSD-3-Clause): the converter's first stage uses its
-  technique of filter lookup tables indexed by whole DSD bytes.
+  SACD parsing and DST decoding, and its `scarletbook-pcm` the DSD-to-PCM conversion; sacdfs
+  uses their public APIs only.
+- **[pysacd](https://github.com/aclater/pysacd)** (GPL-2.0-or-later): its `pysacd-extract`
+  made the reference hashes the DSF files are checked against. sacdfs 0.1's own converter
+  (replaced by scarletbook-pcm, #84) was ported from its `csrc/dsp.c`, with a first stage
+  using the byte lookup-table technique of Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
 - The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec),
   is dedicated to the public domain under CC0 1.0 (see its [licence](tests/corpus/LICENSE)).

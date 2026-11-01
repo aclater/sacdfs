@@ -150,6 +150,25 @@ pub struct Sidecar {
     pub kind: SidecarKind,
 }
 
+impl Sidecar {
+    /// Whether it is folder art: an image file (or link to one), not a playlist or a folder.
+    /// Folder art is also shown inside the areas of the images beside it (#95).
+    pub fn is_art(&self) -> bool {
+        matches!(self.kind, SidecarKind::File | SidecarKind::Link) && is_art_name(&self.name)
+    }
+}
+
+/// The extensions of folder art (#95), lower case.
+pub const ART_EXTS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
+
+/// Whether `name` has the extension of an image, without regard to ASCII case.
+pub fn is_art_name(name: &OsStr) -> bool {
+    let n = name.as_encoded_bytes();
+    n.iter()
+        .rposition(|&b| b == b'.')
+        .is_some_and(|dot| ART_EXTS.iter().any(|e| e.as_bytes().eq_ignore_ascii_case(&n[dot + 1..])))
+}
+
 /// What a sidecar is.
 #[derive(Debug, Clone)]
 pub enum SidecarKind {

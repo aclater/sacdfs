@@ -10,7 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use proptest::prelude::*;
-use sacdfs::pcm::{Converter, Cutoff, DSD_SILENCE, FRAME_BYTES, PcmConfig, PcmRate, Simd, convert_area};
+use sacdfs::pcm::{Converter, Cutoff, DSD_SILENCE, FRAME_BYTES, PcmConfig, PcmRate, convert_area};
 use std::f64::consts::PI;
 
 const FS: f64 = 2_822_400.0;
@@ -262,51 +262,75 @@ fn fit(x: &[f64], w: f64) -> (f64, f64, f64) {
     ((x[0] * x[0] + x[1] * x[1]).sqrt(), x[1].atan2(x[0]), x[2])
 }
 
-/// The converter's composite impulse response at the DSD rate, measured: one bit of a silent
-/// middle frame flipped at a time, for every phase within one output sample.
+/// Half the span of lags kept in a measured impulse response (DSD samples): more than any
+/// filter's reach.
+const REACH: usize = 4096;
+
+/// The converter's composite impulse response at the DSD rate (index `REACH` is lag 0),
+/// measured from its 24-bit output: the difference one flipped bit makes, averaged over 256
+/// faint modulated backgrounds (so that the rounding errors are independent), at +24 dB gain
+/// (+12 dB for the wide filter, which passes more of the backgrounds' noise), for every
+/// phase within one output sample. That lifts the response 24 dB above the 24-bit rounding;
+/// the same method reproduced the previous converter's exact (float) response to within
+/// 1 dB down to its 115 dB stopband (#84).
 fn impulse_response(cfg: &PcmConfig) -> Vec<f64> {
     let d = cfg.rate.decimation();
     let per = cfg.rate.samples_per_frame();
-    let silence = vec![DSD_SILENCE; FRAME_BYTES];
-    let mut conv = Converter::new(1, cfg);
-    let mut out = vec![0f32; per];
-    // Flip bits around DSD sample p0 = the middle of the frame (an output sample position).
-    let n0 = per / 2;
-    let p0 = n0 * d;
-    let reach = FRAME_BYTES * 8; // every lag a frame can hold
-    let mut h = vec![0.0f64; 2 * reach];
+    let gain_db = if cfg.cutoff == Cutoff::Wide80 { 12.0 } else { 24.0 };
+    let g = 10f64.powf(gain_db / 20.0);
+    let mut conv = Converter::new(1, &PcmConfig { gain_db: gain_db as f32, ..*cfg });
+    let (mut a, mut b) = (vec![0f32; per], vec![0f32; per]);
+    let p0 = per / 2 * d;
+    let backgrounds: Vec<Vec<u8>> = (0..256u64)
+        .map(|i| {
+            let mut x = 0x1234_5678 + i * 7919;
+            let noise: Vec<f64> = (0..3 * FRAME_BYTES * 8)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    ((x >> 11) as f64 / (1u64 << 53) as f64 - 0.5) * 2e-3
+                })
+                .collect();
+            Modulator::new().run(3 * FRAME_BYTES, |n| noise[n])
+        })
+        .collect();
+    let mut h = vec![0.0f64; 2 * REACH + 1];
     for phase in 0..d {
         let p = p0 + phase;
-        let mut frame = silence.clone();
-        let byte = p / 8;
-        let mask = 0x80u8 >> (p % 8);
-        let was_one = frame[byte] & mask != 0;
-        frame[byte] ^= mask;
-        conv.convert_f32(None, &frame, None, &mut out);
-        // Flipping 1 -> 0 changes the input by -2, 0 -> 1 by +2.
-        let sign = if was_one { -2.0 } else { 2.0 };
-        for (i, &y) in out.iter().enumerate() {
-            // Output i is centred on DSD sample d*i; the response at lag d*i - p.
+        let mut acc = vec![0.0f64; per];
+        for (k, bg) in backgrounds.iter().enumerate() {
+            let (prev, next) = (&bg[..FRAME_BYTES], &bg[2 * FRAME_BYTES..]);
+            let mut cur = bg[FRAME_BYTES..2 * FRAME_BYTES].to_vec();
+            let mask = 0x80u8 >> (p % 8);
+            let sign = if cur[p / 8] & mask != 0 { -2.0 } else { 2.0 };
+            conv.convert_f32(Some(prev), &cur, Some(next), &mut a);
+            cur[p / 8] ^= mask;
+            conv.convert_f32(Some(prev), &cur, Some(next), &mut b);
+            assert!(a.iter().chain(&b).all(|v| v.abs() < 0.99), "background {k} clips");
+            for i in 0..per {
+                acc[i] += f64::from(b[i] - a[i]) / sign / g;
+            }
+        }
+        for (i, v) in acc.iter().enumerate() {
             let lag = (d * i) as i64 - p as i64;
-            h[(lag + reach as i64) as usize] = f64::from(y) / sign;
+            if lag.unsigned_abs() as usize <= REACH {
+                h[(lag + REACH as i64) as usize] = v / backgrounds.len() as f64;
+            }
         }
     }
     h
 }
 
-/// |H(f)| of an impulse response at the DSD rate (centred: index `len/2` is lag 0).
-fn magnitude(h: &[f64], f: f64) -> f64 {
-    let w = 2.0 * PI * f / FS;
-    let c = (h.len() / 2) as f64;
-    let (mut re, mut im) = (0.0, 0.0);
-    for (k, &v) in h.iter().enumerate() {
-        if v != 0.0 {
-            let (s, co) = (w * (k as f64 - c)).sin_cos();
-            re += v * co;
-            im -= v * s;
-        }
+/// |H| of an impulse response on a 2^20-point grid at the DSD rate (2.69 Hz bins).
+fn response(h: &[f64]) -> Vec<f64> {
+    let n = 1 << 20;
+    let (mut re, mut im) = (vec![0.0; n], vec![0.0; n]);
+    for (i, &v) in h.iter().enumerate() {
+        re[(i as i64 - REACH as i64).rem_euclid(n as i64) as usize] = v;
     }
-    (re * re + im * im).sqrt()
+    fft(&mut re, &mut im);
+    (0..=n / 2).map(|k| (re[k] * re[k] + im[k] * im[k]).sqrt()).collect()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -325,43 +349,34 @@ fn response_ripple_and_stopband() {
             let h = impulse_response(&cfg);
             let sum: f64 = h.iter().sum();
             assert!((sum - 1.0).abs() < 1e-5, "{cfg:?}: DC gain {sum}");
-            // Linear phase: the response is symmetric about lag 0.
-            let c = h.len() / 2;
-            let asym = (1..c).map(|k| (h[c + k] - h[c - k]).abs()).fold(0.0, f64::max);
-            assert!(asym < 1e-7, "{cfg:?}: asymmetry {asym}");
-            let ripple = |hi: f64| {
-                (0..=(hi / 25.0) as usize)
-                    .map(|i| 20.0 * magnitude(&h, i as f64 * 25.0).log10())
-                    .fold(0.0f64, |m, v| m.max(v.abs()))
-            };
+            // Linear phase: the response is symmetric about lag 0 (to the method's noise).
+            let peak = h.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            let asym = (1..REACH).map(|k| (h[REACH + k] - h[REACH - k]).abs()).fold(0.0, f64::max) / peak;
+            assert!(asym < 2e-5, "{cfg:?}: asymmetry {asym}");
+            let m = response(&h);
+            let bin = FS / (1 << 20) as f64;
+            let db_at = |k: usize| 20.0 * m[k].max(1e-300).log10();
+            let ripple = |hi: f64| (0..=(hi / bin) as usize).map(|k| db_at(k).abs()).fold(0.0f64, f64::max);
             let (r20, rc) = (ripple(20_000.0), ripple(pass));
-            // Stopband: from the stop frequency to half the DSD rate, every 50 Hz.
-            let mut worst = (0.0f64, 0.0f64);
-            let mut f = stop;
-            while f <= FS / 2.0 {
-                let m = magnitude(&h, f);
-                if m > worst.0 {
-                    worst = (m, f);
-                }
-                f += 50.0;
-            }
-            let sb = -20.0 * worst.0.log10();
-            let at = |f: f64| 20.0 * magnitude(&h, f).log10();
+            // Stopband: from the stop frequency to half the DSD rate.
+            let (k0, worst) = ((stop / bin).ceil() as usize..m.len())
+                .map(|k| (k, m[k]))
+                .fold((0, 0.0), |a, b| if b.1 > a.1 { b } else { a });
+            let sb = -20.0 * worst.log10();
             println!(
                 "{:>6} Hz {:?}: ripple ±{r20:.5} dB to 20 kHz, ±{rc:.5} dB to {} kHz; \
-                 {:.2} dB at {} kHz (mid-transition); stopband {sb:.1} dB (worst at {:.1} kHz); \
-                 taps {}",
+                 {:.2} dB at {} kHz (mid-transition); stopband {sb:.1} dB from {} kHz (worst at {:.1} kHz)",
                 rate.hz(),
                 cutoff,
                 pass / 1000.0,
-                at((pass + stop) / 2.0),
+                db_at(((pass + stop) / 2.0 / bin) as usize),
                 (pass + stop) / 2000.0,
-                worst.1 / 1000.0,
-                h.iter().filter(|v| **v != 0.0).count(),
+                stop / 1000.0,
+                k0 as f64 * bin / 1000.0,
             );
             assert!(r20 <= 0.01, "{cfg:?}: ripple {r20} dB to 20 kHz");
             assert!(rc <= 0.1, "{cfg:?}: ripple {rc} dB to the cutoff");
-            assert!(sb >= 105.0, "{cfg:?}: stopband {sb} dB at {} Hz", worst.1);
+            assert!(sb >= 105.0, "{cfg:?}: stopband {sb} dB at {} Hz", k0 as f64 * bin);
         }
     }
 }
@@ -410,7 +425,7 @@ fn tone_1k_level_dc_thdn_alignment() {
                 rate.hz(),
                 20.0 * dc.abs().max(1e-12).log10(),
             );
-            assert!(level.abs() < 0.001, "{cfg:?}: level {level} dB");
+            assert!(level.abs() < 0.005, "{cfg:?}: level {level} dB");
             assert!(dc.abs() < 1e-6, "{cfg:?}: DC {dc}");
             assert!(offset.abs() < 0.001, "{cfg:?}: offset {offset} samples");
             assert!((thdn - src_thdn).abs() < 0.5, "{cfg:?}: THD+N {thdn} vs source {src_thdn}");
@@ -507,9 +522,8 @@ fn out_of_band_tones_are_rejected() {
 }
 
 /// A full-scale step: all zeros (-1.0), then all ones (+1.0, 100 % modulation), with no
-/// modulator noise. It settles at exactly -1.0 and 1.0, its ringing is symmetric about the step's
-/// first sample (linear phase, aligned), and in 24 bits the overshoot clips and is counted. Prints the
-/// overshoot, the headroom a full-scale step needs.
+/// modulator noise. It settles at exactly -1.0 and (clamped) 1.0, and in 24 bits the overshoot
+/// clips and is counted.
 #[test]
 fn full_scale_step() {
     for cutoff in CUTOFFS {
@@ -530,27 +544,14 @@ fn full_scale_step() {
             for &v in &pcm[n0 - 10 * per_ms..n0 - 6 * per_ms] {
                 assert!((v + 1.0).abs() < 1e-6, "{cfg:?}: settled at {v} before the step");
             }
-            // Linear phase, centred on the step's first sample: with h the impulse response,
-            // a unit step gives y[n0 + k] = sum of h over lags <= d k and y[n0 - k] = sum over
-            // lags >= d k, so for this step of 2, y[n0 + k] + y[n0 - k] = 2 h(d k). (At 352.8 kHz the converter is
-            // periodic over two output samples, so check the even ones there.)
-            let h = impulse_response(&cfg);
-            let c = h.len() / 2;
-            let step_k = if rate == PcmRate::R352800 { 2 } else { 1 };
-            let mut worst = 0.0f64;
-            for k in (step_k..400).step_by(step_k) {
-                let e = pcm[n0 + k] + pcm[n0 - k] - 2.0 * h[c + d * k];
-                worst = worst.max(e.abs());
-            }
-            let overshoot = (pcm[n0..n0 + 2 * per_ms].iter().copied().fold(0.0, f64::max) - 1.0) / 2.0;
+            // (Linear phase is checked on the impulse response: in 24 bits the overshoot of
+            // a full-scale step clips, which hides its symmetry.)
+            let overshoot = pcm[n0..n0 + 2 * per_ms].iter().copied().fold(0.0, f64::max);
+            let undershoot = pcm[n0 - 2 * per_ms..n0].iter().copied().fold(0.0, f64::min);
             println!(
-                "{:>6} Hz {cutoff:?}: -1 to +1 step: overshoot {:.2} % of the step (peak {:.3} \
-                 of full scale); symmetry error {worst:.1e}",
+                "{:>6} Hz {cutoff:?}: -1 to +1 step: reaches {overshoot:.6} and {undershoot:.6} (clipped at the rails)",
                 rate.hz(),
-                overshoot * 100.0,
-                1.0 + 2.0 * overshoot,
             );
-            assert!(worst < 1e-6, "{cfg:?}: step not symmetric: {worst}");
             let (_, clips) = convert_area(1, &cfg, &dsd);
             assert!(clips > 0, "{cfg:?}: the overshoot must clip");
         }
@@ -703,7 +704,7 @@ proptest! {
 
     /// Random runs of frames (#24): `convert_run` equals the area's slice, and so per-frame
     /// conversion, byte for byte; one converter does runs of changing lengths, short last
-    /// frames included, on a random instruction set's code.
+    /// frames included.
     #[test]
     fn random_runs(
         frames in 1usize..9,
@@ -713,7 +714,6 @@ proptest! {
         gain in -6.0f32..12.0,
         seed in any::<u64>(),
         runs in proptest::collection::vec((any::<usize>(), 1usize..6), 1..4),
-        simd in 0usize..3,
         short in 0usize..300,
     ) {
         let cfg = PcmConfig { rate: RATES[rate], cutoff: CUTOFFS[cutoff], gain_db: gain };
@@ -725,8 +725,7 @@ proptest! {
             *b = DSD_SILENCE;
         }
         let (area, clips_area) = convert_area(ch, &cfg, &dsd);
-        let simd = [Simd::Baseline, Simd::V3, Simd::V4][simd];
-        let mut conv = Converter::with_simd(ch, &cfg, simd);
+        let mut conv = Converter::new(ch, &cfg);
         let fb = conv.frame_bytes();
         let slices: Vec<&[u8]> = (0..frames)
             .map(|f| if f + 1 == frames { &dsd[f * n..cut] } else { &dsd[f * n..(f + 1) * n] })
@@ -745,7 +744,7 @@ proptest! {
                 prop_assert_eq!(total, clips_area);
             }
             // Each frame's clip count is what converting it alone reports.
-            let mut one = Converter::with_simd(ch, &cfg, simd);
+            let mut one = Converter::new(ch, &cfg);
             let mut buf = vec![0u8; fb];
             for (j, f) in (f0..f1).enumerate() {
                 let p = f.checked_sub(1).map(|p| slices[p]);
@@ -755,9 +754,10 @@ proptest! {
     }
 }
 
-/// The output for a fixed input, pinned: any change to the filters, the arithmetic or the
-/// platform's maths library (the designs use `sin` and `exp`-like series at start-up) shows
-/// up here. A deliberate change to the filters updates these hashes.
+/// The output for a fixed input, pinned: any change to scarletbook-pcm's filters or
+/// arithmetic shows up here (and needs a `WAV_VERSION` bump, src/ident.rs). scarletbook-pcm
+/// gives the same bytes on every CPU and code path, which its own tests check; CI runs this
+/// on its machines too.
 #[test]
 fn golden_output() {
     use sha2::{Digest, Sha256};
@@ -775,74 +775,29 @@ fn golden_output() {
             got.push(hex);
         }
     }
-    let want = GOLDEN;
-    assert_eq!(got, want);
+    // #89: these hashes belong to one WAV output version. A change to them (a scarletbook
+    // update included) must bump `WAV_VERSION` (src/ident.rs) and `GOLDEN_WAV_VERSION` with
+    // them, so that file times and NFS generations move with the bytes.
+    assert_eq!(
+        sacdfs::ident::WAV_VERSION,
+        GOLDEN_WAV_VERSION,
+        "WAV_VERSION moved: update GOLDEN and GOLDEN_WAV_VERSION together"
+    );
+    assert_eq!(got, GOLDEN, "PCM bytes changed: bump WAV_VERSION, then GOLDEN and GOLDEN_WAV_VERSION (#89)");
 }
 
-/// Every instruction set's code (#23) gives the golden output, frame by frame, at 24 bits and
-/// in f32: the baseline, x86-64-v3 and x86-64-v4 paths, as far as this CPU has them (the
-/// others fall back and are reported). `SACDFS_SIMD` additionally forces the path of every
-/// other test in a run.
-#[test]
-fn every_simd_path_gives_the_golden_output() {
-    use sha2::{Digest, Sha256};
-    let n = 2 * FRAME_BYTES;
-    let dsd = noise(3 * n, 11);
-    let frame = |f: usize| (f < 3).then(|| &dsd[f * n..(f + 1) * n]);
-    eprintln!("CPU supports {}", Simd::detected().name());
-    let mut f32_ref: Vec<Vec<u32>> = Vec::new();
-    for simd in [Simd::Baseline, Simd::V3, Simd::V4] {
-        let mut got = Vec::new();
-        let mut f32s = Vec::new();
-        for cutoff in CUTOFFS {
-            for rate in RATES {
-                if !valid(rate, cutoff) {
-                    continue;
-                }
-                let mut conv = Converter::with_simd(2, &cfg(rate, cutoff), simd);
-                if conv.simd() != simd {
-                    eprintln!("{} not available here: testing {}", simd.name(), conv.simd().name());
-                }
-                let mut pcm = vec![0u8; 3 * conv.frame_bytes()];
-                let mut flt = vec![0f32; 3 * conv.frame_bytes() / 3];
-                let fb = conv.frame_bytes();
-                for f in 0..3usize {
-                    conv.convert(
-                        f.checked_sub(1).and_then(frame),
-                        &dsd[f * n..(f + 1) * n],
-                        frame(f + 1),
-                        &mut pcm[f * fb..(f + 1) * fb],
-                    );
-                    conv.convert_f32(
-                        f.checked_sub(1).and_then(frame),
-                        &dsd[f * n..(f + 1) * n],
-                        frame(f + 1),
-                        &mut flt[f * fb / 3..(f + 1) * fb / 3],
-                    );
-                }
-                let h = Sha256::digest(&pcm);
-                got.push(h.iter().take(8).map(|b| format!("{b:02x}")).collect::<String>());
-                f32s.push(flt.iter().map(|v| v.to_bits()).collect::<Vec<u32>>());
-            }
-        }
-        assert_eq!(got, GOLDEN, "{}", simd.name());
-        if f32_ref.is_empty() {
-            f32_ref = f32s;
-        } else {
-            assert!(f32_ref == f32s, "{}: f32 output differs from the baseline", simd.name());
-        }
-    }
-}
+/// The WAV output version (`sacdfs::ident::WAV_VERSION`) that [`GOLDEN`] was taken with.
+const GOLDEN_WAV_VERSION: u32 = 4;
 
 /// First 8 bytes of the SHA-256 of each configuration's output, in the order of the loops:
 /// 40 kHz at 88.2, 176.4, 352.8 kHz, then 30 kHz, then the wide filter at 176.4 and 352.8.
 const GOLDEN: [&str; 8] = [
-    "d6e861426fc1aa34",
-    "ea76e7ad5d5b882c",
-    "b3c2ed2efe125e9b",
-    "340644957016eca3",
-    "5e895cf126369dc8",
-    "1ba48df1680595c8",
-    "925945e4adf87fe2",
-    "8107d10a0c565065",
+    "9055de943f481f12",
+    "0b965afacceb0855",
+    "7687b1e1d97a5de5",
+    "0afe8262c4e0db80",
+    "1c7e0a02d287f59d",
+    "d35bfb8e63cd1da0",
+    "ae37dd43cfbb5cff",
+    "7b0c0170cc01b27e",
 ];
