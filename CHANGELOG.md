@@ -17,6 +17,19 @@ All notable changes to sacdfs are recorded here. The format follows
   `--map` handles extracts kept in a tree of their own, `--resume` continues an earlier run.
   It never deletes anything. See the user guide, "Before you delete extracts".
 
+### Changed
+
+- Seeking is scarletbook's (#28): a read that does not continue an open file's cursor starts
+  a scarletbook provisional (cold) reading or, after a remount, one from the saved seek hints;
+  sacdfs's own frame locator is gone. Cold seeks make fewer calls to the image (3.06 a seek on
+  average on the real discs, was 4.44; DST areas 3.0 to 3.4, were 4.8 to 5.5), warm ones one
+  call with fewer bytes (84 KiB, was 110). Seek times through the mount are within 15 % of
+  0.1's, and output is unchanged (DSF gate 93/93). Areas whose layout scarletbook finds
+  suspect are read exactly. Details and figures: `docs/design.md`, "Seeking", and
+  `docs/performance.md`.
+- The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
+  by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
+
 ### Documentation
 
 - CI: a "no private names" check of commit identities and tracked files (`scripts/check-private-names.sh`, adapted from pysacd's). The Roon example in `docs/deployment.md` uses an arbitrary container subnet.

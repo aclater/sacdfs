@@ -460,11 +460,12 @@ impl Engine {
                     && t - c.next_position() <= disc.tuning.reuse_slack
             });
             if !reusable {
-                *cursor = Some(disc.locate(area, t)?);
+                *cursor = Some(disc.locate_for(area, t, d1)?);
             }
             let Some(cur) = cursor.as_mut() else {
                 return Err(ReadError::Io(io::Error::other("no cursor")));
             };
+            cur.reserve(disc, d1)?;
             let channels = cur.channels();
             while t < d1 {
                 let mut chunk_end = (t + PIPELINE_CHUNK).min(d1);
@@ -533,11 +534,12 @@ impl Engine {
                 && t0 - c.next_position() <= disc.tuning.reuse_slack
         });
         if !reusable {
-            *cursor = Some(disc.locate(area, t0)?);
+            *cursor = Some(disc.locate_for(area, t0, t1)?);
         }
         let Some(cur) = cursor.as_mut() else {
             return Err(ReadError::Io(io::Error::other("no cursor")));
         };
+        cur.reserve(disc, t1)?;
         let channels = cur.channels();
         let mut jobs = Vec::with_capacity((t1 - t0) as usize);
         for t in t0..t1 {

@@ -11,12 +11,12 @@
 //! closed too, so that an idle mount holds no files open on the share (which keeps the
 //! server from deleting a replaced file, and NFSv4 state alive).
 //!
-//! A handle is an `Arc<File>` read with positional reads (`pread`, through scarletbook's
-//! [`ReadAtReader`]), so the reads of one image run at the same time on any number of
-//! threads: each read takes a clone of the cached [`Image`] (no I/O, no lock), with a
-//! position of its own (sacdfs#28). *Why:* with one `Mutex<Image>` per image, every read of
-//! a disc queued behind the one in progress, so two players and a tagger on one disc
-//! waited for each other; on a network share each of those reads is a round trip.
+//! A handle is an `Arc<File>` read with positional reads (`pread`), so the reads of one
+//! image run at the same time on any number of threads: scarletbook reads the image through
+//! a [`crate::disc`] source that takes the cached handle for each call (no I/O, no lock)
+//! (sacdfs#28). *Why:* with one `Mutex<Image>` per image, every read of a disc queued behind
+//! the one in progress, so two players and a tagger on one disc waited for each other; on a
+//! network share each of those reads is a round trip.
 //!
 //! A handle is checked against its path at most once per [`REVALIDATE_EVERY`] when it is
 //! used: if the image's size, modification time or file (device and inode) changed, it is
@@ -33,7 +33,6 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use lru::LruCache;
-use scarletbook::{Image, ReadAtReader};
 
 /// Most image handles kept open by default.
 pub const DEFAULT_MAX_OPEN: usize = 64;
@@ -44,19 +43,10 @@ pub const DEFAULT_IDLE: Duration = Duration::from_secs(300);
 /// A handle is checked against its path at most this often.
 pub const REVALIDATE_EVERY: Duration = Duration::from_secs(1);
 
-/// An image read through a shared file with positional reads: cloning it costs no I/O and
-/// gives a reader with a position of its own on the same file.
-pub type ImageFile = Image<ReadAtReader<Arc<File>>>;
-
-/// An open image, shared by the reads of one disc. Reads clone it ([`ImageFile`]), so they
-/// run concurrently; the file is closed when the cache has dropped the handle and the last
-/// read holding a clone is done.
-pub type SharedImage = Arc<ImageFile>;
-
-/// Opens `file` as an image in `format`, for positional reads.
-pub fn image_file(file: File, format: scarletbook::SectorFormat) -> Result<ImageFile, scarletbook::Error> {
-    Image::with_format(ReadAtReader::new(Arc::new(file)), format)
-}
+/// An open image file, shared by the reads of one disc: each read uses it for the length of
+/// one call, so the file is closed when the cache has dropped the handle and the last read
+/// holding it is done.
+pub type SharedFile = Arc<File>;
 
 /// What identifies the content of an image file: the file, its size and modification time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,7 +66,7 @@ impl Stamp {
 
 #[derive(Debug)]
 struct Entry {
-    image: SharedImage,
+    file: SharedFile,
     stamp: Stamp,
     used: Instant,
     checked: Instant,
@@ -146,8 +136,8 @@ impl Handles {
         &self,
         key: u64,
         path: &Path,
-        open: impl FnOnce() -> Result<(ImageFile, Stamp), E>,
-    ) -> Result<SharedImage, E> {
+        open: impl FnOnce() -> Result<(File, Stamp), E>,
+    ) -> Result<SharedFile, E> {
         let now = Instant::now();
         let every = Duration::from_millis(self.revalidate_ms.load(Ordering::Relaxed));
         let found = {
@@ -155,12 +145,12 @@ impl Handles {
             self.close_idle_locked(&mut g, now);
             g.get_mut(&key).map(|e| {
                 e.used = now;
-                (e.image.clone(), e.stamp, now.saturating_duration_since(e.checked) >= every)
+                (e.file.clone(), e.stamp, now.saturating_duration_since(e.checked) >= every)
             })
         };
-        if let Some((image, stamp, check)) = found {
+        if let Some((file, stamp, check)) = found {
             if !check {
-                return Ok(image);
+                return Ok(file);
             }
             let same = std::fs::metadata(path).is_ok_and(|m| Stamp::of(&m) == stamp);
             let mut g = self.lock();
@@ -168,33 +158,33 @@ impl Handles {
                 if let Some(e) = g.peek_mut(&key) {
                     e.checked = now;
                 }
-                return Ok(image);
+                return Ok(file);
             }
             log::debug!("{}: the image file changed: opening it again", path.display());
-            if g.peek(&key).is_some_and(|e| Arc::ptr_eq(&e.image, &image)) {
+            if g.peek(&key).is_some_and(|e| Arc::ptr_eq(&e.file, &file)) {
                 g.pop(&key);
             }
         }
-        let (image, stamp) = open()?;
+        let (file, stamp) = open()?;
         self.opens.fetch_add(1, Ordering::Relaxed);
-        Ok(self.insert(key, image, stamp))
+        Ok(self.insert(key, file, stamp))
     }
 
-    /// Keeps `image` (opened with `stamp`) as the handle of `key`, unless another read put
+    /// Keeps `file` (opened with `stamp`) as the handle of `key`, unless another read put
     /// one there meanwhile; returns the one kept.
-    pub fn insert(&self, key: u64, image: ImageFile, stamp: Stamp) -> SharedImage {
+    pub fn insert(&self, key: u64, file: File, stamp: Stamp) -> SharedFile {
         let now = Instant::now();
         let mut g = self.lock();
         if let Some(e) = g.get_mut(&key) {
             if e.stamp == stamp {
                 e.used = now;
-                return e.image.clone();
+                return e.file.clone();
             }
         }
-        let image = Arc::new(image);
-        g.put(key, Entry { image: image.clone(), stamp, used: now, checked: now });
+        let file = Arc::new(file);
+        g.put(key, Entry { file: file.clone(), stamp, used: now, checked: now });
         self.trim(&mut g);
-        image
+        file
     }
 
     /// Closes the handle of `key`, if open (a disc that is dropped).
@@ -273,11 +263,11 @@ mod tests {
         (f, s)
     }
 
-    fn opener(path: &Path) -> impl FnOnce() -> io::Result<(ImageFile, Stamp)> + '_ {
+    fn opener(path: &Path) -> impl FnOnce() -> io::Result<(File, Stamp)> + '_ {
         move || {
             let f = File::open(path)?;
             let s = Stamp::of(&f.metadata()?);
-            Ok((image_file(f, scarletbook::SectorFormat::Plain).map_err(io::Error::other)?, s))
+            Ok((f, s))
         }
     }
 
@@ -329,7 +319,7 @@ mod tests {
         let b = h.get(1, f.path(), opener(f.path())).unwrap();
         assert_eq!(h.opens(), 1);
         assert!(!Arc::ptr_eq(&a, &b));
-        assert_eq!(b.sector_count(), 3);
+        assert_eq!(b.metadata().unwrap().len(), 4096 + 2048);
         // Another modification time, same size.
         let t = std::time::SystemTime::now() - Duration::from_secs(3600);
         f.as_file().set_modified(t).unwrap();

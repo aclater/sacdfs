@@ -232,7 +232,7 @@ How fast each one is, against the project's targets: [docs/performance.md](docs/
 ## How it works
 
 [docs/design.md](docs/design.md) describes the architecture and the reason for each decision:
-the layout, the DSF and WAV mappings, the frame locator and seek index, caching, concurrency,
+the layout, the DSF and WAV mappings, seeking and the seek index, caching, concurrency,
 the converter, the container and the release builds.
 
 ## Licence and credits
