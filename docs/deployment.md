@@ -154,6 +154,7 @@ All settings are environment variables.
 | `SACDFS_PCM_CUTOFF` | (40) | `--pcm-cutoff`: `40`, `30` or `wide` |
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
+| `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB. On a NAS, `16` is recommended; see [Memory](#memory) |
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
@@ -380,6 +381,16 @@ host networking, on the same NAS as sacdfs.
   as Roon adds it. On a NAS-class CPU, multichannel DST areas decode at about 40× real time.
   Expect a burst of CPU load after adding a large library, or set the analysis speed lower in
   Roon's settings.
+
+### Multichannel copies and music servers
+
+Navidrome, Lyrion (LMS), MPD and MinimServer all showed a disc's Stereo and Multichannel
+copies as one album: merged, with each track up to four times, or as two albums with the same
+name. So sacdfs adds ` (Multichannel)` to the album tag of the multichannel files by default
+(DSF and WAV; stereo files are unchanged), and the servers list two albums. Set
+`SACDFS_MC_ALBUM_SUFFIX: "0"` to keep the disc's album name; then rescan, since the files'
+modification times do not move when you switch. Changing this release's tags moved the files'
+mtimes and NFS generations once (output versions DSF 3, WAV 4), so servers rescan them.
 
 ## Mounting the shares on clients
 
