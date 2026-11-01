@@ -34,7 +34,8 @@ use sacdfs::tree::{Output, SourceDir, Tree};
 /// Unmount with `fusermount3 -u MOUNTPOINT`, or stop sacdfs with SIGINT, SIGTERM or SIGHUP.
 ///
 /// `sacdfs verify SOURCE [EXTRACTS]...` checks extracted DSF and DFF files against what
-/// sacdfs serves, before they are deleted: see `sacdfs verify --help`.
+/// sacdfs serves, before they are deleted: see `sacdfs verify --help`. `sacdfs tags` keeps
+/// user tags for the files (`--tags`): see `sacdfs tags --help`.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Args {
@@ -69,6 +70,11 @@ struct Args {
     /// (by default they get it, so players and servers show them as an album of their own).
     #[arg(long)]
     no_multichannel_album_suffix: bool,
+    /// Directory of tags files (#81), one per disc, named by its disc key
+    /// (`sacdfs tags key IMAGE`): their tags override and add to the TOC's. Without it, or
+    /// for a disc without a file, the files are as the TOC gives them.
+    #[arg(long, value_name = "DIR")]
+    tags: Option<PathBuf>,
     /// Collapse each chain of folders below the top level that holds a single image into
     /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
     #[arg(long)]
@@ -159,6 +165,10 @@ fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_some_and(|a| a == "verify") {
         return sacdfs::verify::main(std::env::args_os().skip(1));
     }
+    // `sacdfs tags ...` (#81): see `sacdfs tags --help`.
+    if std::env::args_os().nth(1).is_some_and(|a| a == "tags") {
+        return sacdfs::tags_cli::main(std::env::args_os().skip(1));
+    }
     // `-o` options, as `mount -t fuse.sacdfs` and fstab pass them (#60).
     let argv = match mount_opts::expand(std::env::args_os().collect()) {
         Ok(v) => v,
@@ -239,6 +249,16 @@ fn run(args: Args) -> io::Result<()> {
     // combination before mounting.
     let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
     sacdfs::dsf::set_mc_album_suffix(!args.no_multichannel_album_suffix);
+    if let Some(dir) = &args.tags {
+        let dir = dir.canonicalize().map_err(|e| with_path(e, dir))?;
+        if !dir.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                format!("--tags {}: not a directory", dir.display()),
+            ));
+        }
+        sacdfs::tags::install(Some(sacdfs::tags::Store::new(&dir)));
+    }
     let pcm = PcmConfig { rate, cutoff: args.pcm_cutoff, gain_db: args.pcm_gain };
     if let Err(e) = pcm.validate() {
         return Err(io::Error::new(

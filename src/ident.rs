@@ -38,6 +38,8 @@
 //! whose content changed still finds it. A sidecar file's generation is a hash of its source
 //! file's size and modification time ([`sidecar_generation`]), so a handle to a replaced
 //! cover goes stale the same way.
+//! A track file whose tag a tags file changed (#81) mixes a hash of that tag into its
+//! generation, and its mtime is no older than the tags file.
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::ffi::OsStrExt;
@@ -156,7 +158,12 @@ pub fn mtime(file: &TrackFile, pcm_offset: u64) -> SystemTime {
         Format::Dsf => (DSF_VERSION, 0),
         Format::Wav => (WAV_VERSION, pcm_offset),
     };
-    shown_mtime(file.disc.mtime, version, offset)
+    let shown = shown_mtime(file.disc.mtime, version, offset);
+    // A file whose tag a tags file changed (#81): no older than the tags file.
+    match file.tags {
+        Some(t) => shown.max(t.mtime),
+        None => shown,
+    }
 }
 
 /// How far the output version of `format` moves its files' mtime past their image's, with
@@ -413,6 +420,12 @@ pub fn generation(file: &TrackFile, flavour: u64) -> u64 {
         &file.size.to_be_bytes(),
         &flavour.to_be_bytes(),
     ]);
+    // A tags file's change (#81) gives the file another generation; without one, the hash
+    // is the same as before the tag layer.
+    let h = match file.tags {
+        Some(t) => sha64(&[b"sacdfs gen tags v1\0", &h.to_be_bytes(), &t.hash.to_be_bytes()]),
+        None => h,
+    };
     // The kernel keeps 32 bits of it; never 0, so that a file never looks like a directory's
     // generation.
     (h & 0xffff_ffff).max(1)

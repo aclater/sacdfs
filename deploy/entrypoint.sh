@@ -24,6 +24,7 @@ args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}" --cache-mb "${SACDF
 on "${SACDFS_FLATTEN:-0}" && args+=(--flatten)
 on "${SACDFS_MC_ALBUM_SUFFIX:-1}" || args+=(--no-multichannel-album-suffix)
 [ -n "${SACDFS_SIDECARS:-}" ] && args+=(--sidecars "$SACDFS_SIDECARS")
+[ -n "${SACDFS_TAGS:-}" ] && args+=(--tags "$SACDFS_TAGS")
 case "${SACDFS_INDEX_CACHE:-/cache}" in
     "" | off | none | 0) args+=(--no-index-cache) ;;
     *) args+=(--index-cache "${SACDFS_INDEX_CACHE:-/cache}") ;;
