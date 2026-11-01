@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0-rc.1] - 2026-11-01
+
 ### Added
 
 - `sacdfs verify SOURCE [EXTRACTS]...` (#80): checks extracted DSF and DFF files against
@@ -72,6 +74,14 @@ All notable changes to sacdfs are recorded here. The format follows
   output versions moved to 2, so every DSF and WAV file shows a new mtime and NFS generation.
 - The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
   by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
+
+### Known issues
+
+- Reading plain-DSD WAV files is about 29 % slower than in 0.1.1 (a whole stereo area,
+  2.07 s against 2.68 s on a Zen 5 machine). This comes from the PCM conversion, which is now
+  scarletbook-pcm's. DST WAV files are about 10 % slower and DSF files are faster. It is still
+  about 1,000x real time per stream. The fix is being worked on upstream
+  (scarletbook-rs#216), and sacdfs will pick it up in a later release.
 
 ### Documentation
 
@@ -265,6 +275,7 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.1...HEAD
+[0.2.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0-rc.1
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aclater/sacdfs/releases/tag/v0.1.0
