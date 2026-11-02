@@ -19,24 +19,26 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 |---|---|---|---|---|---|
 | [Roon](#roon) | Roon 2.x (Roon Server official image) | 0.1.1, 0.2.0-rc.1 to rc.4, 0.2.0 final | SMB, same NAS | Works (0.2.0) | Use `dsf` only; needs the SMB-mount rights; art and playlists work; picks up upgrades by itself; multichannel areas are separate albums |
 | [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used ([#95](https://github.com/aclater/sacdfs/issues/95)) |
-| [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
-| [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums |
-| [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
-| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; art only from files named `cover.*` |
-| [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
+| [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
+| [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
+| [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
+| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; art only from files named `cover.*` |
+| [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
 | [Windows Explorer, PowerShell, Robocopy](#windows-explorer-and-robocopy) | Windows 11 build 26200 | 0.2.0-rc.1 | SMB 3, same host | Works | Copies are byte-identical; a second Robocopy pass skips every file |
 | [foobar2000](#foobar2000) | 2.26.2 (portable) | 0.2.0-rc.1 | SMB 3 | Partial | Opened a DSF without errors; tags, art and seek not verified |
 | [JRiver Media Center](#jriver-media-center) | 36 | none | SMB 3 | Untested | The trial was not run |
 | [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | kernel clients | see [deployment](deployment.md) and [performance](performance.md) | NFSv4, SMB | Works | The container's own share tests; see below |
 
-## How the 0.3.0-rc.1 tests were run
+## How the 0.4.0-rc.2 tests were run
 
 The Jellyfin, Navidrome, LMS, MPD and MinimServer results below were measured on
-sacdfs 0.3.0-rc.1 (the release binary), on a test host with a 14-core Intel CPU. For each
-server:
+sacdfs 0.4.0-rc.2 (the release binary), on a test host with a 14-core Intel CPU, the host of
+the 0.3.0-rc.1 tests, with the same client versions. For each server:
 
-- sacdfs ran on the host as the user, with `--format dsf --flatten --cache-mb 16 --threads 4`
-  (and `--format dsf,wav` where that is compared), and a fresh index cache for each run;
+- sacdfs ran on the host as the user, with the documented options `--format dsf --flatten`
+  and `--threads 4` (and `--format dsf,wav` where that is compared), at the **default cache**
+  (32 MiB since 0.4.0; the 0.3.0-rc.1 tests set `--cache-mb 16`), and a fresh index cache for
+  each run;
 - the server ran in a rootless Podman container that bound the mount's **parent** directory
   with `ro,rslave`, as recommended under [General recommendations](#general-recommendations);
 - the library was the 5 test images, laid out `Artist/Album/disc.iso`: 93 tracks in 7 album
@@ -46,8 +48,11 @@ server:
 - scans were timed with sacdfs's FUSE request log on (`RUST_LOG=fuser::request=debug`), which
   is how opens, reads and bytes served were counted.
 
-A pre-release build of `main` (commit 85316b6) gave the same counts and art results, and
-times within a few percent.
+Other jobs shared the test host during most of these runs, so its times are given only where
+the host was quiet or where load does not change the result: Navidrome's scans and LMS's
+`dsf` scan ran on a quiet host; the MPD scan times were measured again on a quiet 16-core AMD
+desktop. Times taken under load are marked as such; counts, art, names, playback and memory do
+not depend on it.
 
 ## Roon
 
@@ -122,7 +127,8 @@ times; see [restarts and rescans](#restarts-and-rescans).
 
 ## Jellyfin
 
-**Tested on 0.3.0-rc.1.** Jellyfin 12.4.0 (official image, 2 CPUs), one music library.
+**Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). Jellyfin 12.4.0 (official
+image, 2 CPUs), one music library.
 - *Tracks:* 93 of 93 with `dsf`, 186 of 186 with `dsf,wav`; codec, channels (2, 5 and 6),
   track numbers and durations set for every file.
 - *Albums:* 7, all names distinct; the 2 multichannel areas are their own albums,
@@ -132,17 +138,19 @@ times; see [restarts and rescans](#restarts-and-rescans).
   path is the copy in the area folder). Jellyfin fetched online art for 2 of the other 3.
 - *Cost of WAV:* during the first scan sacdfs served 17.9 MiB for the 93 DSF files (about
   200 KB each) and 648.5 MiB with `dsf,wav`: ffprobe reads about 7 MB of each WAV, which
-  sacdfs must convert. sacdfs used 1 CPU-second and 24 MiB RSS with `dsf`, 24 to 26 CPU-seconds
-  and 60 MiB with `dsf,wav`. Jellyfin's own work dominates its scan time (42 to 96 s with
-  `dsf`, 51 to 104 s with `dsf,wav`, 38 s for the extracted `dsf,wav` copy, two runs each), so
-  the times vary too much to compare closely.
+  sacdfs must convert. The bytes are the same as on 0.3.0-rc.1. sacdfs peaked at 30 MiB RSS
+  with `dsf` and 53 MiB with `dsf,wav` at the default cache, and used about 1 CPU-second
+  against 33. Jellyfin's own work dominates its scan time (51 to 53 s with `dsf`, 57 to 61 s
+  with `dsf,wav`, about 45 s for the extracted copy, two runs each, on a shared host), so the
+  times vary too much to compare closely.
 - *Playback:* a 5.1 DST track and a stereo track transcoded to MP3 for their full length
-  (sizes match their durations); a transcode started at 60 % of the track sent its first
-  bytes in 6 to 9 ms.
+  (sizes match their durations at 256 kbit/s); a transcode started at 60 % of the track sent
+  its first bytes in 5 to 9 ms.
 - *LUFS normalization:* turned on for the `dsf` library and run as Jellyfin's
-  "Audio Normalization" task, it opened every file twice and read 39.8 GiB from sacdfs for a
-  library of 22.0 GiB of DSF files, in 464 s, decoding DST all the while (sacdfs averaged 1.7
-  cores; RSS 35 MiB at `--cache-mb 16`).
+  "Audio Normalization" task, it opened every file twice and read 40.0 GiB from sacdfs for a
+  library of 22.0 GiB of DSF files, decoding DST all the while; sacdfs peaked at 52 MiB RSS at
+  the default cache. It took 774 s on the shared host (464 s on a quiet one on 0.3.0-rc.1;
+  the same read pattern costs the same CPU on 0.3.0 and 0.4.0-rc.2 on a quiet host).
 
 **Recommended setup.**
 - `--format dsf`: it saves sacdfs converting about 7 MB of PCM per WAV file on every first
@@ -153,34 +161,49 @@ times; see [restarts and rescans](#restarts-and-rescans).
 
 ## Navidrome
 
-**Tested on 0.3.0-rc.1.** Navidrome 0.64.2 (official image). First scan 0.43 s with `dsf`
-(Navidrome's figure), 93 of 93 files, no errors; 0.68 s and 186 of 186 with `dsf,wav`. A full
-re-scan with nothing changed opened the files but read nothing from sacdfs (0 reads). Album
-art: **4 of 4** album areas with a cover show it, the Multichannel one included (the copy in
-each area folder); the other 3 get Navidrome's placeholder. 7 albums: the 2 multichannel
-areas are separate albums named "… (Multichannel)". DSF and WAV of a track share an album.
-Durations set for all files. sacdfs peaked at 47 MiB RSS. After sacdfs was stopped and started again under the running
-container, the parent bind showed all 93 files again and a full scan went through. Playback:
-a raw stream request with a range returned `206` and `audio/x-dsf` in 26 ms; an MP3
-transcode (FFmpeg, on request) of a 5.1 DST track returned the whole track (10.1 MB) in
-7.6 s, with sacdfs at 20 CPU-seconds.
+**Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). Navidrome 0.64.2 (official image). First scan
+0.42 s with `dsf` (Navidrome's figure), 93 of 93 files, no errors; 0.54 s and 186 of 186
+with `dsf,wav`. Album art: **4 of 4** album areas with a cover show it, the Multichannel one
+included (the copy in each area folder); the other 3 get Navidrome's placeholder. 7 albums:
+the 2 multichannel areas are separate albums named "… (Multichannel)". DSF and WAV of a track
+share an album. Durations set for all files. sacdfs peaked at 18 MiB RSS with `dsf` and
+24 MiB with `dsf,wav`, at the default cache. After sacdfs was stopped and started again under
+the running container, the parent bind showed all 93 files again and a full scan went through. On
+0.3.0-rc.1, a full re-scan with nothing changed opened the files but read nothing
+from sacdfs (0 reads); that was not counted again.
+
+*Renamed and removed images* ([#153](https://github.com/aclater/sacdfs/issues/153), new in
+0.4.0), on 0.4.0-rc.2 under the running container: an image's folder renamed on the source
+showed under its new name inside the container within 5 s, and a full scan then listed 93 files
+with none missing; a disc's folder removed from the
+source was gone within 5 s, and the next full scan marked its 18 files missing and left 6
+albums. Afterwards sacdfs held 4 images open, not the removed one, and the renamed one under its new
+path; it stayed at 18 to 19 MiB RSS.
+
+*Streaming* (on 0.4.0-rc.2, under load): a raw stream request with a range returned `206` and
+`audio/x-dsf` in 41 to 46 ms (26 ms on a quiet host on 0.3.0-rc.1); an MP3 transcode (FFmpeg,
+on request) of a 5.1 DST track returned `200` and an MP3 stream. On 0.3.0-rc.1 a whole 5.1
+track (10.1 MB of MP3) took 7.6 s.
 
 **Recommended setup.** `--format dsf` (or `dsf,wav` if you want both), `--flatten`,
-the default `--cache-mb` (32 since #150; tested with 16). Keep the default `(Multichannel)` album suffix if you want Stereo and
+the default `--cache-mb` (32 since #150; tested with it on 0.4.0-rc.2, and with 16 on
+0.3.0-rc.1). Keep the default `(Multichannel)` album suffix if you want Stereo and
 Multichannel as separate albums.
 
 ## Lyrion / Logitech Media Server
 
-**Tested on 0.3.0-rc.1.** Lyrion Music Server 9.1.1 (official image), scanned and browsed through
-JSON-RPC, with squeezelite 2.0 (Fedora package, DSD support) in the same pod as the player.
-First scan (`wipecache`) 1.1 s for 93 of 93 files with `dsf`, and 1.1 s for 186 of 186
-with `dsf,wav`; a `rescan` with nothing changed made 0 opens and 0 reads. Album art: **4 of 4**
-album areas with a cover have it (the copy in the area folder); 7 albums, the 2 multichannel
-areas as "… (Multichannel)". Durations set; DSF bitrate shows as 0. sacdfs peaked at 55 MiB
-RSS. DSD playback is native: the stock `convert.conf` has only `dsf dsf` (pass-through) for
-DSF, so a player without DSD gets nothing unless the third-party DSD Player plugin is added.
-squeezelite received the stereo DSF and decoded it itself (DSD to PCM); the 5.1 DSF stopped
-at once, because squeezelite is stereo-only (not sacdfs).
+**Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). Lyrion Music Server 9.1.1 (official image), scanned
+and browsed through JSON-RPC, with squeezelite 2.0 (Fedora package, DSD support) in the same
+pod as the player. First scan (`wipecache`) 1.1 s for 93 of 93 files with `dsf`; 186 of 186
+with `dsf,wav` (1.8 to 2.4 s on a shared host; 1.1 s on a quiet one on 0.3.0-rc.1); a
+`rescan` with nothing changed made 0 opens and 0 reads. Album art: **4 of 4** album areas with
+a cover have it (the copy in the area folder); 7 albums, the 2 multichannel areas as
+"… (Multichannel)". Durations set; DSF bitrate shows as 0. sacdfs peaked at 42 MiB RSS with
+`dsf` and 46 MiB with `dsf,wav`, at the default cache. DSD playback is native: the stock
+`convert.conf` has only `dsf dsf` (pass-through) for DSF, so a player without DSD gets nothing
+unless the third-party DSD Player plugin is added. squeezelite received the stereo DSF and
+decoded it itself (DSD to PCM); the 5.1 DSF stopped at once, because squeezelite is
+stereo-only (not sacdfs).
 
 **Recommended setup.** `--format dsf` (or `dsf,wav`), `--flatten`. The official image runs
 LMS as an unprivileged user (uid 499 by default), which cannot read a FUSE mount made without
@@ -192,19 +215,21 @@ validated with LMS.
 
 ## MPD, moOde, Volumio
 
-**Tested on 0.3.0-rc.1.** MPD 0.24.15 (Fedora 44 package, in a container), null output with
-`sync yes`. moOde and Volumio use MPD, but neither was run itself. MPD's first scan (at start,
-empty database) took **0.55 s** for 93 files with `dsf` and **5.6 s** for 186 with `dsf,wav`,
-where sacdfs used 19 CPU-seconds converting WAV for FFmpeg's probe; with `dsf` it used
-1.6 CPU-seconds. 7 albums, 2 of them "… (Multichannel)". `mpc update` with nothing changed:
-0.05 s, 0 opens. DSF plays as DSD (`audio: dsd64:2`, `dsd64:6`; DoP or native DSD to a
+**Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). MPD 0.24.15 (Fedora 44 package, in a container),
+null output with `sync yes`. moOde and Volumio use MPD, but neither was run itself. MPD's
+first scan (at start, empty database), measured on a quiet desktop host (three runs each,
+alternating): **0.34 s** for 93 files with `dsf` and **3.6 s** for 186 with `dsf,wav`, where
+sacdfs used about 12 CPU-seconds converting WAV for FFmpeg's probe and peaked at 53 MiB RSS;
+with `dsf` it used under 0.1 CPU-seconds and 12 MiB. (0.3.0-rc.1, on the test host: 0.55 s
+and 5.6 s.) 7 albums, 2 of them "… (Multichannel)". `mpc update` with nothing changed:
+0.07 s, 0 opens. DSF plays as DSD (`audio: dsd64:2`, `dsd64:6`; DoP or native DSD to a
 capable output, otherwise MPD converts); a seek to 100 s in a 5.1 DST DSF worked at once.
 Album art: `albumart` found the cover in **1 of 4** album areas with one: the disc whose
 cover is named `cover.jpg`. MPD looks only for files named `cover.*` in the track's folder,
 so `folder.jpg` is not used.
 
 **Recommended setup.**
-- `--format dsf`: the first scan was 10 times as fast as with `dsf,wav`. The WAV cost is
+- `--format dsf`: the first scan was about 10 times as fast as with `dsf,wav`. The WAV cost is
   FFmpeg's 5,000,000-byte probe of each WAV file ([#96](https://github.com/aclater/sacdfs/issues/96)).
   If another client needs WAV, run a second container or mount with `dsf,wav` for it.
 - `--flatten`; bind the mount's parent with `rslave` if MPD is in a container.
@@ -212,17 +237,19 @@ so `folder.jpg` is not used.
 
 ## MinimServer
 
-**Tested on 0.3.0-rc.1.** MinimServer 2.2 (official image, starter licence), browsed with UPnP
-ContentDirectory `Browse` calls. The scan finished within 1 s (every file opened in the same second; "93 audio files in
-17 folders"); a restart with its cache made 0 opens and 0 reads. sacdfs peaked at 27 MiB RSS.
-Album art: **4 of 4** album areas with a cover have `upnp:albumArtURI` on their items (63
-of 93 items), served from the copy in the area folder; 7 albums, 2 of them
-"… (Multichannel)". Items are served as `audio/x-dsf` with ranges: a whole 5.1 DST DSF
-(447 MB) streamed in 4.5 s, and a 1 MiB range at mid-file answered `206` in 4 ms.
+**Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). MinimServer 2.2 (official image, starter licence),
+browsed with UPnP ContentDirectory `Browse` calls. The scan finished within 1 s (every file
+opened in the same second; "93 audio files in 17 folders"); a restart with its cache made 0
+opens and 0 reads. sacdfs peaked at 44 MiB RSS at the default cache. Album art: **4 of 4**
+album areas with a cover have `upnp:albumArtURI` on their items (63 of 93 items), served
+from the copy in the area folder; 7 albums, 2 of them "… (Multichannel)". Items are served as
+`audio/x-dsf` with ranges: a 1 MiB range at mid-file answered `206` in 4 to 8 ms, and a whole
+5.1 DST DSF (447 MB) streamed in 6.4 to 9.3 s on the shared host (4.5 s on a quiet one on
+0.3.0-rc.1).
 
 **Recommended setup.** `--format dsf`, `--flatten`. DSD is served as is; a player that needs
 transcoding needs MinimStreamer, which was not tested. `dsf,wav` was not tried with
-MinimServer on 0.3.0-rc.1.
+MinimServer.
 
 ## Windows Explorer and Robocopy
 
@@ -269,16 +296,17 @@ documented but have no test report on #82.
   gigabit LAN ([deployment](deployment.md)).
 - **The default cache suits a NAS.** Since #150 the default `--cache-mb` is 32 (was 256), and
   a Plex-like scan of the bench images peaks at 46 MiB RSS (0.3.0 at its default: 103 MiB), a
-  Roon-like import replay at 45 MiB (134 MiB). The 0.3.0-rc.1 server tests ran with
-  `--cache-mb 16`, with no errors and sacdfs at 24 to 60 MiB RSS; in MPD's first scan with
-  `dsf,wav`, sacdfs peaked at 300 MiB RSS at the old default of 256 MiB against 58 MiB at 16, and
-  the scan took the same 5.6 s. 16 still works; 32 keeps several fast readers of one image at
-  full speed. See [Memory](deployment.md#memory) and
-  [#94](https://github.com/aclater/sacdfs/issues/94).
+  Roon-like import replay at 45 MiB (134 MiB). The 0.4.0-rc.2 server tests ran at the default,
+  with no errors and sacdfs at 18 to 53 MiB RSS (Jellyfin's LUFS pass: 52 MiB). On
+  0.3.0-rc.1, MPD's first scan with `dsf,wav` peaked at 300 MiB RSS at the old default of
+  256 MiB against 58 MiB at 16, in the same 5.6 s. 16 still works (the 0.3.0-rc.1 tests used
+  it); 32 keeps several fast readers of one image at full speed. See
+  [Memory](deployment.md#memory) and [#94](https://github.com/aclater/sacdfs/issues/94).
 - **Containers on a host that mounts sacdfs:** bind the mount's *parent* directory with
-  `rslave` (`-v /srv/sacd:/media:ro,rslave`), not the mount point. Tested on 0.3.0-rc.1 with
-  rootless Podman: after sacdfs was killed and started again, a container that bound the mount
-  point, or the parent without `rslave`, failed every read ("Socket not connected"); after a
+  `rslave` (`-v /srv/sacd:/media:ro,rslave`), not the mount point. Tested with rootless
+  Podman on 0.3.0-rc.1, and the clean stop again on 0.4.0-rc.2: after sacdfs was killed and
+  started again (0.3.0-rc.1), a container that bound the mount point, or the parent without
+  `rslave`, failed every read ("Socket not connected"); after a
   clean stop, the old sacdfs process kept running to serve those containers, so they never saw
   the new one. The container with the `rslave` parent bind lost the mount while sacdfs was
   down and saw the new one as soon as it was up, and a full Navidrome scan through it worked
@@ -290,12 +318,13 @@ documented but have no test report on #82.
   each disc's `Stereo` and `Multichannel` folders sit under the album.
 - **Folder art:** sacdfs 0.2.0 and later place a copy of the cover beside the image inside
   each area folder (`Stereo`, `Multichannel`; [#95](https://github.com/aclater/sacdfs/issues/95)).
-  On 0.3.0-rc.1, Jellyfin, Navidrome, LMS and MinimServer used it for all 4 album areas with
-  a cover. MPD uses only files named `cover.*`, so it found 1 of 4 (the one named
+  On 0.4.0-rc.2 (as on 0.3.0-rc.1), Jellyfin, Navidrome, LMS and MinimServer used it for all
+  4 album areas with a cover. MPD uses only files named `cover.*`, so it found 1 of 4 (the one named
   `cover.jpg`). Roon used the art on 0.2.0; for Plex (0.2.0-rc.4) see [its section](#plex).
 - **Multichannel copies:** sacdfs adds ` (Multichannel)` to the album tag by default
   ([#97](https://github.com/aclater/sacdfs/issues/97)). With it, Jellyfin, Navidrome, LMS, MPD
-  and MinimServer showed the 2 multichannel areas as their own albums on 0.3.0-rc.1. Plex
+  and MinimServer showed the 2 multichannel areas as their own albums on 0.4.0-rc.2 and
+  0.3.0-rc.1. Plex
   needs "Prefer local metadata" to show it. `--no-multichannel-album-suffix` turns it off; it
   was not tried with any client.
 - **Options not validated with any client:** `--pauses kept`, `--tags DIR` and
@@ -307,8 +336,10 @@ documented but have no test report on #82.
   sidecars and images show up within a few seconds without a restart
   ([#101](https://github.com/aclater/sacdfs/issues/101),
   [#123](https://github.com/aclater/sacdfs/issues/123); tested with Roon on 0.2.0). Server
-  rescans with nothing changed read nothing on 0.3.0-rc.1: 0 opens for MPD, MinimServer
-  and LMS, and 0 reads for Navidrome.
+  rescans with nothing changed read nothing: 0 opens for MPD, MinimServer and LMS on
+  0.4.0-rc.2 and 0.3.0-rc.1, and 0 reads for Navidrome on 0.3.0-rc.1. From 0.4.0 a renamed
+  or removed image is also freed in sacdfs ([#153](https://github.com/aclater/sacdfs/issues/153));
+  Navidrome followed both on 0.4.0-rc.2 ([its section](#navidrome)).
 - **Hard disks and simultaneous cold starts.** Once playing, no read took over 0.5 ms in the
   hard-disk test. Slow reads (116 to 156 ms worst) come from several players' first seeks
   queueing on one physical disk when four start at once (39 to 62 ms staggered by 2 s); it is

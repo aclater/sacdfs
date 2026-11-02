@@ -1,6 +1,6 @@
 # Lyrion Music Server (Logitech Media Server)
 
-**Tested** with Lyrion Music Server 9.1.1 (official image) on sacdfs 0.3.0-rc.1, in a container
+**Tested** with Lyrion Music Server 9.1.1 (official image) on sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1), in a container
 reading a sacdfs mount on its host, with squeezelite 2.0 as the player: 93 of 93 tracks with
 `dsf` (186 of 186 with `dsf,wav`), first scan 1.1 s, folder art used, multichannel areas as
 their own albums, native DSD playback. Details:
@@ -13,7 +13,7 @@ their own albums, native DSD playback. Details:
 | `SACDFS_FORMATS` (`--format`) | `dsf`, or `dsf,wav` | both worked |
 | `SACDFS_FLATTEN` (`--flatten`) | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
 
-Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the tests ran with 16).
+Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the 0.4.0-rc.2 tests ran with it, the 0.3.0-rc.1 tests with 16).
 
 ## Add the share
 

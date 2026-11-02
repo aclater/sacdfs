@@ -41,11 +41,13 @@ validated**. The [user guide](../user-guide.md) covers running it.
 |---|---|---|
 | Roon | [roon.md](roon.md) | Roon 2.x, sacdfs 0.2.0 |
 | Plex | [plex.md](plex.md) | Plex Media Server 1.43.5, sacdfs 0.2.0-rc.4 |
-| Jellyfin | [jellyfin.md](jellyfin.md) | Jellyfin 12.4.0, sacdfs 0.3.0-rc.1 |
-| Navidrome | [navidrome.md](navidrome.md) | Navidrome 0.64.2, sacdfs 0.3.0-rc.1 |
-| Lyrion (Logitech Media Server) | [lms.md](lms.md) | Lyrion 9.1.1, sacdfs 0.3.0-rc.1 |
-| MPD (and moOde, Volumio) | [mpd.md](mpd.md) | MPD 0.24.15, sacdfs 0.3.0-rc.1 |
+| Jellyfin | [jellyfin.md](jellyfin.md) | Jellyfin 12.4.0, sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1) |
+| Navidrome | [navidrome.md](navidrome.md) | Navidrome 0.64.2, sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1) |
+| Lyrion (Logitech Media Server) | [lms.md](lms.md) | Lyrion 9.1.1, sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1) |
+| MPD (and moOde, Volumio) | [mpd.md](mpd.md) | MPD 0.24.15, sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1) |
 
-The music-server tests ran on the sacdfs versions named. What changed since then for them is
-the default cache, 32 MiB since 0.4.0 ([#150](https://github.com/aclater/sacdfs/issues/150)); it was re-checked on 0.4.0: a scan that reads the
-start and end of every file peaked at 48 MiB of memory.
+The music-server tests ran on the sacdfs versions named. The Jellyfin, Navidrome, Lyrion and
+MPD tests ran again on 0.4.0-rc.2 at the default cache, 32 MiB since 0.4.0
+([#150](https://github.com/aclater/sacdfs/issues/150)). The Roon and Plex tests are older than
+that default; it was re-checked on 0.4.0: a scan that reads the start and end of every file
+peaked at 48 MiB of memory.

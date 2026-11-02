@@ -1,9 +1,9 @@
 # MPD (and moOde, Volumio)
 
-**Tested** with MPD 0.24.15 (Fedora 44 package, in a container) on sacdfs 0.3.0-rc.1, reading
-a sacdfs mount on its host: first scan 0.55 s for 93 tracks with `dsf`, against 5.6 s with
-`dsf,wav`; DSF played as DSD, stereo and 5.1, and seeks worked. moOde and Volumio are built on
-MPD but were not run themselves. Details: [clients](../clients.md#mpd-moode-volumio).
+**Tested** with MPD 0.24.15 (Fedora 44 package, in a container) on sacdfs 0.4.0-rc.2 (and
+0.3.0-rc.1), reading a sacdfs mount on its host: first scan 0.34 s for 93 tracks with `dsf`,
+against 3.6 s with `dsf,wav` (on a quiet desktop host); DSF played as DSD, stereo and 5.1,
+and seeks worked. moOde and Volumio are built on MPD but were not run themselves. Details: [clients](../clients.md#mpd-moode-volumio).
 
 ## sacdfs settings
 
@@ -12,7 +12,7 @@ MPD but were not run themselves. Details: [clients](../clients.md#mpd-moode-volu
 | `SACDFS_FORMATS` (`--format`) | `dsf` | MPD's FFmpeg probes about 5 MB of each WAV file, which sacdfs must convert: the first scan took 10 times as long with `dsf,wav` |
 | `SACDFS_FLATTEN` (`--flatten`) | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
 
-Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the tests ran with 16). If another
+Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the 0.4.0-rc.2 tests ran with it, the 0.3.0-rc.1 tests with 16). If another
 client needs WAV, give it a second sacdfs container or mount with `dsf,wav`.
 
 ## Add the share

@@ -1,7 +1,7 @@
 # Navidrome
 
-**Tested** with Navidrome 0.64.2 (official image) on sacdfs 0.3.0-rc.1, in a container reading
-a sacdfs mount on its host: first scan 0.43 s, 93 of 93 tracks, folder art used, multichannel
+**Tested** with Navidrome 0.64.2 (official image) on sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1), in a
+container reading a sacdfs mount on its host: first scan 0.42 s, 93 of 93 tracks, folder art used, multichannel
 areas as their own albums, streams and transcodes played, and a restart of sacdfs under the
 running container was picked up. Details: [clients](../clients.md#navidrome).
 
@@ -12,7 +12,7 @@ running container was picked up. Details: [clients](../clients.md#navidrome).
 | `SACDFS_FORMATS` (`--format`) | `dsf`, or `dsf,wav` for both | both worked (186 of 186 with `dsf,wav`) |
 | `SACDFS_FLATTEN` (`--flatten`) | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
 
-Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the tests ran with 16).
+Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the 0.4.0-rc.2 tests ran with it, the 0.3.0-rc.1 tests with 16).
 
 ## Add the share
 
