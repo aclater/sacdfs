@@ -427,6 +427,46 @@ figure is not re-measured. The 1.4 GB base here is the same in both runs and com
 rig's repeated images, not from the TOC. The read path is untouched (an accessor replaces a
 field), and the DSF gate stays 93/93.
 
+## Cache size (#150)
+
+`--cache-mb` swept over 8 to 256 MiB on the five bench images, a fresh mount (`--no-index-cache`)
+per run, medians of 3 runs under benchlock, on a 32-thread host. Seconds, then peak RSS in MiB.
+Straight reads: every DSF or WAV file of one area, 1 MiB reads. Seeks: 200 reads of 128 KiB
+at random places in DST files (warm: after 200 others). Four readers: four 6-channel DST
+files of one image read at once. Replay: `scripts/import-replay.py` over the DSF files
+(WAV: over the WAV files). Scan, as Plex's: walk, `stat`, the first and last 128 KiB of every
+file. The last column is 0.3.0 at its default.
+
+| Workload | 8 | 16 | **32** | 64 | 128 | 256 | 0.3.0, 256 |
+|---|---|---|---|---|---|---|---|
+| plain DSD stereo, DSF | 1.40 (20) | 1.40 (27) | **1.30 (42)** | 1.33 (70) | 1.44 (128) | 1.38 (243) | 1.46 (248) |
+| plain DSD stereo, WAV | 10.81 (37) | 2.24 (44) | **2.19 (60)** | 2.15 (90) | 2.16 (148) | 2.15 (262) | 2.16 (269) |
+| DST stereo, DSF | 3.53 (21) | 3.41 (29) | **3.46 (44)** | 3.44 (72) | 3.49 (130) | 3.47 (244) | 3.46 (247) |
+| DST stereo, WAV | 15.20 (42) | 3.87 (48) | **3.80 (63)** | 3.77 (94) | 3.80 (152) | 3.88 (266) | 3.77 (268) |
+| DST 6 ch., DSF | 11.77 (30) | 11.75 (38) | **11.85 (54)** | 11.71 (83) | 11.84 (140) | 11.75 (254) | 11.72 (258) |
+| DST 6 ch., WAV | 96.09 (61) | 13.80 (55) | **14.02 (71)** | 13.87 (103) | 13.90 (159) | 13.81 (273) | 13.87 (275) |
+| cold seeks | 0.20 (23) | 0.19 (30) | **0.19 (45)** | 0.18 (47) | 0.17 (47) | 0.19 (47) | 0.18 (54) |
+| warm seeks | 0.18 (23) | 0.17 (31) | **0.17 (46)** | 0.18 (73) | 0.17 (80) | 0.17 (80) | 0.17 (88) |
+| four readers, one image | 6.42 (36) | 2.73 (42) | **2.46 (57)** | 2.48 (90) | 2.48 (148) | 2.48 (261) | 2.48 (265) |
+| import replay, DSF | 0.38 (21) | 0.39 (29) | **0.38 (45)** | 0.39 (77) | 0.39 (107) | 0.40 (108) | 0.39 (134) |
+| import replay, WAV | 0.44 (23) | 0.43 (31) | **0.44 (46)** | 0.43 (73) | 0.43 (84) | 0.43 (85) | 0.45 (124) |
+| Plex-like scan | 0.22 (23) | 0.22 (30) | **0.22 (46)** | 0.23 (65) | 0.23 (66) | 0.23 (66) | 0.24 (103) |
+
+- **32 MiB is the new default:** the smallest size within 5 % of 256 on every workload (the
+  largest difference, 6-channel WAV, is +1.5 %; the plain DSD DSF read varies by ±0.1 s between
+  runs). At 16, four readers of one image take 10 % longer (16 % in the sweep of 0.3.0); at 8,
+  WAV straight reads take 4 to 7 times as long, because a fast reader's read-ahead window
+  (about 8 MiB of PCM) no longer fits.
+- **Against 0.3.0 at its default**, 32 MiB reads and seeks within 1.5 %, and the import replay
+  peaks at 45 MiB instead of 134 (WAV: 46 against 124). The same build at 256 MiB peaks at
+  108 MiB. The fixed overhead fell from about 38 to about 13 MiB at 8 MiB
+  ([design](design.md#memory-the-default-cache-and-the-fixed-overhead-150)).
+- Straight reads still peak above the cap plus the fixed overhead at the smallest sizes (61 MiB
+  for 6-channel WAV at 8): the read-ahead's frames that do not fit the cache are held on the
+  heap until read.
+- An idle mount gives its cache back after 60 s: RSS 57 → 11 MiB after a WAV replay and a
+  300 MB read at the default.
+
 ## Mount, listing and tag-walk cost
 
 | What | Measured |

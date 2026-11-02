@@ -167,7 +167,8 @@ impl TrackFile {
         let (audio, header, trailer, tag) = match format {
             Format::Dsf => {
                 let l = tagged?.layout;
-                let header = wav::Header::from_bytes(dsf::region(&l, scarletbook::output::RegionKind::Header));
+                let header =
+                    wav::Header::from_bytes(dsf::region(&l, scarletbook::output::RegionKind::Header));
                 let tag = dsf::region(&l, scarletbook::output::RegionKind::Trailer);
                 let range = 0..tag.len();
                 lib = Some(l);

@@ -8,6 +8,7 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use lru::LruCache;
 use rayon::prelude::*;
@@ -328,6 +329,29 @@ impl Pool {
     fn mapped(&self) -> usize {
         self.lock().mapped
     }
+
+    /// Unmaps every slab with no slot in use.
+    fn unmap_empty(&self) {
+        let freed: Vec<Slab> = {
+            let mut g = self.lock();
+            let g = &mut *g;
+            let mut freed = Vec::new();
+            for (i, slot) in g.slabs.iter_mut().enumerate() {
+                if slot.as_ref().is_some_and(|s| s.used == 0) {
+                    if let Some(s) = slot.take() {
+                        g.mapped -= s.map.len;
+                        g.empty -= 1;
+                        if let Some(v) = g.open.get_mut(&s.len) {
+                            v.retain(|&x| x as usize != i);
+                        }
+                        freed.push(s);
+                    }
+                }
+            }
+            freed
+        };
+        drop(freed);
+    }
 }
 
 /// Bytes of a cache's cap that cached frames leave free: an eighth of the cap, at most
@@ -357,6 +381,9 @@ pub struct FrameCache {
     inner: Mutex<CacheInner>,
     pool: Arc<Pool>,
     cap: usize,
+    /// When the cache was last used, in ms since `epoch` ([`FrameCache::release_if_idle`]).
+    used: AtomicU64,
+    epoch: Instant,
 }
 
 impl std::fmt::Debug for FrameCache {
@@ -372,6 +399,8 @@ impl FrameCache {
             inner: Mutex::new(CacheInner { lru: LruCache::unbounded(), bytes: 0 }),
             pool: Arc::new(Pool { inner: Mutex::new(PoolInner::default()), cap }),
             cap,
+            used: AtomicU64::new(0),
+            epoch: Instant::now(),
         }
     }
 
@@ -413,7 +442,30 @@ impl FrameCache {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, CacheInner> {
+        self.used.store(self.epoch.elapsed().as_millis() as u64, Ordering::Relaxed);
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Drops every cached frame and unmaps the slabs left empty, if the cache has not been
+    /// used for `idle`; whether it did (#150). Frames readers still hold stay until dropped.
+    pub fn release_if_idle(&self, idle: Duration) -> bool {
+        let now = self.epoch.elapsed().as_millis() as u64;
+        if now.saturating_sub(self.used.load(Ordering::Relaxed)) < idle.as_millis() as u64 {
+            return false;
+        }
+        let frames: Vec<Arc<Frame>> = {
+            let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            g.bytes = 0;
+            let mut v = Vec::with_capacity(g.lru.len());
+            while let Some((_, f)) = g.lru.pop_lru() {
+                v.push(f);
+            }
+            v
+        };
+        let any = !frames.is_empty() || self.pool.mapped() > 0;
+        drop(frames);
+        self.pool.unmap_empty();
+        any
     }
 
     fn get(&self, key: &Key) -> Option<Arc<Frame>> {
@@ -544,15 +596,26 @@ impl std::fmt::Debug for Engine {
     }
 }
 
+/// Drops the pooled converters of engine `id`.
+fn drop_converters(id: u64) {
+    let mine: Vec<_> = {
+        let mut list = CONVERTERS.lock().unwrap_or_else(|p| p.into_inner());
+        let (mine, rest) = std::mem::take(&mut *list).into_iter().partition(|(e, _, _)| *e == id);
+        *list = rest;
+        mine
+    };
+    drop(mine);
+}
+
+/// How long an engine's cache goes unused before [`Engine::start_idle_release`] gives its
+/// memory back (#150). *Why 60 s:* longer than the gaps of a player, a scanner or `cp`
+/// between reads, which keep their read-ahead; a reader that comes back later loses a few
+/// ms to decoding.
+pub const IDLE_RELEASE: Duration = Duration::from_secs(60);
+
 impl Drop for Engine {
     fn drop(&mut self) {
-        let mine: Vec<_> = {
-            let mut list = CONVERTERS.lock().unwrap_or_else(|p| p.into_inner());
-            let (mine, rest) = std::mem::take(&mut *list).into_iter().partition(|(e, _, _)| *e == self.id);
-            *list = rest;
-            mine
-        };
-        drop(mine);
+        drop_converters(self.id);
     }
 }
 
@@ -573,6 +636,43 @@ impl Engine {
             .map_err(io::Error::other)?;
         let id = NEXT_ENGINE.fetch_add(1, Ordering::Relaxed);
         Ok(Engine { cache: FrameCache::new(cache_bytes), pool, pcm, id })
+    }
+
+    /// Gives back what an idle engine holds (#150), if its cache has not been used for
+    /// `idle`: the cached frames and their slabs, the decoders and converters not in use, and
+    /// the heap's free pages (glibc's `malloc_trim`). Whether it did.
+    ///
+    /// *Why:* between scans and playback a mount held its whole cache and every decoder it
+    /// had made; a reader that comes back decodes its frames again, a few ms, and the
+    /// kernel's page cache often still holds what it read.
+    pub fn release_if_idle(&self, idle: Duration) -> bool {
+        if !self.cache.release_if_idle(idle) {
+            return false;
+        }
+        drop(std::mem::take(&mut *DECODERS.lock().unwrap_or_else(|p| p.into_inner())));
+        drop_converters(self.id);
+        trim_heap();
+        true
+    }
+
+    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_if_idle`] with
+    /// [`IDLE_RELEASE`] every 15 s, for as long as the engine lives.
+    pub fn start_idle_release(self: &Arc<Self>) -> io::Result<()> {
+        let weak = Arc::downgrade(self);
+        std::thread::Builder::new().name("sacdfs-idle".to_owned()).spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(15));
+                match weak.upgrade() {
+                    Some(e) => {
+                        if e.release_if_idle(IDLE_RELEASE) {
+                            log::debug!("idle: cache and decoders released");
+                        }
+                    }
+                    None => return,
+                }
+            }
+        })?;
+        Ok(())
     }
 
     /// The PCM settings.
@@ -779,7 +879,9 @@ impl Engine {
         let pool = || CONVERTERS.lock().unwrap_or_else(|p| p.into_inner());
         let taken = {
             let mut list = pool();
-            list.iter().rposition(|(e, ch, _)| *e == self.id && *ch == channels).map(|i| list.swap_remove(i).2)
+            list.iter()
+                .rposition(|(e, ch, _)| *e == self.id && *ch == channels)
+                .map(|i| list.swap_remove(i).2)
         };
         let mut c = taken.unwrap_or_else(|| Converter::new(channels, &self.pcm));
         let r = f(&mut c);
@@ -1023,6 +1125,20 @@ pub fn limit_malloc_arenas() -> bool {
     unsafe { libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS) == 1 }
 }
 
+/// Gives the heap's free pages back to the system (glibc's `malloc_trim`).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[allow(unsafe_code)]
+fn trim_heap() {
+    // SAFETY: malloc_trim takes an integer and only releases free memory of the allocator.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+/// Elsewhere, nothing to trim.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_heap() {}
+
 /// Elsewhere there is no glibc arena to limit.
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 pub fn limit_malloc_arenas() -> bool {
@@ -1070,6 +1186,31 @@ mod tests {
 
     /// Frames of the pool: the mapping stays within the cap, slots are reused once their
     /// frames are evicted and dropped, and an empty slab makes room for another length.
+    #[test]
+    fn an_idle_cache_gives_its_memory_back() {
+        let c = FrameCache::new(4 << 20);
+        for i in 0..200 {
+            let b = c.buffer(9408);
+            c.insert(key(i), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
+        }
+        let held = c.get(&key(199)).unwrap();
+        // Just used: kept.
+        assert!(!c.release_if_idle(Duration::from_secs(60)));
+        assert!(c.bytes() > 0);
+        // Idle: frames dropped, and every slab but the held frame's unmapped.
+        assert!(c.release_if_idle(Duration::ZERO));
+        assert_eq!(c.bytes(), 0);
+        assert!(c.get(&key(0)).is_none());
+        assert_eq!(c.mapped(), Pool::slab_shape(9408).0);
+        drop(held);
+        assert!(c.release_if_idle(Duration::ZERO));
+        assert_eq!(c.mapped(), 0);
+        // Still usable.
+        let b = c.buffer(9408);
+        c.insert(key(1), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
+        assert!(c.get(&key(1)).is_some());
+    }
+
     #[test]
     fn pooled_frames_stay_within_the_cap() {
         let cap = 4 << 20;
