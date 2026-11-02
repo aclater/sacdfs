@@ -1,0 +1,1 @@
+# valgrind suppressions for scripts/leak-check.sh (#151). Each entry says why it is not a leak.

@@ -1,0 +1,75 @@
+# Leak hunting off PR CI (#151): every week, and on demand, the test suite under valgrind
+# memcheck and a short soak on the corpus. Too slow for every pull request (the owner: "dont
+# make CI take too long"); pull requests run only tests/no_growth.rs, in the tests job. The
+# long soak (hours, real discs) runs on a test host: see docs/development.md.
+name: leaks
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"   # Mondays, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+
+jobs:
+  memcheck:
+    name: memcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
+        with:
+          save-if: false
+      - name: Install valgrind and fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends valgrind fuse3
+      - name: Test suite under memcheck
+        run: scripts/leak-check.sh memcheck
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: memcheck
+          path: target/leak-check/
+          retention-days: 14
+
+  soak:
+    name: soak (corpus, 20 min)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
+        with:
+          save-if: false
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - run: cargo build --locked --release
+      - name: Soak
+        run: |
+          mkdir -p target/soak-images
+          for i in dsd-stereo-mch-2048 dst-features-2ch-6ch dst-features-4ch album-set-disc-2-of-3; do
+            ln -s "$PWD/tests/corpus/images/$i.iso" target/soak-images/
+          done
+          python3 -I scripts/soak.py --sacdfs target/release/sacdfs --images target/soak-images \
+            --hours 0.33 --interval 30 --warmup 300 --cache-mb 16 --out target/soak.tsv
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: soak
+          path: target/soak.tsv
+          retention-days: 14

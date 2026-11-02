@@ -1,0 +1,72 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Leak checks off PR CI (#151); see docs/development.md. Run inside the container of
+# scripts/leak-check.Containerfile (cargo, valgrind, fusermount3), from the repository root:
+#
+#   podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD":/src:z -w /src \
+#       sacdfs-leak scripts/leak-check.sh memcheck
+#
+#   memcheck            every test binary under valgrind memcheck, one test at a time,
+#                       following the sacdfs processes the FUSE tests start. Fails on any
+#                       definite or indirect leak, or on a memory error.
+#   massif IMAGES MIN   a soak segment of MIN minutes (scripts/soak.py on the .iso files in
+#                       IMAGES) with the mounted sacdfs under valgrind massif; prints the heap
+#                       over time, the allocation sites still live at the end, and the growth
+#                       between the first snapshot after the warm-up and the last.
+#
+# Output goes to $OUT (default target/leak-check).
+set -euo pipefail
+
+OUT=${OUT:-target/leak-check}
+mkdir -p "$OUT"
+export SACDFS_FUSE_TESTS=1
+
+memcheck() {
+    # Release-like code, debug info for the stacks, and the test binaries' paths.
+    cargo build --locked --bins
+    cargo test --locked --no-run --message-format=json 2>/dev/null \
+        | python3 -I -c 'import json,sys
+for l in sys.stdin:
+    m = json.loads(l)
+    if m.get("reason") == "compiler-artifact" and m.get("executable") and m["profile"]["test"]:
+        print(m["executable"])' >"$OUT/tests.txt"
+    local vg=(valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect
+        --errors-for-leak-kinds=definite,indirect --trace-children=yes
+        "--trace-children-skip=*fusermount3,*/kill,*/sh,*/bash,*/python3"
+        --suppressions=scripts/leak-check.supp --num-callers=30)
+    local fail=0
+    while read -r bin; do
+        name=$(basename "$bin")
+        echo "== $name"
+        # Each test on its own: valgrind serialises threads, and a FUSE test waiting on a
+        # mount must not wait behind another test's decoding.
+        if ! "${vg[@]}" "--log-file=$OUT/$name.%p.log" "$bin" --test-threads=1 >"$OUT/$name.out" 2>&1; then
+            echo "   FAIL: see $OUT/$name.*"
+            fail=1
+        fi
+        grep -h "definitely lost:\|indirectly lost:\|ERROR SUMMARY" "$OUT/$name".*.log | sort | uniq -c || true
+    done <"$OUT/tests.txt"
+    return $fail
+}
+
+massif() {
+    local images=$1 minutes=$2
+    cargo build --locked --release
+    local hours
+    hours=$(python3 -I -c "print($minutes / 60)")
+    # The watchdog's timeout is longer under valgrind, which runs the decoder ~30x slower.
+    python3 -I scripts/soak.py --sacdfs target/release/sacdfs --images "$images" --hours "$hours" \
+        --interval 30 --warmup 120 --readers 2 --read-pause 0.5 --request-timeout 60 \
+        --stall-every 240 --remount-every 300 --out "$OUT/massif-soak.tsv" \
+        --wrap "valgrind --tool=massif --threshold=0.5 --detailed-freq=4 --max-snapshots=200 --time-unit=ms --massif-out-file=$OUT/massif.out" \
+        || true  # the soak's verdict does not apply under valgrind
+    ms_print "$OUT/massif.out" >"$OUT/massif.txt"
+    python3 -I scripts/massif-summary.py "$OUT/massif.out"
+}
+
+case ${1:-} in
+    memcheck) memcheck ;;
+    massif) massif "${2:?IMAGES}" "${3:?MINUTES}" ;;
+    *) sed -n '3,20p' "$0"; exit 2 ;;
+esac
