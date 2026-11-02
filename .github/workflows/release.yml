@@ -12,7 +12,7 @@
 # files, it builds and tests everything and publishes nothing. Every job or step that
 # publishes is guarded by `github.ref_type == 'tag'`, and only a tag push makes that true.
 #
-# Not crates.io: scarletbook is a git dependency, which crates.io refuses. The release
+# Not crates.io yet: scarletbook is there since 0.5.7, publishing sacdfs is #155. The release
 # checklist is in CONTRIBUTING.md, "Releasing".
 name: release
 

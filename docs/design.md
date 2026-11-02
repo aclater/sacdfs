@@ -46,7 +46,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is tag v0.5.6** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.5.7, from crates.io (`=0.5.7`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -56,7 +56,9 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   [PCM conversion](#pcm-conversion)). 0.5.6 (#128) for the plain-DSD speed it restored
   (scarletbook-rs#216) and its run-time DST dispatch, with unchanged bytes; *why not stay:* it
   removes the known plain-DSD WAV slowdown for free, and every gate passed; *trade-off:* none
-  measured (no read got slower).
+  measured (no read got slower). 0.5.7 (#155) came from crates.io, pinned exactly: *why:* the
+  registry is the only source a published crate may use and cargo's checksum pins the bytes; the
+  tag is no longer needed; bytes unchanged, gated as above.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
