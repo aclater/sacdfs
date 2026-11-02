@@ -165,6 +165,7 @@ All settings are environment variables.
 | `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB. On a NAS, `16` is recommended; see [Memory](#memory) |
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
+| `SACDFS_REQUEST_TIMEOUT` | (30) | `--request-timeout` in seconds: a read, lookup or listing that waits longer for the images (a stalled disk or share) fails with an I/O error, and is logged, instead of hanging the SMB or NFS client; `0` waits for good. See [Troubleshooting](#troubleshooting) |
 | `SACDFS_INDEX_CACHE` | `/cache` | `--index-cache` directory (keep it on a volume so it survives updates); `off` for `--no-index-cache` |
 | `SACDFS_VERBOSE` | `1` | `0` warnings only, `1` (`-v`), `2` (`-vv`) |
 | `SMB` | `1` | `0` to turn the SMB server off |
@@ -572,6 +573,17 @@ holding an old one gets "stale file handle" instead of other data.
   the container is rootless.
 - **`SACDFS_SOURCE /images does not exist`**: the images volume isn't mounted.
 - **A port is already in use**: see the notes on addresses under Docker and TrueNAS above.
+- **A client gets I/O errors, and the log shows `... has waited 30.0 s (running on
+  sacdfs-read-3 for 30.0 s): failing it with EIO after the 30 s request timeout`**: the
+  images did not answer for 30 s (a disk in error recovery, a hung network share under
+  `SACDFS_SOURCE`). sacdfs gives up on that request so that the client is not left waiting
+  (an SMB client would otherwise wait for hours), and keeps serving the other images. The
+  line says what was asked (the image, track and offset of a read, or the inode of a
+  listing), and whether it was running or still queued. Once the images answer again,
+  requests succeed again; nothing needs restarting. A client may see a few times the timeout
+  before its error, because the kernel asks again for the same data. Raise
+  `SACDFS_REQUEST_TIMEOUT` if the images are on disks that spin down and take longer than
+  30 s to wake.
 - More detail: `SACDFS_VERBOSE=2`, `SMB_LOG_LEVEL=3`, `NFS_LOG_LEVEL=DEBUG`.
 
 ## Testing

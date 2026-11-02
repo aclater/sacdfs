@@ -104,6 +104,11 @@ struct Args {
     #[arg(long, default_value_t = sacdfs::handles::DEFAULT_MAX_OPEN, value_name = "N",
           value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=1024))]
     max_open_images: usize,
+    /// Seconds a request (a read, a lookup, a listing) may wait for the source before it
+    /// fails with an I/O error and a log line, so that a stalled share never hangs a client;
+    /// 0 waits for good.
+    #[arg(long, default_value_t = sacdfs::watchdog::DEFAULT_TIMEOUT.as_secs(), value_name = "SECS")]
+    request_timeout: u64,
     /// Append the log to FILE instead of standard error, at info level unless -v says more.
     /// Without it a background mount logs nowhere, except to the journal under systemd.
     #[arg(long, value_name = "FILE")]
@@ -340,7 +345,8 @@ fn run(args: Args) -> io::Result<()> {
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let tags_tree = tree.clone();
-    let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;
+    let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?
+        .with_request_timeout(Some(Duration::from_secs(args.request_timeout)))?;
 
     let mut config = Config::default();
     config.mount_options = vec![

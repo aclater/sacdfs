@@ -1156,19 +1156,94 @@ size read. `statvfs` comes from `nix` (MIT, already a dependency of fuser, with 
 
 ## Concurrency
 
-fuser dispatches requests on 4 threads, so that a directory listing that opens many images
-does not hold up other requests. Reads are answered from a pool of request threads (as many
-as decoder threads, at least 4 and at most 16): the request's `ReplyData` moves to a worker,
-which decodes or copies and replies, so slow reads on one file don't block
-`lookup`/`readdir` or reads of other files. DST frames are decoded, and frames converted to
-PCM, on a separate rayon pool (`--threads`), one `DstDecoder` and one `Converter` per channel
-count per thread.
+fuser reads requests from the kernel on 4 threads, and they only hand requests over: what
+is in memory already (the attributes of a node made already, `opendir` and `access` of one)
+is answered there, and everything that may read the source moves, with its reply, to a pool
+of request threads. Reads go to one pool (`sacdfs-read`, as many threads as decoder threads,
+at least 4 and at most 16, growing when busy), lookups, listings, opens and the root's
+attributes to another (`sacdfs-meta`, 4, growing too). A worker decodes, copies or loads, and
+replies, so a slow read or listing never blocks the others. DST frames are decoded, and frames
+converted to PCM, on a separate rayon pool (`--threads`), one `DstDecoder` and one
+`Converter` per channel count per thread.
 
-- *Why the request pool is not a rayon pool:* a rayon worker that waits for another pool runs
-  other jobs of its own pool meanwhile, and a second read of the same file would then wait,
-  on the same thread, for the demultiplexer lock the first one holds.
+- *Why the request pools are not rayon pools:* a rayon worker that waits for another pool
+  runs other jobs of its own pool meanwhile, and a second read of the same file would then
+  wait, on the same thread, for the demultiplexer lock the first one holds.
 - Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O error on
   that read.
+
+### A stalled source (#63, #72)
+
+A source can stop answering without failing: a hung NFS or SMB share, a disk retrying a bad
+sector, a disk that spins up. A thread that reads it then blocks in the kernel, for as long
+as the source takes, and nothing in sacdfs can stop it. Two things keep that from hanging
+everything:
+
+- **Nothing that reads the source runs on fuser's threads** (#63). *Why:* `lookup` and
+  `readdir` used to load TOCs there, so four listings of a hung share stopped every other
+  request of the mount, even of directories listed long before. *Trade-off:* a lookup or
+  listing now costs a handover to another thread; the kernel keeps entries and attributes
+  for a day (for the refresh interval on a re-read tree), so few requests pay it, and `getattr` of a
+  node made already (the most frequent request, from `ls -l` and every scanner) is still
+  answered in place. Measured on the bench images (186 files, harrison, under the bench
+  lock, two runs each): a cold walk of the whole mount, every lookup, listing and TOC load,
+  took 11.4 and 12.6 ms before, 14.0 and 12.2 ms after; a warm `stat` 0.91 and 1.29 µs
+  before, 1.28 and 1.29 µs after. Both within the noise.
+- **The request pools grow** when a request is queued and no thread is free, to at most 64
+  threads each; a spare thread with nothing to do for 10 s ends. *Why:* a thread blocked on
+  a stalled source is lost until the source answers. A fixed pool lost its threads one by
+  one, and then every request, of any image, queued behind them. *Why 64:* the kernel sends
+  at most 64 background requests at once (`max_background`), plus the few synchronous ones
+  of its callers; the bound keeps a hung share from making threads without end. A thread is
+  a stack of address space, mostly untouched, and costs nothing while parked.
+- **The watchdog fails what waits too long** (`--request-timeout`, 30 s by default, 0 for
+  none; `src/watchdog.rs`). Each request handed over has its reply in a slot that the
+  request thread takes when done, and that one watchdog thread, checking a few times per
+  timeout, takes first if the timeout has passed: it logs the request (the image, track and
+  offset of a read; the inode of a listing), whether it was queued or running and on which
+  thread, and replies `EIO`. The request thread, when it finishes, finds the slot empty and
+  only logs. *Why fail rather than wait:* fuser has no `FUSE_INTERRUPT` (fuser#14), so a
+  request sacdfs is stuck on stays open for as long as the source hangs, and an SMB server
+  re-exporting the mount keeps its client waiting with interim answers: #72 waited 6 h. An
+  error lets the client retry or give up, and sacdfs logs what was stuck, which #72 lacked.
+  libfuse 3.18 ("request timeouts"), JuiceFS 1.3 and macFUSE 5.5 (`daemon_timeout`) added
+  the same. *Why `EIO`, not `EAGAIN`:* `EIO` is what a failing disk gives, and every client
+  handles it; some programs retry a blocking read's `EAGAIN` at once, which would spin on a
+  stalled source. *Why 30 s:* far above the slowest healthy request (a cold DST read, or the
+  first listing of a directory of images on a share, takes milliseconds to a few seconds),
+  and below the 60 s after which SMB clients give up on a server. *Trade-off:* a disk that
+  takes longer than the timeout to spin up fails its first requests; raise the timeout for
+  such disks. A client can see a few times the timeout before its error, because the kernel
+  asks again for the page its failed read-ahead held, and programs retry a short read.
+- A listing that timed out goes on loading on its thread; when the source answers, the
+  directory is loaded, and the next listing is immediate.
+- The root's `getattr` starts a sweep of the source for changes (#123). It does not wait for
+  a sweep already running (held up by a stalled source, say): it answers with the times
+  known, and the running sweep moves them when it is done.
+
+**Not done, and why.** *A timeout on the source I/O itself:* a thread blocked in the kernel
+cannot be stopped from user space; only the request can be answered. *Moving the TOC loads
+off rayon's global pool:* a listing opens its images in parallel there (`sacdfs-toc`, at most
+8 threads), so 8 images stalled at once leave later listings that open images queued, and
+the watchdog fails them; listings of directories made already, and reads, are not affected.
+A follow-up can give TOC loads a growing pool like the request pools.
+
+**Audit of every wait on the read path (#72).** Looking for a wait that a missed wakeup or a
+lost reply could make endless:
+
+| Wait | Bounded by | Finding |
+|---|---|---|
+| A request job queued for a request thread (`mpsc` receive) | a free thread | the pool was fixed: threads blocked on the source starved every later request. Now it grows, and the watchdog bounds the wait |
+| A read waiting for its file's demultiplexer (`Reader::stream`), held by an earlier read or the file's read-ahead | that holder's decode, or its source I/O | bounded unless the holder blocks on the source; the waiter is now failed by the watchdog |
+| A read waiting for the DST pool (`ThreadPool::install` / `scope`) | the decode jobs, which always complete (a panic is carried back to the caller) | no lost wakeup: rayon sets the latch when the jobs end. The PCM path demultiplexes inside the pool, so a stalled source there holds a decoder thread too |
+| The frame cache, its slab pool, the open-image cache (`handles`) | short critical sections | none of them is held across source I/O or another wait (the image `stat` and `open` run outside the lock) |
+| Read-ahead | nothing waits for it, except through `Reader::stream` above | |
+| The kernel's own read of a page that a failed or abandoned read-ahead held | the request for it, which the watchdog bounds | |
+
+No missed wakeup or lost reply was found: every endless wait was a wait for the source, or for
+a lock or thread held by something waiting for the source. What held #72's read is still not
+known (its images were on local disks); the watchdog bounds it and its log line says what it
+was waiting on, for the next occurrence.
 
 ### Open images
 

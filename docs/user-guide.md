@@ -57,6 +57,11 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   listed and between reads, so that a seek does not have to open it again (a round trip or two
   on a network share). The least recently used image is closed when the limit is reached, and
   any image unused for 5 minutes is closed.
+- `--request-timeout SECS` (default 30, `0` for none): a request (a read, a lookup, a
+  listing) that has waited this long for the source, because a share or disk stopped
+  answering, fails with an I/O error and a warning in the log, instead of hanging the program
+  that asked. Requests for other images go on meanwhile. Raise it for disks that spin down
+  and take longer to wake.
 
 **What is shown.**
 - `--format dsf`, `wav` or `dsf,wav` (the default) chooses which files appear.

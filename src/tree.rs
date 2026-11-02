@@ -820,6 +820,12 @@ impl Tree {
         self.find(ino)
     }
 
+    /// The node with inode number `ino`, if it is made already: never reads the source
+    /// (unlike [`Tree::get`]), so it can answer on fuser's own threads (#63).
+    pub fn loaded(&self, ino: u64) -> Option<Arc<Node>> {
+        self.nodes.read().unwrap_or_else(|p| p.into_inner()).get(&ino).cloned()
+    }
+
     /// Finds `ino` from the index: walks from the root through the directories its key's
     /// path goes through (matching inode numbers, not names, so that `--flatten` and
     /// de-duplicated names do not matter), then into the image's area and file.
@@ -1110,7 +1116,14 @@ impl Tree {
         }
         let Some(root) = self.get(ROOT) else { return };
         let Node::Dir(Dir { kind: DirKind::Source(top), .. }) = &*root else { return };
-        let mut guard = self.sweep.lock().unwrap_or_else(|p| p.into_inner());
+        // A sweep running already (maybe held up by a stalled source) is not waited for: the
+        // root's attributes are answered as they are, and the sweep moves them when done
+        // (#63).
+        let mut guard = match self.sweep.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return,
+        };
         let st = guard.get_or_insert_with(|| {
             let mut s = Sweep { checked: None, dirs: HashMap::new() };
             s.add(top);
