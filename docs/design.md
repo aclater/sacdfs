@@ -483,14 +483,27 @@ mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a
   as a user and as root: the new mount was lost in 200 of 200 when the old one was detached
   from outside (`fusermount3 -u -z`, a file open) and exited after the new one mounted, and in
   200 of 200 when the old one, unmounted, was held stopped until the new one had mounted.
-  With the fix, 2 of about 5,000 fixed-binary restarts lost the new mount, both with a file
-  open and the old mount detached from outside, and neither sacdfs logged an unmount: not
-  explained yet, and not an unmount by sacdfs. This was the failure seen in #51.
+  With the fix, 2 of about 5,000 fixed-binary restarts still lost the new mount; that was the
+  device-number reuse of the next rule (#54). This was the failure seen in #51.
 - On SIGINT, SIGTERM or SIGHUP, sacdfs unmounts (or detaches, if busy) only if the mount on top at
   its path still has its own device number, read from `/proc/self/mountinfo` right after
-  mounting; otherwise it logs why and leaves the path alone. *Why:* the device number is
-  unique while the mount exists, which is the only time it is compared; the mount table asks
-  the file system nothing, so the check cannot wait on a stopping session.
+  mounting, **and** its own FUSE connection is still up (`poll` on a duplicate of its
+  `/dev/fuse` descriptor shows no `POLLERR`); otherwise it logs why and leaves the path alone.
+  The same check guards the detach after a failed session. *Why the connection (#54):* the
+  kernel hands a freed device number (and mount id) to the next mount at once, so after an
+  unmount from outside, a new mount on the same path usually has the old one's number (178 of
+  200 restarts on Linux 7.2). An old sacdfs that got its signal only then (held stopped,
+  busy, or simply late: a service manager sends SIGTERM and then SIGCONT) saw "its" number on
+  top and unmounted the new mount: 28 of 50 restarts as a user and 13 of 20 as root, every
+  one with the number reused. The kernel aborts a mount's FUSE connection when its superblock
+  goes, before the number is freed, so a connection still up means the number read just
+  before is this mount's. Both checks ask the file system nothing, so they cannot wait on a
+  stopping session. With it: 0 lost in 200 such restarts, and 0 in the loop below.
+  Rejected: the 64-bit unique mount id (`statmount`/`listmount`, Linux 6.8+), which needs raw
+  syscalls and a fallback on older kernels for the same answer; holding an `O_PATH` descriptor
+  on the mount to pin its number, which makes a plain `fusermount3 -u` fail as busy.
+  The #53 note that "neither sacdfs logged an unmount" came from runs at the default log
+  level, where "signal N: unmounting" (info) is not shown.
 - A new sacdfs whose mount point is still a live FUSE mount of its user's (the previous one
   has not unmounted yet) waits for it to go, up to 10 s, then fails with "still mounted there
   after 10 s"; a dead one is cleared at once (below, #57). *Why:* mounted

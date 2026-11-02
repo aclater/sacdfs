@@ -6,6 +6,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A sacdfs that got its stop signal after its mount had already been unmounted from outside
+  (`fusermount3 -u`) could unmount the next sacdfs mounted on the same path (#54). The kernel
+  reuses a freed device number at once, and sacdfs told its own mount by that number alone;
+  it now also checks that its own FUSE connection is still up.
+
 ## [0.2.0-rc.1] - 2026-11-01
 
 ### Added

@@ -656,6 +656,48 @@ fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
     assert!(wait_exit(&mut new, "the new sacdfs"));
 }
 
+/// An old sacdfs that gets a signal after its mount was unmounted from outside leaves the
+/// next mount on the path alone, though that mount usually has the old one's device number
+/// (#54): the kernel reuses a freed number at once, and the old sacdfs, which told its mount
+/// by that number alone, unmounted the new one. SIGTERM followed by SIGCONT is what a
+/// service manager sends on stop. Several rounds: the number is reused in most, not all.
+#[test]
+fn a_late_signal_leaves_the_next_mount_alone() {
+    if !fuse_available() {
+        return;
+    }
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    for round in 0..6 {
+        let mut old = Mount::foreground(&image, &[]);
+        let at = old.path();
+        let file = at
+            .join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
+        let whole = std::fs::read(&file).unwrap();
+        let mut old_child = old.child.take().unwrap();
+        let pid = old_child.id().to_string();
+        assert!(Command::new("kill").arg("-STOP").arg(&pid).status().unwrap().success());
+        unmount_retrying(&at);
+        let cache = tempfile::tempdir().unwrap();
+        let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
+            .arg("-f")
+            .arg(&image)
+            .arg(&at)
+            .spawn()
+            .unwrap();
+        wait_for("the new mount", || std::fs::read(&file).is_ok_and(|d| d == whole));
+        assert!(Command::new("kill").arg("-TERM").arg(&pid).status().unwrap().success());
+        assert!(Command::new("kill").arg("-CONT").arg(&pid).status().unwrap().success());
+        assert!(wait_exit(&mut old_child, "the old sacdfs"));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (round {round})");
+        assert_eq!(fuse_mounts_on(&at), 1, "round {round}");
+        assert_eq!(std::fs::read(&file).unwrap(), whole, "round {round}");
+        unmount_retrying(&at);
+        assert!(wait_exit(&mut new, "the new sacdfs"));
+    }
+}
+
 /// The source field of the mount on `mountpoint` in `/proc/self/mountinfo` (escaped).
 fn mount_source(mountpoint: &Path) -> Option<String> {
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
