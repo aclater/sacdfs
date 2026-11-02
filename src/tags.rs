@@ -882,4 +882,50 @@ TIT2 = "Three (stereo)"
         std::os::unix::fs::symlink(d.path().join("a.jpg"), d.path().join("l.jpg")).unwrap();
         assert!(read_picture(d.path(), "l.jpg").is_err());
     }
+
+    #[test]
+    fn watch_finds_edits_across_mounts() {
+        let d = tempfile::tempdir().unwrap();
+        let tags = d.path().join("tags");
+        fs::create_dir_all(&tags).unwrap();
+        // Only this test installs a store in this process; no other unit test opens a disc.
+        install(Some(Store::new(&tags)));
+        let key = "0123456789abcdef0123456789abcdef";
+        let image = d.path().join("a.iso");
+        let other = d.path().join("b.iso");
+        let file = d.path().join("cache/tag-keys");
+        let images = || [image.as_path(), other.as_path()].into_iter();
+        // Nothing kept yet: nothing watched.
+        assert!(Watch::load(Some(file.clone()), images()).images.is_empty());
+        let mut w = Watch::load(Some(file.clone()), images());
+        w.images.insert(image.clone(), (key.to_owned(), None));
+        w.dirty = true;
+        w.save();
+        // A tags file added while stopped: found at the mount, with its mtime.
+        fs::write(tags.join(format!("{key}.toml")), "[album]\ngenre = \"Jazz\"\n").unwrap();
+        let m = fs::metadata(tags.join(format!("{key}.toml"))).unwrap().modified().unwrap();
+        let mut w = Watch::load(Some(file.clone()), images());
+        assert_eq!(w.images.len(), 1);
+        assert_eq!(w.check(true), vec![(image.clone(), m)]);
+        assert!(w.check(false).is_empty());
+        w.save();
+        // Unchanged at the next mount: still shown (initial), not as a change.
+        let mut w = Watch::load(Some(file.clone()), images());
+        assert_eq!(w.check(true), vec![(image.clone(), m)]);
+        assert!(w.check(false).is_empty());
+        // Edited in place (the directory's mtime may not move), then removed.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(tags.join(format!("{key}.toml")), "[album]\ngenre = \"Rock and more\"\n").unwrap();
+        let edited = w.check(false);
+        assert_eq!(edited.len(), 1);
+        assert!(edited[0].1 > m);
+        fs::remove_file(tags.join(format!("{key}.toml"))).unwrap();
+        let removed = w.check(false);
+        assert_eq!(removed.len(), 1);
+        assert!(removed[0].1 >= edited[0].1);
+        assert!(w.check(false).is_empty());
+        // A file that is not a watch file is as none.
+        fs::write(&file, "something else\n").unwrap();
+        assert!(Watch::load(Some(file), images()).images.is_empty());
+    }
 }
