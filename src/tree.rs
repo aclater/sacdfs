@@ -1020,7 +1020,45 @@ impl Tree {
                 }
             }
         }
+        // What the tree notes by source path for them goes too, for the paths that are gone:
+        // the mtimes passed up (#123) and the tags files watched (#81).
+        let mut paths: Vec<&Path> = Vec::new();
+        let mut images: Vec<&Path> = Vec::new();
+        for (_, node) in &freed {
+            let Node::Dir(d) = &**node else { continue };
+            match &d.kind {
+                DirKind::Source(s) => paths.push(&s.path),
+                DirKind::Folder(p, _) => paths.push(p),
+                DirKind::Image(disc) => {
+                    paths.push(&disc.path);
+                    images.push(&disc.path);
+                }
+                DirKind::Flat(image, s) => {
+                    paths.push(&s.path);
+                    paths.push(image);
+                    images.push(image);
+                }
+                DirKind::Area(..) => {}
+            }
+        }
+        let gone = |p: &&Path| fs::symlink_metadata(p).is_err();
+        paths.retain(gone);
+        images.retain(gone);
+        if !paths.is_empty() {
+            let mut b = self.bumps.write().unwrap_or_else(|p| p.into_inner());
+            for p in &paths {
+                b.remove(*p);
+            }
+        }
+        if !images.is_empty() && crate::tags::installed() {
+            let mut w = self.tagged.lock().unwrap_or_else(|p| p.into_inner());
+            for i in &images {
+                w.forget(i);
+            }
+        }
         // The discs are dropped here, outside the lock (each closes its image handle).
+        drop(paths);
+        drop(images);
         drop(freed);
     }
 

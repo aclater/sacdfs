@@ -212,6 +212,9 @@ pub struct Disc {
     /// Set when a cursor hands what it recorded to the seek index, so that a flush of the
     /// persistent seek index looks only at discs that may have changed.
     changed: Arc<AtomicBool>,
+    /// Set when the disc is dropped, so that the persistent seek index saves its last
+    /// changes at its next flush and then lets go of it (#153).
+    retired: Arc<AtomicBool>,
     source: Source,
     /// Cursors that started reading provisionally, and those that read exactly.
     readings: [AtomicU64; 2],
@@ -349,9 +352,10 @@ impl Disc {
         log_unspecified_layouts(path, lib.toc());
         let lib = Arc::new(lib);
         let changed = Arc::new(AtomicBool::new(false));
+        let retired = Arc::new(AtomicBool::new(false));
         if let (Some(cache), Some(key)) = (cache, key) {
             let slots = areas.iter().map(|a| a.slot).collect();
-            cache.register(key, shapes, lib.clone(), changed.clone(), slots, saved);
+            cache.register(key, shapes, lib.clone(), changed.clone(), retired.clone(), slots, saved);
         }
         Ok(Disc {
             id,
@@ -361,6 +365,7 @@ impl Disc {
             tuning,
             lib,
             changed,
+            retired,
             source,
             readings: [AtomicU64::new(0), AtomicU64::new(0)],
             loaded: loaded_hints,
@@ -435,6 +440,7 @@ impl Disc {
 impl Drop for Disc {
     fn drop(&mut self) {
         crate::handles::global().remove(self.source.inner.key);
+        self.retired.store(true, Ordering::Release);
     }
 }
 
