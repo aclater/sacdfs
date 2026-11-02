@@ -204,8 +204,6 @@ pub struct Disc {
     pub path: PathBuf,
     /// Modification time of the image file, shown on every node under it.
     pub mtime: SystemTime,
-    /// The table of contents.
-    pub toc: Toc,
     /// Per area of `toc.areas`, in the same order.
     pub areas: Vec<AreaState>,
     /// Seeking thresholds.
@@ -276,12 +274,14 @@ impl Disc {
         for w in lib.warnings() {
             log::debug!("{}: {w}", path.display());
         }
-        let toc = lib.toc().clone();
-        let areas: Vec<AreaState> = toc
+        // The TOC stays in the library's disc, the one copy ([`Disc::toc`], #136).
+        let sectors = lib.toc().sectors;
+        let areas: Vec<AreaState> = lib
+            .toc()
             .areas
             .iter()
             .map(|a| {
-                let (start_lsn, end_lsn) = audio_sector_range(a, toc.sectors);
+                let (start_lsn, end_lsn) = audio_sector_range(a, sectors);
                 let capacity = (end_lsn - start_lsn).saturating_mul(FRAMES_PER_SECTOR);
                 let per_frame = FRAME_BYTES_PER_CHANNEL * u64::from(a.channel_count.max(1));
                 AreaState {
@@ -315,19 +315,20 @@ impl Disc {
         let mut saved = Vec::with_capacity(areas.len());
         let mut loaded_hints = vec![0; areas.len()];
         for (i, st) in areas.iter().enumerate() {
-            let Some(area) = toc.area(st.slot) else {
+            let Some(area) = lib.toc().area(st.slot) else {
                 saved.push(None);
                 continue;
             };
             let bytes = loaded.as_ref().and_then(|l| l.get(i).cloned().flatten());
-            let set = bytes.as_ref().is_some_and(|b| {
-                AreaIndex::from_bytes(area, toc.sectors, b, INLINE_BUDGET)
-                    .and_then(|idx| {
-                        let n = idx.hints();
-                        lib.set_seek_index(st.slot, idx).map(|()| loaded_hints[i] = n)
-                    })
-                    .inspect_err(|e| log::debug!("{}: saved seek index not used: {e}", path.display()))
-                    .is_ok()
+            // Built first, so that the borrow of the TOC ends before the library is changed.
+            let built = bytes.as_ref().map(|b| AreaIndex::from_bytes(area, sectors, b, INLINE_BUDGET));
+            let set = built.is_some_and(|r| {
+                r.and_then(|idx| {
+                    let n = idx.hints();
+                    lib.set_seek_index(st.slot, idx).map(|()| loaded_hints[i] = n)
+                })
+                .inspect_err(|e| log::debug!("{}: saved seek index not used: {e}", path.display()))
+                .is_ok()
             });
             if !set {
                 if let Err(e) =
@@ -345,7 +346,7 @@ impl Disc {
         if hints > 0 {
             log::debug!("{}: {hints} seek hints loaded", path.display());
         }
-        log_unspecified_layouts(path, &toc);
+        log_unspecified_layouts(path, lib.toc());
         let lib = Arc::new(lib);
         let changed = Arc::new(AtomicBool::new(false));
         if let (Some(cache), Some(key)) = (cache, key) {
@@ -356,7 +357,6 @@ impl Disc {
             id,
             path: path.to_owned(),
             mtime,
-            toc,
             areas,
             tuning,
             lib,
@@ -365,6 +365,11 @@ impl Disc {
             readings: [AtomicU64::new(0), AtomicU64::new(0)],
             loaded: loaded_hints,
         })
+    }
+
+    /// The table of contents, held once, by the library's disc.
+    pub fn toc(&self) -> &Toc {
+        self.lib.toc()
     }
 
     /// A cursor whose next timeline position can be `frame`, for a read of about a

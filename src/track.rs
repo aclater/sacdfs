@@ -148,7 +148,7 @@ impl TrackFile {
         samples_per_frame: u32,
         pauses: bool,
     ) -> Option<TrackFile> {
-        let a = disc.toc.areas.get(area)?;
+        let a = disc.toc().areas.get(area)?;
         let kept;
         let track = match pauses.then(|| pause_range(a, track)).flatten() {
             Some((first, end)) => {
@@ -162,7 +162,7 @@ impl TrackFile {
         };
         let layout = Layout { channels: a.channel_count, frames: track.duration_frames };
         let mut lib = None;
-        let tagged = dsf::tagged(&disc.toc, a, track);
+        let tagged = dsf::tagged(disc.toc(), a, track);
         let stamp = tagged.as_ref().and_then(|t| t.stamp);
         let (audio, header, trailer, tag) = match format {
             Format::Dsf => {
@@ -180,7 +180,7 @@ impl TrackFile {
                         let id3 = dsf::region(&t.layout, scarletbook::output::RegionKind::Trailer);
                         (t.set, id3)
                     }
-                    None => (dsf::tag_set(&disc.toc, a, track, &dsf::options(a, track)), Vec::new()),
+                    None => (dsf::tag_set(disc.toc(), a, track, &dsf::options(a, track)), Vec::new()),
                 };
                 let spf = u64::from(samples_per_frame);
                 if spf == 0 || dsf::FRAME_BYTES * 8 % spf != 0 {

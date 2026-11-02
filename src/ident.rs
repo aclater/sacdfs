@@ -425,7 +425,7 @@ pub fn generation(file: &TrackFile, flavour: u64) -> u64 {
     };
     let h = sha64(&[
         b"sacdfs gen v1\0",
-        &file.disc.toc.sectors.to_be_bytes(),
+        &file.disc.toc().sectors.to_be_bytes(),
         &mtime.as_secs().to_be_bytes(),
         &mtime.subsec_nanos().to_be_bytes(),
         &[fmt],

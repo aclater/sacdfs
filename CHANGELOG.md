@@ -32,6 +32,9 @@ All notable changes to sacdfs are recorded here. The format follows
   what sacdfs holds without a cache (`--cache-mb 16`: 73 → 62 MiB; at the default 256:
   304 → 300 MiB).
 
+- Each listed image's table of contents is held once, by scarletbook's disc, instead of twice
+  (#136): about 60 KB less per listed image (see docs/performance.md for the replay).
+
 ### Fixed
 
 - A sacdfs that got its stop signal after its mount had already been unmounted from outside
