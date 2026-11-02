@@ -20,6 +20,14 @@ All notable changes to sacdfs are recorded here. The format follows
   modification time of the disc's folders and every folder above, as a new sidecar does, so
   that scanners that skip unchanged folders (Roon) find it. See the user guide, "Your own tags".
 
+### Changed
+
+- The frame cache keeps its frames in slabs of memory mapped outside the heap, at most
+  `--cache-mb` of them, instead of on the heap (#73). Evicted frames no longer leave holes
+  that the process keeps: a full-library import replay (271 images) peaks at the cap plus
+  what sacdfs holds without a cache (`--cache-mb 16`: 73 → 62 MiB; at the default 256:
+  304 → 300 MiB).
+
 ### Fixed
 
 - A sacdfs that got its stop signal after its mount had already been unmounted from outside
