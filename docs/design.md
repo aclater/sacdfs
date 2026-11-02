@@ -423,7 +423,8 @@ copies get their own album name in the tags, by default, with an option to turn 
 comment tag (servers group by album name); hiding an area (loses content). *Trade-off:* the
 tag bytes differ from an extract's, which the owner allows (only audio must match); the
 output versions move (DSF 3, WAV 4). The option is a process-wide switch in `dsf.rs`, and
-toggling it does not move mtimes. The tag layer (#81) will override the album name.
+toggling it does not move mtimes. A tags file's album name wins and gets no suffix
+([Tag layer](#tag-layer-81)).
 
 **Generation numbers.** A track file's generation is 32 bits (all the kernel keeps) of a hash
 of its image's sector count and mtime, its format, size and an output version per format, and
@@ -1411,6 +1412,92 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   build), no persisted credentials, actions pinned by SHA.
 - **Not crates.io.** scarletbook is a git dependency and crates.io refuses those
   (`publish = false`). Publishing waits for scarletbook on crates.io (scarletbook-rs#39).
+
+## Tag layer (#81)
+
+User tags are kept in a tags directory and merged into the TOC's tags when a track file is
+made (`src/tags.rs`, `dsf::tagged`); `sacdfs tags import` fills it from extracts
+(`src/tags_cli.rs`). *Why it matters:* storage reclamation (#82). A library check found that
+deleting extracts would lose user genres (TCON) on 827 of 1,066 files, embedded art on 33 and
+MusicBrainz IDs on 26.
+
+- **A tags directory, one TOML file per disc, named by the disc's TOC identity.** *Owner
+  decision (#81, 2026-11-01):* "a tags directory, one file per disc, keyed by the disc's TOC
+  identity. The images' dataset stays read-only." *Why:* edits survive renames and moves, and
+  two copies of a disc share them; the images stay read-only; sacdfs does not depend on beets.
+  *Alternatives:* a file next to each ISO (needs a writable image dataset), the beets
+  database (a dependency). *Trade-off:* a user must look the key up (`sacdfs tags key`).
+- **The key** is 128 bits of a SHA-256 of the master and area TOCs' numbers: catalogue
+  numbers as stored, set size and position, date, disc flags, and each area's slot, channels,
+  TOC and audio sectors and each track's sectors and frames. *Why not the path-based inode
+  key:* that changes on a rename. *Why numbers and not the raw TOC sectors:* the library hands
+  over the parsed TOC; these fields sit at fixed offsets of the specification, so a newer
+  scarletbook gives the same key, and any copy of the same pressing does too. Text is left out
+  so that a TOC text decoding fix can't move a key. *Trade-off:* two pressings with identical
+  numbers would share a file; with sector-exact track positions that needs the same master.
+- **Out of band only; no writable mount.** *Owner decision:* "out-of-band only:
+  `sacdfs tags import` from extracts, beets-pysacd export, and a CLI/TOML for hand edits. The
+  mount stays read-only; a writable mount is not planned." *Why:* taggers rewrite whole
+  multi-gigabyte files; accepting that over FUSE, NFS and SMB is a lot of risk for what the
+  importer and beets already give.
+- **Art only when named.** *Owner decision:* "embedded only when a disc's tags file names an
+  image. With no tags file, output stays byte-identical." The picture is an `APIC` front cover
+  appended to scarletbook's tag (as `Tags::Raw`), at most 960 KiB, since scarletbook caps a tag
+  at 1 MiB. *Trade-off:* the tag is held in memory per listed track file, so a picture costs
+  its size per track and format of the discs that embed one (33 of 1,066 files in the library
+  check); sharing it between files is a follow-up if it matters.
+- **Byte identity.** Without `--tags`, nothing is looked up. With it, a file whose tag comes
+  out equal to the TOC's (no tags file, or nothing set for that track) keeps its bytes, mtime
+  and generation. *Why not bump `DSF_VERSION`/`WAV_VERSION`:* those move every file; only the
+  files a tags file changes get a new generation (the old one hashed with the tag's hash) and
+  an mtime no older than the tags file's. The audio never changes, so the DSF gate and the
+  golden audio hashes are untouched.
+- **Merging:** items the library knows (title, genre, album ...) are set in its `TagSet`, so
+  they are written as the TOC's are, in sacdfs's frame order; `TXXX` too. Other frames (`UFID`,
+  `COMM`, other text frames) and the picture are appended after them. Levels: album, area
+  album, track, area track; the later wins. An `album` from the tags file gets no multichannel
+  suffix (#97 hook): the user named it.
+- **Reading:** a tags file is read when a track file is made, that is when its area is first
+  listed, and kept while its mtime and size are unchanged. A file that does not parse (unknown
+  key or section) is ignored with a warning, so a typo never changes the served files.
+- **Live reload (owner requirement: pruning scanners such as Roon must see tag edits).** On a
+  directory SOURCE (a watching tree, #101), adding, editing or removing a tags file changes the
+  affected files' tags, size, mtime and generation and moves the mtime of the image's folder,
+  its area folders and every folder above, exactly as a new sidecar does (#123), within the
+  refresh interval (2 s). The sweep (`Tree::sweep`, run when the root's attributes are asked
+  for) looks at the tags files of the images: one `stat` of the tags directory, one per tags
+  file known, and a listing of the directory only when its mtime moved (a file added or
+  removed). A change is a bump under the image's path (`Tree::bump`), so the image and area
+  folders, which now key their mtime on that path, move with their ancestors. An area listed
+  again re-makes its track files; one whose tag changed replaces its node under the same
+  number (`Tree::renew`), and a file whose tag is the same keeps its node, so open files and
+  caches stay as they are (an open handle keeps the file it opened). The mtime of a bump is
+  the tags file's when it moved forward (a remount shows the same), else the time now (a
+  removal, or an older time put back), so that the folders always move.
+  *Why the image's path, not the disc key:* scanners walk folders, and the image's path is
+  what the folders above it are made of.
+  *Why also across mounts:* a disc's key needs its TOC, read only when the image is opened
+  (on its folder's first listing). A tags file written while sacdfs was stopped, or for an
+  image not opened yet, would otherwise move nothing above the image, and a pruning scanner
+  would never open it. So each opened image's key and its tags file's last state are kept in
+  `tag-keys` in the seek index's cache directory, by a SHA-256 of the image's path (never the
+  path), and checked at the mount, before anything is shown: every folder above an image with
+  a tags file shows an mtime no older than it, and one changed or removed since moves.
+  *Alternatives:* opening every image at the mount for its key costs a TOC read per image
+  ("latency is important"); putting the tags directory's mtime in every folder's would make a
+  scanner rescan the whole library for one edit. *Trade-off:* a stale entry (an image
+  replaced under the same path) only moves a few mtimes once, and the image's own change
+  moves them anyway; without a cache directory (`--no-index-cache`), an image not yet opened
+  in this mount is found on its first listing only. A single-image SOURCE does not watch:
+  there an edit shows after a remount.
+- **Import** runs `verify` with the user's arguments and keeps only IDENTICAL and
+  IDENTICAL-PAUSE rows: the matching is verify's, so a tag is never attached to a track whose
+  audio differs. Per extract it takes the frames `Losses::between` calls lost against the
+  untagged served file (so nothing the TOC already says is copied) and the front cover. Values
+  shared by every track of an area become area-album values, shared by both areas album
+  values. Existing tags files keep their values (hand edits win), and files are written
+  through a rename. *Why reuse verify:* the owner asked for verify's matching, and it is the
+  proof the extract may be deleted.
 
 ## Verifying extracts (`sacdfs verify`, #80)
 
