@@ -1232,7 +1232,7 @@ everything:
   listing now costs a handover to another thread; the kernel keeps entries and attributes
   for a day (for the refresh interval on a re-read tree), so few requests pay it, and `getattr` of a
   node made already (the most frequent request, from `ls -l` and every scanner) is still
-  answered in place. Measured on the bench images (186 files, harrison, under the bench
+  answered in place. Measured on the bench images (186 files, a desktop test machine, under the bench
   lock, two runs each): a cold walk of the whole mount, every lookup, listing and TOC load,
   took 11.4 and 12.6 ms before, 14.0 and 12.2 ms after; a warm `stat` 0.91 and 1.29 µs
   before, 1.28 and 1.29 µs after. Both within the noise.
