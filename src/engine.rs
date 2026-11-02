@@ -3,7 +3,6 @@
 //! Decoding frames: the bounded cache of decoded and converted frames, and the pool of
 //! decoder threads, which also converts frames to PCM for the WAV files.
 
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::num::NonZeroUsize;
@@ -461,11 +460,28 @@ impl FrameCache {
     }
 }
 
-thread_local! {
-    static DECODER: RefCell<DstDecoder> = RefCell::new(DstDecoder::new());
-    /// The converters of this thread, by (engine id, channel count).
-    static CONVERTERS: RefCell<Vec<(u64, u8, Converter)>> = const { RefCell::new(Vec::new()) };
+/// DST decoders not in use (#150): a decoder thread takes one for a frame and gives it back,
+/// so there are only as many as frames were ever decoded at once.
+///
+/// *Why not one per thread:* a decoder's tables and buffers (about 64 KiB per filter, up to
+/// about 400 KiB for six channels) stayed with every decoder thread that had ever decoded
+/// DST, one per CPU, though seek-heavy reads such as a library import decode a few frames at
+/// a time. *Trade-off:* a lock taken twice per frame, against a frame's decoding of about
+/// 1 ms; a decoder may move between threads (its tables are rebuilt for every frame anyway).
+static DECODERS: Mutex<Vec<DstDecoder>> = Mutex::new(Vec::new());
+
+/// Runs `f` with a DST decoder from [`DECODERS`], or a new one.
+fn with_decoder<R>(f: impl FnOnce(&mut DstDecoder) -> R) -> R {
+    let pool = || DECODERS.lock().unwrap_or_else(|p| p.into_inner());
+    let mut d = pool().pop().unwrap_or_default();
+    let r = f(&mut d);
+    pool().push(d);
+    r
 }
+
+/// PCM converters not in use, by (engine id, channel count), taken and given back as
+/// [`DECODERS`] are (#150), for the same reason: not one per thread that ever converted.
+static CONVERTERS: Mutex<Vec<(u64, u8, Converter)>> = Mutex::new(Vec::new());
 
 /// Most consecutive frames converted in one job (#24), for frames that come from the
 /// plain DSD pipeline (at most [`PIPELINE_CHUNK`] at a time): one job per four frames cut a
@@ -475,7 +491,7 @@ thread_local! {
 /// takes well under a millisecond and readers sharing the pool are not held up (#15).
 const PCM_RUN: u32 = 4;
 
-/// Engine ids, for the per-thread converters.
+/// Engine ids, for the pooled converters.
 static NEXT_ENGINE: AtomicU64 = AtomicU64::new(1);
 
 /// Decoded DSD frames (interleaved, as scarletbook gives them) that a sequential PCM reader
@@ -525,6 +541,18 @@ impl std::fmt::Debug for Engine {
             .field("cache_bytes", &self.cache.bytes())
             .field("pcm_rate", &self.pcm.rate.hz())
             .finish_non_exhaustive()
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        let mine: Vec<_> = {
+            let mut list = CONVERTERS.lock().unwrap_or_else(|p| p.into_inner());
+            let (mine, rest) = std::mem::take(&mut *list).into_iter().partition(|(e, _, _)| *e == self.id);
+            *list = rest;
+            mine
+        };
+        drop(mine);
     }
 }
 
@@ -686,7 +714,7 @@ impl Engine {
             .collect()
     }
 
-    /// Converts a run of consecutive frames with this thread's converter.
+    /// Converts a run of consecutive frames with a pooled converter.
     fn convert_run(
         &self,
         channels: u8,
@@ -722,7 +750,7 @@ impl Engine {
             .collect())
     }
 
-    /// Converts one frame with this thread's converter.
+    /// Converts one frame with a pooled converter.
     fn convert_one(
         &self,
         channels: u8,
@@ -746,19 +774,17 @@ impl Engine {
         Ok(Frame { data, fill: cur.fill, clips })
     }
 
-    /// Runs `f` with this thread's converter for `channels` channels, made on first use.
+    /// Runs `f` with a converter for `channels` channels from [`CONVERTERS`], or a new one.
     fn with_converter<R>(&self, channels: u8, f: impl FnOnce(&mut Converter) -> R) -> R {
-        CONVERTERS.with(|c| {
-            let mut list = c.borrow_mut();
-            let i = match list.iter().position(|(e, ch, _)| *e == self.id && *ch == channels) {
-                Some(i) => i,
-                None => {
-                    list.push((self.id, channels, Converter::new(channels, &self.pcm)));
-                    list.len() - 1
-                }
-            };
-            f(&mut list[i].2)
-        })
+        let pool = || CONVERTERS.lock().unwrap_or_else(|p| p.into_inner());
+        let taken = {
+            let mut list = pool();
+            list.iter().rposition(|(e, ch, _)| *e == self.id && *ch == channels).map(|i| list.swap_remove(i).2)
+        };
+        let mut c = taken.unwrap_or_else(|| Converter::new(channels, &self.pcm));
+        let r = f(&mut c);
+        pool().push((self.id, channels, c));
+        r
     }
 
     /// Decoded DSD frames, interleaved, of positions `[d0, d1)`, handed to `sink` in order,
@@ -945,8 +971,7 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
             buf.fill(scarletbook::audio::MISSING_FILL);
             Fill::Missing
         }
-        FrameContent::Dst(bytes) => match DECODER.with(|d| d.borrow_mut().decode(&bytes, channels, &mut buf))
-        {
+        FrameContent::Dst(bytes) => match with_decoder(|d| d.decode(&bytes, channels, &mut buf)) {
             Ok(()) => Fill::Audio,
             Err(_) => {
                 buf.fill(scarletbook::audio::INVALID_FILL);
@@ -960,7 +985,7 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
 /// Decodes one timeline position, in scarletbook's interleaved layout.
 fn decode_interleaved(job: TrackFrame, channels: u8) -> Result<(u32, Dsd), ReadError> {
     let number = job.number;
-    let audio = DECODER.with(|d| scarletbook::audio::decode_frame(&mut d.borrow_mut(), job, channels))?;
+    let audio = with_decoder(|d| scarletbook::audio::decode_frame(d, job, channels))?;
     let fill = match audio.status {
         FrameStatus::Missing => Fill::Missing,
         FrameStatus::Invalid(_) => Fill::Invalid,
