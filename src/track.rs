@@ -106,7 +106,7 @@ pub struct TrackFile {
     /// A DSF file's layout, scarletbook's (`output::Layout`): its header, its tag and where
     /// each audio byte comes from.
     dsf: Option<scarletbook::output::Layout>,
-    header: Vec<u8>,
+    header: wav::Header,
     trailer: Vec<u8>,
     tag: std::ops::Range<usize>,
     /// File size in bytes.
@@ -167,7 +167,7 @@ impl TrackFile {
         let (audio, header, trailer, tag) = match format {
             Format::Dsf => {
                 let l = tagged?.layout;
-                let header = dsf::region(&l, scarletbook::output::RegionKind::Header);
+                let header = wav::Header::from_bytes(dsf::region(&l, scarletbook::output::RegionKind::Header));
                 let tag = dsf::region(&l, scarletbook::output::RegionKind::Trailer);
                 let range = 0..tag.len();
                 lib = Some(l);
@@ -190,13 +190,13 @@ impl TrackFile {
                 let wl =
                     wav::Layout { channels: layout.channels, frames: layout.frames, samples_per_frame, rate };
                 let t = wav::trailer(&set, &id3);
-                let header = wav::header(&wl, a.loudspeaker_layout(), t.bytes.len() as u64);
+                let header = wav::header_parts(&wl, a.loudspeaker_layout(), t.bytes.len() as u64);
                 (Audio::Wav(wl), header, t.bytes, t.tag)
             }
         };
         let size = match (&lib, audio) {
             (Some(l), _) => l.size(),
-            (None, Audio::Wav(l)) => header.len() as u64 + l.data_len() + trailer.len() as u64,
+            (None, Audio::Wav(l)) => header.len() + l.data_len() + trailer.len() as u64,
             (None, Audio::Dsf(_)) => return None,
         };
         let track_end = a.tracks.iter().map(|t| t.end_frame()).max().unwrap_or(0);
@@ -256,7 +256,7 @@ impl TrackFile {
 
     /// Length of everything before the first audio byte.
     pub fn header_len(&self) -> u64 {
-        self.header.len() as u64
+        self.header.len()
     }
 
     /// Offset of the first byte after the audio.
@@ -295,7 +295,7 @@ impl TrackFile {
         // Header.
         if offset < h {
             let e = end.min(h);
-            out.extend_from_slice(&self.header[offset as usize..e as usize]);
+            self.header.extend_into(offset, e, &mut out);
         }
         // Audio.
         let (ds, de) = (offset.max(h), end.min(self.data_end()));
