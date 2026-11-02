@@ -6,37 +6,7 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-
-- **`ls -l` over NFS no longer prints "Unknown error 524"** (#174). sacdfs answered
-  extended-attribute requests with `ENOSYS` (since 0.1.1, #61), which NFS-Ganesha passed on as
-  "not supported" and the Linux NFS client showed as error 524 on every entry of `ls -l` and
-  `getfattr -d`. sacdfs now says there are none: an empty attribute list, and "No such
-  attribute" for any name. The cost is one cheap request per entry of an `ls -l`
-  on the mount (1245 on the corpus, about 4 µs each, against 1 before); a scan that stats and
-  opens every file sends none, as before, and so does Samba as the container sets it up. The
-  container test now runs `ls -lR` over SMB and NFS and `getfattr -R -d` over NFS.
-
-## [0.4.0-rc.3] - 2026-11-02
-
-### Fixed
-
-- **Removed and renamed images no longer stay in memory** (#153, after #163). The persistent
-  seek index kept the disc of every image opened, with its seek index, for as long as the mount
-  ran, even after the tree had freed it. A dropped disc is now saved at the next flush (every
-  30 s) and then let go of. The mtimes passed up for removed folders (#123) and the watch of
-  their tags files (#81) are dropped too. On four real discs, with an album added or removed
-  every few seconds under a new name each time, memory over 45 minutes (with #167) grew 123 to
-  138 MiB, against 102 to 181 MiB on 0.4.0-rc.2's code. The second-half trend fell from +94 to
-  +14 MiB an hour. What remains comes with reads, not with removed albums, and is looked into
-  separately.
-
-- **Spare request threads now end** (#167). A pool's spare threads were meant to end after 10 s
-  without work, but while jobs kept coming more often than that (any mount being read) none
-  ever did. The pool kept as many threads as at its busiest moment (a stall, a burst of
-  read-ahead), up to 64. A spare thread now ends after a job once no job has found every
-  thread busy for 10 s.
-
+## [0.4.0-rc.4] - 2026-11-02
 
 ### Added
 
@@ -78,6 +48,31 @@ All notable changes to sacdfs are recorded here. The format follows
   replay peaks at 44 → 45 MiB at the default 32 MiB cache.
 
 ### Fixed
+
+- **`ls -l` over NFS no longer prints "Unknown error 524"** (#174). sacdfs answered
+  extended-attribute requests with `ENOSYS` (since 0.1.1, #61), which NFS-Ganesha passed on as
+  "not supported" and the Linux NFS client showed as error 524 on every entry of `ls -l` and
+  `getfattr -d`. sacdfs now says there are none: an empty attribute list, and "No such
+  attribute" for any name. The cost is one cheap request per entry of an `ls -l`
+  on the mount (1245 on the corpus, about 4 µs each, against 1 before); a scan that stats and
+  opens every file sends none, as before, and so does Samba as the container sets it up. The
+  container test now runs `ls -lR` over SMB and NFS and `getfattr -R -d` over NFS.
+
+- **Removed and renamed images no longer stay in memory** (#153, after #163). The persistent
+  seek index kept the disc of every image opened, with its seek index, for as long as the mount
+  ran, even after the tree had freed it. A dropped disc is now saved at the next flush (every
+  30 s) and then let go of. The mtimes passed up for removed folders (#123) and the watch of
+  their tags files (#81) are dropped too. On four real discs, with an album added or removed
+  every few seconds under a new name each time, memory over 45 minutes (with #167) grew 123 to
+  138 MiB, against 102 to 181 MiB on 0.4.0-rc.2's code. The second-half trend fell from +94 to
+  +14 MiB an hour. What remains comes with reads, not with removed albums, and is looked into
+  separately.
+
+- **Spare request threads now end** (#167). A pool's spare threads were meant to end after 10 s
+  without work, but while jobs kept coming more often than that (any mount being read) none
+  ever did. The pool kept as many threads as at its busiest moment (a stall, a burst of
+  read-ahead), up to 64. A spare thread now ends after a job once no job has found every
+  thread busy for 10 s.
 
 - **Removed and renamed images are freed** (#153). A folder that is re-read now frees what it
   no longer lists, and everything below it: the image's directory, its areas and track files,
@@ -457,8 +452,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.0-rc.3...HEAD
-[0.4.0-rc.3]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0-rc.3
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.0-rc.4...HEAD
+[0.4.0-rc.4]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0-rc.4
 [0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
