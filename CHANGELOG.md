@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0-rc.3] - 2026-11-02
+
 ### Fixed
 
 - A new playlist or art file next to an image is listed again within about 2 seconds over SMB
@@ -291,7 +293,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.2...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.3...HEAD
+[0.2.0-rc.3]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.2...v0.2.0-rc.3
 [0.2.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0-rc.1
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
