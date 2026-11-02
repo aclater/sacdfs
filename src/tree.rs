@@ -57,12 +57,15 @@ pub struct Output {
     pub wav: bool,
     /// Samples per channel per frame of the WAV files (from the PCM rate).
     pub samples_per_frame: u32,
+    /// Serve each track with its pause (`--pauses kept`, #112), as extractors that keep the
+    /// pauses write it. Off: the track's own range, the pause dropped.
+    pub pauses_kept: bool,
 }
 
 impl Default for Output {
     /// DSF and WAV side by side, WAV at 176.4 kHz.
     fn default() -> Self {
-        Output { dsf: true, wav: true, samples_per_frame: 2352 }
+        Output { dsf: true, wav: true, samples_per_frame: 2352, pauses_kept: false }
     }
 }
 
@@ -1453,7 +1456,14 @@ impl Tree {
                     // they are made unique in the same order).
                     for format in self.output.formats() {
                         let spf = self.output.samples_per_frame;
-                        let Some(file) = TrackFile::with_format(disc.clone(), *i, track, format, spf) else {
+                        let Some(file) = TrackFile::with_pauses(
+                            disc.clone(),
+                            *i,
+                            track,
+                            format,
+                            spf,
+                            self.output.pauses_kept,
+                        ) else {
                             continue;
                         };
                         let name =

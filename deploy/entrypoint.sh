@@ -19,6 +19,7 @@ args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}" --cache-mb "${SACDF
 [ -n "${SACDFS_THREADS:-}" ] && args+=(--threads "$SACDFS_THREADS")
 [ -n "${SACDFS_MAX_OPEN_IMAGES:-}" ] && args+=(--max-open-images "$SACDFS_MAX_OPEN_IMAGES")
 [ -n "${SACDFS_REQUEST_TIMEOUT:-}" ] && args+=(--request-timeout "$SACDFS_REQUEST_TIMEOUT")
+[ -n "${SACDFS_PAUSES:-}" ] && args+=(--pauses "$SACDFS_PAUSES")
 [ -n "${SACDFS_PCM_RATE:-}" ] && args+=(--pcm-rate "$SACDFS_PCM_RATE")
 [ -n "${SACDFS_PCM_CUTOFF:-}" ] && args+=(--pcm-cutoff "$SACDFS_PCM_CUTOFF")
 [ -n "${SACDFS_PCM_GAIN:-}" ] && args+=(--pcm-gain "$SACDFS_PCM_GAIN")

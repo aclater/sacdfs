@@ -154,6 +154,7 @@ All settings are environment variables.
 |---|---|---|
 | `SACDFS_SOURCE` | `/images` | where the images are inside the container (mount the host directory here, read-only) |
 | `SACDFS_FORMATS` | `dsf,wav` | `--format`: `dsf`, `wav` or both |
+| `SACDFS_PAUSES` | (dropped) | `--pauses`: `dropped`, or `kept` to serve each track with its pause (#112) |
 | `SACDFS_PCM_RATE` | (176400) | `--pcm-rate`: `88200`, `176400` or `352800` |
 | `SACDFS_PCM_CUTOFF` | (40) | `--pcm-cutoff`: `40`, `30` or `wide` |
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |

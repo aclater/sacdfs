@@ -56,6 +56,10 @@ struct Args {
     /// Which files to show: dsf, wav, or both (dsf,wav).
     #[arg(long, default_value = "dsf,wav", value_name = "LIST", value_parser = parse_formats)]
     format: Formats,
+    /// Pauses: dropped (the default: each file is the track's own range) or kept (each file
+    /// is the track with its pause, as extractors that keep pauses write it).
+    #[arg(long, default_value = "dropped", value_name = "MODE", value_parser = ["dropped", "kept"])]
+    pauses: String,
     /// Sample rate of the WAV files, in Hz: 88200, 176400 or 352800.
     #[arg(long, default_value_t = 176_400, value_name = "HZ", value_parser = parse_rate)]
     pcm_rate: u32,
@@ -327,6 +331,7 @@ fn run(args: Args) -> io::Result<()> {
         dsf: args.format.dsf,
         wav: args.format.wav,
         samples_per_frame: rate.samples_per_frame() as u32,
+        pauses_kept: args.pauses == "kept",
     };
     let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
     let tree = Tree::with_options(root, Tuning::default(), output)
