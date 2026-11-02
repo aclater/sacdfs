@@ -1080,7 +1080,8 @@ fn a_file_open_through_the_kernel_reads_on_after_its_image_is_removed() {
     std::fs::remove_file(src.join("Artist/Album/disc.iso")).unwrap();
     std::fs::remove_dir_all(src.join("Artist/Album")).unwrap();
     wait_for("the removal", || std::fs::read_dir(mnt.join("Artist")).unwrap().next().is_none());
-    assert!(!name.exists());
+    // The kernel may still hold the file's entry for its entry timeout: wait it out.
+    wait_for("the removed file to go", || !name.exists());
     // Past the image handle's check of its path (once a second), and with what the kernel
     // read ahead dropped: the rest is read from sacdfs.
     std::thread::sleep(Duration::from_millis(1100));
