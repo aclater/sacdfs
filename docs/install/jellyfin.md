@@ -1,6 +1,6 @@
 # Jellyfin
 
-**Tested** with Jellyfin 12.4.0 (official image) on sacdfs 0.3.0-rc.1, in a container reading
+**Tested** with Jellyfin 12.4.0 (official image) on sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1), in a container reading
 a sacdfs mount on its host: 93 of 93 tracks with `dsf` (186 of 186 with `dsf,wav`), the
 multichannel areas as their own albums, folder art used, transcoded playback and seeks.
 Details: [clients](../clients.md#jellyfin).
@@ -12,7 +12,7 @@ Details: [clients](../clients.md#jellyfin).
 | `SACDFS_FORMATS` (`--format`) | `dsf` | Jellyfin's ffprobe reads about 7 MB of each WAV file, which sacdfs must convert: 648.5 MiB served for the first scan against 17.9 MiB with `dsf` |
 | `SACDFS_FLATTEN` (`--flatten`) | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
 
-Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the tests ran with 16).
+Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the 0.4.0-rc.2 tests ran with it, the 0.3.0-rc.1 tests with 16).
 
 ## Add the share
 
