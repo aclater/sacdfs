@@ -141,11 +141,29 @@ fn probes_are_answered_once() {
     let area = mount.path().join("dsd-stereo-mch-2048/Stereo");
     assert!(std::fs::read_dir(&area).unwrap().count() > 2);
 
-    // Extended attributes: the first ENOSYS tells the kernel there are none, and a second
-    // listing asks nothing (it sent one LISTXATTR per file before).
-    mount.requests("XATTR", || ls_l(&area));
-    assert_eq!(mount.requests("LISTXATTR", || ls_l(&area)), 0, "second ls -l");
-    assert_eq!(mount.requests("XATTR", || ls_l(&area)), 0, "third ls -l");
+    // Extended attributes (#174): none, said as an empty list and "no such attribute", not
+    // ENOSYS (which NFS clients saw as "Unknown error 524"). A scanner's stat and open send no
+    // xattr request; `ls -l` sends one LISTXATTR per entry and no GETXATTR.
+    let entries = std::fs::read_dir(&area).unwrap().count();
+    let scan = || {
+        for e in std::fs::read_dir(&area).unwrap() {
+            let p = e.unwrap().path();
+            std::fs::metadata(&p).unwrap();
+            drop(std::fs::File::open(&p).unwrap());
+        }
+    };
+    assert_eq!(mount.requests("XATTR", scan), 0, "stat and open");
+    assert_eq!(mount.requests("XATTR", scan), 0, "stat and open, again");
+    assert_eq!(mount.requests("GETXATTR", || ls_l(&area)), 0, "ls -l: GETXATTR");
+    assert!(mount.requests("LISTXATTR", || ls_l(&area)) <= entries + 1, "ls -l: LISTXATTR");
+    let one = std::fs::read_dir(&area).unwrap().next().unwrap().unwrap().path();
+    let out = Command::new("getfattr").arg("-d").arg(&one).output();
+    if let Ok(out) = out {
+        assert!(out.status.success(), "getfattr -d: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.stdout.is_empty());
+        let out = Command::new("getfattr").args(["-n", "user.x"]).arg(&one).output().unwrap();
+        assert!(String::from_utf8_lossy(&out.stderr).contains("No such attribute"), "getfattr -n");
+    }
 
     // Missing names: one LOOKUP each, then the kernel's negative entry answers.
     for name in ["cover.jpg", "folder.jpg", "desktop.ini", ".hidden"] {
