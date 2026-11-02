@@ -1,5 +1,9 @@
 # Deploying sacdfs on a NAS
 
+> **Installing?** Start with the short [install guides](install/README.md): one per NAS system
+> and music server, with numbered steps and a check that it works. This page is the
+> reference behind them: every setting, and why.
+
 sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)):
 
 - **On the NAS (server-side, the main deployment).** sacdfs runs next to the images, in a
