@@ -553,7 +553,8 @@ mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a
   one with the number reused. The kernel aborts a mount's FUSE connection when its superblock
   goes, before the number is freed, so a connection still up means the number read just
   before is this mount's. Both checks ask the file system nothing, so they cannot wait on a
-  stopping session. With it: 0 lost in 200 such restarts, and 0 in the loop below.
+  stopping session. With it: 0 lost in 200 such restarts, and 0 in a 14,000-iteration
+  restart loop (user and root, 10 stop scenarios, 2,800 of them late-signal).
   Rejected: the 64-bit unique mount id (`statmount`/`listmount`, Linux 6.8+), which needs raw
   syscalls and a fallback on older kernels for the same answer; holding an `O_PATH` descriptor
   on the mount to pin its number, which makes a plain `fusermount3 -u` fail as busy.
