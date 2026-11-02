@@ -1,6 +1,6 @@
 # Leak hunting off PR CI (#151): every week, and on demand, the test suite under valgrind
-# memcheck and a short soak on the corpus. Too slow for every pull request (the owner: "dont
-# make CI take too long"); pull requests run only tests/no_growth.rs, in the tests job. The
+# memcheck and a short soak on the corpus. Too slow for every pull request (pull request CI
+# is kept fast); pull requests run only tests/no_growth.rs, in the tests job. The
 # long soak (hours, real discs) runs on a test host: see docs/development.md.
 name: leaks
 
