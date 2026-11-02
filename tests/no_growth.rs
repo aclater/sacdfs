@@ -104,7 +104,8 @@ fn cycle(i: usize, lib: &Path, mp: &Path, tags_file: &Path) {
     let meta = fs::metadata(lib).unwrap();
     let (uid, gid) = (meta.uid(), meta.gid());
     let tree = Arc::new(tree);
-    let fs = SacdFs::new(tree, engine, 4, uid, gid).unwrap().with_request_timeout(Some(WATCHDOG)).unwrap();
+    let fs =
+        SacdFs::new(tree, engine.clone(), 4, uid, gid).unwrap().with_request_timeout(Some(WATCHDOG)).unwrap();
     let mut config = Config::default();
     config.mount_options = vec![MountOption::RO, MountOption::FSName("sacdfs-no-growth".to_owned())];
     config.n_threads = Some(2);
@@ -131,6 +132,11 @@ fn cycle(i: usize, lib: &Path, mp: &Path, tags_file: &Path) {
     read_all(&album);
 
     session.umount_and_join().unwrap();
+    // The DST decoders are pooled process-wide (#150), up to as many as ever decoded at once:
+    // a high-water mark set by how the reads happened to overlap, not growth. Emptied here, as
+    // an idle mount does, so that only what the mount itself left behind is counted.
+    assert!(engine.release_if_idle(Duration::ZERO));
+    drop(engine);
 }
 
 /// The live heap, once background threads of the last mount (the watchdog's, the spare
