@@ -32,15 +32,28 @@ All notable changes to sacdfs are recorded here. The format follows
   what sacdfs holds without a cache (`--cache-mb 16`: 73 → 62 MiB; at the default 256:
   304 → 300 MiB).
 
+- **scarletbook and scarletbook-pcm 0.5.3 → 0.5.6** (#128). Output bytes are unchanged: the DSF
+  gate (all 93 tracks), the golden PCM and DSF hashes and the real-disc WAV test pass. Straight
+  reads through the mount, against 0.2.0 (means of 3, same machine): plain-DSD stereo WAV
+  2.14 s against 2.63 s (-19 %), plain-DSD DSF 1.28 s against 1.65 s (-22 %), DST stereo WAV
+  3.80 s against 3.83 s, DST stereo DSF 3.46 s against 3.55 s, DST 6-channel DSF 11.68 s
+  against 11.89 s. **This supersedes 0.2.0's known issue** (plain-DSD WAV about 29 % slower
+  than in 0.1.1, scarletbook-rs#216): the plain-DSD WAV read is back at 0.1.1's speed.
+
 - Each listed image's table of contents is held once, by scarletbook's disc, instead of twice
-  (#136): about 60 KB less per listed image (see docs/performance.md for the replay).
+  (#136): one TOC's size less per listed image, about 14 KB on small discs and up to 60 KB (see
+  docs/performance.md).
 
 ### Fixed
 
+- The deployment guide now says how to make Plex show a disc's multichannel copy as its own
+  album (#138): turn on "Prefer local metadata". Plex's default agent gives both copies the
+  matched release's title, so they looked like one album shown twice. No served bytes change.
 - A sacdfs that got its stop signal after its mount had already been unmounted from outside
   (`fusermount3 -u`) could unmount the next sacdfs mounted on the same path (#54). The kernel
   reuses a freed device number at once, and sacdfs told its own mount by that number alone;
   it now also checks that its own FUSE connection is still up.
+
 
 ## [0.2.0] - 2026-11-02
 
