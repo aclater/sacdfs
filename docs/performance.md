@@ -399,6 +399,25 @@ stereo images, generic build:
 - Memory stays bounded by `--cache-mb` (default 256 MiB) plus a fixed amount: decoding runs
   on sacdfs's own pool, and no library cursor holds a read-ahead window of its own.
 
+**Parallel readers at full speed (#28, 2026-11-02):** 1, 4 and 8 readers each reading 240 MiB
+of a different stereo DSF file at once, 1 MiB per call, on a fresh mount with
+`--no-index-cache`; "one image" is 8 tracks of one DST stereo area, "different images" is the
+first track of 8 mounts of that same image file (each its own disc, handle and seek index);
+local images (page cache), generic build, 32-thread machine under `benchlock`.
+
+| Readers | One image: MB/s in all, CPU cores busy, worst call, peak memory | Different images: the same |
+|---|---|---|
+| 1 | 703, 19.3, 7 ms, 159 MiB | 834, 20.6, 5 ms, 159 MiB |
+| 4 | 1103, 23.2, 16 ms, 248 MiB | 983, 23.5, 17 ms, 260 MiB |
+| 8 | 1091, 23.9, 32 ms, 255 MiB | 941, 22.6, 37 ms, 281 MiB |
+
+- Readers of one image scale as well as readers of different images (here slightly better:
+  they share one handle and one parsed TOC): no read waits for another read of its disc.
+- The ceiling is the CPU, not a lock: one DST reader already keeps about 20 cores decoding,
+  and the CPU per MB is the same for 1 and 8 readers (6.9 s for 240 MiB, 44.0 s for 8 x 240
+  MiB). Beyond 4 readers the aggregate stays flat and each reader's share falls evenly.
+- Memory stays under `--cache-mb` plus a fixed amount at 8 readers.
+
 **One TOC per image (#136).** A `Disc` no longer clones scarletbook's TOC. Replay of the five
 bench images, each linked 60 times (300 images, 5 580 files, `--cache-mb 16`,
 `scripts/import-replay.py`): peak RSS 1496 MiB before, 1492 MiB after, about 14 KB per image.
