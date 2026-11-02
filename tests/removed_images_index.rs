@@ -42,24 +42,28 @@ fn the_seek_index_cache_lets_go_of_removed_images() {
     for n in 0..10 {
         let album = lib.join(format!("album-{n}"));
         std::fs::create_dir(&album).unwrap();
-        std::os::unix::fs::symlink(&img, album.join("disc.iso")).unwrap();
+        // A copy, not a link: its own entry (keyed by its canonical path), so that what it
+        // reads is new to the cache.
+        std::fs::copy(&img, album.join("disc.iso")).unwrap();
         settle();
-        // Read the new album's files, so that its seek index has something to save.
-        for (path, f) in tree.all_files() {
+        let files = tree.all_files();
+        cache.flush().unwrap();
+        // Read the new album's files, so that its seek index has something to save that
+        // no flush has saved yet.
+        for (path, f) in files {
             if path.starts_with(format!("album-{n}")) {
                 Reader::new(f.clone()).read(&engine, f.size / 2, 4096).unwrap();
             }
         }
-        cache.flush().unwrap();
         let writes = cache.writes();
         std::fs::remove_file(album.join("disc.iso")).unwrap();
         std::fs::remove_dir(&album).unwrap();
         settle();
         let _ = tree.children(ROOT);
-        // The engine's frame cache holds no disc; the reads above are done.
+        // The flush that lets go of the removed disc saves what it read first.
         cache.flush().unwrap();
         counts.push(cache.live_count());
-        assert!(cache.writes() >= writes, "a removed disc's index is saved, not lost");
+        assert!(cache.writes() > writes, "a removed disc's last reads are saved, not lost");
     }
     eprintln!("discs held by the seek index cache after each add+remove: {counts:?}");
     assert!(counts.iter().all(|&c| c == 1), "the seek index cache keeps removed discs: {counts:?}");
