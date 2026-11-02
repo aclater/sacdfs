@@ -66,6 +66,7 @@ fn multichannel_album_suffix_and_verify() {
     untagged[20..28].copy_from_slice(&0u64.to_le_bytes());
     fs::write(ext.join("02 - untagged.dsf"), &untagged).unwrap();
     let s = run(&Args {
+        pauses: "dropped".into(),
         source: lib.clone(),
         extracts: vec![lib.clone()],
         map: vec![],

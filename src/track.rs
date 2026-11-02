@@ -78,6 +78,12 @@ pub enum Audio {
     Wav(wav::Layout),
 }
 
+/// The range of `track`'s track with pause, if it is a valid range longer than the track.
+fn pause_range(area: &scarletbook::Area, track: &Track) -> Option<(u32, u32)> {
+    let (first, end) = scarletbook::audio::track_range_with_pause(area, u32::from(track.number))?;
+    (first <= track.start_frame && end >= track.end_frame() && end > first).then_some((first, end))
+}
+
 /// One track of one area, shown as a DSF or WAV file.
 #[derive(Debug)]
 pub struct TrackFile {
@@ -126,7 +132,34 @@ impl TrackFile {
         format: Format,
         samples_per_frame: u32,
     ) -> Option<TrackFile> {
+        Self::with_pauses(disc, area, track, format, samples_per_frame, false)
+    }
+
+    /// Like [`TrackFile::with_format`]; with `pauses` set, the file is the track with pause
+    /// (`--pauses kept`, #112): from frame 0 (track one) or the track's own start, to the
+    /// start of the next track (the area's play time for the last), as the
+    /// extractors that keep the pauses write it. A track whose range is not valid is served
+    /// without its pause.
+    pub fn with_pauses(
+        disc: Arc<Disc>,
+        area: usize,
+        track: &Track,
+        format: Format,
+        samples_per_frame: u32,
+        pauses: bool,
+    ) -> Option<TrackFile> {
         let a = disc.toc.areas.get(area)?;
+        let kept;
+        let track = match pauses.then(|| pause_range(a, track)).flatten() {
+            Some((first, end)) => {
+                let mut t = track.clone();
+                t.start_frame = first;
+                t.duration_frames = end - first;
+                kept = t;
+                &kept
+            }
+            None => track,
+        };
         let layout = Layout { channels: a.channel_count, frames: track.duration_frames };
         let mut lib = None;
         let tagged = dsf::tagged(&disc.toc, a, track);
