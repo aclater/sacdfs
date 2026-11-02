@@ -46,6 +46,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- A stalled source (a hung NFS or SMB share, or a slow disk) no longer blocks other requests
+  (#63): lookups, listings, opens and the root's attributes run off FUSE's own threads, and
+  busy request pools grow up to 64 threads. A watchdog fails any request older than
+  `--request-timeout` (default 30 s) with EIO and logs what it waited on, so no read can hang
+  for hours (#72).
 - The deployment guide now says how to make Plex show a disc's multichannel copy as its own
   album (#138): turn on "Prefer local metadata". Plex's default agent gives both copies the
   matched release's title, so they looked like one album shown twice. No served bytes change.

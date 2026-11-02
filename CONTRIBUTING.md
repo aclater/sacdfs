@@ -89,6 +89,8 @@ never moved.
    `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
    `gh attestation verify`. A version with a hyphen (`0.2.0-rc.1`) is marked as a
    pre-release and doesn't move `:latest`.
+6. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
+   in aclater/sacd (the minor version's summary and release list).
 
 **Not on crates.io (yet).** scarletbook is a git dependency, and crates.io refuses crates
 with git dependencies, so `cargo publish` is not part of the release (`publish = false` in
