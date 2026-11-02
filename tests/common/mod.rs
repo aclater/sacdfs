@@ -228,3 +228,19 @@ pub fn parse_wav(file: &[u8]) -> Wav {
     assert_eq!(w.bits, 24);
     w
 }
+
+/// Stops a spawned `sacdfs` with SIGTERM and waits (up to 10 s) for it to exit, killing it
+/// only as a last resort. A SIGKILL while the process is writing its coverage profile at exit
+/// leaves a truncated `.profraw` and fails the coverage job (#127).
+pub fn stop_gracefully(child: &mut std::process::Child) {
+    let _ = Command::new("kill").arg("-TERM").arg(child.id().to_string()).status();
+    let start = Instant::now();
+    while child.try_wait().ok().flatten().is_none() {
+        if start.elapsed() > Duration::from_secs(10) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
