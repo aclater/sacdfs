@@ -6,7 +6,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.3.0-rc.1] - 2026-11-02
+## [0.3.0] - 2026-11-02
+
+Tested as a release candidate (0.3.0-rc.1) on a NAS with Roon (new files and folders found at
+once, scanners that skip unchanged folders find deep changes after a restart, multichannel
+tags) and with five other media servers on the candidate itself (see `docs/clients.md`).
 
 ### Added
 
@@ -357,8 +361,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.3.0-rc.1...HEAD
-[0.3.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0-rc.1
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aclater/sacdfs/releases/tag/v0.1.0
