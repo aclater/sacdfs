@@ -42,6 +42,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- The deployment guide now says how to make Plex show a disc's multichannel copy as its own
+  album (#138): turn on "Prefer local metadata". Plex's default agent gives both copies the
+  matched release's title, so they looked like one album shown twice. No served bytes change.
 - A sacdfs that got its stop signal after its mount had already been unmounted from outside
   (`fusermount3 -u`) could unmount the next sacdfs mounted on the same path (#54). The kernel
   reuses a freed device number at once, and sacdfs told its own mount by that number alone;
