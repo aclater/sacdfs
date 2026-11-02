@@ -127,9 +127,10 @@ impl WaitOrKill for Child {
     }
 }
 
+/// `ls -l`, which must succeed without printing an error (#174).
 fn ls_l(dir: &Path) {
-    let st = Command::new("ls").arg("-l").arg(dir).stdout(Stdio::null()).status().unwrap();
-    assert!(st.success());
+    let out = Command::new("ls").arg("-l").arg(dir).output().unwrap();
+    assert!(out.status.success() && out.stderr.is_empty(), "ls -l: {}", String::from_utf8_lossy(&out.stderr));
 }
 
 #[test]
@@ -143,7 +144,9 @@ fn probes_are_answered_once() {
 
     // Extended attributes (#174): none, said as an empty list and "no such attribute", not
     // ENOSYS (which NFS clients saw as "Unknown error 524"). A scanner's stat and open send no
-    // xattr request; `ls -l` sends one LISTXATTR per entry and no GETXATTR.
+    // xattr request. `ls -l` prints no error and sends a few xattr requests per entry: which
+    // ones depends on coreutils and the security module (on Fedora with SELinux, one
+    // LISTXATTR; elsewhere GETXATTRs for ACL or label names as well).
     let entries = std::fs::read_dir(&area).unwrap().count();
     let scan = || {
         for e in std::fs::read_dir(&area).unwrap() {
@@ -154,8 +157,8 @@ fn probes_are_answered_once() {
     };
     assert_eq!(mount.requests("XATTR", scan), 0, "stat and open");
     assert_eq!(mount.requests("XATTR", scan), 0, "stat and open, again");
-    assert_eq!(mount.requests("GETXATTR", || ls_l(&area)), 0, "ls -l: GETXATTR");
-    assert!(mount.requests("LISTXATTR", || ls_l(&area)) <= entries + 1, "ls -l: LISTXATTR");
+    let n = mount.requests("XATTR", || ls_l(&area));
+    assert!(n <= 4 * (entries + 1), "ls -l: {n} xattr requests for {entries} entries");
     let one = std::fs::read_dir(&area).unwrap().next().unwrap().unwrap().path();
     let out = Command::new("getfattr").arg("-d").arg(&one).output();
     if let Ok(out) = out {
