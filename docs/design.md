@@ -105,12 +105,15 @@ before. Two changes, each needed:
   frames of another size. Reusing evicted buffers of the same size (the first fix) helped,
   but a full-library replay (271 images, on 4 CPUs) still ended with 7 MiB free in the heap
   at `--cache-mb 256` and 12 MiB at 16. With slabs, the cache's memory is its cap: `--cache-mb
-  16` went from 73 to 63 MiB, and `--cache-mb 256` costs the same as `--cache-mb 0` plus
-  256 MiB. The eighth of the cap kept for spare buffers is gone, so the cache holds that much
-  more. *Why 512 KiB:* a slab empties soon after its frames stop being used, and a 256 MiB
-  cache is 512 mappings, far below the kernel's default limit of 65 530. *Measured
+  16` went from 73 to 62 MiB (66 to 53 MiB on 4 CPUs), and `--cache-mb 256` from 304 to
+  300 MiB (292 MiB either way on 4 CPUs), about what `--cache-mb 0` holds plus the cap. Cached frames still leave an eighth of the cap (at most 32 MiB) free, now as free
+  slots (`free_reserve`). *Why:* with frames filling the whole cap, each new frame evicted one
+  first and straight reads of a plain DSD stereo area took 5 to 10 % longer; with the reserve
+  they take free slots, as the spare buffers did. *Why 512 KiB:* a slab empties soon after
+  its frames stop being used, and a 256 MiB cache is 512 mappings, far below the kernel's default limit of 65 530. *Measured
   alternatives:* `malloc_trim` after the replay gave back only 5 MiB of the 7 MiB of holes at
-  256. *Cache colouring:* slots start at multiples of the frame length, so the frames a
+  256; slabs mapped with `MAP_POPULATE`, or 2 MiB slabs with `MADV_HUGEPAGE`, read no faster
+  (stereo plain DSD, medians of 6: 1.92 and 1.98 s against 1.95 s). *Cache colouring:* slots start at multiples of the frame length, so the frames a
   thread decodes one after another do not all start at the same offset within a page, which
   would make them collide in the CPU's cache sets ([Drepper, "What every programmer should
   know about memory", 2007](https://www.akkadia.org/drepper/cpumemory.pdf),
