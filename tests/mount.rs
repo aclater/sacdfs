@@ -998,3 +998,78 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
     assert_eq!(std::fs::metadata(mnt.join("Artist/Album")).unwrap().modified().unwrap(), later);
     m.stop("TERM");
 }
+
+#[test]
+fn a_new_sidecar_is_listed_and_moves_its_ancestors() {
+    // #123 with #101: a playlist dropped next to an image while mounted must be listed
+    // within a few seconds, with and without --flatten, and every folder above it must move.
+    // The root's attributes are looked at first, as a scanner does (that runs the sweep).
+    use std::time::SystemTime;
+    if !fuse_available() {
+        return;
+    }
+    let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    for flatten in [false, true] {
+        let top = tempfile::tempdir().unwrap();
+        let src = top.path().canonicalize().unwrap();
+        let album = src.join("Artist/Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::copy(corpus().join("images/dsd-stereo-mch-2048.iso"), album.join("disc.iso")).unwrap();
+        std::fs::write(album.join("folder.jpg"), b"art").unwrap();
+        for p in
+            [album.join("disc.iso"), album.join("folder.jpg"), album.clone(), src.join("Artist"), src.clone()]
+        {
+            set(&p, old);
+        }
+        let m = Mount::foreground(&src, if flatten { &["--flatten"] } else { &[] });
+        let mnt = m.path();
+        let mtime = |p: &str| std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
+        let names = |p: &str| -> Vec<String> {
+            std::fs::read_dir(mnt.join(p))
+                .unwrap()
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .collect()
+        };
+        // Everything listed once, as a first scan does.
+        let before: Vec<SystemTime> = ["", "Artist", "Artist/Album"].iter().map(|p| mtime(p)).collect();
+        assert!(names("").contains(&"Artist".to_owned()));
+        assert!(names("Artist").contains(&"Album".to_owned()));
+        assert!(names("Artist/Album").contains(&"folder.jpg".to_owned()));
+
+        // The root looked at (the sweep runs), then the folder listed a second later, so
+        // that the next sweep comes before the folder's next re-read is due.
+        let _ = mtime("");
+        std::thread::sleep(Duration::from_secs(1));
+        let _ = names("Artist/Album");
+        std::fs::write(album.join("new.m3u8"), b"#EXTM3U\n").unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        let t0 = Instant::now();
+        let listed = loop {
+            // A client that caches a listing until its folder's mtime moves (SMB clients do)
+            // must never see the new mtime with the old listing: it would keep that forever.
+            let _ = mtime("");
+            let _ = mtime("Artist");
+            let moved = mtime("Artist/Album") > before[2];
+            let now = names("Artist/Album");
+            let has = now.contains(&"new.m3u8".to_owned());
+            assert!(
+                !moved || has,
+                "flatten {flatten}: the folder's mtime moved, its listing did not: {now:?}"
+            );
+            if has {
+                break true;
+            }
+            if t0.elapsed() > Duration::from_secs(3) {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(listed, "flatten {flatten}: new.m3u8 not listed after 3 s: {:?}", names("Artist/Album"));
+        wait_for("the ancestors to move", || {
+            ["", "Artist", "Artist/Album"].iter().zip(&before).all(|(p, b)| mtime(p) > *b)
+        });
+        assert_eq!(std::fs::read(mnt.join("Artist/Album/new.m3u8")).unwrap(), b"#EXTM3U\n");
+        m.stop("TERM");
+    }
+}

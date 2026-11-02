@@ -463,6 +463,8 @@ struct Listing {
     art_version: u64,
     /// With `--flatten`: how many leading entries are the image's own (kept on a re-read).
     head: usize,
+    /// The directory's mtime as shown when the listing was made or last compared (#123).
+    served: SystemTime,
 }
 
 #[derive(Debug)]
@@ -893,6 +895,7 @@ impl Tree {
             snapshot: cx.snapshot.or_else(|| prev.and_then(|p| p.snapshot)),
             art_version: cx.art_version,
             head: cx.head,
+            served: self.dir_mtime(dir),
         }));
         Some(entries)
     }
@@ -906,10 +909,16 @@ impl Tree {
         if let (DirKind::Area(..), Some(art)) = (&dir.kind, &dir.art) {
             return art.current(self).1 != l.art_version;
         }
-        if l.checked.elapsed() < self.refresh {
+        // A directory whose mtime moved (the sweep found a change below it, #123) is compared
+        // now, whatever the interval: a client that keeps a listing until its directory's
+        // mtime moves (SMB clients do) would otherwise keep the old listing under the new
+        // mtime for good.
+        let served = self.dir_mtime(dir);
+        if l.checked.elapsed() < self.refresh && served == l.served {
             return false;
         }
         l.checked = Instant::now();
+        l.served = served;
         l.watch.iter().any(|(p, m)| mtime_of(p) != *m)
     }
 
@@ -943,22 +952,24 @@ impl Tree {
     /// sidecar file, its source file's.
     pub fn mtime(&self, node: &Node) -> SystemTime {
         match node {
-            Node::Dir(d) => {
-                let own = match d.shown.load(Ordering::Relaxed) {
-                    0 => d.mtime,
-                    n => SystemTime::UNIX_EPOCH + Duration::from_nanos(n),
-                };
-                let mut stamp = *d.stamp;
-                if let Some(b) =
-                    d.key().and_then(|k| self.bumps.read().unwrap_or_else(|p| p.into_inner()).get(k).copied())
-                {
-                    stamp.merge(&b);
-                }
-                own.max(self.served(&stamp))
-            }
+            Node::Dir(d) => self.dir_mtime(d),
             Node::File(f) => ident::mtime(f, self.wav_mtime_offset),
             Node::Sidecar(s) => s.meta.mtime,
         }
+    }
+
+    /// The modification time shown for directory `d` (see [`Tree::mtime`]).
+    fn dir_mtime(&self, d: &Dir) -> SystemTime {
+        let own = match d.shown.load(Ordering::Relaxed) {
+            0 => d.mtime,
+            n => SystemTime::UNIX_EPOCH + Duration::from_nanos(n),
+        };
+        let mut stamp = *d.stamp;
+        let bump = d.key().and_then(|k| self.bumps.read().unwrap_or_else(|p| p.into_inner()).get(k).copied());
+        if let Some(b) = bump {
+            stamp.merge(&b);
+        }
+        own.max(self.served(&stamp))
     }
 
     /// The newest mtime shown below a directory whose content is `stamp` (#123): of its
@@ -2294,5 +2305,30 @@ mod tests {
         let img = mtime_of(&second.join("d.iso")).unwrap();
         t.sweep();
         assert_eq!(dir_mtimes(&t)[0], img + ident::newest_offset(true, true, 0));
+    }
+
+    #[test]
+    fn a_folder_never_shows_a_new_mtime_with_an_old_listing() {
+        // rc.2 on a NAS over SMB: the sweep moved a folder's mtime before the folder's
+        // throttled re-read was due, so a client that caches a listing until the mtime moves
+        // kept the old listing for good (#123, #101).
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        for flatten in [false, true] {
+            let dir = old_tree(old);
+            let sel = Sidecars::parse("default").unwrap();
+            let root = SourceDir::scan_with(dir.path(), &sel, None).unwrap();
+            let t =
+                Tree::new(root).with_flatten(flatten).watching(&sel).with_refresh(Duration::from_secs(3600));
+            let album = t.resolve(Path::new("Artist/Album")).unwrap();
+            let names =
+                || -> Vec<OsString> { t.children(album).unwrap().iter().map(|e| e.name.clone()).collect() };
+            let before = t.mtime(&t.get(album).unwrap());
+            assert!(!names().iter().any(|n| n == "new.m3u8"));
+            fs::write(dir.path().join("Artist/Album/new.m3u8"), b"#EXTM3U\n").unwrap();
+            t.sweep();
+            let after = t.mtime(&t.get(album).unwrap());
+            assert!(after > before, "flatten {flatten}");
+            assert!(names().iter().any(|n| n == "new.m3u8"), "flatten {flatten}: {:?}", names());
+        }
     }
 }
