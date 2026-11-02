@@ -17,7 +17,15 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
 - **On a Linux client (client-side).** sacdfs runs on the client and reads the images from a
   network share, as in the [user guide](user-guide.md). Every read of an image is then a
   network round trip; [over NFS from hard disks](#client-side-images-on-hard-disks-over-nfs),
-  what is slow is starting playback, not playing.
+  what is slow is starting playback, not playing. A cold seek over NFS from a NAS's hard
+  disks takes about 22 ms for plain DSD and 37 ms for DST on average, and about 2 ms once the
+  seek index knows that part of the disc. The mount can also be re-exported by the kernel NFS
+  server ([user guide](user-guide.md#sharing-the-mount-over-nfs)).
+
+sacdfs also runs **locally**, on the Linux machine that holds the images, as in the
+[user guide's quick start](user-guide.md#quick-start): a cold seek returns in about 2 ms, a
+WAV seek in under 3 ms. How
+fast each way is, against the project's targets: [performance.md](performance.md).
 
 This guide covers the first: the container image in this repository (`Containerfile`), how
 to run it with Docker, Podman or Compose and on TrueNAS SCALE, and how clients mount its
