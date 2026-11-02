@@ -479,7 +479,13 @@ sidecar or image.
   not after the refresh interval: in rc.2 the sweep could move a folder's mtime while its
   re-read was still throttled, and an SMB client, which keeps a listing until the folder's mtime
   moves, then kept the old listing under the new mtime for good (a new playlist never listed).
-  Change detection still uses each listing's stored source mtimes, never the shown one. *Considered:*
+  Change detection still uses each listing's stored source mtimes, never the shown one.
+  A directory's *first* listing compares its source mtime (each directory's of a `--flatten`
+  chain) with the one recorded when what it would be listed from was read (the mount's scan,
+  or its parent's re-read), and re-reads it if they differ. In rc.3 a folder not listed since
+  the mount was listed from the scan unchecked, so a sidecar added after the mount never
+  showed in it (the Roon-after-restart case). *Why compare, not always re-read:* one `stat`
+  per folder, against a `readdir` and a `stat` per entry, on a first scan of every folder. *Considered:*
   inotify (not on NFS or SMB sources, which are the NAS case); re-reading a directory's
   descendants on its own `getattr` (the same `stat`s, made many times per scan).
 - *Deterministic, no wall clock:* the time is a maximum of source mtimes and fixed offsets, so a

@@ -1073,3 +1073,53 @@ fn a_new_sidecar_is_listed_and_moves_its_ancestors() {
         m.stop("TERM");
     }
 }
+
+#[test]
+fn new_sidecars_are_listed_in_folders_listed_before_and_not() {
+    // rc.3 on a NAS: of four album folders, two listed since the mount and two not, a new
+    // playlist in each showed only in the two listed before (1, 1, 0, 0). A folder's first
+    // listing must read its source again if it changed since the mount (#101, #123).
+    if !fuse_available() {
+        return;
+    }
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let albums = ["A1", "A2", "A3", "A4"];
+    for a in albums {
+        let d = src.join("Artist").join(a);
+        std::fs::create_dir_all(&d).unwrap();
+        std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), d.join("disc.iso"))
+            .unwrap();
+    }
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    let names = |a: &str| -> Vec<String> {
+        std::fs::read_dir(mnt.join("Artist").join(a))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect()
+    };
+    assert!(names("A1").contains(&"disc".to_owned()));
+    assert!(names("A2").contains(&"disc".to_owned()));
+    for a in albums {
+        std::fs::write(src.join("Artist").join(a).join("new.m3u8"), b"#EXTM3U\n").unwrap();
+    }
+    let t0 = Instant::now();
+    let listed = |a: &str| names(a).contains(&"new.m3u8".to_owned());
+    // Each folder once only, as a scanner looks: the first listing of A3 and A4 must have it.
+    let mut seen = [false; 4];
+    while t0.elapsed() < Duration::from_secs(3) && !seen.iter().all(|s| *s) {
+        let _ = std::fs::metadata(&mnt);
+        for (i, a) in albums.iter().enumerate() {
+            if !seen[i] && (i < 2 || t0.elapsed() > Duration::from_millis(200)) {
+                seen[i] = listed(a);
+                if i >= 2 {
+                    assert!(seen[i], "{a}: its first listing misses the new file");
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(seen, [true; 4], "listed in A1..A4");
+    m.stop("TERM");
+}
