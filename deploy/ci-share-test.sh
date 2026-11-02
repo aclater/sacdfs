@@ -33,7 +33,7 @@ group "Client image (kernel SMB and NFS clients)"
 sudo modprobe -a cifs nfs nfsv4
 docker network create sacdfs-ci
 docker run --name client-build "$client_image" \
-    dnf -y -q --setopt=install_weak_deps=False install cifs-utils nfs-utils python3
+    dnf -y -q --setopt=install_weak_deps=False install cifs-utils nfs-utils python3 attr
 docker commit client-build sacdfs-client:ci
 docker rm client-build
 endgroup
@@ -51,13 +51,26 @@ docker run --rm --network sacdfs-ci --privileged \
         echo "$1: size $size, available $avail"
         [ "$size" -gt 0 ] && [ "$avail" -eq 0 ]
       }
+      # A long listing prints no error, and over NFS neither does an xattr dump (#174: every
+      # entry of `ls -l` on the NFS export said "Unknown error 524" while sacdfs answered
+      # xattr requests with ENOSYS). SMB has no xattrs (ea support = no): getfattr fails there.
+      quiet() {
+        ls -lR "$1" >/dev/null 2>/tmp/err || { head -n 5 /tmp/err; return 1; }
+        if [ -n "${2:-}" ]; then
+          getfattr -R -d "$1" >/dev/null 2>>/tmp/err || { head -n 5 /tmp/err; return 1; }
+        fi
+        [ ! -s /tmp/err ] || { head -n 5 /tmp/err; return 1; }
+        echo "$1: no errors"
+      }
       mkdir -p /mnt/smb /mnt/nfs
       mount -t cifs //sacdfs/sacd /mnt/smb -o ro,guest,vers=3.1.1
       full /mnt/smb
+      quiet /mnt/smb
       python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/smb --min 400 --wav
       umount /mnt/smb
       mount -t nfs4 sacdfs:/sacd /mnt/nfs -o ro,vers=4.2
       full /mnt/nfs
+      quiet /mnt/nfs xattrs
       python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/nfs --min 400 --wav
       umount /mnt/nfs'
 endgroup
