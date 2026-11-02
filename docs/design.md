@@ -1846,6 +1846,53 @@ the owner's NAS already used.
   its samples equal to the raw bytes; a sparse 4.76 GB six-channel RF64 file reads in FFmpeg
   and libsndfile.
 
+### Leaks (#151)
+
+The owner asked for leak tracing and profiling: sacdfs runs for days on a NAS. How to run
+each tool is in [development.md](development.md).
+
+- **On every PR: `tests/no_growth.rs`, a dhat-rs test.** It runs mount cycles in-process
+  and requires the heap left after each unmount to stay flat.
+  - *Why in-process:* dhat counts only its own process's allocations, so the filesystem
+    runs on a fuser background session in the test.
+  - *Why mount cycles, not hours:* the owner said "dont make CI take too long". The test
+    takes about 14 s on the CI runners, and the `tests` job grew from 2 min 23 s to
+    2 min 51 s on main to 3 min 12 s on the PR's first run. That is under the 1-minute budget
+    the owner set.
+  - *Why 16 KiB of slack:* a deliberately leaked tree per cycle adds about 40 KiB a cycle,
+    while the measured noise is 32 bytes.
+  - *Alternatives:* a counting global allocator written in the test. Rejected because it
+    needs `unsafe`, and dhat-rs is the tool #151 names.
+- **Off PR CI:**
+  - `scripts/soak.py`: hours of churn on a test host, plus 20 minutes weekly in
+    `.github/workflows/leaks.yml`.
+  - `scripts/leak-check.sh massif`: the heap profile of a soak segment.
+  - `scripts/leak-check.sh memcheck`: the whole suite, and the `sacdfs` processes it starts,
+    under valgrind memcheck. It also runs weekly.
+
+  *Why off PR CI:* each takes from 20 minutes to hours. *Why the soak judges the trend rather
+  than a fixed ceiling:* the frame cache and malloc's arenas fill during the warm-up. After
+  it, what counts is the level staying within the cache cap plus noise, and the trend of the
+  second half staying near zero.
+- **Why memcheck, not LeakSanitizer.** There is no C code in the graph (sacdfs and
+  scarletbook are pure Rust), so there is no C boundary to instrument. Rust's LeakSanitizer
+  needs a nightly compiler, and clang's `-shared-libasan` route does not instrument Rust.
+  memcheck works with the stable toolchain and follows child processes.
+- **Found: every WAV file's header was kept whole in memory**, 256 KiB per listed WAV file,
+  almost all of it the `JUNK` padding's zeros. massif put 522 MiB of a 40-minute soak's 635 MiB
+  heap at `wav::header`. The fix landed through #150 at the same time, so this PR has none. On
+  the five gate discs (93 WAV files), the resident memory after listing everything fell from
+  32.3 MB to 8.8 MB, which is about 5 GB less for a 1,000-disc library after a full scan.
+- **Found, filed and fixed separately: #153.** Nodes, and with them discs, of removed or
+  renamed images stayed in the tree for good. With every added album under a new name, the
+  soak grew from 135 to 394 MiB in 19 minutes. *Why not fixed here:* it needed a design
+  change in the tree, in another lane; #163 fixed it. The soak's default churn (a new name
+  for every added album) covers it from then on. `--churn-slots K` (names reused) checks
+  everything else in isolation.
+- **Why massif, not heaptrack.** heaptrack is not in UBI, and the Red Hat-first rule applies.
+  massif, in UBI 10's valgrind, gives the same two answers: what is live at the end, and how
+  each site grew. The container is `scripts/leak-check.Containerfile`.
+
 ### Oldest distributions (#58)
 
 *Why:* the install docs ([binary.md](install/binary.md#binaries)) promise RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, but CI tests only

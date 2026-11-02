@@ -25,7 +25,9 @@ see [SECURITY.md](SECURITY.md).
 
    The mount tests need `/dev/fuse` and `fusermount3` (package `fuse3`); without
    `SACDFS_FUSE_TESTS=1` they are skipped where FUSE is missing. In a container, pass
-   `--device /dev/fuse --cap-add SYS_ADMIN`.
+   `--device /dev/fuse --cap-add SYS_ADMIN`. `tests/no_growth.rs` checks that mount cycles
+   leave no heap behind. For the long checks (the soak, heap profiles, memcheck), see
+   [docs/development.md](docs/development.md).
 4. Update the documentation with the code: README.md, docs/options.md and docs/user-guide.md for anything a
    user sees (the options table in docs/options.md must match `sacdfs --help`; CI checks it with
    `.github/scripts/check-readme-options.py`), docs/design.md when the design changes, with

@@ -1,0 +1,15 @@
+# valgrind suppressions for scripts/leak-check.sh (#151). Each entry says why it is not a leak.
+
+# The mount of the binary's FUSE session (55 bytes, once per process): `serve` in
+# src/main.rs keeps it in a ManuallyDrop on purpose, because its drop would unmount by path,
+# and the path may hold a newer sacdfs's mount by then (#51). Once per process, no growth.
+{
+   sacdfs-session-mount-kept-on-purpose
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   ...
+   fun:_ZN5fuser3mnt5Mount3new*
+   ...
+   fun:_ZN6sacdfs3run*
+}

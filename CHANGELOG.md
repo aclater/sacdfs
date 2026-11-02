@@ -13,6 +13,10 @@ All notable changes to sacdfs are recorded here. The format follows
   after the GitHub release; the first version is published by hand. The crate holds only
   the sources, Cargo.toml, Cargo.lock, README.md, COPYING and CHANGELOG.md. The crates.io
   install path is not yet validated.
+- Leak hunting tools (#151). `tests/no_growth.rs` runs in CI and checks that mount cycles leave no
+  heap behind. Off CI, `scripts/soak.py` runs hours of reads and churn and judges the memory trend,
+  and `scripts/leak-check.sh` runs valgrind memcheck over the test suite and massif over a soak.
+  A weekly workflow runs memcheck and a short soak. See `docs/development.md`.
 
 ### Changed
 
