@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0-rc.2] - 2026-11-02
+
 ### Fixed
 
 - A folder's modification time is now the newest of everything shown below it, up to the
@@ -283,7 +285,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.2...HEAD
+[0.2.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0-rc.1
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aclater/sacdfs/releases/tag/v0.1.0
