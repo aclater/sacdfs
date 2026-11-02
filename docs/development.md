@@ -98,7 +98,8 @@ prints:
 - each site's growth from the first detailed snapshot after the warm-up to the last.
 
 `scripts/massif-summary.py` makes that report. A site is the first sacdfs or scarletbook
-function on the stack. The full `ms_print` output goes to `target/leak-check/massif.txt`.
+function on the stack. Where `ms_print` exists (it is not in UBI), its full output goes to
+`target/leak-check/massif.txt`.
 
 The container is UBI 10 with RHEL 10's Rust and valgrind. heaptrack would be faster, but it
 is not in UBI, and massif gives the same two answers.
@@ -124,4 +125,5 @@ processes.
 
 ## Results
 
-See the pull request that added these tools (#151) and docs/design.md, "Leaks".
+What these tools found, and what was fixed, is in docs/design.md under "Leaks", and in the
+pull request for #151.

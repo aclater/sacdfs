@@ -11,9 +11,10 @@
 #                       following the sacdfs processes the FUSE tests start. Fails on any
 #                       definite or indirect leak, or on a memory error.
 #   massif IMAGES MIN   a soak segment of MIN minutes (scripts/soak.py on the .iso files in
-#                       IMAGES) with the mounted sacdfs under valgrind massif; prints the heap
-#                       over time, the allocation sites still live at the end, and the growth
-#                       between the first snapshot after the warm-up and the last.
+#                       IMAGES, plus any options in $SOAK_ARGS) with the mounted sacdfs
+#                       under valgrind massif; prints the heap over time, the allocation
+#                       sites still live at the end, and the growth between the first
+#                       snapshot after the warm-up and the last.
 #
 # Output goes to $OUT (default target/leak-check).
 set -euo pipefail
@@ -30,7 +31,9 @@ memcheck() {
 for l in sys.stdin:
     m = json.loads(l)
     if m.get("reason") == "compiler-artifact" and m.get("executable") and m["profile"]["test"]:
-        print(m["executable"])' >"$OUT/tests.txt"
+        print(m["executable"])' | grep -v '/no_growth-' >"$OUT/tests.txt"
+    # tests/no_growth.rs is left out: dhat replaces the allocator there (memcheck would see
+    # nothing), and its in-process mount hangs under valgrind.
     # No --error-exitcode: it would change the exit status of the sacdfs processes the tests
     # start and check. The verdict comes from the logs instead.
     local vg=(valgrind --leak-check=full --show-leak-kinds=definite,indirect
@@ -65,10 +68,11 @@ massif() {
     # The watchdog's timeout is longer under valgrind, which runs the decoder ~30x slower.
     python3 -I scripts/soak.py --sacdfs target/release/sacdfs --images "$images" --hours "$hours" \
         --interval 30 --warmup 120 --readers 2 --read-pause 0.5 --request-timeout 60 \
-        --stall-every 240 --remount-every 300 --out "$OUT/massif-soak.tsv" \
+        --stall-every 240 --remount-every 300 --out "$OUT/massif-soak.tsv" ${SOAK_ARGS:-} \
         --wrap "valgrind --tool=massif --threshold=0.5 --detailed-freq=4 --max-snapshots=200 --time-unit=ms --massif-out-file=$OUT/massif.out" \
         || true  # the soak's verdict does not apply under valgrind
-    ms_print "$OUT/massif.out" >"$OUT/massif.txt"
+    # ms_print (the full trees) is not in UBI; massif-summary.py is the report.
+    if command -v ms_print >/dev/null; then ms_print "$OUT/massif.out" >"$OUT/massif.txt"; fi
     python3 -I scripts/massif-summary.py "$OUT/massif.out"
 }
 
