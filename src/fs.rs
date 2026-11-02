@@ -2,17 +2,21 @@
 
 //! The FUSE filesystem: requests from the kernel, answered from the tree and the engine.
 //!
-//! Metadata requests (`lookup`, `getattr`, `readdir`) are answered on fuser's threads.
-//! Reads are moved, with their reply, to a pool of request threads, which decode or copy
-//! and reply, so a slow read never holds up the others.
+//! fuser's threads only take requests from the kernel. What is in memory already (the
+//! attributes of a node made already) is answered there; everything that may read the
+//! source (lookups and listings, which open images, opens, reads) is moved with its reply to
+//! a pool of request threads, reads to one and metadata to another, so that a slow or
+//! stalled source never holds up the requests of the others (#63). Each moved request is
+//! watched: one that waits longer than the request timeout is failed with `EIO`
+//! ([`crate::watchdog`], #72).
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io;
 use std::os::unix::fs::FileExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,7 +28,8 @@ use fuser::{
 
 use crate::engine::Engine;
 use crate::track::Reader;
-use crate::tree::{Node, ROOT, Tree};
+use crate::tree::{Entry, Node, ROOT, Tree};
+use crate::watchdog::{self, Fail, Watchdog, What};
 
 /// How long the kernel may cache entries and attributes: the tree never changes.
 const TTL: Duration = Duration::from_secs(24 * 3600);
@@ -37,7 +42,24 @@ pub const MAX_READ: u32 = 1 << 20;
 
 type Job = Box<dyn FnOnce() + Send>;
 
-/// A plain pool of threads taking jobs from a queue.
+/// Most threads a pool of [`Workers`] grows to. *Why 64:* the kernel sends at most 64
+/// background requests (read-ahead) at once (`max_background`, set in `init`), plus the
+/// few synchronous ones of its callers; past that, a request waits for a thread, and the
+/// watchdog fails it if it waits too long. Each thread costs a stack of address space,
+/// mostly untouched, and nothing while it is parked.
+pub const MAX_POOL_THREADS: usize = 64;
+
+/// A thread above a pool's core count that has had no job for this long ends.
+const SPARE_IDLE: Duration = Duration::from_secs(10);
+
+/// A pool of threads taking jobs from a queue, `core` of them at least, growing up to
+/// `max` when a job is queued and no thread is idle.
+///
+/// *Why it grows (#63, #72):* a thread whose job blocks on a stalled source (a hung NFS
+/// share) is lost until the source answers, maybe for hours. A fixed pool would lose its
+/// threads one by one, and then every request, of any source, would queue behind them. A
+/// spare thread is started instead, so other requests keep being served; the bound keeps a
+/// hung source from making threads without end, and the watchdog fails what then waits.
 ///
 /// Not a rayon pool: a rayon worker waiting for another pool (here, the DST decoders)
 /// runs other jobs of its own pool meanwhile, and a second read of the same file would
@@ -45,53 +67,145 @@ type Job = Box<dyn FnOnce() + Send>;
 #[derive(Debug, Clone)]
 pub struct Workers {
     tx: Sender<Job>,
+    inner: Arc<WorkersInner>,
+}
+
+#[derive(Debug)]
+struct WorkersInner {
+    rx: Mutex<Receiver<Job>>,
+    name: String,
+    core: usize,
+    max: usize,
+    /// Threads alive.
+    threads: AtomicUsize,
+    /// Threads waiting for a job.
+    idle: AtomicUsize,
+    /// Jobs sent and not yet taken.
+    queued: AtomicUsize,
+    /// Used to number new threads.
+    started: AtomicUsize,
 }
 
 impl Workers {
-    /// `n` threads named `name-<i>`.
+    /// `n` threads named `name-<i>`, growing to [`MAX_POOL_THREADS`] (at least `n`).
     pub fn new(n: usize, name: &str) -> io::Result<Workers> {
-        let (tx, rx) = channel::<Job>();
-        let rx = Arc::new(Mutex::new(rx));
-        for i in 0..n.max(1) {
-            let rx: Arc<Mutex<Receiver<Job>>> = rx.clone();
-            std::thread::Builder::new().name(format!("{name}-{i}")).spawn(move || {
-                loop {
-                    let job = match rx.lock() {
-                        Ok(r) => r.recv(),
-                        Err(_) => return,
-                    };
-                    match job {
-                        Ok(job) => {
-                            if catch_unwind(AssertUnwindSafe(job)).is_err() {
-                                log::error!("a request thread job panicked");
-                            }
-                        }
-                        Err(_) => return,
-                    }
-                }
-            })?;
-        }
-        Ok(Workers { tx })
+        Self::with_max(n, MAX_POOL_THREADS, name)
     }
 
-    /// Runs `job` on one of the threads.
+    /// `core` threads named `name-<i>` (at least one), growing to `max` when busy.
+    pub fn with_max(core: usize, max: usize, name: &str) -> io::Result<Workers> {
+        let core = core.max(1);
+        let (tx, rx) = channel::<Job>();
+        let inner = Arc::new(WorkersInner {
+            rx: Mutex::new(rx),
+            name: name.to_owned(),
+            core,
+            max: max.max(core),
+            threads: AtomicUsize::new(0),
+            idle: AtomicUsize::new(0),
+            queued: AtomicUsize::new(0),
+            started: AtomicUsize::new(0),
+        });
+        for _ in 0..core {
+            inner.threads.fetch_add(1, Ordering::SeqCst);
+            Self::start(&inner)?;
+        }
+        Ok(Workers { tx, inner })
+    }
+
+    /// Starts one thread, already counted in `threads`.
+    fn start(inner: &Arc<WorkersInner>) -> io::Result<()> {
+        let i = inner.started.fetch_add(1, Ordering::Relaxed);
+        let me = inner.clone();
+        let spawned = std::thread::Builder::new().name(format!("{}-{i}", inner.name)).spawn(move || {
+            loop {
+                me.idle.fetch_add(1, Ordering::SeqCst);
+                let job = match me.rx.lock() {
+                    Ok(r) => r.recv_timeout(SPARE_IDLE),
+                    Err(_) => Err(RecvTimeoutError::Disconnected),
+                };
+                me.idle.fetch_sub(1, Ordering::SeqCst);
+                match job {
+                    Ok(job) => {
+                        me.queued.fetch_sub(1, Ordering::SeqCst);
+                        if catch_unwind(AssertUnwindSafe(job)).is_err() {
+                            log::error!("a request thread job panicked");
+                        }
+                    }
+                    // A spare thread with nothing to do ends; the core ones stay.
+                    Err(RecvTimeoutError::Timeout) => {
+                        let core = me.core;
+                        let fewer = |t: usize| (t > core).then(|| t - 1);
+                        if me.threads.fetch_update(Ordering::SeqCst, Ordering::SeqCst, fewer).is_ok() {
+                            return;
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        me.threads.fetch_sub(1, Ordering::SeqCst);
+                        return;
+                    }
+                }
+            }
+        });
+        if let Err(e) = spawned {
+            inner.threads.fetch_sub(1, Ordering::SeqCst);
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Runs `job` on one of the threads; starts one more if none is free and the pool is
+    /// below its bound.
     pub fn spawn(&self, job: impl FnOnce() + Send + 'static) {
-        let _ = self.tx.send(Box::new(job));
+        let inner = &self.inner;
+        inner.queued.fetch_add(1, Ordering::SeqCst);
+        if self.tx.send(Box::new(job)).is_err() {
+            inner.queued.fetch_sub(1, Ordering::SeqCst);
+            return;
+        }
+        if inner.queued.load(Ordering::SeqCst) <= inner.idle.load(Ordering::SeqCst) {
+            return;
+        }
+        let max = inner.max;
+        let more = |t: usize| (t < max).then_some(t + 1);
+        if inner.threads.fetch_update(Ordering::SeqCst, Ordering::SeqCst, more).is_err() {
+            return;
+        }
+        match Self::start(inner) {
+            Ok(()) => log::debug!("{}: every thread busy: {} now", inner.name, self.threads()),
+            Err(e) => log::warn!("{}: no spare thread: {e}", inner.name),
+        }
+    }
+
+    /// Threads alive now.
+    pub fn threads(&self) -> usize {
+        self.inner.threads.load(Ordering::SeqCst)
     }
 }
 
 /// The filesystem.
 #[derive(Debug)]
 pub struct SacdFs {
-    tree: Arc<Tree>,
+    shared: Arc<Shared>,
     engine: Arc<Engine>,
+    /// Reads, decoding or copying.
     requests: Workers,
+    /// Metadata requests that may read the source (lookups, listings, opens): see
+    /// [`SacdFs::serve`].
+    meta: Workers,
+    watchdog: Watchdog,
+    /// The source filesystem's size, and when it was read: see [`SacdFs::statfs`].
+    source_size: Arc<Mutex<SourceSize>>,
+}
+
+/// What the request threads share with the filesystem.
+#[derive(Debug)]
+struct Shared {
+    tree: Arc<Tree>,
     handles: Mutex<HashMap<u64, Open>>,
     next_fh: AtomicU64,
     uid: u32,
     gid: u32,
-    /// The source filesystem's size, and when it was read: see [`SacdFs::statfs`].
-    source_size: Arc<Mutex<SourceSize>>,
 }
 
 /// An open file.
@@ -170,7 +284,9 @@ fn negative_attr() -> FileAttr {
 
 impl SacdFs {
     /// A filesystem showing `tree`, decoding with `engine`, answering reads on
-    /// `request_threads` threads. Files belong to `uid`/`gid`.
+    /// `request_threads` threads (more when they are busy, see [`Workers`]), and failing a
+    /// request that waits longer than [`watchdog::DEFAULT_TIMEOUT`]. Files belong to
+    /// `uid`/`gid`.
     pub fn new(
         tree: Arc<Tree>,
         engine: Arc<Engine>,
@@ -179,20 +295,65 @@ impl SacdFs {
         gid: u32,
     ) -> io::Result<Self> {
         let requests = Workers::new(request_threads, "sacdfs-read")?;
+        // As many as fuser's own threads, whose waiting these take over.
+        let meta = Workers::new(4, "sacdfs-meta")?;
         // Read now, while the source has just been walked; refreshed in the background.
         let source_size = Arc::new(Mutex::new(SourceSize::of(tree.source())));
         Ok(SacdFs {
-            tree,
+            shared: Arc::new(Shared {
+                tree,
+                handles: Mutex::new(HashMap::new()),
+                next_fh: AtomicU64::new(1),
+                uid,
+                gid,
+            }),
             engine,
             requests,
-            handles: Mutex::new(HashMap::new()),
-            next_fh: AtomicU64::new(1),
-            uid,
-            gid,
+            meta,
+            watchdog: Watchdog::new(Some(watchdog::DEFAULT_TIMEOUT))?,
             source_size,
         })
     }
 
+    /// The same filesystem, failing a request that waits longer than `timeout` (`None` or
+    /// zero: requests wait as long as they take).
+    pub fn with_request_timeout(mut self, timeout: Option<Duration>) -> io::Result<Self> {
+        self.watchdog = Watchdog::new(timeout)?;
+        Ok(self)
+    }
+
+    /// The watchdog.
+    pub fn watchdog(&self) -> &Watchdog {
+        &self.watchdog
+    }
+
+    /// Answers a request that may read the source off fuser's threads: `work` runs on a
+    /// metadata thread, then `answer` replies with what it found, or is given `None` if the
+    /// watchdog failed the request meanwhile.
+    ///
+    /// *Why (#63):* fuser has 4 threads reading requests from the kernel. A lookup or
+    /// listing that loads TOCs from a stalled share held one of them for as long as the
+    /// share hung, and four of them stopped the whole mount, even for directories listed
+    /// already. Now fuser's threads only hand the request over, and what was listed
+    /// already still answers.
+    fn serve<R: Fail, T: Send + 'static>(
+        &self,
+        what: What,
+        reply: R,
+        work: impl FnOnce(&Arc<Shared>) -> T + Send + 'static,
+        answer: impl FnOnce(Option<R>, T) + Send + 'static,
+    ) {
+        let pending = self.watchdog.watch(what, reply);
+        let shared = self.shared.clone();
+        self.meta.spawn(move || {
+            pending.running();
+            let found = work(&shared);
+            answer(pending.take(), found);
+        });
+    }
+}
+
+impl Shared {
     /// How long the kernel may keep an entry of `parent` numbered `ino` (a name looked up
     /// there, or the directory's own attributes): [`TTL`], or the refresh interval when
     /// either is re-read when its source changes.
@@ -235,6 +396,152 @@ impl SacdFs {
     fn handle(&self, fh: u64) -> Option<Open> {
         self.handles.lock().unwrap_or_else(|p| p.into_inner()).get(&fh).cloned()
     }
+
+    fn lookup(&self, parent: u64, name: &OsStr) -> Result<(Duration, FileAttr, Generation), Errno> {
+        let mut negative = false;
+        let ino = match name.as_encoded_bytes() {
+            // The kernel's export code asks for `.` of an inode number from a file handle
+            // and for `..` of a directory, to rebuild its path.
+            b"." => self.tree.get(parent).map(|_| parent),
+            b".." => match self.tree.get(parent).as_deref() {
+                Some(Node::Dir(d)) => Some(d.parent),
+                Some(Node::File(_) | Node::Sidecar(_)) => return Err(Errno::ENOTDIR),
+                None => None,
+            },
+            _ => match self.tree.children(parent) {
+                Some(children) => {
+                    negative = true;
+                    children.iter().find(|e| e.name == name).map(|e| e.ino)
+                }
+                None => None,
+            },
+        };
+        match ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n))) {
+            // A directory that is re-read when its source changes (#101), and what is in
+            // it, is remembered for a short time only.
+            Some((ino, node)) => {
+                Ok((self.ttl(parent, ino), self.attr(ino, &node), Generation(self.tree.generation(&node))))
+            }
+            // A name missing from a directory stays missing (unless the directory is re-read,
+            // #101), so the kernel may remember that it is: inode 0 is a negative entry,
+            // cached for the TTL (#61). `.` and `..` of an unknown number stay errors, for the export
+            // code.
+            None if negative => Ok((self.ttl(parent, parent), negative_attr(), Generation(0))),
+            None => Err(Errno::ENOENT),
+        }
+    }
+
+    fn getattr(&self, ino: u64, node: Option<Arc<Node>>) -> Result<(Duration, FileAttr), Errno> {
+        match node {
+            Some(node) => Ok((self.ttl(ino, ino), self.attr(ino, &node))),
+            None => Err(Errno::ENOENT),
+        }
+    }
+
+    /// Opens `node`: a new file handle.
+    fn open(&self, node: Option<Arc<Node>>) -> Result<u64, Errno> {
+        let Some(node) = node else { return Err(Errno::ENOENT) };
+        let open = match &*node {
+            Node::File(file) => Open::Track(Arc::new(Reader::new(file.clone()))),
+            Node::Sidecar(s) => match self.tree.open_sidecar(s) {
+                Ok(f) => Open::Sidecar(Arc::new(f)),
+                Err(e) => {
+                    log::info!("sidecar {}: open: {e}", s.target.display());
+                    return Err(Errno::from_i32(e.raw_os_error().unwrap_or(libc::EIO)));
+                }
+            },
+            Node::Dir(_) => return Err(Errno::EISDIR),
+        };
+        let fh = self.next_fh.fetch_add(1, Ordering::Relaxed);
+        self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(fh, open);
+        Ok(fh)
+    }
+
+    fn opendir(&self, ino: u64, node: Option<Arc<Node>>) -> Result<FopenFlags, Errno> {
+        match node.as_deref() {
+            // A listing that is re-read when its source changes is not cached by the kernel.
+            Some(Node::Dir(_)) if self.tree.is_live(ino) => Ok(FopenFlags::empty()),
+            Some(Node::Dir(_)) => Ok(FopenFlags::FOPEN_KEEP_CACHE | FopenFlags::FOPEN_CACHE_DIR),
+            Some(Node::File(_) | Node::Sidecar(_)) => Err(Errno::ENOTDIR),
+            None => Err(Errno::ENOENT),
+        }
+    }
+
+    fn access(node: Option<Arc<Node>>, mask: AccessFlags) -> Result<(), Errno> {
+        match node.as_deref() {
+            None => Err(Errno::ENOENT),
+            Some(_) if mask.contains(AccessFlags::W_OK) => Err(Errno::EROFS),
+            Some(Node::File(_) | Node::Sidecar(_)) if mask.contains(AccessFlags::X_OK) => Err(Errno::EACCES),
+            Some(_) => Ok(()),
+        }
+    }
+}
+
+fn reply_entry(reply: ReplyEntry, r: Result<(Duration, FileAttr, Generation), Errno>) {
+    match r {
+        Ok((ttl, attr, generation)) => reply.entry(&ttl, &attr, generation),
+        Err(e) => reply.error(e),
+    }
+}
+
+fn reply_attr(reply: ReplyAttr, r: Result<(Duration, FileAttr), Errno>) {
+    match r {
+        Ok((ttl, attr)) => reply.attr(&ttl, &attr),
+        Err(e) => reply.error(e),
+    }
+}
+
+fn reply_opened(reply: ReplyOpen, r: Result<(u64, FopenFlags), Errno>) {
+    match r {
+        Ok((fh, flags)) => reply.opened(FileHandle(fh), flags),
+        Err(e) => reply.error(e),
+    }
+}
+
+fn reply_empty(reply: ReplyEmpty, r: Result<(), Errno>) {
+    match r {
+        Ok(()) => reply.ok(),
+        Err(e) => reply.error(e),
+    }
+}
+
+/// A track file read, for the log line of one that timed out.
+struct ReadOf {
+    reader: Arc<Reader>,
+    offset: u64,
+    size: u32,
+}
+
+impl std::fmt::Display for ReadOf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let file = &self.reader.file;
+        write!(
+            f,
+            "{} track {} at offset {} ({} bytes)",
+            file.disc.path.display(),
+            file.number,
+            self.offset,
+            self.size
+        )
+    }
+}
+
+/// A name in a directory, for a log line.
+struct InName(u64, std::ffi::OsString);
+
+impl std::fmt::Display for InName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} in inode {}", self.1, self.0)
+    }
+}
+
+/// An inode, for a log line.
+struct Ino(u64);
+
+impl std::fmt::Display for Ino {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "inode {}", self.0)
+    }
 }
 
 impl Filesystem for SacdFs {
@@ -252,52 +559,45 @@ impl Filesystem for SacdFs {
     }
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
-        let mut negative = false;
-        let ino = match name.as_encoded_bytes() {
-            // The kernel's export code asks for `.` of an inode number from a file handle
-            // and for `..` of a directory, to rebuild its path.
-            b"." => self.tree.get(parent.0).map(|_| parent.0),
-            b".." => match self.tree.get(parent.0).as_deref() {
-                Some(Node::Dir(d)) => Some(d.parent),
-                Some(Node::File(_) | Node::Sidecar(_)) => {
-                    reply.error(Errno::ENOTDIR);
-                    return;
+        let name = name.to_owned();
+        self.serve(
+            What::new("lookup", InName(parent.0, name.clone())),
+            reply,
+            move |sh| sh.lookup(parent.0, &name),
+            |reply, r| {
+                if let Some(reply) = reply {
+                    reply_entry(reply, r)
                 }
-                None => None,
             },
-            _ => match self.tree.children(parent.0) {
-                Some(children) => {
-                    negative = true;
-                    children.iter().find(|e| e.name == name).map(|e| e.ino)
-                }
-                None => None,
-            },
-        };
-        match ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n))) {
-            Some((ino, node)) => {
-                // A directory that is re-read when its source changes (#101), and what is in
-                // it, is remembered for a short time only.
-                let ttl = self.ttl(parent.0, ino);
-                reply.entry(&ttl, &self.attr(ino, &node), Generation(self.tree.generation(&node)))
-            }
-            // A name missing from a directory stays missing (unless the directory is re-read,
-            // #101), so the kernel may remember that it is: inode 0 is a negative entry,
-            // cached for the TTL (#61). `.` and `..` of an unknown number stay errors, for the export
-            // code.
-            None if negative => reply.entry(&self.ttl(parent.0, parent.0), &negative_attr(), Generation(0)),
-            None => reply.error(Errno::ENOENT),
-        }
+        );
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
-        // A scan starts at the root: changes anywhere below move its mtime first (#123).
-        if ino.0 == ROOT {
-            self.tree.sweep();
+        // A node made already is answered here, from memory: no handover for the most
+        // frequent request. The root first sweeps the source (#123), and a node not made
+        // yet is looked for along its path: both read the source.
+        if ino.0 != ROOT {
+            if let Some(node) = self.shared.tree.loaded(ino.0) {
+                reply_attr(reply, self.shared.getattr(ino.0, Some(node)));
+                return;
+            }
         }
-        match self.tree.get(ino.0) {
-            Some(node) => reply.attr(&self.ttl(ino.0, ino.0), &self.attr(ino.0, &node)),
-            None => reply.error(Errno::ENOENT),
-        }
+        self.serve(
+            What::new("getattr", Ino(ino.0)),
+            reply,
+            move |sh| {
+                if ino.0 == ROOT {
+                    // A scan starts at the root: changes anywhere below move its mtime first.
+                    sh.tree.sweep();
+                }
+                sh.getattr(ino.0, sh.tree.get(ino.0))
+            },
+            |reply, r| {
+                if let Some(reply) = reply {
+                    reply_attr(reply, r)
+                }
+            },
+        );
     }
 
     fn open(&self, _req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
@@ -305,34 +605,27 @@ impl Filesystem for SacdFs {
             reply.error(Errno::EROFS);
             return;
         }
-        let Some(node) = self.tree.get(ino.0) else {
-            reply.error(Errno::ENOENT);
-            return;
-        };
-        let open = match &*node {
-            Node::File(file) => Open::Track(Arc::new(Reader::new(file.clone()))),
-            Node::Sidecar(s) => match self.tree.open_sidecar(s) {
-                Ok(f) => Open::Sidecar(Arc::new(f)),
-                Err(e) => {
-                    log::info!("sidecar {}: open: {e}", s.target.display());
-                    reply.error(Errno::from_i32(e.raw_os_error().unwrap_or(libc::EIO)));
-                    return;
+        // Opening a sidecar opens its source file.
+        self.serve(
+            What::new("open", Ino(ino.0)),
+            reply,
+            move |sh| (sh.open(sh.tree.get(ino.0)), sh.clone()),
+            |reply, (r, sh)| match reply {
+                Some(reply) => reply_opened(reply, r.map(|fh| (fh, FopenFlags::FOPEN_KEEP_CACHE))),
+                // Too late: the kernel never learns of the handle, so it is closed here.
+                None => {
+                    if let Ok(fh) = r {
+                        sh.handles.lock().unwrap_or_else(|p| p.into_inner()).remove(&fh);
+                    }
                 }
             },
-            Node::Dir(_) => {
-                reply.error(Errno::EISDIR);
-                return;
-            }
-        };
-        let fh = self.next_fh.fetch_add(1, Ordering::Relaxed);
-        self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(fh, open);
-        reply.opened(FileHandle(fh), FopenFlags::FOPEN_KEEP_CACHE);
+        );
     }
 
     fn read(
         &self,
         _req: &Request,
-        _ino: INodeNo,
+        ino: INodeNo,
         fh: FileHandle,
         offset: u64,
         size: u32,
@@ -340,15 +633,21 @@ impl Filesystem for SacdFs {
         _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        let reader = match self.handle(fh.0) {
+        let reader = match self.shared.handle(fh.0) {
             Some(Open::Track(r)) => r,
             Some(Open::Sidecar(file)) => {
                 // The source may be slow (a network filesystem): read on a request thread.
-                self.requests.spawn(move || match read_plain(&file, offset, size) {
-                    Ok(data) => reply.data(&data),
-                    Err(e) => {
-                        log::warn!("sidecar read at {offset}: {e}");
-                        reply.error(Errno::EIO);
+                let pending = self.watchdog.watch(What::new("sidecar read", Ino(ino.0)), reply);
+                self.requests.spawn(move || {
+                    pending.running();
+                    let r = read_plain(&file, offset, size);
+                    let Some(reply) = pending.take() else { return };
+                    match r {
+                        Ok(data) => reply.data(&data),
+                        Err(e) => {
+                            log::warn!("sidecar read at {offset}: {e}");
+                            reply.error(Errno::EIO);
+                        }
                     }
                 });
                 return;
@@ -360,8 +659,12 @@ impl Filesystem for SacdFs {
         };
         let engine = self.engine.clone();
         let pool = self.requests.clone();
+        let what = What::new("read", ReadOf { reader: reader.clone(), offset, size });
+        let pending = self.watchdog.watch(what, reply);
         self.requests.spawn(move || {
+            pending.running();
             let result = catch_unwind(AssertUnwindSafe(|| reader.read(&engine, offset, u64::from(size))));
+            let Some(reply) = pending.take() else { return };
             match result {
                 Ok(Ok((data, ahead))) => {
                     reply.data(&data);
@@ -412,52 +715,75 @@ impl Filesystem for SacdFs {
         _flush: bool,
         reply: ReplyEmpty,
     ) {
-        self.handles.lock().unwrap_or_else(|p| p.into_inner()).remove(&fh.0);
+        self.shared.handles.lock().unwrap_or_else(|p| p.into_inner()).remove(&fh.0);
         reply.ok();
     }
 
     fn opendir(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
-        match self.tree.get(ino.0).as_deref() {
-            // A listing that is re-read when its source changes is not cached by the kernel.
-            Some(Node::Dir(_)) if self.tree.is_live(ino.0) => {
-                reply.opened(FileHandle(0), FopenFlags::empty())
-            }
-            Some(Node::Dir(_)) => {
-                reply.opened(FileHandle(0), FopenFlags::FOPEN_KEEP_CACHE | FopenFlags::FOPEN_CACHE_DIR)
-            }
-            Some(Node::File(_) | Node::Sidecar(_)) => reply.error(Errno::ENOTDIR),
-            None => reply.error(Errno::ENOENT),
+        if let Some(node) = self.shared.tree.loaded(ino.0) {
+            reply_opened(reply, self.shared.opendir(ino.0, Some(node)).map(|f| (0, f)));
+            return;
         }
+        self.serve(
+            What::new("opendir", Ino(ino.0)),
+            reply,
+            move |sh| sh.opendir(ino.0, sh.tree.get(ino.0)),
+            |reply, r| {
+                if let Some(reply) = reply {
+                    reply_opened(reply, r.map(|f| (0, f)))
+                }
+            },
+        );
     }
 
-    fn readdir(&self, _req: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, mut reply: ReplyDirectory) {
-        let Some(children) = self.tree.children(ino.0) else {
-            reply.error(Errno::ENOTDIR);
-            return;
-        };
-        let parent = self.tree.parent_of(ino.0);
-        let dots =
-            [(ino.0, FileType::Directory, OsStr::new(".")), (parent, FileType::Directory, OsStr::new(".."))];
-        let entries = dots.into_iter().chain(children.iter().map(|e| {
-            (e.ino, if e.is_dir { FileType::Directory } else { FileType::RegularFile }, e.name.as_os_str())
-        }));
-        for (i, (ino, kind, name)) in entries.enumerate().skip(offset as usize) {
-            if reply.add(INodeNo(ino), i as u64 + 1, kind, name) {
-                break;
-            }
-        }
-        reply.ok();
+    fn readdir(&self, _req: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, reply: ReplyDirectory) {
+        // Listing a directory the first time opens its images (reads their TOCs).
+        self.serve(
+            What::new("readdir", Ino(ino.0)),
+            reply,
+            move |sh| sh.tree.children(ino.0).map(|c| (c, sh.tree.parent_of(ino.0))),
+            move |reply: Option<ReplyDirectory>, found: Option<(Arc<Vec<Entry>>, u64)>| {
+                let Some(mut reply) = reply else { return };
+                let Some((children, parent)) = found else {
+                    reply.error(Errno::ENOTDIR);
+                    return;
+                };
+                let dots = [
+                    (ino.0, FileType::Directory, OsStr::new(".")),
+                    (parent, FileType::Directory, OsStr::new("..")),
+                ];
+                let entries = dots.into_iter().chain(children.iter().map(|e| {
+                    (
+                        e.ino,
+                        if e.is_dir { FileType::Directory } else { FileType::RegularFile },
+                        e.name.as_os_str(),
+                    )
+                }));
+                for (i, (ino, kind, name)) in entries.enumerate().skip(offset as usize) {
+                    if reply.add(INodeNo(ino), i as u64 + 1, kind, name) {
+                        break;
+                    }
+                }
+                reply.ok();
+            },
+        );
     }
 
     fn access(&self, _req: &Request, ino: INodeNo, mask: AccessFlags, reply: ReplyEmpty) {
-        match self.tree.get(ino.0).as_deref() {
-            None => reply.error(Errno::ENOENT),
-            Some(_) if mask.contains(AccessFlags::W_OK) => reply.error(Errno::EROFS),
-            Some(Node::File(_) | Node::Sidecar(_)) if mask.contains(AccessFlags::X_OK) => {
-                reply.error(Errno::EACCES)
-            }
-            Some(_) => reply.ok(),
+        if let Some(node) = self.shared.tree.loaded(ino.0) {
+            reply_empty(reply, Shared::access(Some(node), mask));
+            return;
         }
+        self.serve(
+            What::new("access", Ino(ino.0)),
+            reply,
+            move |sh| Shared::access(sh.tree.get(ino.0), mask),
+            |reply, r| {
+                if let Some(reply) = reply {
+                    reply_empty(reply, r)
+                }
+            },
+        );
     }
 
     // No extended attributes. ENOSYS, not ENODATA or an empty list: the kernel then remembers
@@ -479,7 +805,7 @@ impl Filesystem for SacdFs {
             let mut s = self.source_size.lock().unwrap_or_else(|p| p.into_inner());
             if !s.refreshing && s.read.elapsed() >= STATFS_REFRESH {
                 s.refreshing = true;
-                let (cell, path) = (self.source_size.clone(), self.tree.source().to_owned());
+                let (cell, path) = (self.source_size.clone(), self.shared.tree.source().to_owned());
                 self.requests.spawn(move || {
                     let new = SourceSize::of(&path);
                     *cell.lock().unwrap_or_else(|p| p.into_inner()) = new;
@@ -487,7 +813,42 @@ impl Filesystem for SacdFs {
             }
             *s
         };
-        let files = self.tree.len() as u64;
+        let files = self.shared.tree.len() as u64;
         reply.statfs(size.blocks, 0, 0, files, 0, 1 << 16, 255, size.frsize);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn a_pool_grows_past_a_stalled_job_and_shrinks_back() {
+        let pool = Workers::with_max(2, 4, "test-pool").unwrap();
+        assert_eq!(pool.threads(), 2);
+        // Three jobs that stall until released: more than the core threads.
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        for _ in 0..3 {
+            let r = release_rx.clone();
+            pool.spawn(move || {
+                let _ = r.lock().unwrap().recv();
+            });
+        }
+        // Another job still runs, on a spare thread.
+        let (done_tx, done_rx) = mpsc::channel();
+        pool.spawn(move || done_tx.send(()).unwrap());
+        done_rx.recv_timeout(Duration::from_secs(5)).expect("a free job ran");
+        assert!(pool.threads() <= 4);
+        // Bounded: with every thread stalled, a job waits.
+        for _ in 0..3 {
+            let r = release_rx.clone();
+            pool.spawn(move || {
+                let _ = r.lock().unwrap().recv();
+            });
+        }
+        assert_eq!(pool.threads(), 4);
+        drop(release_tx);
     }
 }
