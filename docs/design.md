@@ -149,7 +149,7 @@ before. Two changes, each needed:
 
 ### Memory: the default cache and the fixed overhead (#150)
 
-The owner asked for memory "down" after 0.3.0: peak RSS under 100 MiB at the default cache and
+The owner asked for lower memory use after 0.3.0: peak RSS under 100 MiB at the default cache and
 under 64 MiB at the smallest, on the import replay, with straight reads and seeks within 5 % of
 0.3.0. Measured on the five bench images (`scripts/import-replay.py`; a 32-thread host):
 
@@ -276,8 +276,8 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
 
 ### Sidecar files (#79, #75)
 
-The owner's goal for sacdfs (#82, 2026-11-01): "a value of using sacdfs is reclaiming storage
-space - so that's what i want to architect for": people delete the DSF files they extracted
+The owner's goal for sacdfs (#82, 2026-11-01) is to architect it for reclaiming storage
+space: people delete the DSF files they extracted
 and lose nothing. The first gap was everything else in the album folders. sacdfs showed only
 what it makes from images, so a player reading through it saw no local art (in a real Roon
 test on the owner's NAS, Roon fell back to its online art), and a playlist could not live on
@@ -466,8 +466,8 @@ after every NAS reboot or app update.
   collision case above.
 
 **Multichannel album suffix (#97).** The album tag of a multichannel area's DSF and WAV files
-ends in ` (Multichannel)` unless `--no-multichannel-album-suffix`. *Owner quote:* "multichannel
-copies get their own album name in the tags, by default, with an option to turn it off".
+ends in ` (Multichannel)` unless `--no-multichannel-album-suffix`. *Owner decision:* multichannel
+copies get their own album name in the tags by default, with an option to turn it off.
 *Why:* Navidrome, LMS, MPD and MinimServer all showed a disc's two copies as one album.
 *Sources:* the client tests on #82. *Alternatives:* no change; a separate album-artist or
 comment tag (servers group by album name); hiding an area (loses content). *Trade-off:* the
@@ -542,7 +542,7 @@ sidecar or image.
   directory whose mtime did not change, and everything below it. Found testing 0.2.0-rc.1 with
   Roon (#123): an upgrade moved every DSF file's mtime and a new playlist sat next to an image,
   yet Roon reported nothing, because the directories above them kept their source's mtime. The
-  owner's decision: "fix it, ship it", in 0.2.0 (as rc.2).
+  owner decided to fix it and ship the fix in 0.2.0 (as rc.2).
 - *How, at mount:* the scan `stat`s every image and sidecar it notes (one `stat` each, beside
   the `readdir` it already does; over NFS the attributes usually come with the listing) and keeps
   a `tree::Stamp` per source directory: its own mtime, the newest of the rest, and the newest
@@ -772,8 +772,8 @@ from 539 lines to 144, all of it the options below).
   the date's year, a space, then the copyright (a stored "Label 2007" becomes "2007 Label
   2007"); their tag and size grow by 5 bytes. The audio is the same (DSF gate 93/93). The DSF
   output version moved to 2, so those files' NFS generations and mtimes moved as #64 intends.
-  *Decision (owner, #28):* adopt the library's writer, accept the conformant TCOP: "i dont care
-  about roons play history or churn". *Trade-off:* players and taggers that keyed on the old
+  *Decision (owner, #28):* adopt the library's writer, accept the conformant TCOP; preserving
+  Roon play history and avoiding a one-time re-scan are not requirements. *Trade-off:* players and taggers that keyed on the old
   bytes or mtime see the files as changed once.
 - **Serving:** the frame cache holds decoded frames as scarletbook gives them (interleaved);
   `fill` gathers each channel's bytes and reverses their bits per read. *Why per read, not
@@ -1425,7 +1425,7 @@ judged by the cold-seek target.
   reads still take 40 to 57 ms when four start together: the start-ups' round trips and
   decoding. Shortening that would mean fewer dependent reads of the image per cold seek,
   which is scarletbook's seeking (#28).
-- **Owner direction:** "performance will be key", "latency is important".
+- **Owner direction:** performance and latency are key requirements.
 
 ## Performance basis
 
@@ -1562,8 +1562,8 @@ deleting extracts would lose user genres (TCON) on 827 of 1,066 files, embedded 
 MusicBrainz IDs on 26.
 
 - **A tags directory, one TOML file per disc, named by the disc's TOC identity.** *Owner
-  decision (#81, 2026-11-01):* "a tags directory, one file per disc, keyed by the disc's TOC
-  identity. The images' dataset stays read-only." *Why:* edits survive renames and moves, and
+  decision (#81, 2026-11-01):* a tags directory with one file per disc, keyed by the disc's TOC
+  identity; the images' dataset stays read-only. *Why:* edits survive renames and moves, and
   two copies of a disc share them; the images stay read-only; sacdfs does not depend on beets.
   *Alternatives:* a file next to each ISO (needs a writable image dataset), the beets
   database (a dependency). *Trade-off:* a user must look the key up (`sacdfs tags key`).
@@ -1575,13 +1575,13 @@ MusicBrainz IDs on 26.
   scarletbook gives the same key, and any copy of the same pressing does too. Text is left out
   so that a TOC text decoding fix can't move a key. *Trade-off:* two pressings with identical
   numbers would share a file; with sector-exact track positions that needs the same master.
-- **Out of band only; no writable mount.** *Owner decision:* "out-of-band only:
-  `sacdfs tags import` from extracts, beets-pysacd export, and a CLI/TOML for hand edits. The
-  mount stays read-only; a writable mount is not planned." *Why:* taggers rewrite whole
+- **Out of band only; no writable mount.** *Owner decision:* out-of-band only,
+  through `sacdfs tags import` from extracts, beets-pysacd export, and a CLI/TOML for hand edits;
+  the mount stays read-only, and a writable mount is not planned. *Why:* taggers rewrite whole
   multi-gigabyte files; accepting that over FUSE, NFS and SMB is a lot of risk for what the
   importer and beets already give.
-- **Art only when named.** *Owner decision:* "embedded only when a disc's tags file names an
-  image. With no tags file, output stays byte-identical." The picture is an `APIC` front cover
+- **Art only when named.** *Owner decision:* art is embedded only when a disc's tags file names an
+  image, and with no tags file the output stays byte-identical. The picture is an `APIC` front cover
   appended to scarletbook's tag (as `Tags::Raw`), at most 960 KiB, since scarletbook caps a tag
   at 1 MiB. *Trade-off:* the tag is held in memory per listed track file, so a picture costs
   its size per track and format of the discs that embed one (33 of 1,066 files in the library
@@ -1855,7 +1855,7 @@ each tool is in [development.md](development.md).
   and requires the heap left after each unmount to stay flat.
   - *Why in-process:* dhat counts only its own process's allocations, so the filesystem
     runs on a fuser background session in the test.
-  - *Why mount cycles, not hours:* the owner said "dont make CI take too long". The test
+  - *Why mount cycles, not hours:* the owner asked that CI not take too long. The test
     takes about 14 s on the CI runners, and the `tests` job grew from 2 min 23 s to
     2 min 51 s on main to 3 min 12 s on the PR's first run. That is under the 1-minute budget
     the owner set.
