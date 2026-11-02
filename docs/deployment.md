@@ -198,11 +198,13 @@ Measured with sacdfs 0.1.0 replaying a Roon library import (271 images, 3,216 tr
 | `16` | about 90 MB |
 
 That was sacdfs 0.1.0, whose cache grew past its limit when a scan jumps around within files
-([#73](https://github.com/aclater/sacdfs/issues/73)). Since the fix for #73, the cache stays
-within its limit and the rest of sacdfs takes about 30 to 40 MiB, so the memory is about
-`SACDFS_CACHE_MB` + 40 MiB: about 60 MiB at `16`, about 300 MiB at `256` (measured with the
-same reads over 60 images; see [design](design.md#memory-73)). Limiting open images
-(`SACDFS_MAX_OPEN_IMAGES`) makes no measurable difference: an open image costs about 30 KB.
+([#73](https://github.com/aclater/sacdfs/issues/73)). Since the fixes for #73, the cache's
+memory is its limit (its frames live in their own memory mappings, which never pass
+`SACDFS_CACHE_MB`), and the rest of sacdfs takes about 30 to 50 MiB, depending mostly on the
+number of images listed (about 60 KB each) and of CPUs (about 0.3 MiB per decoder thread).
+For a 271-image library: about `SACDFS_CACHE_MB` + 30 to 50 MiB (see
+[design](design.md#memory-73)). Limiting open images (`SACDFS_MAX_OPEN_IMAGES`) makes no
+measurable difference: an open image costs about 30 KB.
 
 ## Running it
 
