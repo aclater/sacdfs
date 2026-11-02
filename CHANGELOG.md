@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A new playlist or art file is listed in a folder that was not listed since the mount (#101,
+  #123). In 0.2.0-rc.3 such a folder's first listing showed it as it was at mount, and the new
+  file never appeared.
+
 ## [0.2.0-rc.3] - 2026-11-02
 
 ### Fixed
