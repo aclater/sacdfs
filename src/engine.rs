@@ -3,12 +3,12 @@
 //! Decoding frames: the bounded cache of decoded and converted frames, and the pool of
 //! decoder threads, which also converts frames to PCM for the WAV files.
 
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use lru::LruCache;
 use rayon::prelude::*;
@@ -329,6 +329,29 @@ impl Pool {
     fn mapped(&self) -> usize {
         self.lock().mapped
     }
+
+    /// Unmaps every slab with no slot in use.
+    fn unmap_empty(&self) {
+        let freed: Vec<Slab> = {
+            let mut g = self.lock();
+            let g = &mut *g;
+            let mut freed = Vec::new();
+            for (i, slot) in g.slabs.iter_mut().enumerate() {
+                if slot.as_ref().is_some_and(|s| s.used == 0) {
+                    if let Some(s) = slot.take() {
+                        g.mapped -= s.map.len;
+                        g.empty -= 1;
+                        if let Some(v) = g.open.get_mut(&s.len) {
+                            v.retain(|&x| x as usize != i);
+                        }
+                        freed.push(s);
+                    }
+                }
+            }
+            freed
+        };
+        drop(freed);
+    }
 }
 
 /// Bytes of a cache's cap that cached frames leave free: an eighth of the cap, at most
@@ -358,6 +381,9 @@ pub struct FrameCache {
     inner: Mutex<CacheInner>,
     pool: Arc<Pool>,
     cap: usize,
+    /// When the cache was last used, in ms since `epoch` ([`FrameCache::release_if_idle`]).
+    used: AtomicU64,
+    epoch: Instant,
 }
 
 impl std::fmt::Debug for FrameCache {
@@ -373,6 +399,8 @@ impl FrameCache {
             inner: Mutex::new(CacheInner { lru: LruCache::unbounded(), bytes: 0 }),
             pool: Arc::new(Pool { inner: Mutex::new(PoolInner::default()), cap }),
             cap,
+            used: AtomicU64::new(0),
+            epoch: Instant::now(),
         }
     }
 
@@ -414,7 +442,30 @@ impl FrameCache {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, CacheInner> {
+        self.used.store(self.epoch.elapsed().as_millis() as u64, Ordering::Relaxed);
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Drops every cached frame and unmaps the slabs left empty, if the cache has not been
+    /// used for `idle`; whether it did (#150). Frames readers still hold stay until dropped.
+    pub fn release_if_idle(&self, idle: Duration) -> bool {
+        let now = self.epoch.elapsed().as_millis() as u64;
+        if now.saturating_sub(self.used.load(Ordering::Relaxed)) < idle.as_millis() as u64 {
+            return false;
+        }
+        let frames: Vec<Arc<Frame>> = {
+            let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            g.bytes = 0;
+            let mut v = Vec::with_capacity(g.lru.len());
+            while let Some((_, f)) = g.lru.pop_lru() {
+                v.push(f);
+            }
+            v
+        };
+        let any = !frames.is_empty() || self.pool.mapped() > 0;
+        drop(frames);
+        self.pool.unmap_empty();
+        any
     }
 
     fn get(&self, key: &Key) -> Option<Arc<Frame>> {
@@ -461,11 +512,28 @@ impl FrameCache {
     }
 }
 
-thread_local! {
-    static DECODER: RefCell<DstDecoder> = RefCell::new(DstDecoder::new());
-    /// The converters of this thread, by (engine id, channel count).
-    static CONVERTERS: RefCell<Vec<(u64, u8, Converter)>> = const { RefCell::new(Vec::new()) };
+/// DST decoders not in use (#150): a decoder thread takes one for a frame and gives it back,
+/// so there are only as many as frames were ever decoded at once.
+///
+/// *Why not one per thread:* a decoder's tables and buffers (about 64 KiB per filter, up to
+/// about 400 KiB for six channels) stayed with every decoder thread that had ever decoded
+/// DST, one per CPU, though seek-heavy reads such as a library import decode a few frames at
+/// a time. *Trade-off:* a lock taken twice per frame, against a frame's decoding of about
+/// 1 ms; a decoder may move between threads (its tables are rebuilt for every frame anyway).
+static DECODERS: Mutex<Vec<DstDecoder>> = Mutex::new(Vec::new());
+
+/// Runs `f` with a DST decoder from [`DECODERS`], or a new one.
+fn with_decoder<R>(f: impl FnOnce(&mut DstDecoder) -> R) -> R {
+    let pool = || DECODERS.lock().unwrap_or_else(|p| p.into_inner());
+    let mut d = pool().pop().unwrap_or_default();
+    let r = f(&mut d);
+    pool().push(d);
+    r
 }
+
+/// PCM converters not in use, by (engine id, channel count), taken and given back as
+/// [`DECODERS`] are (#150), for the same reason: not one per thread that ever converted.
+static CONVERTERS: Mutex<Vec<(u64, u8, Converter)>> = Mutex::new(Vec::new());
 
 /// Most consecutive frames converted in one job (#24), for frames that come from the
 /// plain DSD pipeline (at most [`PIPELINE_CHUNK`] at a time): one job per four frames cut a
@@ -475,7 +543,7 @@ thread_local! {
 /// takes well under a millisecond and readers sharing the pool are not held up (#15).
 const PCM_RUN: u32 = 4;
 
-/// Engine ids, for the per-thread converters.
+/// Engine ids, for the pooled converters.
 static NEXT_ENGINE: AtomicU64 = AtomicU64::new(1);
 
 /// Decoded DSD frames (interleaved, as scarletbook gives them) that a sequential PCM reader
@@ -528,6 +596,29 @@ impl std::fmt::Debug for Engine {
     }
 }
 
+/// Drops the pooled converters of engine `id`.
+fn drop_converters(id: u64) {
+    let mine: Vec<_> = {
+        let mut list = CONVERTERS.lock().unwrap_or_else(|p| p.into_inner());
+        let (mine, rest) = std::mem::take(&mut *list).into_iter().partition(|(e, _, _)| *e == id);
+        *list = rest;
+        mine
+    };
+    drop(mine);
+}
+
+/// How long an engine's cache goes unused before [`Engine::start_idle_release`] gives its
+/// memory back (#150). *Why 60 s:* longer than the gaps of a player, a scanner or `cp`
+/// between reads, which keep their read-ahead; a reader that comes back later loses a few
+/// ms to decoding.
+pub const IDLE_RELEASE: Duration = Duration::from_secs(60);
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        drop_converters(self.id);
+    }
+}
+
 impl Engine {
     /// An engine with `threads` decoder threads (0: one per CPU), a cache of `cache_bytes`
     /// and the default PCM settings.
@@ -545,6 +636,43 @@ impl Engine {
             .map_err(io::Error::other)?;
         let id = NEXT_ENGINE.fetch_add(1, Ordering::Relaxed);
         Ok(Engine { cache: FrameCache::new(cache_bytes), pool, pcm, id })
+    }
+
+    /// Gives back what an idle engine holds (#150), if its cache has not been used for
+    /// `idle`: the cached frames and their slabs, the decoders and converters not in use, and
+    /// the heap's free pages (glibc's `malloc_trim`). Whether it did.
+    ///
+    /// *Why:* between scans and playback a mount held its whole cache and every decoder it
+    /// had made; a reader that comes back decodes its frames again, a few ms, and the
+    /// kernel's page cache often still holds what it read.
+    pub fn release_if_idle(&self, idle: Duration) -> bool {
+        if !self.cache.release_if_idle(idle) {
+            return false;
+        }
+        drop(std::mem::take(&mut *DECODERS.lock().unwrap_or_else(|p| p.into_inner())));
+        drop_converters(self.id);
+        trim_heap();
+        true
+    }
+
+    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_if_idle`] with
+    /// [`IDLE_RELEASE`] every 15 s, for as long as the engine lives.
+    pub fn start_idle_release(self: &Arc<Self>) -> io::Result<()> {
+        let weak = Arc::downgrade(self);
+        std::thread::Builder::new().name("sacdfs-idle".to_owned()).spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(15));
+                match weak.upgrade() {
+                    Some(e) => {
+                        if e.release_if_idle(IDLE_RELEASE) {
+                            log::debug!("idle: cache and decoders released");
+                        }
+                    }
+                    None => return,
+                }
+            }
+        })?;
+        Ok(())
     }
 
     /// The PCM settings.
@@ -686,7 +814,7 @@ impl Engine {
             .collect()
     }
 
-    /// Converts a run of consecutive frames with this thread's converter.
+    /// Converts a run of consecutive frames with a pooled converter.
     fn convert_run(
         &self,
         channels: u8,
@@ -722,7 +850,7 @@ impl Engine {
             .collect())
     }
 
-    /// Converts one frame with this thread's converter.
+    /// Converts one frame with a pooled converter.
     fn convert_one(
         &self,
         channels: u8,
@@ -746,19 +874,19 @@ impl Engine {
         Ok(Frame { data, fill: cur.fill, clips })
     }
 
-    /// Runs `f` with this thread's converter for `channels` channels, made on first use.
+    /// Runs `f` with a converter for `channels` channels from [`CONVERTERS`], or a new one.
     fn with_converter<R>(&self, channels: u8, f: impl FnOnce(&mut Converter) -> R) -> R {
-        CONVERTERS.with(|c| {
-            let mut list = c.borrow_mut();
-            let i = match list.iter().position(|(e, ch, _)| *e == self.id && *ch == channels) {
-                Some(i) => i,
-                None => {
-                    list.push((self.id, channels, Converter::new(channels, &self.pcm)));
-                    list.len() - 1
-                }
-            };
-            f(&mut list[i].2)
-        })
+        let pool = || CONVERTERS.lock().unwrap_or_else(|p| p.into_inner());
+        let taken = {
+            let mut list = pool();
+            list.iter()
+                .rposition(|(e, ch, _)| *e == self.id && *ch == channels)
+                .map(|i| list.swap_remove(i).2)
+        };
+        let mut c = taken.unwrap_or_else(|| Converter::new(channels, &self.pcm));
+        let r = f(&mut c);
+        pool().push((self.id, channels, c));
+        r
     }
 
     /// Decoded DSD frames, interleaved, of positions `[d0, d1)`, handed to `sink` in order,
@@ -945,8 +1073,7 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
             buf.fill(scarletbook::audio::MISSING_FILL);
             Fill::Missing
         }
-        FrameContent::Dst(bytes) => match DECODER.with(|d| d.borrow_mut().decode(&bytes, channels, &mut buf))
-        {
+        FrameContent::Dst(bytes) => match with_decoder(|d| d.decode(&bytes, channels, &mut buf)) {
             Ok(()) => Fill::Audio,
             Err(_) => {
                 buf.fill(scarletbook::audio::INVALID_FILL);
@@ -960,7 +1087,7 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
 /// Decodes one timeline position, in scarletbook's interleaved layout.
 fn decode_interleaved(job: TrackFrame, channels: u8) -> Result<(u32, Dsd), ReadError> {
     let number = job.number;
-    let audio = DECODER.with(|d| scarletbook::audio::decode_frame(&mut d.borrow_mut(), job, channels))?;
+    let audio = with_decoder(|d| scarletbook::audio::decode_frame(d, job, channels))?;
     let fill = match audio.status {
         FrameStatus::Missing => Fill::Missing,
         FrameStatus::Invalid(_) => Fill::Invalid,
@@ -997,6 +1124,20 @@ pub fn limit_malloc_arenas() -> bool {
     // created afterwards).
     unsafe { libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS) == 1 }
 }
+
+/// Gives the heap's free pages back to the system (glibc's `malloc_trim`).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[allow(unsafe_code)]
+fn trim_heap() {
+    // SAFETY: malloc_trim takes an integer and only releases free memory of the allocator.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+/// Elsewhere, nothing to trim.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_heap() {}
 
 /// Elsewhere there is no glibc arena to limit.
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
@@ -1045,6 +1186,51 @@ mod tests {
 
     /// Frames of the pool: the mapping stays within the cap, slots are reused once their
     /// frames are evicted and dropped, and an empty slab makes room for another length.
+    #[test]
+    fn an_idle_cache_gives_its_memory_back() {
+        let c = FrameCache::new(4 << 20);
+        for i in 0..200 {
+            let b = c.buffer(9408);
+            c.insert(key(i), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
+        }
+        let held = c.get(&key(199)).unwrap();
+        // Just used: kept.
+        assert!(!c.release_if_idle(Duration::from_secs(60)));
+        assert!(c.bytes() > 0);
+        // Idle: frames dropped, and every slab but the held frame's unmapped.
+        assert!(c.release_if_idle(Duration::ZERO));
+        assert_eq!(c.bytes(), 0);
+        assert!(c.get(&key(0)).is_none());
+        assert_eq!(c.mapped(), Pool::slab_shape(9408).0);
+        drop(held);
+        assert!(c.release_if_idle(Duration::ZERO));
+        assert_eq!(c.mapped(), 0);
+        // Still usable.
+        let b = c.buffer(9408);
+        c.insert(key(1), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
+        assert!(c.get(&key(1)).is_some());
+    }
+
+    #[test]
+    fn an_idle_engine_drops_its_pools() {
+        let e = Arc::new(Engine::new(2, 4 << 20).unwrap());
+        e.start_idle_release().unwrap();
+        // A converter and a decoder are pooled after use.
+        e.with_converter(2, |_| ());
+        with_decoder(|_| ());
+        let mine = || CONVERTERS.lock().unwrap().iter().filter(|(id, _, _)| *id == e.id).count();
+        assert_eq!(mine(), 1);
+        e.with_converter(2, |_| ());
+        assert_eq!(mine(), 1, "reused, not made again");
+        let b = e.cache().buffer(9408);
+        e.cache().insert(key(0), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
+        assert!(!e.release_if_idle(Duration::from_secs(60)));
+        assert!(e.release_if_idle(Duration::ZERO));
+        assert_eq!(mine(), 0);
+        assert_eq!(e.cache().bytes(), 0);
+        assert_eq!(e.cache().mapped(), 0);
+    }
+
     #[test]
     fn pooled_frames_stay_within_the_cap() {
         let cap = 4 << 20;

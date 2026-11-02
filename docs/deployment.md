@@ -163,7 +163,7 @@ All settings are environment variables.
 | `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |
 | `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there, read-only is enough); see the [user guide](user-guide.md#your-own-tags---tags) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
-| `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB. On a NAS, `16` is recommended; see [Memory](#memory) |
+| `SACDFS_CACHE_MB` | `32` | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
 | `SACDFS_REQUEST_TIMEOUT` | (30) | `--request-timeout` in seconds: a read, lookup or listing that waits longer for the images (a stalled disk or share) fails with an I/O error, and is logged, instead of hanging the SMB or NFS client; `0` waits for good. See [Troubleshooting](#troubleshooting) |
@@ -187,28 +187,29 @@ which is all a read-only share needs.
 
 ### Memory
 
-On a NAS, set `SACDFS_CACHE_MB=16` (`--cache-mb 16`). The cache holds decoded frames so that
-a client re-reading the same part of a file does not decode it again. Players read ahead, so
-a small cache costs little, and the default of 256 MiB uses much more memory than its number
-suggests during a library scan.
+The default `SACDFS_CACHE_MB=32` (`--cache-mb 32`, since #150) suits a NAS. The cache holds
+decoded frames so that a client re-reading the same part of a file does not decode it again;
+players read ahead, so a small cache costs little. 32 MiB is the smallest size that reads,
+seeks and scans within 5 % of a 256 MiB cache ([performance](performance.md#cache-size-150));
+at 16, several fast readers of one image are about 10 % slower, and below that WAV straight
+reads slow down several times.
 
-Measured with sacdfs 0.1.0 replaying a Roon library import (271 images, 3,216 tracks; per file
-768 KiB at the start, 36 KiB at the middle and 33 KiB at the end), resident memory after all
-271 images:
+Peak resident memory of sacdfs with the bench images (five discs, 186 files), measured on the
+build of #150:
 
-| `SACDFS_CACHE_MB` | memory |
-|---|---|
-| `256` (default) | about 630 MB |
-| `16` | about 90 MB |
+| `SACDFS_CACHE_MB` | import replay (Roon's reads: 768 KiB at the start, 36 KiB at the middle, 33 KiB at the end of each file) | Plex-like scan (the first and last 128 KiB of every file) |
+|---|---|---|
+| `8` | 21 MiB | 23 MiB |
+| `32` (default) | 45 MiB | 46 MiB |
+| `256` | 108 MiB | 66 MiB |
+| `256` with 0.3.0 | 134 MiB | 103 MiB |
 
-That was sacdfs 0.1.0, whose cache grew past its limit when a scan jumps around within files
-([#73](https://github.com/aclater/sacdfs/issues/73)). Since the fixes for #73, the cache's
-memory is its limit (its frames live in their own memory mappings, which never pass
-`SACDFS_CACHE_MB`), and the rest of sacdfs takes about 30 to 50 MiB, depending mostly on the
-number of images listed (about 60 KB each) and of CPUs (about 0.3 MiB per decoder thread).
-For a 271-image library: about `SACDFS_CACHE_MB` + 30 to 50 MiB (see
-[design](design.md#memory-73)). Limiting open images (`SACDFS_MAX_OPEN_IMAGES`) makes no
-measurable difference: an open image costs about 30 KB.
+The cache's memory is its limit (its frames live in their own memory mappings, which never pass
+`SACDFS_CACHE_MB`), and the rest of sacdfs takes about 13 MiB here, a little more for each
+image listed (its TOC, text and track lists) and for each frame decoded at once. After 60 s
+without reads sacdfs gives the cache and its decoders back: about 11 MiB idle (see
+[design](design.md#memory-the-default-cache-and-the-fixed-overhead-150)). Limiting open images
+(`SACDFS_MAX_OPEN_IMAGES`) makes no measurable difference: an open image costs about 30 KB.
 
 ## Running it
 
@@ -317,7 +318,7 @@ The names of screens and fields may differ between releases.
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
-   - `SACDFS_CACHE_MB: "16"` keeps memory around 90 MB during a library scan ([Memory](#memory)).
+   - `SACDFS_CACHE_MB: "32"`, the default, keeps a library scan under 50 MiB of memory ([Memory](#memory)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and

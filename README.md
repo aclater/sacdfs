@@ -105,7 +105,7 @@ above it.
 |---|---|
 | `-f`, `--foreground` | Stay in the foreground and log to standard error. Without it sacdfs returns once the filesystem is mounted and keeps running in the background. |
 | `--threads N` | DST decoder and PCM converter threads; `0` (the default) means one per CPU. |
-| `--cache-mb N` | Size of the cache of decoded and converted frames, in MiB (default `256`). DSF and WAV reads share it. On a NAS, `16` is recommended ([deployment guide](docs/deployment.md#memory)). |
+| `--cache-mb N` | Size of the cache of decoded and converted frames, in MiB (default `32`). DSF and WAV reads share it. The default suits a NAS too; an idle mount gives the cache back after 60 s ([deployment guide](docs/deployment.md#memory)). |
 | `--format LIST` | Which files to show: `dsf`, `wav`, or both, `dsf,wav` (the default). |
 | `--pauses MODE` | `dropped` (the default): each file is the track's own range. `kept`: each file is the track with its pause (track 1 from the start of the area), as extractors that keep pauses write it; DSF and WAV both. |
 | `--pcm-rate HZ` | Sample rate of the WAV files: `88200`, `176400` (the default) or `352800`. Always 24-bit. |

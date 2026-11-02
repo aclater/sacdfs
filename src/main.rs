@@ -51,7 +51,7 @@ struct Args {
     #[arg(long, default_value_t = 0, value_name = "N")]
     threads: usize,
     /// Size of the cache of decoded and converted frames, in MiB.
-    #[arg(long, default_value_t = 256, value_name = "N")]
+    #[arg(long, default_value_t = 32, value_name = "N")]
     cache_mb: usize,
     /// Which files to show: dsf, wav, or both (dsf,wav).
     #[arg(long, default_value = "dsf,wav", value_name = "LIST", value_parser = parse_formats)]
@@ -334,6 +334,8 @@ fn run(args: Args) -> io::Result<()> {
         pauses_kept: args.pauses == "kept",
     };
     let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
+    // An idle mount gives its cache and decoders back (#150).
+    engine.start_idle_release()?;
     let tree = Tree::with_options(root, Tuning::default(), output)
         .with_flatten(args.flatten)
         .with_pcm(&pcm)

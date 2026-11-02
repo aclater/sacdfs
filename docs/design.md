@@ -145,6 +145,48 @@ before. Two changes, each needed:
   and the borrow from the library's disc costs nothing per read. *Trade-off:* the TOC is
   borrowed from the library's disc, so it lives as long as the `Disc`, as before.
 
+### Memory: the default cache and the fixed overhead (#150)
+
+The owner asked for memory "down" after 0.3.0: peak RSS under 100 MiB at the default cache and
+under 64 MiB at the smallest, on the import replay, with straight reads and seeks within 5 % of
+0.3.0. Measured on the five bench images (`scripts/import-replay.py`; a 32-thread host):
+
+- **Where the fixed overhead was** (0.3.0, `--cache-mb 8`, WAV import replay, `/proc/PID/smaps`
+  and heaptrack's peak): program and libraries 6 MiB; heap 46 MiB, of which the WAV files'
+  headers 23 MiB, PCM converters 14 MiB, DST decoders 4 MiB and the rest (tree, TOCs, seek
+  state) about 5 MiB; other anonymous memory under 1 MiB (thread stacks, and the FUSE threads'
+  16 MiB receive buffers, almost all untouched). After: heap 8 MiB (converters 2, decoders 2,
+  the rest 3 to 4).
+- **A WAV file's header no longer stores its padding** (`wav::Header`). *Why:* a WAV file's
+  audio starts at 256 KiB ([WAV files](#wav-files)), and every listed WAV file kept that
+  header whole, zeros included, for as long as it was shown: about 256 KiB per WAV file, 23 MiB
+  for the 93 WAV files of the bench images, growing with the library. The zeros are now
+  written when a read asks for them. *Trade-off:* none measured; the served bytes are the same
+  (DSF gate 93/93, every file's first and last MiB identical to 0.3.0's).
+- **DST decoders and PCM converters are pooled, not one per thread** (`engine::DECODERS`,
+  `CONVERTERS`). *Why:* each decoder thread kept, for good, a decoder and a converter per
+  channel count it had ever used (14 MiB of converters in all in the replay above), though a
+  library import decodes a few frames at a time. Now there are only as many as were ever in
+  use at once. *Trade-off:* a lock taken twice per frame or run of frames; no read got slower.
+- **An idle engine gives its memory back** (`Engine::start_idle_release`): once its cache
+  has gone unused for 60 s (`IDLE_RELEASE`), the cached frames are dropped, empty slabs
+  unmapped, pooled decoders and converters dropped and the heap trimmed (`malloc_trim`).
+  After a WAV import and a 300 MB read at the default cache, RSS went from 57 to 11 MiB.
+  *Why:* a mount spends most of its life idle between scans and playback. *Why 60 s:* longer
+  than any gap between a client's reads; a reader that comes back decodes its next frames
+  again (a few ms), and the kernel's page cache usually still holds what it read.
+- **The default `--cache-mb` is 32** (was 256). *Why:* the sweep (8, 16, 32, 64, 128, 256 MiB;
+  [performance](performance.md#cache-size-150)) found 32 the smallest size that costs no more
+  than 5 % against 256 anywhere. At 16, four parallel readers of one DST image took 10 to 16 %
+  longer; at 8, WAV straight reads took 4 to 7 times as long (the fast-reader read-ahead window,
+  about 8 MiB of PCM, no longer fits). *Alternatives:* 16 (the earlier NAS recommendation:
+  fine for scans and players, not for parallel fast readers); 64 (no faster than 32 anywhere).
+  *Trade-off:* a client that re-reads parts of files the kernel has dropped decodes them again
+  sooner.
+- *Not changed:* the decoder threads (idle rayon threads cost only their touched stack, a few
+  KiB each) and the FUSE receive buffers (virtual, not resident). There is no read-ahead
+  buffer of its own to drop: read-ahead decodes into the cache.
+
 ## Layout
 
 ```
@@ -800,8 +842,7 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   reading the header would make sacdfs locate, decode and convert the track's first frames
   (measured: 1.1 MB of image reads per file for the first 200 bytes, against 0 with padding),
   and the page with the end of the audio would hold the start of the tags. The cost is 256 KiB
-  of zeros per file, about 0.05 % of a typical track. Those zeros are made when they are read, not
-  kept in memory (#151): see "Leaks" under Testing. The padding takes up the ds64 chunk in
+  of zeros per file, about 0.05 % of a typical track. The padding takes up the ds64 chunk in
   RF64 files, so the audio offset is the same for both.
   *What padding cannot avoid:* a tagger that walks the chunks (mutagen, TagLib) reads the 8-byte
   header of the data chunk, which RIFF puts right before the audio, and the kernel then reads
@@ -1167,8 +1208,8 @@ of request threads. Reads go to one pool (`sacdfs-read`, as many threads as deco
 at least 4 and at most 16, growing when busy), lookups, listings, opens and the root's
 attributes to another (`sacdfs-meta`, 4, growing too). A worker decodes, copies or loads, and
 replies, so a slow read or listing never blocks the others. DST frames are decoded, and frames
-converted to PCM, on a separate rayon pool (`--threads`), one `DstDecoder` and one
-`Converter` per channel count per thread.
+converted to PCM, on a separate rayon pool (`--threads`), with `DstDecoder`s and
+`Converter`s (one per channel count) taken from pools shared by its threads (#150).
 
 - *Why the request pools are not rayon pools:* a rayon worker that waits for another pool
   runs other jobs of its own pool meanwhile, and a second read of the same file would then
@@ -1830,17 +1871,11 @@ each tool is in [development.md](development.md).
   scarletbook are pure Rust), so there is no C boundary to instrument. Rust's LeakSanitizer
   needs a nightly compiler, and clang's `-shared-libasan` route does not instrument Rust.
   memcheck works with the stable toolchain and follows child processes.
-- **Found and fixed here: every WAV file's header was kept whole in memory.** That is 256 KiB
-  per listed WAV file, almost all of it the `JUNK` padding's zeros. massif put 522 MiB of a
-  40-minute soak's 635 MiB heap at `wav::header`.
-  - *Fix:* `track::Header` keeps the bytes before the zeros and the last 8 bytes, and makes
-    the zeros when they are read.
-  - *Measured* on the five gate discs (93 WAV files): the resident memory after listing
-    everything fell from 32.3 MB to 8.8 MB. That is about 5 GB less for a 1,000-disc
-    library after a full scan.
-  - The served bytes are unchanged: the DSF gate is 93/93, and the WAV and corpus tests pass.
-  - *Why in this PR:* the fix is small, sits in `track.rs` (not the cache, engine or handles
-    being changed for #150), and #151 asks for small fixes to be made here.
+- **Found: every WAV file's header was kept whole in memory**, 256 KiB per listed WAV file,
+  almost all of it the `JUNK` padding's zeros. massif put 522 MiB of a 40-minute soak's 635 MiB
+  heap at `wav::header`. The fix landed through #150 at the same time, so this PR has none. On
+  the five gate discs (93 WAV files), the resident memory after listing everything fell from
+  32.3 MB to 8.8 MB, which is about 5 GB less for a 1,000-disc library after a full scan.
 - **Found, filed: #153.** Nodes, and with them discs, of removed or renamed images stay in the
   tree for good. *Why not fixed here:* it needs FUSE forget accounting or a reachability
   sweep in the tree, which is a design change in another lane.

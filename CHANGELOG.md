@@ -6,11 +6,16 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 
-- A WAV file no longer keeps its 256 KiB header padding in memory once listed (#151). The
-  resident memory after listing five discs fell from 32 MB to 9 MB, which is about 5 GB less
-  for a 1,000-disc library after a full scan.
+- **Less memory** (#150). The default `--cache-mb` is now 32 (was 256; `SACDFS_CACHE_MB` in the
+  container too): the smallest size whose reads, seeks and scans stay within 5 % of a 256 MiB
+  cache. On the bench images a Roon-like import replay peaks at 45 MiB instead of 134, and a
+  Plex-like scan at 46 MiB instead of 103; reads and seeks are within 1.5 % of 0.3.0. The fixed
+  overhead fell from about 38 to 13 MiB: a WAV file's header no longer keeps its 256 KiB of
+  padding in memory, and DST decoders and PCM converters are pooled instead of kept by every
+  decoder thread. An idle mount (no reads for 60 s) gives its cache and decoders back, about
+  11 MiB idle. The served bytes are unchanged (DSF gate 93/93).
 
 ### Added
 

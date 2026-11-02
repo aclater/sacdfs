@@ -106,7 +106,7 @@ pub struct TrackFile {
     /// A DSF file's layout, scarletbook's (`output::Layout`): its header, its tag and where
     /// each audio byte comes from.
     dsf: Option<scarletbook::output::Layout>,
-    header: Header,
+    header: wav::Header,
     trailer: Vec<u8>,
     tag: std::ops::Range<usize>,
     /// File size in bytes.
@@ -115,56 +115,6 @@ pub struct TrackFile {
     pub tags: Option<crate::tags::Stamp>,
     warned: AtomicBool,
     warned_clips: AtomicBool,
-}
-
-/// The bytes before a file's audio, kept without their run of zeros (#151). A WAV file's
-/// header is 256 KiB or more, almost all of it the `JUNK` chunk's zeros (see
-/// [`wav::AUDIO_START_MIN`]), and every track file listed keeps its header: a whole
-/// header per WAV file made a library's listing cost 256 KiB per WAV file in memory.
-/// *Why not a WAV-only layout:* this keeps any header, DSF's too, and reads stay a copy.
-#[derive(Debug)]
-struct Header {
-    /// The bytes up to the run of zeros before the last [`Header::TAIL`] bytes.
-    head: Vec<u8>,
-    /// The last bytes (a WAV file's `data` chunk header).
-    tail: Vec<u8>,
-    /// The whole length.
-    len: u64,
-}
-
-impl Header {
-    const TAIL: usize = 8;
-
-    fn new(full: Vec<u8>) -> Header {
-        let len = full.len() as u64;
-        let split = full.len().saturating_sub(Self::TAIL);
-        let tail = full[split..].to_vec();
-        let mut head = full;
-        head.truncate(split);
-        while head.last() == Some(&0) {
-            head.pop();
-        }
-        head.shrink_to_fit();
-        Header { head, tail, len }
-    }
-
-    /// Appends bytes `[from, to)` of the header to `out`.
-    fn extend(&self, out: &mut Vec<u8>, from: u64, to: u64) {
-        let (h, z) = (self.head.len() as u64, self.len - self.tail.len() as u64);
-        let part = |a: u64, b: u64| (from.max(a), to.min(b));
-        let (a, b) = part(0, h);
-        if a < b {
-            out.extend_from_slice(&self.head[a as usize..b as usize]);
-        }
-        let (a, b) = part(h, z);
-        if a < b {
-            out.resize(out.len() + (b - a) as usize, 0);
-        }
-        let (a, b) = part(z, self.len);
-        if a < b {
-            out.extend_from_slice(&self.tail[(a - z) as usize..(b - z) as usize]);
-        }
-    }
 }
 
 impl TrackFile {
@@ -217,7 +167,8 @@ impl TrackFile {
         let (audio, header, trailer, tag) = match format {
             Format::Dsf => {
                 let l = tagged?.layout;
-                let header = dsf::region(&l, scarletbook::output::RegionKind::Header);
+                let header =
+                    wav::Header::from_bytes(dsf::region(&l, scarletbook::output::RegionKind::Header));
                 let tag = dsf::region(&l, scarletbook::output::RegionKind::Trailer);
                 let range = 0..tag.len();
                 lib = Some(l);
@@ -240,13 +191,13 @@ impl TrackFile {
                 let wl =
                     wav::Layout { channels: layout.channels, frames: layout.frames, samples_per_frame, rate };
                 let t = wav::trailer(&set, &id3);
-                let header = wav::header(&wl, a.loudspeaker_layout(), t.bytes.len() as u64);
+                let header = wav::header_parts(&wl, a.loudspeaker_layout(), t.bytes.len() as u64);
                 (Audio::Wav(wl), header, t.bytes, t.tag)
             }
         };
         let size = match (&lib, audio) {
             (Some(l), _) => l.size(),
-            (None, Audio::Wav(l)) => header.len() as u64 + l.data_len() + trailer.len() as u64,
+            (None, Audio::Wav(l)) => header.len() + l.data_len() + trailer.len() as u64,
             (None, Audio::Dsf(_)) => return None,
         };
         let track_end = a.tracks.iter().map(|t| t.end_frame()).max().unwrap_or(0);
@@ -260,7 +211,7 @@ impl TrackFile {
             area_end,
             audio,
             dsf: lib,
-            header: Header::new(header),
+            header,
             trailer,
             tag,
             size,
@@ -306,7 +257,7 @@ impl TrackFile {
 
     /// Length of everything before the first audio byte.
     pub fn header_len(&self) -> u64 {
-        self.header.len
+        self.header.len()
     }
 
     /// Offset of the first byte after the audio.
@@ -345,7 +296,7 @@ impl TrackFile {
         // Header.
         if offset < h {
             let e = end.min(h);
-            self.header.extend(&mut out, offset, e);
+            self.header.extend_into(offset, e, &mut out);
         }
         // Audio.
         let (ds, de) = (offset.max(h), end.min(self.data_end()));
@@ -605,31 +556,5 @@ impl Reader {
         let stop = frames.min(k1 + window);
         s.ahead_until = stop;
         (start < stop).then_some(ReadAhead { first: start, end: stop })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Header;
-
-    /// Every range of a header kept without its zeros reads as the whole header.
-    #[test]
-    fn header_without_its_zeros_reads_the_same() {
-        let mut full = b"RIFF\x10\x00\x00\x00WAVEfmt \x00\x01".to_vec();
-        full.resize(300, 0);
-        full.extend_from_slice(b"data\x01\x02\x00\x00");
-        for whole in [full.clone(), b"DSD \x00\x00x".to_vec(), Vec::new(), vec![0; 20]] {
-            let h = Header::new(whole.clone());
-            assert_eq!(h.len, whole.len() as u64);
-            assert!(h.head.len() + h.tail.len() <= whole.len());
-            for a in 0..=whole.len() {
-                for b in a..=whole.len() {
-                    let mut out = vec![7];
-                    h.extend(&mut out, a as u64, b as u64);
-                    assert_eq!(&out[1..], &whole[a..b], "{a}..{b}");
-                }
-            }
-        }
-        assert!(Header::new(full).head.len() < 20);
     }
 }
