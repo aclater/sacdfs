@@ -98,6 +98,16 @@ struct WorkersInner {
     queued: AtomicUsize,
     /// Used to number new threads.
     started: AtomicUsize,
+    /// When a job last found no idle thread, in ms since `epoch`: a spare thread ends
+    /// after a job once that is [`SPARE_IDLE`] ago.
+    busy_ms: AtomicU64,
+    epoch: Instant,
+}
+
+impl WorkersInner {
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
 }
 
 impl Workers {
@@ -119,6 +129,8 @@ impl Workers {
             idle: AtomicUsize::new(0),
             queued: AtomicUsize::new(0),
             started: AtomicUsize::new(0),
+            busy_ms: AtomicU64::new(0),
+            epoch: Instant::now(),
         });
         for _ in 0..core {
             inner.threads.fetch_add(1, Ordering::SeqCst);
@@ -144,6 +156,18 @@ impl Workers {
                         me.queued.fetch_sub(1, Ordering::SeqCst);
                         if catch_unwind(AssertUnwindSafe(job)).is_err() {
                             log::error!("a request thread job panicked");
+                        }
+                        // *Why here too:* only the thread holding the queue waits with a
+                        // timeout; the others wait for the queue's lock. While jobs keep
+                        // coming more often than SPARE_IDLE, none of them times out, and
+                        // spare threads would stay for good.
+                        let quiet = me.now_ms().saturating_sub(me.busy_ms.load(Ordering::SeqCst))
+                            >= SPARE_IDLE.as_millis() as u64;
+                        if quiet && me.queued.load(Ordering::SeqCst) == 0 {
+                            let core = me.core;
+                            if update(&me.threads, |t: usize| (t > core).then(|| t - 1)) {
+                                return;
+                            }
                         }
                     }
                     // A spare thread with nothing to do ends; the core ones stay.
@@ -180,6 +204,7 @@ impl Workers {
         if inner.queued.load(Ordering::SeqCst) <= inner.idle.load(Ordering::SeqCst) {
             return;
         }
+        inner.busy_ms.store(inner.now_ms(), Ordering::SeqCst);
         let max = inner.max;
         let more = |t: usize| (t < max).then_some(t + 1);
         if !update(&inner.threads, more) {
@@ -888,5 +913,32 @@ mod tests {
         }
         assert_eq!(pool.threads(), 4);
         drop(release_tx);
+    }
+
+    /// Spare threads end once the pool has been less busy for [`SPARE_IDLE`], even while
+    /// jobs keep coming (a mount being read): else the pool only ever grows, to its
+    /// busiest moment (a stall, a burst of read-ahead), and keeps that many threads.
+    #[test]
+    fn spare_threads_end_under_a_steady_trickle_of_jobs() {
+        let pool = Workers::with_max(1, 4, "test-trickle").unwrap();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        for _ in 0..4 {
+            let r = release_rx.clone();
+            pool.spawn(move || {
+                let _ = r.lock().unwrap().recv();
+            });
+        }
+        assert_eq!(pool.threads(), 4);
+        drop(release_tx);
+        // One quick job every second, far less than one thread can do.
+        let deadline = Instant::now() + SPARE_IDLE * 3;
+        while Instant::now() < deadline && pool.threads() > 1 {
+            let (tx, rx) = mpsc::channel();
+            pool.spawn(move || tx.send(()).unwrap());
+            rx.recv_timeout(Duration::from_secs(5)).expect("the job ran");
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        assert_eq!(pool.threads(), 1, "spare threads kept under a trickle of jobs");
     }
 }

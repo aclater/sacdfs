@@ -611,6 +611,13 @@ impl Watch {
         Watch { images, file, ..Watch::default() }
     }
 
+    /// Stops watching the image `image`, removed from SOURCE or renamed (#153).
+    pub fn forget(&mut self, image: &Path) {
+        if self.images.remove(image).is_some() {
+            self.dirty = true;
+        }
+    }
+
     /// Notes the image `image`, just opened, whose TOC is `toc`: the mtime its directories
     /// and those above show at least, if its disc has a tags file.
     pub fn opened(&mut self, image: &Path, toc: &Toc) -> Option<SystemTime> {

@@ -6,6 +6,24 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Removed and renamed images no longer stay in memory** (#153, after #163). The persistent
+  seek index kept the disc of every image opened, with its seek index, for as long as the mount
+  ran, even after the tree had freed it. A dropped disc is now saved at the next flush (every
+  30 s) and then let go of. The mtimes passed up for removed folders (#123) and the watch of
+  their tags files (#81) are dropped too. On four real discs, with an album added or removed
+  every few seconds under a new name each time, memory over 45 minutes (with #167) grew 123 to
+  138 MiB, against 102 to 181 MiB on 0.4.0-rc.2's code. The second-half trend fell from +94 to
+  +14 MiB an hour. What remains comes with reads, not with removed albums, and is looked into
+  separately.
+
+- **Spare request threads now end** (#167). A pool's spare threads were meant to end after 10 s
+  without work, but while jobs kept coming more often than that (any mount being read) none
+  ever did. The pool kept as many threads as at its busiest moment (a stall, a burst of
+  read-ahead), up to 64. A spare thread now ends after a job once no job has found every
+  thread busy for 10 s.
+
 ## [0.4.0-rc.2] - 2026-11-02
 
 0.4.0-rc.1 was tagged, but its release stopped at a test race on one build (the test now waits
