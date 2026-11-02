@@ -17,7 +17,8 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
 
 This guide covers the first: the container image in this repository (`Containerfile`), how
 to run it with Docker, Podman or Compose and on TrueNAS SCALE, and how clients mount its
-shares.
+shares. The clients tested so far, with the settings that worked for each, are in
+[clients](clients.md).
 
 ## What the container does
 

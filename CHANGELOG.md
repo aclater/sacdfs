@@ -50,6 +50,9 @@ All notable changes to sacdfs are recorded here. The format follows
   reuses a freed device number at once, and sacdfs told its own mount by that number alone;
   it now also checks that its own FUSE connection is still up.
 
+### Documentation
+
+- docs/clients.md (#82): the clients sacdfs has been tested with (Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD, MinimServer, Windows, foobar2000; JRiver untested), the versions and results, and the recommended setup for each.
 
 ## [0.2.0] - 2026-11-02
 
