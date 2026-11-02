@@ -183,6 +183,10 @@ it does not change the files' modification times, so restart the mount and have 
 rescan. A disc's [tags file](#your-own-tags---tags) that names the album wins, and gets no
 suffix.
 
+Plex shows the suffix only with "Prefer local metadata" on in the library's settings; by
+default it uses the matched release's title for both copies (see the deployment guide,
+"Multichannel copies and music servers").
+
 The filesystem is read-only, so tags cannot be edited in place: your own tags go in a tags
 directory ([below](#your-own-tags---tags)), or in a tagger's own database.
 

@@ -407,6 +407,18 @@ name. So sacdfs adds ` (Multichannel)` to the album tag of the multichannel file
 modification times do not move when you switch. Changing this release's tags moved the files'
 mtimes and NFS generations once (output versions DSF 3, WAV 4), so servers rescan them.
 
+**Plex: turn on "Prefer local metadata".** Plex keeps the two copies as two albums, since they
+are in different folders, but its default music agent (Plex Music) replaces each album's title
+with the title of the release it matches online. Both copies match the same release, so they
+show as two albums with the same name, and the ` (Multichannel)` suffix is not seen. In a
+Plex 1.43.5 test of 10 discs (6 with a multichannel area, #138), the default library showed
+each of the 6 titles twice. With "Prefer local metadata" on (library settings, Advanced; the
+library pref `respectTags`), or with the "Plex Personal Media" agent, all 6 showed as "Album"
+and "Album (Multichannel)", with the right tracks in each, and the Plex Music agent still
+fetches the art and reviews. For an existing library, turn the setting on and run "Refresh
+All Metadata" on the library: the titles change without a rescan. sacdfs needs no other
+setting for this; the stereo and multichannel files already have different album tags.
+
 ## Mounting the shares on clients
 
 `nas` is the address or name of the container (or of its alias address). The SMB share is
