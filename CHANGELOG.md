@@ -8,6 +8,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Added
 
+- `--pauses kept` (`SACDFS_PAUSES=kept` in the container, #112): serves every track with its
+  pause, as extractors that keep pauses write it, as DSF and as WAV, so those exact files can be
+  had without re-extracting and `sacdfs verify` reports IDENTICAL, not IDENTICAL-PAUSE, against
+  them. Off by default (`--pauses dropped`); the default output is unchanged byte for byte.
 - The tag layer (#81): `--tags DIR` (`SACDFS_TAGS` in the container) serves user tags from a
   tags directory, one TOML file per disc named by its TOC identity (`sacdfs tags key IMAGE`),
   so edits survive renames. A file overrides and adds album- and track-level tags (genres,

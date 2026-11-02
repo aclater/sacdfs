@@ -60,6 +60,12 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
 
 **What is shown.**
 - `--format dsf`, `wav` or `dsf,wav` (the default) chooses which files appear.
+- `--pauses kept` serves every track with its pause: the file runs from the end of the previous
+  track's range (track 1 from the start of the area) to the start of the next track, which
+  is what extractors that keep pauses write. Use it to get those exact files back; `sacdfs verify`
+  then reports IDENTICAL, not IDENTICAL-PAUSE, against such extracts. It applies to DSF and WAV
+  files. The default, `--pauses dropped`, serves each track's own range; the container's
+  `SACDFS_PAUSES` is the same setting. File sizes and durations change only in `kept` mode.
 - `--pcm-rate`, `--pcm-cutoff` and `--pcm-gain` choose how the WAV files are made
   ([Formats](#wav-files)). `--pcm-cutoff wide` needs `--pcm-rate 176400` or `352800`; with
   `88200` sacdfs refuses to start, since 88.2 kHz cannot hold an 80 kHz band.

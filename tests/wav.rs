@@ -34,7 +34,7 @@ fn config(rate: PcmRate) -> PcmConfig {
 }
 
 fn output(rate: PcmRate, dsf: bool) -> Output {
-    Output { dsf, wav: true, samples_per_frame: rate.samples_per_frame() as u32 }
+    Output { dsf, wav: true, samples_per_frame: rate.samples_per_frame() as u32, ..Output::default() }
 }
 
 fn ok_cases() -> Vec<Value> {

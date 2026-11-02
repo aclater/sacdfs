@@ -107,6 +107,7 @@ above it.
 | `--threads N` | DST decoder and PCM converter threads; `0` (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded and converted frames, in MiB (default `256`). DSF and WAV reads share it. On a NAS, `16` is recommended ([deployment guide](docs/deployment.md#memory)). |
 | `--format LIST` | Which files to show: `dsf`, `wav`, or both, `dsf,wav` (the default). |
+| `--pauses MODE` | `dropped` (the default): each file is the track's own range. `kept`: each file is the track with its pause (track 1 from the start of the area), as extractors that keep pauses write it; DSF and WAV both. |
 | `--pcm-rate HZ` | Sample rate of the WAV files: `88200`, `176400` (the default) or `352800`. Always 24-bit. |
 | `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz; with `--pcm-rate 176400` or `352800` only). |
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default `0`). Samples that would clip are clamped, and the log says so once per file. |
