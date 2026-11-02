@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Spare request threads now end** (#167). A pool's spare threads were meant to end after 10 s
+  without work, but while jobs kept coming more often than that (any mount being read) none
+  ever did. The pool kept as many threads as at its busiest moment (a stall, a burst of
+  read-ahead), up to 64. A spare thread now ends after a job once no job has found every
+  thread busy for 10 s.
+
 ## [0.4.0-rc.2] - 2026-11-02
 
 0.4.0-rc.1 was tagged, but its release stopped at a test race on one build (the test now waits
