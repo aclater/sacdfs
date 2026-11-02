@@ -170,8 +170,21 @@ pub fn version_offset(format: Format) -> Duration {
 }
 
 fn shown_mtime(image: SystemTime, version: u32, pcm_offset: u64) -> SystemTime {
+    image + file_offset(version, pcm_offset)
+}
+
+fn file_offset(version: u32, pcm_offset: u64) -> Duration {
     let step = u64::from(version.saturating_sub(1)) * VERSION_STEP;
-    image + Duration::from_secs(step + pcm_offset.min(PCM_OFFSETS - 1))
+    Duration::from_secs(step + pcm_offset.min(PCM_OFFSETS - 1))
+}
+
+/// How far the newest track file shown moves past its image's mtime (see [`mtime`]): the
+/// largest offset of the formats shown, DSF and/or WAV with the PCM options' `pcm_offset`.
+/// A directory's mtime counts its images' mtimes moved by this (#123).
+pub fn newest_offset(dsf: bool, wav: bool, pcm_offset: u64) -> Duration {
+    let d = if dsf { file_offset(DSF_VERSION, 0) } else { Duration::ZERO };
+    let w = if wav { file_offset(WAV_VERSION, pcm_offset) } else { Duration::ZERO };
+    d.max(w)
 }
 
 /// One source directory or image of the index.
@@ -483,6 +496,7 @@ mod tests {
             dirs: dirs.into_iter().map(|(n, d)| (n.into(), d)).collect(),
             images: images.iter().map(|i| PathBuf::from(format!("{p}/{i}"))).collect(),
             sidecars: Vec::new(),
+            stamp: Box::default(),
         };
         let make = |order: bool| {
             let a = dir("/s/a", vec![], &["x.iso"]);

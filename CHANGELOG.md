@@ -8,10 +8,23 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- A new playlist or art file next to an image is listed again within about 2 seconds over SMB
+  (#101, #123). In 0.2.0-rc.2 its folder's time moved before its listing was read again, so an
+  SMB client kept the old listing and never showed the new file.
 - A sacdfs that got its stop signal after its mount had already been unmounted from outside
   (`fusermount3 -u`) could unmount the next sacdfs mounted on the same path (#54). The kernel
   reuses a freed device number at once, and sacdfs told its own mount by that number alone;
   it now also checks that its own FUSE connection is still up.
+
+## [0.2.0-rc.2] - 2026-11-02
+
+### Fixed
+
+- A folder's modification time is now the newest of everything shown below it, up to the
+  mount's root (#123), not its source folder's own. Roon, which skips folders whose time did
+  not change, missed new output versions (and so new tags) and new playlists or art deeper
+  down; a plain rescan now finds them. Times stay the same across remounts; folders keep their
+  inode numbers and NFS handles. A change while mounted shows within about 2 seconds.
 
 ## [0.2.0-rc.1] - 2026-11-01
 
@@ -282,7 +295,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.2...HEAD
+[0.2.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.1...v0.2.0-rc.2
 [0.2.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0-rc.1
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aclater/sacdfs/releases/tag/v0.1.0
