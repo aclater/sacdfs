@@ -33,7 +33,7 @@ use std::fs;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -444,13 +444,25 @@ pub struct Dir {
     /// The modification time of the source directory when it was last re-read, in
     /// nanoseconds since the epoch; 0 until then (`mtime` is shown).
     shown: AtomicU64,
+    /// Set when the directory is no longer listed anywhere and its nodes are being freed
+    /// (#153): it lists nothing from then on.
+    gone: AtomicBool,
     children: Mutex<Option<Box<Listing>>>,
 }
 
 impl Dir {
     fn new(kind: DirKind, mtime: SystemTime, parent: u64) -> Dir {
         let stamp = Box::default();
-        Dir { kind, mtime, parent, art: None, stamp, shown: AtomicU64::new(0), children: Mutex::new(None) }
+        Dir {
+            kind,
+            mtime,
+            parent,
+            art: None,
+            stamp,
+            shown: AtomicU64::new(0),
+            gone: AtomicBool::new(false),
+            children: Mutex::new(None),
+        }
     }
 
     fn with_stamp(mut self, stamp: Stamp) -> Dir {
@@ -910,6 +922,9 @@ impl Tree {
         let node = self.get(ino)?;
         let Node::Dir(dir) = &*node else { return None };
         let mut guard = dir.children.lock().unwrap_or_else(|p| p.into_inner());
+        if dir.gone.load(Ordering::Acquire) {
+            return None;
+        }
         let mut prev = guard.take();
         if let Some(l) = prev.as_mut() {
             if !self.stale(dir, l) {
@@ -920,6 +935,19 @@ impl Tree {
         }
         let mut cx = Cx::default();
         let entries = Arc::new(self.load(dir, ino, prev.as_deref(), &mut cx));
+        if dir.gone.load(Ordering::Acquire) {
+            // Removed while it was being listed: what the listing made is freed here, as
+            // the removal could not take it (#153).
+            let old = prev.iter().flat_map(|p| p.entries.iter());
+            self.forget(dir, entries.iter().chain(old).map(|e| e.ino));
+            return None;
+        }
+        if let Some(p) = &prev {
+            // What the source no longer has is freed (#153): numbers stay what they were,
+            // since they come from paths, and open files hold what they read.
+            let kept: std::collections::HashSet<u64> = entries.iter().map(|e| e.ino).collect();
+            self.forget(dir, p.entries.iter().map(|e| e.ino).filter(|i| !kept.contains(i)));
+        }
         if prev.is_some() {
             // What the directory shows as its modification time follows its source.
             let newest = cx.watch.iter().filter_map(|(_, m)| *m).max();
@@ -938,6 +966,62 @@ impl Tree {
             tags: cx.tags,
         }));
         Some(entries)
+    }
+
+    /// Frees the nodes `inos`, entries that directory `dir` no longer lists, and every node
+    /// below them (#153): an image removed from SOURCE or renamed, a sidecar removed. Their
+    /// discs go with the last node or open file that holds them.
+    ///
+    /// *Why this is safe for the kernel:* inode numbers are not handed out but made from
+    /// paths ([`crate::ident`]), so a freed number is never given to anything else; the
+    /// same path coming back gets the same number, with its generation. A number the
+    /// kernel still holds is answered as an unknown one (looked for along its path, so
+    /// `ENOENT` once the path is gone), and an open file keeps reading from its handle,
+    /// which holds its own node. So no lookup count is kept, and nothing waits for `forget`.
+    ///
+    /// The folder art an area lists is listed by its folder too, under the same numbers, and
+    /// is freed from there. A directory being listed while it is removed (its lock is held)
+    /// is marked gone, and frees what that listing made itself. Called with `dir`'s lock
+    /// held: nothing lists it again meanwhile, and so nothing remakes a node being freed.
+    fn forget(&self, dir: &Dir, inos: impl Iterator<Item = u64>) {
+        let area = matches!(dir.kind, DirKind::Area(..));
+        let mut stack: Vec<(u64, bool)> = inos.map(|i| (i, area)).collect();
+        if stack.is_empty() {
+            return;
+        }
+        let mut freed: Vec<(u64, Arc<Node>)> = Vec::new();
+        while let Some((ino, in_area)) = stack.pop() {
+            let Some(node) = self.loaded(ino) else { continue };
+            match &*node {
+                Node::Sidecar(_) if in_area => continue,
+                Node::Dir(d) => {
+                    d.gone.store(true, Ordering::Release);
+                    let listing = match d.children.try_lock() {
+                        Ok(mut g) => g.take(),
+                        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner().take(),
+                        // Being listed (maybe on a stalled source): that listing frees its
+                        // own entries when done, so none is waited for here.
+                        Err(std::sync::TryLockError::WouldBlock) => None,
+                    };
+                    if let Some(l) = listing {
+                        let sub = matches!(d.kind, DirKind::Area(..));
+                        stack.extend(l.entries.iter().map(|e| (e.ino, sub)));
+                    }
+                }
+                _ => {}
+            }
+            freed.push((ino, node));
+        }
+        {
+            let mut nodes = self.nodes.write().unwrap_or_else(|p| p.into_inner());
+            for (ino, node) in &freed {
+                if nodes.get(ino).is_some_and(|n| Arc::ptr_eq(n, node)) {
+                    nodes.remove(ino);
+                }
+            }
+        }
+        // The discs are dropped here, outside the lock (each closes its image handle).
+        drop(freed);
     }
 
     /// Whether `l`, the listing of `dir`, is out of date: its source changed. Looks at the

@@ -22,7 +22,11 @@
 //! used: if the image's size, modification time or file (device and inode) changed, it is
 //! closed and the image opened again, exactly as a first open would. *Why not on every
 //! read:* a `stat` of the path is a round trip on a share whose attribute cache has
-//! expired; once a second is noise for a straight read and never stale for long.
+//! expired; once a second is noise for a straight read and never stale for long. A path
+//! that is gone (the image removed from SOURCE, or its folder renamed) keeps its handle: the
+//! files still open on that disc read on from it until released (#153), as from a removed
+//! file on a local filesystem. Only while the cache keeps the handle (the bound and idle
+//! timeout above): once closed, the image cannot be opened again from its old path.
 
 use std::fs::{File, Metadata};
 use std::io;
@@ -131,7 +135,7 @@ impl Handles {
     }
 
     /// The handle of `key`, opened with `open` if there is none, or if the file at `path`
-    /// changed since it was opened.
+    /// changed since it was opened. A path that no longer exists keeps its handle.
     pub fn get<E: From<io::Error>>(
         &self,
         key: u64,
@@ -152,7 +156,12 @@ impl Handles {
             if !check {
                 return Ok(file);
             }
-            let same = std::fs::metadata(path).is_ok_and(|m| Stamp::of(&m) == stamp);
+            let same = match std::fs::metadata(path) {
+                Ok(m) => Stamp::of(&m) == stamp,
+                // Removed from SOURCE (or its link): the open handle still reads the file it
+                // was, so the files still open on it keep reading until released (#153).
+                Err(e) => e.kind() == io::ErrorKind::NotFound,
+            };
             let mut g = self.lock();
             if same {
                 if let Some(e) = g.peek_mut(&key) {

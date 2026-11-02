@@ -1042,6 +1042,58 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
 }
 
 #[test]
+fn a_file_open_through_the_kernel_reads_on_after_its_image_is_removed() {
+    // #153: the removed image's nodes are freed, but the open file keeps its own.
+    use std::io::Read;
+    if !fuse_available() {
+        return;
+    }
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    std::fs::create_dir_all(src.join("Artist/Album")).unwrap();
+    std::os::unix::fs::symlink(
+        corpus().join("images/dsd-stereo-mch-2048.iso"),
+        src.join("Artist/Album/disc.iso"),
+    )
+    .unwrap();
+    // No frame cache: the reads after the removal read the image.
+    let m = Mount::foreground(&src, &["--cache-mb", "0"]);
+    let mnt = m.path();
+    let area = mnt.join("Artist/Album/disc/Stereo");
+    let name = std::fs::read_dir(&area)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|x| x == "dsf"))
+        .unwrap();
+    // The file's bytes, read with the library (not through the kernel, whose page cache
+    // would then answer the reads below).
+    let lib = Tree::with_options(SourceDir::scan(&src).unwrap(), Tuning::default(), Output::default());
+    let ino = lib.resolve(name.strip_prefix(&mnt).unwrap()).unwrap();
+    let Some(node) = lib.get(ino) else { panic!("no node") };
+    let sacdfs::tree::Node::File(f) = &*node else { panic!("not a file") };
+    let engine = Engine::new(1, 1 << 20).unwrap();
+    let whole = Reader::new(f.clone()).read(&engine, 0, f.size).unwrap().0;
+    let mut open = std::fs::File::open(&name).unwrap();
+    let mut first = vec![0; 4096];
+    open.read_exact(&mut first).unwrap();
+
+    std::fs::remove_file(src.join("Artist/Album/disc.iso")).unwrap();
+    std::fs::remove_dir_all(src.join("Artist/Album")).unwrap();
+    wait_for("the removal", || std::fs::read_dir(mnt.join("Artist")).unwrap().next().is_none());
+    assert!(!name.exists());
+    // Past the image handle's check of its path (once a second), and with what the kernel
+    // read ahead dropped: the rest is read from sacdfs.
+    std::thread::sleep(Duration::from_millis(1100));
+    nix::fcntl::posix_fadvise(&open, 0, 0, nix::fcntl::PosixFadviseAdvice::POSIX_FADV_DONTNEED).unwrap();
+    assert_eq!(open.metadata().unwrap().len(), whole.len() as u64);
+    let mut rest = Vec::new();
+    open.read_to_end(&mut rest).unwrap();
+    assert!([first, rest].concat() == whole, "the open file reads other bytes");
+    drop(open);
+    m.stop("TERM");
+}
+
+#[test]
 fn a_new_sidecar_is_listed_and_moves_its_ancestors() {
     // #123 with #101: a playlist dropped next to an image while mounted must be listed
     // within a few seconds, with and without --flatten, and every folder above it must move.
