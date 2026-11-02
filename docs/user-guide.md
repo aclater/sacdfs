@@ -322,6 +322,15 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   images' own.
   With non-default options, a file whose image changed in the last few hours can show a
   time slightly in the future (up to 7 hours ahead); tools such as `tar` may warn about it.
+- **Folder times and library scanners.** A folder shows the newest time of anything shown
+  below it, at any depth: a new or changed playlist, scan or image, or a sacdfs release that
+  moves the files' times, moves every folder above it up to the mount's root. Roon and other
+  scanners that skip folders whose time did not change therefore find the change with a plain
+  rescan; no Force Rescan is needed. A change made while mounted shows within about 2 seconds of
+  the next look at the mount's root. Only the times move: folders keep their inode numbers, so
+  NFS clients keep working. The same source always shows the same folder times, across
+  remounts. After upgrading to 0.2.0, an existing Roon library sees every album as modified
+  once.
 - **`df` and free space.** The mount reports the size of the filesystem that holds SOURCE,
   all of it used: `df` shows that size with 0 available, and SMB clients (Explorer, Finder)
   see a full drive of that size. Nothing can be written to the mount anyway.

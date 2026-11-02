@@ -417,7 +417,8 @@ plus two offsets, in whole seconds:
 - a version offset: 25,203 s per output version after the first (`DSF_VERSION`,
   `WAV_VERSION`), more than any PCM offset.
 
-Directories keep their own mtime.
+A directory shows the newest mtime of what is shown below it (#123), see
+[Directory times](#directory-times-123) below.
 
 - *Why derive it, not document "re-copy after changing options":* rsync, Plex, Roon and the
   like rely on mtime and would silently keep stale WAV copies or analyses. Deriving costs
@@ -447,6 +448,55 @@ Directories keep their own mtime.
   generation hash itself is unchanged from 0.1, so an upgrade keeps every handle valid. Unit
   tests (`ident::tests::mtime_offsets`, `tree::tests::pcm_options_change_wav_numbers_and_generations_only`)
   and a mount test (`tests/probes.rs`) check this.
+
+### Directory times (#123)
+
+A directory's mtime is the newest of its source directory's own mtime and the mtimes of
+everything shown below it, at any depth: source directories, sidecar files and folders, and
+each image's track files (its image's mtime moved by the largest offset of the formats shown,
+`ident::newest_offset`). An image's own folder and its area folders show their image's files
+and their folder art. Up to the mount root, then, every directory moves when anything below it
+moves: an output-version bump, new tags (which come with one), a new, removed or changed
+sidecar or image.
+
+- *Why:* Roon (and other scanners that keep a directory's mtime from the last scan) skip a
+  directory whose mtime did not change, and everything below it. Found testing 0.2.0-rc.1 with
+  Roon (#123): an upgrade moved every DSF file's mtime and a new playlist sat next to an image,
+  yet Roon reported nothing, because the directories above them kept their source's mtime. The
+  owner's decision: "fix it, ship it", in 0.2.0 (as rc.2).
+- *How, at mount:* the scan `stat`s every image and sidecar it notes (one `stat` each, beside
+  the `readdir` it already does; over NFS the attributes usually come with the listing) and keeps
+  a `tree::Stamp` per source directory: its own mtime, the newest of the rest, and the newest
+  image. The output offset is added when the time is shown, so `--format` and the PCM options
+  count without a rescan. No disc is opened for it.
+- *How, while mounted (#101):* every time a directory is re-read, its stamp is passed up to each
+  ancestor (`Tree::bump`). A change deep in the tree must also surface without anything above
+  it being listed, since that is exactly what a scanner skips; so when the root's attributes are
+  asked for (a scan starts there), at most once per refresh interval (2 s), `Tree::sweep`
+  compares the mtime of every known source directory and sidecar folder (one `stat` each) and
+  re-reads only those that changed (their own entries; a new subdirectory in full). *Considered:*
+  inotify (not on NFS or SMB sources, which are the NAS case); re-reading a directory's
+  descendants on its own `getattr` (the same `stat`s, made many times per scan).
+- *Deterministic, no wall clock:* the time is a maximum of source mtimes and fixed offsets, so a
+  fresh mount of the same source shows the same times (the NFS case, #17). While mounted the
+  times only move forward; if the newest thing below is deleted, its directory's mtime (when it
+  changed) is newer anyway, and a remount shows the new maximum. A file changed in place moves
+  no directory mtime on the source, so the sweep does not see it (#101 does not either); its own
+  mtime moves, for a scanner that reads it.
+- *ctime moves with it, generations do not:* the kernel and NFS servers use ctime as the change
+  attribute, so clients revalidate a directory's cached listing when it moves. A directory's
+  inode number and generation (0) stay the same: its handle stays valid; only the time moves.
+- *`--flatten`:* a collapsed folder shows the newest of its whole chain (the chain's directories
+  and sidecars and its one image); a change in any directory of the chain moves it, as its
+  source path is the chain's top.
+- *Limits:* a folder gaining its first image is found by its parent's re-read (#101), not the
+  sweep (which knows only folders that held something). An area folder's copy of the folder art
+  follows when the area is re-read; the album folder, where the art file is, moves at once.
+- *Cost:* one `stat` per image and sidecar at mount; one `stat` per source directory per sweep
+  (at most every 2 s, only while the root is looked at). Tests:
+  `tree::tests::directory_mtimes_show_the_newest_below`,
+  `tree::tests::a_change_deep_below_moves_every_ancestor_and_matches_a_remount`, and the mount
+  test `directory_mtimes_move_with_what_is_below_through_the_kernel`.
 
 **Export support.** `init` asks for `FUSE_EXPORT_SUPPORT`. `lookup` answers `.` (the inode
 itself) and `..` (its directory's parent), which the kernel sends to turn a file handle into

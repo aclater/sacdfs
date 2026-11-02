@@ -935,3 +935,67 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
     assert!(ls("Artist/Second/d/Stereo").iter().any(|n| n.ends_with(".dsf")));
     m.stop("TERM");
 }
+
+#[test]
+fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
+    // #123: a scanner that skips unchanged directories from the top (Roon) must see every
+    // directory above a change move: the output version (files later than their image),
+    // and a new sidecar deep in the tree, without a remount.
+    use std::time::SystemTime;
+    if !fuse_available() {
+        return;
+    }
+    let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let album = src.join("Artist/Album");
+    std::fs::create_dir_all(&album).unwrap();
+    std::fs::copy(corpus().join("images/dsd-stereo-mch-2048.iso"), album.join("disc.iso")).unwrap();
+    for p in [album.join("disc.iso"), album.clone(), src.join("Artist"), src.clone()] {
+        set(&p, old);
+    }
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    let dirs = ["", "Artist", "Artist/Album", "Artist/Album/disc", "Artist/Album/disc/Stereo"];
+    let mtime = |p: &str| std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
+    let shown = old + sacdfs::ident::newest_offset(true, true, 0);
+    for p in dirs {
+        assert_eq!(mtime(p), shown, "{p}");
+    }
+    let newest_file = std::fs::read_dir(mnt.join("Artist/Album/disc/Stereo"))
+        .unwrap()
+        .map(|e| e.unwrap().metadata().unwrap().modified().unwrap())
+        .max()
+        .unwrap();
+    assert_eq!(newest_file, shown);
+    let ino = |p: &str| {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(mnt.join(p)).unwrap().ino()
+    };
+    let inos: Vec<u64> = dirs.iter().map(|p| ino(p)).collect();
+
+    // A new playlist two levels down, newer than anything shown.
+    let later = old + Duration::from_secs(10 * 86_400);
+    std::fs::write(album.join("new.m3u8"), b"#EXTM3U\n").unwrap();
+    set(&album.join("new.m3u8"), later);
+    set(&album, later - Duration::from_secs(1));
+    wait_for("the root to move", || mtime("") == later);
+    for p in &dirs[..3] {
+        assert_eq!(mtime(p), later, "{p}");
+    }
+    // The image's own folders do not show the playlist: they keep their time.
+    for p in &dirs[3..] {
+        assert_eq!(mtime(p), shown, "{p}");
+    }
+    // Only the times move: the same numbers, and the new file is there.
+    assert_eq!(dirs.iter().map(|p| ino(p)).collect::<Vec<_>>(), inos);
+    assert!(mnt.join("Artist/Album/new.m3u8").exists());
+    m.stop("TERM");
+    // The next mount shows the same times (stable for NFS clients, #17).
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    assert_eq!(std::fs::metadata(&mnt).unwrap().modified().unwrap(), later);
+    assert_eq!(std::fs::metadata(mnt.join("Artist/Album")).unwrap().modified().unwrap(), later);
+    m.stop("TERM");
+}

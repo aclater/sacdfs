@@ -24,7 +24,7 @@ use fuser::{
 
 use crate::engine::Engine;
 use crate::track::Reader;
-use crate::tree::{Node, Tree};
+use crate::tree::{Node, ROOT, Tree};
 
 /// How long the kernel may cache entries and attributes: the tree never changes.
 const TTL: Duration = Duration::from_secs(24 * 3600);
@@ -290,6 +290,10 @@ impl Filesystem for SacdFs {
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
+        // A scan starts at the root: changes anywhere below move its mtime first (#123).
+        if ino.0 == ROOT {
+            self.tree.sweep();
+        }
         match self.tree.get(ino.0) {
             Some(node) => reply.attr(&self.ttl(ino.0, ino.0), &self.attr(ino.0, &node)),
             None => reply.error(Errno::ENOENT),
