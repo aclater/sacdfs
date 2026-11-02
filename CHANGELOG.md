@@ -6,6 +6,19 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A WAV file no longer keeps its 256 KiB header padding in memory once listed (#151). The
+  resident memory after listing five discs fell from 32 MB to 9 MB, which is about 5 GB less
+  for a 1,000-disc library after a full scan.
+
+### Added
+
+- Leak hunting tools (#151). `tests/no_growth.rs` runs in CI and checks that mount cycles leave no
+  heap behind. Off CI, `scripts/soak.py` runs hours of reads and churn and judges the memory trend,
+  and `scripts/leak-check.sh` runs valgrind memcheck over the test suite and massif over a soak.
+  A weekly workflow runs memcheck and a short soak. See `docs/development.md`.
+
 ## [0.3.0] - 2026-11-02
 
 Tested as a release candidate (0.3.0-rc.1) on a NAS with Roon (new files and folders found at

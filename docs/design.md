@@ -800,7 +800,8 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   reading the header would make sacdfs locate, decode and convert the track's first frames
   (measured: 1.1 MB of image reads per file for the first 200 bytes, against 0 with padding),
   and the page with the end of the audio would hold the start of the tags. The cost is 256 KiB
-  of zeros per file, about 0.05 % of a typical track. The padding takes up the ds64 chunk in
+  of zeros per file, about 0.05 % of a typical track. Those zeros are made when they are read, not
+  kept in memory (#151): see "Leaks" under Testing. The padding takes up the ds64 chunk in
   RF64 files, so the audio offset is the same for both.
   *What padding cannot avoid:* a tagger that walks the chunks (mutagen, TagLib) reads the 8-byte
   header of the data chunk, which RIFF puts right before the audio, and the kernel then reads
@@ -1796,6 +1797,56 @@ the owner's NAS already used.
   (stereo, 5.0, 5.1), `pcm_s24le` and tags; libsndfile reads every WAV file of the corpus,
   its samples equal to the raw bytes; a sparse 4.76 GB six-channel RF64 file reads in FFmpeg
   and libsndfile.
+
+### Leaks (#151)
+
+The owner asked for leak tracing and profiling: sacdfs runs for days on a NAS. How to run
+each tool is in [development.md](development.md).
+
+- **On every PR: `tests/no_growth.rs`, a dhat-rs test.** It runs mount cycles in-process
+  and requires the heap left after each unmount to stay flat.
+  - *Why in-process:* dhat counts only its own process's allocations, so the filesystem
+    runs on a fuser background session in the test.
+  - *Why mount cycles, not hours:* the owner said "dont make CI take too long". The test
+    takes about 14 s on the CI runners, and the `tests` job grew from 2 min 23 s to
+    2 min 51 s on main to 3 min 12 s on the PR's first run. That is under the 1-minute budget
+    the owner set.
+  - *Why 16 KiB of slack:* a deliberately leaked tree per cycle adds about 40 KiB a cycle,
+    while the measured noise is 32 bytes.
+  - *Alternatives:* a counting global allocator written in the test. Rejected because it
+    needs `unsafe`, and dhat-rs is the tool #151 names.
+- **Off PR CI:**
+  - `scripts/soak.py`: hours of churn on a test host, plus 20 minutes weekly in
+    `.github/workflows/leaks.yml`.
+  - `scripts/leak-check.sh massif`: the heap profile of a soak segment.
+  - `scripts/leak-check.sh memcheck`: the whole suite, and the `sacdfs` processes it starts,
+    under valgrind memcheck. It also runs weekly.
+
+  *Why off PR CI:* each takes from 20 minutes to hours. *Why the soak judges the trend rather
+  than a fixed ceiling:* the frame cache and malloc's arenas fill during the warm-up. After
+  it, what counts is the level staying within the cache cap plus noise, and the trend of the
+  second half staying near zero.
+- **Why memcheck, not LeakSanitizer.** There is no C code in the graph (sacdfs and
+  scarletbook are pure Rust), so there is no C boundary to instrument. Rust's LeakSanitizer
+  needs a nightly compiler, and clang's `-shared-libasan` route does not instrument Rust.
+  memcheck works with the stable toolchain and follows child processes.
+- **Found and fixed here: every WAV file's header was kept whole in memory.** That is 256 KiB
+  per listed WAV file, almost all of it the `JUNK` padding's zeros. massif put 522 MiB of a
+  40-minute soak's 635 MiB heap at `wav::header`.
+  - *Fix:* `track::Header` keeps the bytes before the zeros and the last 8 bytes, and makes
+    the zeros when they are read.
+  - *Measured* on the five gate discs (93 WAV files): the resident memory after listing
+    everything fell from 32.3 MB to 8.8 MB. That is about 5 GB less for a 1,000-disc
+    library after a full scan.
+  - The served bytes are unchanged: the DSF gate is 93/93, and the WAV and corpus tests pass.
+  - *Why in this PR:* the fix is small, sits in `track.rs` (not the cache, engine or handles
+    being changed for #150), and #151 asks for small fixes to be made here.
+- **Found, filed: #153.** Nodes, and with them discs, of removed or renamed images stay in the
+  tree for good. *Why not fixed here:* it needs FUSE forget accounting or a reachability
+  sweep in the tree, which is a design change in another lane.
+- **Why massif, not heaptrack.** heaptrack is not in UBI, and the Red Hat-first rule applies.
+  massif, in UBI 10's valgrind, gives the same two answers: what is live at the end, and how
+  each site grew. The container is `scripts/leak-check.Containerfile`.
 
 ### Oldest distributions (#58)
 

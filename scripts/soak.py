@@ -12,7 +12,8 @@ of links to them in a work directory and mounts it with `--tags`. While it runs:
   offsets, bursts of small reads at random seeks, and the start/middle/end reads of a
   library scan;
 - the churner, every few seconds: adds or removes an image and a sidecar (the re-read,
-  #101/#123), adds or removes an `Artwork/` folder, and edits a tags file (the reload, #121);
+  #101/#123), adds or removes an `Artwork/` folder, and edits a tags file (the reload, #121).
+  Each added album has a new name, unless `--churn-slots K` reuses K names;
 - the staller, every `--stall-every` seconds: points an image's link at a FIFO, reads it
   until the watchdog fails the request (#141), then releases the stuck open and restores
   the link (the abandoned request then finishes);
@@ -192,9 +193,15 @@ def churner(args, images, keys):
         act = n % 5
         try:
             if act == 0:  # an image appears in a new album folder
-                d = churn / f"album-{n}"
+                if args.churn_slots:  # names come back: album-0 ... album-(K-1), same image each
+                    slot = (n // 5) % args.churn_slots
+                    d, img = churn / f"album-{slot}", images[slot % len(images)]
+                    if d.exists():
+                        continue
+                else:  # every album is new, as on a library that grows and gets renamed
+                    d, img = churn / f"album-{n}", rnd.choice(images)
                 d.mkdir(parents=True)
-                (d / "disc.iso").symlink_to(rnd.choice(images))
+                (d / "disc.iso").symlink_to(img)
             elif act == 1:  # sidecars come and go
                 (lib / "a0" / f"cover-{n}.jpg").write_bytes(b"\xff\xd8\xff\xe0 soak" * rnd.randrange(1, 64))
                 for old in sorted((lib / "a0").glob("cover-*.jpg"))[:-2]:
@@ -211,7 +218,8 @@ def churner(args, images, keys):
                     art.mkdir()
                     (art / "back.png").write_bytes(b"\x89PNG soak" * rnd.randrange(1, 64))
             else:  # the oldest added albums go
-                for d in sorted(churn.glob("album-*"), key=lambda p: int(p.name[6:]))[:-3]:
+                keep = 1 if args.churn_slots else 3
+                for d in sorted(churn.glob("album-*"), key=lambda p: p.stat().st_mtime)[:-keep]:
                     (d / "disc.iso").unlink()
                     d.rmdir()
             count("churn")
@@ -357,6 +365,8 @@ def main():
     ap.add_argument("--cache-mb", type=int, default=64)
     ap.add_argument("--request-timeout", type=int, default=3)
     ap.add_argument("--churn-every", type=float, default=5)
+    ap.add_argument("--churn-slots", type=int, default=0,
+                    help="reuse this many album names (0: every added album has a new name)")
     ap.add_argument("--stall-every", type=float, default=180)
     ap.add_argument("--remount-every", type=float, default=300)
     ap.add_argument("--noise-mb", type=float, default=32)
@@ -384,6 +394,10 @@ def main():
     for n, k in enumerate(keys):
         write_tags(args, k, n)
 
+    # SIGTERM or SIGINT end the run early, with a verdict on what was sampled (a background
+    # job of a non-interactive shell ignores SIGINT, so SIGTERM is the one to send).
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: STOP.set())
     log(f"work directory {args.work}; {len(images)} images; {args.hours} h")
     main_mount = Mount(args, lib, args.work / "mnt", "main.log", args.wrap)
     state = {"files": files_under(args.work / "mnt")}
@@ -418,7 +432,7 @@ def main():
 def run(args, main_mount, keys_out, rows, t0):
     with open(args.out, "w") as out:
         out.write("\t".join(keys_out) + "\n")
-        while time.monotonic() - t0 < args.hours * 3600:
+        while time.monotonic() - t0 < args.hours * 3600 and not STOP.is_set():
             STOP.wait(args.interval)
             if main_mount.proc.poll() is not None:
                 log("the main sacdfs exited")

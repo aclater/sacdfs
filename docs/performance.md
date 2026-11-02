@@ -434,6 +434,7 @@ field), and the DSF gate stays 93/93.
 | Mount of a library on an NFS share (154 images; `sacdfs` returns once mounted) | **0.12 s** (7 mounts, 0.118 to 0.122 s, with or without `--flatten`); 2.0 s for the first, with the client's NFS attribute cache cold |
 | `stat` of all 186 files (93 DSF, 93 WAV) on a fresh mount, which opens the five images and reads their TOCs | **13 ms** |
 | Header and tag reads of all 186 files, as a tagger walks the chunks | **113 ms** (100 ms v3), 0.22 s of sacdfs CPU, 20.5 MB of image reads, all of them for DSF headers |
+| Resident memory after listing all 186 files (#151) | **8.8 MB**; 32.3 MB before WAV headers were kept without their 256 KiB of zeros |
 | DSF tag walk of the 93 DSF files (open, first 4 KiB, the tag, close) | **0.09 s**: 342 calls to the image (3.7 a file), 20.7 MB (222 KB a file) |
 
 Mounting reads no image: only the names of the source tree are walked. An image's TOCs are read

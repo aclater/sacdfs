@@ -23,15 +23,17 @@ mkdir -p "$OUT"
 export SACDFS_FUSE_TESTS=1
 
 memcheck() {
-    # Release-like code, debug info for the stacks, and the test binaries' paths.
-    cargo build --locked --bins
+    # The test binaries (the test profile: optimised, with debug info for the stacks).
+    rm -f "$OUT"/*.log "$OUT"/*.out
     cargo test --locked --no-run --message-format=json 2>/dev/null \
         | python3 -I -c 'import json,sys
 for l in sys.stdin:
     m = json.loads(l)
     if m.get("reason") == "compiler-artifact" and m.get("executable") and m["profile"]["test"]:
         print(m["executable"])' >"$OUT/tests.txt"
-    local vg=(valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect
+    # No --error-exitcode: it would change the exit status of the sacdfs processes the tests
+    # start and check. The verdict comes from the logs instead.
+    local vg=(valgrind --leak-check=full --show-leak-kinds=definite,indirect
         --errors-for-leak-kinds=definite,indirect --trace-children=yes
         "--trace-children-skip=*fusermount3,*/kill,*/sh,*/bash,*/python3"
         --suppressions=scripts/leak-check.supp --num-callers=30)
@@ -41,12 +43,17 @@ for l in sys.stdin:
         echo "== $name"
         # Each test on its own: valgrind serialises threads, and a FUSE test waiting on a
         # mount must not wait behind another test's decoding.
+        # A test may fail under valgrind for its timing (it runs some 30 times slower): noted,
+        # but the verdict is valgrind's.
         if ! "${vg[@]}" "--log-file=$OUT/$name.%p.log" "$bin" --test-threads=1 >"$OUT/$name.out" 2>&1; then
-            echo "   FAIL: see $OUT/$name.*"
+            echo "   (some tests failed under valgrind, see $OUT/$name.out)"
+        fi
+        if grep -l "definitely lost: [1-9]\|indirectly lost: [1-9]\|ERROR SUMMARY: [1-9]" "$OUT/$name".*.log; then
+            echo "   FAIL: leaks or memory errors in the logs above"
             fail=1
         fi
-        grep -h "definitely lost:\|indirectly lost:\|ERROR SUMMARY" "$OUT/$name".*.log | sort | uniq -c || true
     done <"$OUT/tests.txt"
+    [ $fail = 0 ] && echo "memcheck: no leaks or memory errors"
     return $fail
 }
 
