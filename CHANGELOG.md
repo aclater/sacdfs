@@ -25,6 +25,14 @@ All notable changes to sacdfs are recorded here. The format follows
   2.30 → 2.26 s, DST stereo DSF 4.93 → 4.65 s, DST 6-channel DSF 13.33 → 13.13 s; the import
   replay peaks at 44 → 45 MiB at the default 32 MiB cache.
 
+### Documentation
+
+- Short install guides in `docs/install/` (#82), one per NAS system and music server, each
+  with numbered steps and a check that it works: TrueNAS SCALE, Docker or Podman, OpenMediaVault,
+  Linux clients (NFS, SMB, fstab), Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD. Each says what
+  it was validated on; Unraid, Synology, QNAP and UGREEN UGOS are placeholders until someone
+  reports a run. `docs/deployment.md` stays the reference and points to them first.
+
 ## [0.3.0] - 2026-11-02
 
 Tested as a release candidate (0.3.0-rc.1) on a NAS with Roon (new files and folders found at
