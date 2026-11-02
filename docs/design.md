@@ -1883,9 +1883,12 @@ each tool is in [development.md](development.md).
   heap at `wav::header`. The fix landed through #150 at the same time, so this PR has none. On
   the five gate discs (93 WAV files), the resident memory after listing everything fell from
   32.3 MB to 8.8 MB, which is about 5 GB less for a 1,000-disc library after a full scan.
-- **Found, filed: #153.** Nodes, and with them discs, of removed or renamed images stay in the
-  tree for good. *Why not fixed here:* it needs FUSE forget accounting or a reachability
-  sweep in the tree, which is a design change in another lane.
+- **Found, filed and fixed separately: #153.** Nodes, and with them discs, of removed or
+  renamed images stayed in the tree for good. With every added album under a new name, the
+  soak grew from 135 to 394 MiB in 19 minutes. *Why not fixed here:* it needed a design
+  change in the tree, in another lane; #163 fixed it. The soak's default churn (a new name
+  for every added album) covers it from then on. `--churn-slots K` (names reused) checks
+  everything else in isolation.
 - **Why massif, not heaptrack.** heaptrack is not in UBI, and the Red Hat-first rule applies.
   massif, in UBI 10's valgrind, gives the same two answers: what is live at the end, and how
   each site grew. The container is `scripts/leak-check.Containerfile`.
