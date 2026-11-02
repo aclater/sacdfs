@@ -23,5 +23,3 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# The engine, until it is published on crates.io.
-allow-git = ["https://github.com/aclater/scarletbook-rs"]

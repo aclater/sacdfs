@@ -17,9 +17,8 @@ extracting anything first. Seeks return in a few milliseconds, locally or over t
 
 sacdfs runs on Linux (x86_64) and needs FUSE 3's `fusermount3` helper (package `fuse3` on
 most distributions). Each [release](https://github.com/aclater/sacdfs/releases) has two
-builds, and the container image for a NAS is on GitHub's registry. Nothing is on crates.io
-yet: sacdfs's engine, scarletbook, isn't on crates.io, and crates.io refuses a crate that
-depends on a git repository. `cargo install` from crates.io comes once scarletbook is there.
+builds, and the container image for a NAS is on GitHub's registry. sacdfs itself is not on crates.io yet (#155), but its engine, scarletbook,
+is, since 0.5.7, so `cargo install` from crates.io comes with the publishing step of #155.
 
 ### Binaries
 

@@ -17,6 +17,14 @@ All notable changes to sacdfs are recorded here. The format follows
   decoder thread. An idle mount (no reads for 60 s) gives its cache and decoders back, about
   11 MiB idle. The served bytes are unchanged (DSF gate 93/93).
 
+- **scarletbook and scarletbook-pcm 0.5.6 → 0.5.7, now from crates.io** (#155). The two crates
+  are taken from the registry, pinned exactly (`=0.5.7`), instead of from a git tag, which also
+  lets cargo-deny drop its git exception. Output bytes are unchanged: the DSF gate (93/93), the
+  golden PCM and DSF hashes and the real-disc WAV test pass. Straight reads through the mount,
+  0.5.6 (main) → 0.5.7 (means of 3, alternating): plain-DSD DSF 1.45 → 1.29 s, plain-DSD WAV
+  2.30 → 2.26 s, DST stereo DSF 4.93 → 4.65 s, DST 6-channel DSF 13.33 → 13.13 s; the import
+  replay peaks at 44 → 45 MiB at the default 32 MiB cache.
+
 ## [0.3.0] - 2026-11-02
 
 Tested as a release candidate (0.3.0-rc.1) on a NAS with Roon (new files and folders found at
