@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0-rc.1] - 2026-11-02
+
 ### Added
 
 - `--pauses kept` (`SACDFS_PAUSES=kept` in the container, #112): serves every track with its
@@ -352,7 +354,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.3.0-rc.1...HEAD
+[0.3.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0-rc.1
 [0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aclater/sacdfs/releases/tag/v0.1.0
