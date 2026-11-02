@@ -52,6 +52,20 @@ pub const MAX_POOL_THREADS: usize = 64;
 /// A thread above a pool's core count that has had no job for this long ends.
 const SPARE_IDLE: Duration = Duration::from_secs(10);
 
+/// Sets `n` to `f` of its value, unless `f` says `None`; whether it was set. (A loop
+/// rather than `fetch_update`, deprecated in newer Rust, or `try_update`, newer than the
+/// MSRV.)
+fn update(n: &AtomicUsize, f: impl Fn(usize) -> Option<usize>) -> bool {
+    let mut cur = n.load(Ordering::SeqCst);
+    loop {
+        let Some(new) = f(cur) else { return false };
+        match n.compare_exchange_weak(cur, new, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(now) => cur = now,
+        }
+    }
+}
+
 /// A pool of threads taking jobs from a queue, `core` of them at least, growing up to
 /// `max` when a job is queued and no thread is idle.
 ///
@@ -136,7 +150,7 @@ impl Workers {
                     Err(RecvTimeoutError::Timeout) => {
                         let core = me.core;
                         let fewer = |t: usize| (t > core).then(|| t - 1);
-                        if me.threads.fetch_update(Ordering::SeqCst, Ordering::SeqCst, fewer).is_ok() {
+                        if update(&me.threads, fewer) {
                             return;
                         }
                     }
@@ -168,7 +182,7 @@ impl Workers {
         }
         let max = inner.max;
         let more = |t: usize| (t < max).then_some(t + 1);
-        if inner.threads.fetch_update(Ordering::SeqCst, Ordering::SeqCst, more).is_err() {
+        if !update(&inner.threads, more) {
             return;
         }
         match Self::start(inner) {
