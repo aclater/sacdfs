@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The frame cache keeps its frames in slabs of memory mapped outside the heap, at most
+  `--cache-mb` of them, instead of on the heap (#73). Evicted frames no longer leave holes
+  that the process keeps: a full-library import replay (271 images) peaks at the cap plus
+  what sacdfs holds without a cache (`--cache-mb 16`: 73 → 63 MiB), and the eighth of the
+  cap that was kept for spare buffers now holds frames.
+
 ## [0.2.0-rc.1] - 2026-11-01
 
 ### Added

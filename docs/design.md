@@ -93,23 +93,48 @@ before. Two changes, each needed:
   what one setting does); `malloc_trim` after evictions (gives back only whole free pages,
   and walks the heap). This is the one `unsafe` call outside the daemonising code: `mallopt`
   takes two integers.
-- **The cache reuses the buffers of evicted frames** (`FrameCache::buffers`, `spares`): DST
-  frames are decoded straight into them (`DstDecoder::decode`, with scarletbook's fills for
-  missing and invalid frames, as `audio::decode_frame` does), plain DSD and PCM frames are
-  copied in. An eighth of the cap, at most 32 MiB, is kept for spare buffers, so frames and
-  spares together stay within the cap. *Why:* freeing evicted frames left holes between the
-  cached frames and the short-lived allocations of decoding (read buffers of up to 1 MiB,
-  compressed frames) that the heap could not give back; a malloc profile showed the cache's
-  count was right and the excess was the heap's. With one arena, reuse took 339 → 271 MiB at
-  256. *Why 32 MiB:* a read-ahead's worth of frames, so that straight reads reuse buffers
-  rather than allocate; a 4 MiB reserve held 314 MiB. *Trade-off:* the cache holds an eighth
-  fewer frames.
-- **What is left above the cap** (#73 item 3): about 32 MiB that a mount holds with no cache:
-  12 MiB at mount (binary, FUSE buffers, the scan), then the decoders' tables (256 KiB per
-  decoder thread), the image cursors' read buffers (up to 1 MiB each while a file is open),
-  the seek indexes and the open images. It levels off after the first few hundred files and
-  does not depend on `--max-open-images`. With more decoder threads (`--threads`, one per
-  CPU by default) it grows by about 0.3 MiB per thread.
+- **The cache's frames live in slabs outside the heap** (`engine::Pool`, `FrameBuf`; this
+  replaced the reuse of evicted frames' buffers, `FrameCache::spares`, of the first fix).
+  Each frame takes a slot of a slab of slots of its length (512 KiB, mapped with `mmap`), DST
+  frames are decoded straight into it, and its slot is given back when the frame is dropped.
+  The slabs together never pass the cap; a slab is unmapped only when it is empty and a
+  frame of another length needs the room. When the slabs are full, a new frame evicts the
+  least recently used frames until a slot is free. *Why:* frames on the heap left holes when
+  they were evicted, because frames of 2, 5 and 6 channels and PCM frames differ in size and
+  readers drop frames late; the allocator could neither give these back nor fill them with
+  frames of another size. Reusing evicted buffers of the same size (the first fix) helped,
+  but a full-library replay (271 images, on 4 CPUs) still ended with 7 MiB free in the heap
+  at `--cache-mb 256` and 12 MiB at 16. With slabs, the cache's memory is its cap: `--cache-mb
+  16` went from 73 to 63 MiB, and `--cache-mb 256` costs the same as `--cache-mb 0` plus
+  256 MiB. The eighth of the cap kept for spare buffers is gone, so the cache holds that much
+  more. *Why 512 KiB:* a slab empties soon after its frames stop being used, and a 256 MiB
+  cache is 512 mappings, far below the kernel's default limit of 65 530. *Measured
+  alternatives:* `malloc_trim` after the replay gave back only 5 MiB of the 7 MiB of holes at
+  256. *Cache colouring:* slots start at multiples of the frame length, so the frames a
+  thread decodes one after another do not all start at the same offset within a page, which
+  would make them collide in the CPU's cache sets ([Drepper, "What every programmer should
+  know about memory", 2007](https://www.akkadia.org/drepper/cpumemory.pdf),
+  on cache associativity; [mmap(2)](https://man7.org/linux/man-pages/man2/mmap.2.html):
+  mappings are page-aligned). *Trade-off:* `unsafe` code for the mapping and its slots
+  (`mmap`, `munmap` and raw slices into the slab), kept to one type.
+- **What is left above the cap** (#73 item 3), measured with a heap walk (glibc's chunks and
+  `/proc/PID/pagemap`) after the 271-image replay: about 45 to 50 MiB on a 32-thread host,
+  none of it the cache's:
+  - about 7 MiB for the program at mount;
+  - about 16 MiB for the images and their files once listed (the tree, two copies of each
+    image's TOC: scarletbook's and the one `Disc` keeps, its text and track lists), about
+    60 KB per image. Raw-sector images (2 054 or 2 064 bytes per sector) also keep an 80 KiB
+    read buffer in scarletbook (the replay's library had 54 of them: 9 MiB);
+  - about 18 MiB more during the replay: each decoder thread's DST tables and buffers (roughly
+    300 to 350 KB per thread that decoded DST; 17 threads here), the seek indexes' pending readings
+    (80 bytes per seek, at most 256 per area) and seek hints, and smaller objects;
+  - the FUSE threads' 16 MiB receive buffers are allocated but almost never touched (under
+    1 MiB resident in all).
+
+  It grows with the number of images listed (about 60 KB each) and with decoder threads,
+  not with the cache, and does not depend on `--max-open-images`. *Not done here:* keeping
+  one TOC per image instead of two (`Disc::toc` becoming a method over scarletbook's copy)
+  needs changes in `tree.rs` and the tag code, left for after the tag work (#121).
 
 ## Layout
 

@@ -34,7 +34,7 @@ pub enum Fill {
 #[derive(Debug)]
 pub struct Frame {
     /// The bytes.
-    pub data: Box<[u8]>,
+    pub data: FrameBuf,
     /// How the DSD frame was produced (for PCM: the DSD frame it was converted from).
     pub fill: Fill,
     /// PCM only: samples clipped by the conversion.
@@ -58,81 +58,328 @@ struct Key {
     kind: Kind,
 }
 
+/// Bytes of one slab of frame buffers ([`Pool`]), before rounding to whole slots and pages:
+/// 55 two-channel or 18 six-channel DSD frames. *Why this size:* small enough that a slab
+/// empties soon after its frames stop being used (it is given back only when empty), large
+/// enough that a 256 MiB cache is 512 mappings, far below the kernel's limit on mappings.
+const SLAB_BYTES: usize = 512 << 10;
+
+/// The buffer of one frame: a slot of a slab of the cache's [`Pool`], or, without a cache
+/// or past its cap, a buffer of its own on the heap.
+pub struct FrameBuf {
+    ptr: std::ptr::NonNull<u8>,
+    len: usize,
+    home: Home,
+}
+
+enum Home {
+    Slab { pool: Arc<Pool>, slab: u32, slot: u32 },
+    Heap(#[allow(dead_code)] Box<[u8]>),
+}
+
+// SAFETY: a FrameBuf owns its bytes exclusively (a slot is handed to one buffer at a time,
+// and the slab stays mapped while the buffer's pool has it), like a Box<[u8]>.
+#[allow(unsafe_code)]
+unsafe impl Send for FrameBuf {}
+// SAFETY: as for Send: shared access only reads the bytes.
+#[allow(unsafe_code)]
+unsafe impl Sync for FrameBuf {}
+
+impl std::ops::Deref for FrameBuf {
+    type Target = [u8];
+    #[allow(unsafe_code)]
+    fn deref(&self) -> &[u8] {
+        // SAFETY: ptr..ptr+len is this buffer's slot (or its box), valid while it lives.
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl std::ops::DerefMut for FrameBuf {
+    #[allow(unsafe_code)]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as for deref, and &mut self makes the access exclusive.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl std::fmt::Debug for FrameBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pooled = matches!(self.home, Home::Slab { .. });
+        f.debug_struct("FrameBuf").field("len", &self.len).field("pooled", &pooled).finish()
+    }
+}
+
+impl From<Vec<u8>> for FrameBuf {
+    fn from(v: Vec<u8>) -> Self {
+        let mut b = v.into_boxed_slice();
+        let len = b.len();
+        let ptr = std::ptr::NonNull::new(b.as_mut_ptr()).unwrap_or(std::ptr::NonNull::dangling());
+        FrameBuf { ptr, len, home: Home::Heap(b) }
+    }
+}
+
+impl FrameBuf {
+    /// A zeroed buffer of `len` bytes on the heap.
+    fn heap(len: usize) -> Self {
+        vec![0u8; len].into()
+    }
+}
+
+impl Drop for FrameBuf {
+    fn drop(&mut self) {
+        if let Home::Slab { pool, slab, slot } = &self.home {
+            pool.release(*slab, *slot);
+        }
+    }
+}
+
+/// An anonymous memory mapping, unmapped when dropped.
+struct Mapping {
+    ptr: std::ptr::NonNull<u8>,
+    len: usize,
+}
+
+// SAFETY: the mapping is plain memory; its slots are handed out to one FrameBuf at a time.
+#[allow(unsafe_code)]
+unsafe impl Send for Mapping {}
+// SAFETY: as for Send.
+#[allow(unsafe_code)]
+unsafe impl Sync for Mapping {}
+
+impl Mapping {
+    #[cfg(unix)]
+    #[allow(unsafe_code)]
+    fn new(len: usize) -> Option<Mapping> {
+        // SAFETY: an anonymous private mapping at an address of the kernel's choice; it is
+        // only used through this Mapping, and unmapped once in drop.
+        let p = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        if p == libc::MAP_FAILED {
+            return None;
+        }
+        std::ptr::NonNull::new(p.cast::<u8>()).map(|ptr| Mapping { ptr, len })
+    }
+
+    #[cfg(not(unix))]
+    fn new(_len: usize) -> Option<Mapping> {
+        None
+    }
+}
+
+impl Drop for Mapping {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        // SAFETY: the mapping made in new, unmapped once; no slot of it is in use (a slab is
+        // dropped only when empty, or with its pool, which every slot keeps alive).
+        unsafe {
+            libc::munmap(self.ptr.as_ptr().cast(), self.len);
+        }
+    }
+}
+
+struct Slab {
+    map: Mapping,
+    /// Bytes per slot.
+    len: usize,
+    free: Vec<u32>,
+    used: u32,
+}
+
+#[derive(Default)]
+struct PoolInner {
+    /// Slabs by id; `None` for an id given back.
+    slabs: Vec<Option<Slab>>,
+    /// Ids of slabs with a free slot, by slot length.
+    open: std::collections::HashMap<usize, Vec<u32>>,
+    /// Bytes mapped.
+    mapped: usize,
+}
+
+/// The memory of a frame cache (#73): slabs of equal-sized slots mapped outside the heap,
+/// at most the cache's cap of them. Frames take a slot of their length, and give it back
+/// when dropped; a slab is unmapped only to make room for a slab of another length.
+///
+/// *Why:* frames on the heap left holes there when evicted (frames of 2, 5 and 6 channels
+/// and PCM frames differ in size, and readers drop frames late), holes which the
+/// allocator could neither give back nor fill with frames of another size: a library
+/// import's replay held 20 to 40 MiB above the cap, in a heap whose free bytes were 5 to
+/// 12 MiB at the end. A slot freed in a slab is reused by the next frame of its length,
+/// and the slabs together never pass the cap, so the cache's memory is its cap.
+struct Pool {
+    inner: Mutex<PoolInner>,
+    cap: usize,
+}
+
+impl Pool {
+    fn lock(&self) -> std::sync::MutexGuard<'_, PoolInner> {
+        self.inner.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Bytes mapped for a slab of slots of `len` bytes, and its slot count.
+    fn slab_shape(len: usize) -> (usize, u32) {
+        let slots = (SLAB_BYTES / len).max(1);
+        let bytes = (slots * len).div_ceil(4096) * 4096;
+        // Whole pages: fill the rounding with more slots.
+        (bytes, u32::try_from(bytes / len).unwrap_or(u32::MAX))
+    }
+
+    /// A slot of `len` bytes, if one is free or a slab more fits within the cap (after
+    /// unmapping empty slabs of other lengths). Its content is unspecified.
+    fn alloc(self: &Arc<Self>, len: usize) -> Option<FrameBuf> {
+        if len == 0 {
+            return None;
+        }
+        let mut g = self.lock();
+        let g = &mut *g;
+        let id = match g.open.get(&len).and_then(|v| v.last().copied()) {
+            Some(id) => id,
+            None => {
+                let (bytes, slots) = Self::slab_shape(len);
+                if g.mapped + bytes > self.cap {
+                    for i in 0..g.slabs.len() {
+                        if g.mapped + bytes <= self.cap {
+                            break;
+                        }
+                        if g.slabs[i].as_ref().is_some_and(|s| s.used == 0) {
+                            if let Some(s) = g.slabs[i].take() {
+                                g.mapped -= s.map.len;
+                                if let Some(v) = g.open.get_mut(&s.len) {
+                                    v.retain(|&x| x as usize != i);
+                                }
+                            }
+                        }
+                    }
+                    if g.mapped + bytes > self.cap {
+                        return None;
+                    }
+                }
+                let map = Mapping::new(bytes)?;
+                g.mapped += bytes;
+                let slab = Slab { map, len, free: (0..slots).rev().collect(), used: 0 };
+                let id = match g.slabs.iter().position(Option::is_none) {
+                    Some(i) => {
+                        g.slabs[i] = Some(slab);
+                        i
+                    }
+                    None => {
+                        g.slabs.push(Some(slab));
+                        g.slabs.len() - 1
+                    }
+                };
+                let id = id as u32;
+                g.open.entry(len).or_default().push(id);
+                id
+            }
+        };
+        let s = g.slabs.get_mut(id as usize)?.as_mut()?;
+        let slot = s.free.pop()?;
+        s.used += 1;
+        // SAFETY: slot < slots, so the slot lies within the mapping.
+        #[allow(unsafe_code)]
+        let ptr = unsafe { s.map.ptr.add(slot as usize * len) };
+        if s.free.is_empty() {
+            if let Some(v) = g.open.get_mut(&len) {
+                v.retain(|&x| x != id);
+            }
+        }
+        Some(FrameBuf { ptr, len, home: Home::Slab { pool: Arc::clone(self), slab: id, slot } })
+    }
+
+    fn release(&self, slab: u32, slot: u32) {
+        let mut g = self.lock();
+        let g = &mut *g;
+        let Some(Some(s)) = g.slabs.get_mut(slab as usize) else { return };
+        s.free.push(slot);
+        s.used -= 1;
+        if s.free.len() == 1 {
+            g.open.entry(s.len).or_default().push(slab);
+        }
+    }
+
+    /// Bytes mapped.
+    fn mapped(&self) -> usize {
+        self.lock().mapped
+    }
+}
+
 #[derive(Debug)]
 struct CacheInner {
     lru: LruCache<Key, Arc<Frame>>,
     bytes: usize,
-    /// Buffers of evicted frames, oldest first, handed out again for new frames (#73).
-    spare: Vec<Box<[u8]>>,
-    spare_bytes: usize,
-}
-
-/// Bytes of a cache's cap kept for spare buffers: an eighth of the cap, at most 32 MiB, which
-/// is a read-ahead's worth of frames. Cached frames fill the rest, so that frames and spare
-/// buffers together stay within the cap.
-fn spare_cap(cap: usize) -> usize {
-    (cap / 8).min(32 << 20)
 }
 
 /// A least-recently-used cache of decoded DSD frames and converted PCM frames, bounded in
 /// bytes: one budget for both, so a mount that serves only one format spends all of it on
 /// that format.
 ///
-/// The buffers of evicted frames are not freed but handed out again for new frames
-/// (`FrameCache::buffers`). *Why (#73):* freeing them left holes between the cached frames
-/// and the short-lived allocations of decoding, which the allocator could neither give back
-/// nor always reuse, so the process held about 20 % more than the cap; reusing them keeps
-/// the cache's memory, frames and spare buffers together, within its cap (`spare_cap`).
-#[derive(Debug)]
+/// The frames' buffers come from the cache's [`Pool`], slabs mapped outside the heap and
+/// bounded by the cap, so the memory the cache holds, cached frames and free slots, stays
+/// within its cap (#73). A frame that needs a slot when the pool is full evicts the least
+/// recently used frames until one is free.
 pub struct FrameCache {
     inner: Mutex<CacheInner>,
+    pool: Arc<Pool>,
     cap: usize,
+}
+
+impl std::fmt::Debug for FrameCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FrameCache").field("cap", &self.cap).finish_non_exhaustive()
+    }
 }
 
 impl FrameCache {
     /// A cache holding at most `cap` bytes of frames.
     pub fn new(cap: usize) -> Self {
         FrameCache {
-            inner: Mutex::new(CacheInner {
-                lru: LruCache::unbounded(),
-                bytes: 0,
-                spare: Vec::new(),
-                spare_bytes: 0,
-            }),
+            inner: Mutex::new(CacheInner { lru: LruCache::unbounded(), bytes: 0 }),
+            pool: Arc::new(Pool { inner: Mutex::new(PoolInner::default()), cap }),
             cap,
         }
     }
 
-    /// `n` buffers of `len` bytes for new frames: spare buffers of evicted frames where there
-    /// are some, otherwise new ones. Their content is unspecified.
-    fn buffers(&self, len: usize, n: usize) -> Vec<Box<[u8]>> {
-        let mut out = self.spares(len, n);
-        out.resize_with(n, || vec![0u8; len].into_boxed_slice());
-        out
-    }
-
-    /// Up to `n` spare buffers of `len` bytes, for [`FrameCache::buffers`]; the caller makes
-    /// the rest (on the threads that fill them, so that zeroing new ones is parallel too).
-    fn spares(&self, len: usize, n: usize) -> Vec<Box<[u8]>> {
+    /// `n` buffers of `len` bytes for new frames: free slots of the pool, evicting the least
+    /// recently used frames to free some when it is full; past that (no cache, or frames
+    /// that readers still hold fill it), buffers on the heap. Their content is unspecified.
+    fn buffers(&self, len: usize, n: usize) -> Vec<FrameBuf> {
         let mut out = Vec::with_capacity(n);
-        if self.cap > 0 {
-            let mut g = self.lock();
-            let mut i = g.spare.len();
-            while i > 0 && out.len() < n {
-                i -= 1;
-                if g.spare[i].len() == len {
-                    let b = g.spare.remove(i);
-                    g.spare_bytes -= len;
+        while out.len() < n {
+            if self.cap > 0 {
+                if let Some(b) = self.pool.alloc(len) {
                     out.push(b);
+                    continue;
+                }
+                // Evict outside the pool's lock; the evicted frame gives its slot back when
+                // dropped, here or by the last reader that holds it.
+                let evicted = {
+                    let mut g = self.lock();
+                    g.lru.pop_lru().map(|(_, f)| {
+                        g.bytes -= f.data.len();
+                        f
+                    })
+                };
+                if evicted.is_some() {
+                    drop(evicted);
+                    continue;
                 }
             }
+            out.push(FrameBuf::heap(len));
         }
         out
     }
 
     /// One buffer of `len` bytes for a new frame, as [`FrameCache::buffers`].
-    fn buffer(&self, len: usize) -> Box<[u8]> {
-        self.buffers(len, 1).pop().unwrap_or_else(|| vec![0u8; len].into_boxed_slice())
+    fn buffer(&self, len: usize) -> FrameBuf {
+        self.buffers(len, 1).pop().unwrap_or_else(|| FrameBuf::heap(len))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, CacheInner> {
@@ -147,37 +394,37 @@ impl FrameCache {
         if self.cap == 0 {
             return;
         }
-        let mut g = self.lock();
-        let len = frame.data.len();
-        if let Some(old) = g.lru.put(key, frame) {
-            g.bytes -= old.data.len();
-        }
-        g.bytes += len;
-        let spare_cap = spare_cap(self.cap);
-        while g.bytes > self.cap - spare_cap {
-            match g.lru.pop_lru() {
-                Some((_, f)) => {
-                    g.bytes -= f.data.len();
-                    // A frame a reader still holds is freed when the reader drops it.
-                    if let Ok(f) = Arc::try_unwrap(f) {
-                        g.spare_bytes += f.data.len();
-                        g.spare.push(f.data);
+        let mut evicted = Vec::new();
+        {
+            let mut g = self.lock();
+            let len = frame.data.len();
+            if let Some(old) = g.lru.put(key, frame) {
+                g.bytes -= old.data.len();
+                evicted.push(old);
+            }
+            g.bytes += len;
+            // Heap buffers (past the pool) count too: frames stay within the cap.
+            while g.bytes > self.cap {
+                match g.lru.pop_lru() {
+                    Some((_, f)) => {
+                        g.bytes -= f.data.len();
+                        evicted.push(f);
                     }
+                    None => break,
                 }
-                None => break,
             }
         }
-        let mut drop_n = 0;
-        while drop_n < g.spare.len() && g.bytes + g.spare_bytes > self.cap {
-            g.spare_bytes -= g.spare[drop_n].len();
-            drop_n += 1;
-        }
-        g.spare.drain(..drop_n);
+        drop(evicted);
     }
 
-    /// Bytes held.
+    /// Bytes of cached frames.
     pub fn bytes(&self) -> usize {
         self.lock().bytes
+    }
+
+    /// Bytes the cache's pool has mapped for frames: at most the cap.
+    pub fn mapped(&self) -> usize {
+        self.pool.mapped()
     }
 }
 
@@ -619,9 +866,9 @@ impl Engine {
                 jobs.push(TrackFrame { number: t, content });
             }
         }
-        let mut bufs =
-            self.cache.spares(usize::from(channels) * FRAME_BYTES_PER_CHANNEL, jobs.len()).into_iter();
-        let jobs: Vec<(TrackFrame, Option<Box<[u8]>>)> = jobs.into_iter().map(|j| (j, bufs.next())).collect();
+        let bufs = self.cache.buffers(usize::from(channels) * FRAME_BYTES_PER_CHANNEL, jobs.len());
+        let jobs: Vec<(TrackFrame, Option<FrameBuf>)> =
+            jobs.into_iter().zip(bufs.into_iter().map(Some)).collect();
         let decoded: Vec<Result<(u32, Frame), ReadError>> =
             if jobs.iter().any(|(j, _)| matches!(j.content, FrameContent::Dst(_))) {
                 self.pool.install(|| jobs.into_par_iter().map(|(j, b)| decode(j, channels, b)).collect())
@@ -644,12 +891,12 @@ impl Engine {
 const FRAME_BYTES_PER_CHANNEL: usize = 4704;
 
 /// Decodes one timeline position, interleaved, for the cache, into `buf` (`channels x 4704`
-/// bytes, from [`FrameCache::spares`], or a new one): what `scarletbook::audio::decode_frame` gives, but
+/// bytes, from [`FrameCache::buffers`], or a new one): what `scarletbook::audio::decode_frame` gives, but
 /// written into a buffer of the cache rather than a new one (#73).
-fn decode(job: TrackFrame, channels: u8, buf: Option<Box<[u8]>>) -> Result<(u32, Frame), ReadError> {
+fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, Frame), ReadError> {
     let bad = |m: &str| Err(ReadError::Io(io::Error::other(m.to_owned())));
     let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
-    let mut buf = buf.unwrap_or_else(|| vec![0u8; len].into_boxed_slice());
+    let mut buf = buf.unwrap_or_else(|| FrameBuf::heap(len));
     if !(1..=6).contains(&channels) || buf.len() != len {
         return bad("bad channel count");
     }
@@ -736,50 +983,68 @@ mod tests {
     use super::*;
 
     fn frame(len: usize) -> Arc<Frame> {
-        Arc::new(Frame { data: vec![0u8; len].into_boxed_slice(), fill: Fill::Audio, clips: 0 })
+        Arc::new(Frame { data: vec![0u8; len].into(), fill: Fill::Audio, clips: 0 })
+    }
+
+    fn key(i: u32) -> Key {
+        Key { disc: 1, area: 0, frame: i, kind: Kind::Dsd }
     }
 
     #[test]
     fn cache_is_bounded() {
         let c = FrameCache::new(10_000);
         for i in 0..10 {
-            c.insert(Key { disc: 1, area: 0, frame: i, kind: Kind::Dsd }, frame(4704));
+            c.insert(key(i), frame(4704));
         }
         assert!(c.bytes() <= 10_000);
-        assert!(c.get(&Key { disc: 1, area: 0, frame: 9, kind: Kind::Dsd }).is_some());
-        assert!(c.get(&Key { disc: 1, area: 0, frame: 0, kind: Kind::Dsd }).is_none());
-        c.insert(Key { disc: 1, area: 0, frame: 9, kind: Kind::Dsd }, frame(100));
-        // Only frame 9 fitted beside the spare buffers' share, and it was replaced.
-        assert_eq!(c.bytes(), 100);
+        assert!(c.get(&key(9)).is_some());
+        assert!(c.get(&key(0)).is_none());
+        c.insert(key(9), frame(100));
+        assert_eq!(c.bytes(), 4704 + 100);
+        // A slab does not fit in so small a cap: buffers come from the heap.
+        assert_eq!(c.mapped(), 0);
         let z = FrameCache::new(0);
         assert_eq!(z.buffers(8, 2).len(), 2);
-        z.insert(Key { disc: 1, area: 0, frame: 0, kind: Kind::Dsd }, frame(1));
+        z.insert(key(0), frame(1));
         assert_eq!(z.bytes(), 0);
     }
 
+    /// Frames of the pool: the mapping stays within the cap, slots are reused once their
+    /// frames are evicted and dropped, and an empty slab makes room for another length.
     #[test]
-    fn evicted_buffers_are_reused() {
-        // Room for 7 frames, and one spare buffer (an eighth of the cap).
-        let c = FrameCache::new(40_000);
-        let key = |i| Key { disc: 1, area: 0, frame: i, kind: Kind::Dsd };
-        for i in 0..9 {
-            c.insert(key(i), frame(4704));
+    fn pooled_frames_stay_within_the_cap() {
+        let cap = 4 << 20;
+        let c = FrameCache::new(cap);
+        let insert = |c: &FrameCache, i: u32, len: usize| {
+            let mut b = c.buffer(len);
+            b.fill(i as u8);
+            c.insert(key(i), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
+        };
+        for i in 0..2000 {
+            insert(&c, i, 9408);
+            assert!(c.mapped() <= cap && c.bytes() <= cap);
         }
-        // Frame 0 was evicted, and its buffer kept.
-        assert!(c.get(&key(0)).is_none());
-        assert_eq!(c.lock().spare.len(), 1);
-        assert_eq!(c.buffers(4704, 2).len(), 2);
-        assert!(c.lock().spare.is_empty());
-        // A buffer of another size is not handed out.
-        c.insert(key(9), frame(4704));
-        assert_eq!(c.lock().spare.len(), 1);
-        assert_eq!(c.buffers(100, 1)[0].len(), 100);
-        assert_eq!(c.lock().spare.len(), 1);
-        let big = FrameCache::new(1 << 20);
-        for i in 0..1000 {
-            big.insert(key(i), frame(4704));
+        // The cache is full of pooled frames, and the newest are intact.
+        assert!(c.bytes() > cap - (1 << 20));
+        let f = c.get(&key(1999)).unwrap();
+        assert!(matches!(f.data.home, Home::Slab { .. }));
+        assert!(f.data.iter().all(|&b| b == (1999 % 256) as u8));
+        drop(f);
+        // Another length takes over the cap as the old frames are evicted.
+        for i in 2000..2400 {
+            insert(&c, i, 28224);
+            assert!(c.mapped() <= cap);
         }
-        let g = big.lock();
-        assert!(g.bytes + g.spare_bytes <= 1 << 20 && g.spare_bytes <= spare_cap(1 << 20));
+        let f = c.get(&key(2399)).unwrap();
+        assert!(matches!(f.data.home, Home::Slab { .. }) && f.data.len() == 28224);
+        assert!(c.get(&key(1999)).is_none());
+        // A frame a reader holds keeps its slot until dropped; the cache stays usable.
+        let held: Vec<_> = (2300..2400).filter_map(|i| c.get(&key(i))).collect();
+        for i in 2400..2600 {
+            insert(&c, i, 28224);
+        }
+        assert!(c.mapped() <= cap);
+        drop(held);
+        drop(c);
     }
 }
