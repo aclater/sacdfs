@@ -474,7 +474,12 @@ sidecar or image.
   it being listed, since that is exactly what a scanner skips; so when the root's attributes are
   asked for (a scan starts there), at most once per refresh interval (2 s), `Tree::sweep`
   compares the mtime of every known source directory and sidecar folder (one `stat` each) and
-  re-reads only those that changed (their own entries; a new subdirectory in full). *Considered:*
+  re-reads only those that changed (their own entries; a new subdirectory in full). A listing
+  whose directory's shown mtime moved since it was made is compared with its source at once,
+  not after the refresh interval: in rc.2 the sweep could move a folder's mtime while its
+  re-read was still throttled, and an SMB client, which keeps a listing until the folder's mtime
+  moves, then kept the old listing under the new mtime for good (a new playlist never listed).
+  Change detection still uses each listing's stored source mtimes, never the shown one. *Considered:*
   inotify (not on NFS or SMB sources, which are the NAS case); re-reading a directory's
   descendants on its own `getattr` (the same `stat`s, made many times per scan).
 - *Deterministic, no wall clock:* the time is a maximum of source mtimes and fixed offsets, so a

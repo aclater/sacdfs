@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A new playlist or art file next to an image is listed again within about 2 seconds over SMB
+  (#101, #123). In 0.2.0-rc.2 its folder's time moved before its listing was read again, so an
+  SMB client kept the old listing and never showed the new file.
+
 ## [0.2.0-rc.2] - 2026-11-02
 
 ### Fixed
