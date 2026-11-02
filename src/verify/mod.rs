@@ -79,6 +79,10 @@ pub struct Args {
     /// Size of the cache of decoded frames, in MiB.
     #[arg(long, default_value_t = 64, value_name = "N")]
     pub cache_mb: usize,
+    /// Compare against files served with `--pauses` MODE: `kept` for extracts that include
+    /// each track's pause (then they are IDENTICAL, not IDENTICAL-PAUSE).
+    #[arg(long, default_value = "dropped", value_name = "MODE", value_parser = ["dropped", "kept"])]
+    pub pauses: String,
     /// No progress line on standard error.
     #[arg(short, long)]
     pub quiet: bool,
@@ -824,7 +828,11 @@ pub fn run(args: &Args) -> io::Result<Summary> {
 
     let threads = if args.threads == 0 { default_threads() } else { args.threads };
     let engine = Engine::new(threads, args.cache_mb.saturating_mul(1 << 20))?;
-    let tree = Tree::with_options(scanned, Tuning::default(), Output::dsf_only());
+    let tree = Tree::with_options(
+        scanned,
+        Tuning::default(),
+        Output { pauses_kept: args.pauses == "kept", ..Output::dsf_only() },
+    );
 
     // The images of every folder needed, opened up front, on this thread: a worker never
     // waits for another to open them.

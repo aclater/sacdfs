@@ -101,6 +101,7 @@ fn import_then_serve() {
 
     let tags_dir = dir.path().join("tags");
     let args = sacdfs::verify::Args {
+        pauses: "dropped".into(),
         source: lib.clone(),
         extracts: vec![ext.clone()],
         map: vec![ext.clone(), lib.clone()],
@@ -128,6 +129,7 @@ fn import_then_serve() {
     let again = sacdfs::tags_cli::import(
         &tags_dir,
         sacdfs::verify::Args {
+            pauses: "dropped".into(),
             source: lib.clone(),
             extracts: vec![ext.clone()],
             map: vec![ext.clone(), lib.clone()],

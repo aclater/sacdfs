@@ -240,6 +240,7 @@ fn setup(dir: &Path) -> (PathBuf, PathBuf, BTreeMap<String, Status>) {
 
 fn args(source: &Path, extracts: Vec<PathBuf>, map: Vec<PathBuf>, output: Option<PathBuf>) -> Args {
     Args {
+        pauses: "dropped".into(),
         source: source.to_owned(),
         extracts,
         map,
