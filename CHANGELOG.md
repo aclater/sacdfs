@@ -6,33 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.2.0-rc.4] - 2026-11-02
+## [0.2.0] - 2026-11-02
 
-### Fixed
-
-- A new playlist or art file is listed in a folder that was not listed since the mount (#101,
-  #123). In 0.2.0-rc.3 such a folder's first listing showed it as it was at mount, and the new
-  file never appeared.
-
-## [0.2.0-rc.3] - 2026-11-02
-
-### Fixed
-
-- A new playlist or art file next to an image is listed again within about 2 seconds over SMB
-  (#101, #123). In 0.2.0-rc.2 its folder's time moved before its listing was read again, so an
-  SMB client kept the old listing and never showed the new file.
-
-## [0.2.0-rc.2] - 2026-11-02
-
-### Fixed
-
-- A folder's modification time is now the newest of everything shown below it, up to the
-  mount's root (#123), not its source folder's own. Roon, which skips folders whose time did
-  not change, missed new output versions (and so new tags) and new playlists or art deeper
-  down; a plain rescan now finds them. Times stay the same across remounts; folders keep their
-  inode numbers and NFS handles. A change while mounted shows within about 2 seconds.
-
-## [0.2.0-rc.1] - 2026-11-01
+Tested as four release candidates, the last of them (rc.4) on a NAS with Roon: memory
+during a full-library import halved (325 MB at the default cache, 60 MB at `--cache-mb 16`,
+against 631 and 92 MB in 0.1), folder art in every area folder, multichannel discs as their
+own albums, and new files and changed tags found by scanners that skip unchanged folders.
+rc.2 to rc.4 fixed how folder modification times follow changes below them (#123) and two
+regressions of new-file pickup (#101) that the NAS tests found.
 
 ### Added
 
@@ -100,6 +81,22 @@ All notable changes to sacdfs are recorded here. The format follows
   output versions moved to 2, so every DSF and WAV file shows a new mtime and NFS generation.
 - The persistent seek index holds scarletbook's seek hints (format version 2): a cache written
   by sacdfs 0.1 is ignored and rewritten, and 0.1 ignores 0.2's.
+
+### Fixed
+
+- A folder's modification time is now the newest of everything shown below it, up to the
+  mount's root (#123), not its source folder's own. Roon, which skips folders whose time did
+  not change, missed new output versions (and so new tags) and new playlists or art deeper
+  down; a plain rescan now finds them. Times stay the same across remounts; folders keep their
+  inode numbers and NFS handles. A change while mounted shows within about 2 seconds.
+
+- A new playlist or art file next to an image is listed again within about 2 seconds over SMB
+  (#101, #123). In 0.2.0-rc.2 its folder's time moved before its listing was read again, so an
+  SMB client kept the old listing and never showed the new file.
+
+- A new playlist or art file is listed in a folder that was not listed since the mount (#101,
+  #123). In 0.2.0-rc.3 such a folder's first listing showed it as it was at mount, and the new
+  file never appeared.
 
 ### Known issues
 
@@ -301,10 +298,7 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.4...HEAD
-[0.2.0-rc.4]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.3...v0.2.0-rc.4
-[0.2.0-rc.3]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.2...v0.2.0-rc.3
-[0.2.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.2.0-rc.1...v0.2.0-rc.2
-[0.2.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0-rc.1
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aclater/sacdfs/releases/tag/v0.1.0
