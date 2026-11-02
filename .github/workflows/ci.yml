@@ -1,5 +1,5 @@
 # CI: formatting, clippy, the tests (including the FUSE tests that mount the corpus), and a
-# check that the README's options table matches `sacdfs --help`.
+# check that the options table (docs/options.md) matches `sacdfs --help`.
 name: ci
 
 on:
@@ -93,8 +93,8 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - run: cargo build --locked --quiet
-      - name: The README's options table matches sacdfs --help
-        run: target/debug/sacdfs --help | python3 -I .github/scripts/check-readme-options.py README.md
+      - name: The options table (docs/options.md) matches sacdfs --help
+        run: target/debug/sacdfs --help | python3 -I .github/scripts/check-readme-options.py docs/options.md
 
   private-names:
     # Commit identities and tracked files must carry no private details (home.arpa names,
