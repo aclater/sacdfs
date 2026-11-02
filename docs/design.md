@@ -127,9 +127,8 @@ before. Two changes, each needed:
   `/proc/PID/pagemap`) after the 271-image replay: about 45 to 50 MiB on a 32-thread host,
   none of it the cache's:
   - about 7 MiB for the program at mount;
-  - about 16 MiB for the images and their files once listed (the tree, two copies of each
-    image's TOC: scarletbook's and the one `Disc` keeps, its text and track lists), about
-    60 KB per image. Raw-sector images (2 054 or 2 064 bytes per sector) also keep an 80 KiB
+  - about 16 MiB for the images and their files once listed (the tree and each image's TOC, its text and track lists; one copy since #136, was
+    two: scarletbook's and one `Disc` kept), about 60 KB per image before, about half now. Raw-sector images (2 054 or 2 064 bytes per sector) also keep an 80 KiB
     read buffer in scarletbook (the replay's library had 54 of them: 9 MiB);
   - about 18 MiB more during the replay: each decoder thread's DST tables and buffers (roughly
     300 to 350 KB per thread that decoded DST; 17 threads here), the seek indexes' pending readings
@@ -137,10 +136,14 @@ before. Two changes, each needed:
   - the FUSE threads' 16 MiB receive buffers are allocated but almost never touched (under
     1 MiB resident in all).
 
-  It grows with the number of images listed (about 60 KB each) and with decoder threads,
-  not with the cache, and does not depend on `--max-open-images`. *Not done here:* keeping
-  one TOC per image instead of two (`Disc::toc` becoming a method over scarletbook's copy)
-  needs changes in `tree.rs` and the tag code, left for after the tag work (#121).
+  It grows with the number of images listed (see above) and with decoder threads,
+  not with the cache, and does not depend on `--max-open-images`.
+- **One TOC per image** (#136). `Disc::toc()` is a method over scarletbook's copy instead of a
+  clone held in a field. *Why:* the owner's target is peak RSS within the cache cap plus 50 MB
+  (#73), and the second copy was about 60 KB per image (16 MB over 271 images). *Alternative:*
+  an `Arc<Toc>` shared by `Disc` and the library: not possible without changing scarletbook,
+  and the borrow from the library's disc costs nothing per read. *Trade-off:* the TOC is
+  borrowed from the library's disc, so it lives as long as the `Disc`, as before.
 
 ## Layout
 

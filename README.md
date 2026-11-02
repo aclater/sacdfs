@@ -244,6 +244,12 @@ How fast each one is, against the project's targets: [docs/performance.md](docs/
 - A damaged image shows up as missing directories or files, filled audio (with a warning in
   the log) or an I/O error on one file. It never stops the mount.
 
+## Releases
+
+What each minor version brought, and what is in progress:
+[RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md). Point releases are in the
+[changelog](CHANGELOG.md).
+
 ## How it works
 
 [docs/design.md](docs/design.md) describes the architecture and the reason for each decision:

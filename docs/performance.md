@@ -418,6 +418,15 @@ local images (page cache), generic build, 32-thread machine under `benchlock`.
   MiB). Beyond 4 readers the aggregate stays flat and each reader's share falls evenly.
 - Memory stays under `--cache-mb` plus a fixed amount at 8 readers.
 
+**One TOC per image (#136).** A `Disc` no longer clones scarletbook's TOC. Replay of the five
+bench images, each linked 60 times (300 images, 5 580 files, `--cache-mb 16`,
+`scripts/import-replay.py`): peak RSS 1496 MiB before, 1492 MiB after, about 14 KB per image.
+That is less than the 60 KB average of #125's library because these five discs have few tracks
+(the saving is the size of one TOC, which grows with the tracks and their text); the larger
+figure is not re-measured. The 1.4 GB base here is the same in both runs and comes from this
+rig's repeated images, not from the TOC. The read path is untouched (an accessor replaces a
+field), and the DSF gate stays 93/93.
+
 ## Mount, listing and tag-walk cost
 
 | What | Measured |

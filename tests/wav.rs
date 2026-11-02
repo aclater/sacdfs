@@ -125,7 +125,7 @@ fn check_case(case: &Value, rate: PcmRate, tuning: Tuning, cache: usize) -> usiz
         assert_eq!(w.data.end as u64 % wav::PAGE, 0);
         assert_eq!(u32::from(w.channels), u32::from(f.layout.channels));
         assert_eq!(w.rate, rate.hz());
-        assert_eq!(w.mask, wav::channel_mask(f.disc.toc.areas[f.area].loudspeaker_layout()));
+        assert_eq!(w.mask, wav::channel_mask(f.disc.toc().areas[f.area].loudspeaker_layout()));
         assert_eq!(w.mask.count_ones(), u32::from(w.channels));
         assert_eq!(w.samples, u64::from(f.layout.frames) * spf);
         // The same ID3v2.4 tag as the DSF file, and INFO fields that agree with it.
