@@ -6,6 +6,17 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ls -l` over NFS no longer prints "Unknown error 524"** (#174). sacdfs answered
+  extended-attribute requests with `ENOSYS` (since 0.1.1, #61), which NFS-Ganesha passed on as
+  "not supported" and the Linux NFS client showed as error 524 on every entry of `ls -l` and
+  `getfattr -d`. sacdfs now says there are none: an empty attribute list, and "No such
+  attribute" for any name. The cost is one cheap request per entry of an `ls -l`
+  on the mount (1245 on the corpus, about 4 µs each, against 1 before); a scan that stats and
+  opens every file sends none, as before, and so does Samba as the container sets it up. The
+  container test now runs `ls -lR` over SMB and NFS and `getfattr -R -d` over NFS.
+
 ## [0.4.0-rc.3] - 2026-11-02
 
 ### Fixed

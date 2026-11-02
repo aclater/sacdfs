@@ -1178,14 +1178,28 @@ Two kinds of probe are answered so that the kernel stops asking (#61):
   code's) still fail with `ENOENT` when the inode is unknown, so a handle to something gone
   still gets `ESTALE`. Measured with fuser's request log on a 24-track area: three `stat`s of
   each of four missing names sent 3 `LOOKUP`s each before, 1 after.
-- **Extended attributes:** `getxattr` and `listxattr` answer `ENOSYS`. The kernel then
-  remembers that the filesystem has none and answers every later call itself, with
-  `EOPNOTSUPP`, the answer of a filesystem without xattrs. *Why not `ENODATA` and an empty list,
-  as before:* those are answers about one file, so the kernel asked again for every file:
-  `ls -l` sends a `LISTXATTR` per entry. Measured on the same area (48 files): two `ls -l` and a
-  `getfattr -d` sent 49, 49 and 48 `LISTXATTR` before; 1 `LISTXATTR` and 1 `GETXATTR` in the
-  first `ls -l`, then none. Samba (`ea support = no` in the container) and NFS-Ganesha (no
-  xattr support configured) read the same files through the container test.
+- **Extended attributes (#174, after #61):** `listxattr` answers an empty list and `getxattr`
+  answers `ENODATA` ("no such attribute"), at once, without touching the tree. *Why not
+  `ENOSYS`, as from 0.1.1 (#61) to 0.4.0-rc.3:* the kernel remembers `ENOSYS` for the whole
+  mount and answers every later call itself, with `EOPNOTSUPP`. That was cheap locally (one
+  request in all), but NFS-Ganesha forwards an NFSv4.2 client's `LISTXATTRS` to the mount,
+  turns `EOPNOTSUPP` into `NFS4ERR_NOTSUPP`, and the Linux NFS client returns that as its
+  kernel-internal `ENOTSUPP` (524), which `ls` prints as "Unknown error 524" for every entry
+  of `ls -l`. `security.selinux` is not involved: the client's own security module answers
+  it, locally and over NFS, and no `security.*` request reached sacdfs in the measurements
+  below. *Why not configure Ganesha instead:* Ganesha 9.16 (the image's) has no setting that
+  stops it advertising or forwarding xattrs for an FSAL_VFS export (its export options cover
+  ACLs and security labels only), and dropping NFSv4.2 would break the documented
+  `vers=4.2` mount. *Why not an empty list with `ENOSYS` for `getxattr`:* it would keep
+  named `getxattr` calls at one request in all, but `getfattr -n` over NFS would still fail
+  with 524. *The cost, measured* with fuser's request log on the corpus (914 files, 331
+  folders): a scanner's `stat` and `open` of every file, twice, sends no xattr request either
+  way; `ls -lR` sends one `LISTXATTR` per entry (1245, against 1 then 0 with `ENOSYS`), about
+  4 µs each (10 runs of `ls -lR`: 27 ms against 22 ms, debug build); `getfattr -n user.x` on
+  every entry sends 1245 `GETXATTR` each time (1 in all with `ENOSYS`). Samba, set up as the
+  container sets it up (`ea support = no`, `store dos attributes = no`), sent none for a
+  recursive listing of the share and reads of a folder's files. The CI share test runs
+  `ls -lR` over SMB and NFS and `getfattr -R -d` over NFS, and fails on any error line.
 
 **Filesystem size (#62).** `statfs` reports the size of the filesystem holding SOURCE, all of
 it used (0 free, 0 available), the number of entries made so far as inodes, and 0 free
