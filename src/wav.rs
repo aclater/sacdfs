@@ -243,15 +243,75 @@ pub fn needs_rf64(layout: &Layout, trailer_len: u64) -> bool {
     header_len(layout) - 8 + layout.data_len() + trailer_len > u64::from(u32::MAX)
 }
 
+/// A file's header as it is held in memory: `head`, then `zeros` zero bytes, then `tail`
+/// (#150). A WAV file's header is mostly the `JUNK` chunk's zero padding (about 256 KiB),
+/// which is not stored.
+///
+/// *Why:* every listed WAV file keeps its header for as long as it is shown, and held whole
+/// the padding was about 256 KiB per WAV file: 23 MiB of the 32 MiB a mount of the five bench
+/// images held once listed, and it grows with the library.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Header {
+    head: Vec<u8>,
+    zeros: u64,
+    tail: Vec<u8>,
+}
+
+impl Header {
+    /// A header of exactly these bytes.
+    pub fn from_bytes(bytes: Vec<u8>) -> Header {
+        Header { head: bytes, zeros: 0, tail: Vec::new() }
+    }
+
+    /// Its length in bytes.
+    pub fn len(&self) -> u64 {
+        self.head.len() as u64 + self.zeros + self.tail.len() as u64
+    }
+
+    /// Whether it has no bytes.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Appends bytes `[start, end)` of the header to `out` (`end` at most its length).
+    pub fn extend_into(&self, start: u64, end: u64, out: &mut Vec<u8>) {
+        let h = self.head.len() as u64;
+        let z = h + self.zeros;
+        if start < h {
+            out.extend_from_slice(&self.head[start as usize..end.min(h) as usize]);
+        }
+        let (zs, ze) = (start.max(h), end.min(z));
+        if zs < ze {
+            out.resize(out.len() + (ze - zs) as usize, 0);
+        }
+        let (ts, te) = (start.max(z), end.min(self.len()));
+        if ts < te {
+            out.extend_from_slice(&self.tail[(ts - z) as usize..(te - z) as usize]);
+        }
+    }
+
+    /// The whole header.
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut v = Vec::with_capacity(self.len() as usize);
+        self.extend_into(0, self.len(), &mut v);
+        v
+    }
+}
+
 /// The header of a file with `layout`, of an area with loudspeaker layout `speakers` (for
 /// the channel mask), and a trailer of `trailer_len` bytes: everything before the first
 /// audio byte ([`header_len`] bytes).
 pub fn header(layout: &Layout, speakers: LoudspeakerLayout, trailer_len: u64) -> Vec<u8> {
+    header_parts(layout, speakers, trailer_len).to_vec()
+}
+
+/// [`header`], with its padding not stored ([`Header`]).
+pub fn header_parts(layout: &Layout, speakers: LoudspeakerLayout, trailer_len: u64) -> Header {
     let rf64 = needs_rf64(layout, trailer_len);
     let header_len = header_len(layout);
     let data_len = layout.data_len();
     let riff_size = header_len - 8 + data_len + trailer_len;
-    let mut h = Vec::with_capacity(header_len as usize);
+    let mut h = Vec::with_capacity(128);
     if rf64 {
         h.extend_from_slice(b"RF64");
         h.extend_from_slice(&u32::MAX.to_le_bytes());
@@ -282,11 +342,13 @@ pub fn header(layout: &Layout, speakers: LoudspeakerLayout, trailer_len: u64) ->
     chunk(&mut h, b"fmt ", &fmt);
     // Padding up to the data chunk header; even, since the data length is.
     let junk = header_len as usize - h.len() - 8 - 8;
-    chunk(&mut h, b"JUNK", &vec![0u8; junk]);
-    h.extend_from_slice(b"data");
+    h.extend_from_slice(b"JUNK");
+    h.extend_from_slice(&(junk as u32).to_le_bytes());
+    let mut tail = Vec::with_capacity(8);
+    tail.extend_from_slice(b"data");
     let data_size = if rf64 { u32::MAX } else { data_len as u32 };
-    h.extend_from_slice(&data_size.to_le_bytes());
-    h
+    tail.extend_from_slice(&data_size.to_le_bytes());
+    Header { head: h, zeros: junk as u64, tail }
 }
 
 #[cfg(test)]
@@ -307,6 +369,23 @@ mod tests {
 
     fn layout(channels: u8, frames: u32) -> Layout {
         Layout { channels, frames, samples_per_frame: 2352, rate: 176_400 }
+    }
+
+    #[test]
+    fn sparse_header_reads_as_the_whole_one() {
+        let l = layout(2, 1000);
+        let parts = header_parts(&l, LoudspeakerLayout::Stereo, 100);
+        let whole = parts.to_vec();
+        assert_eq!(whole.len() as u64, header_len(&l));
+        assert_eq!(&whole[whole.len() - 8..whole.len() - 4], b"data");
+        // Only the chunks around the padding are stored.
+        assert!(parts.head.len() + parts.tail.len() < 256);
+        let n = whole.len() as u64;
+        for (s, e) in [(0, n), (0, 12), (10, 80), (70, 5000), (5000, n - 4), (n - 9, n), (n, n), (100, 100)] {
+            let mut out = vec![7u8];
+            parts.extend_into(s, e, &mut out);
+            assert_eq!(&out[1..], &whole[s as usize..e as usize], "{s}..{e}");
+        }
     }
 
     #[test]

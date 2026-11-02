@@ -44,7 +44,7 @@ COPY COPYING /usr/share/licenses/sacdfs/COPYING
 # All settings are environment variables; see docs/deployment.md.
 ENV SACDFS_SOURCE=/images \
     SACDFS_FORMATS=dsf,wav \
-    SACDFS_CACHE_MB=256 \
+    SACDFS_CACHE_MB=32 \
     SACDFS_INDEX_CACHE=/cache \
     SMB=1 \
     NFS=1 \

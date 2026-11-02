@@ -63,13 +63,14 @@ next to an image was listed at once and imported by a Force Rescan (adds 51, 5,8
 (3,211 modifications and 446 adds, the new per-area art); it shows 46 multichannel areas as
 separate albums, under its own canonical titles, so the suffix is not visible there (Roon
 already split them before [#97](https://github.com/aclater/sacdfs/issues/97)); and playback
-continued through a sacdfs restart. A library import of 271 images and 3,216 tracks was replayed against 0.1.0 for the memory
-figures in the deployment guide.
+continued through a sacdfs restart. A library import of 271 images and 3,216 tracks was replayed against 0.1.0 for #73's memory
+figures; the deployment guide's figures are now the replay of #150 over the bench images.
 
 **Recommended setup.**
 - `SACDFS_FORMATS=dsf` (`--format dsf`): with both formats every track appears twice. Roon
   plays DSD and converts it itself.
-- `SACDFS_FLATTEN=1`; `SACDFS_CACHE_MB=16` on a NAS.
+- `SACDFS_FLATTEN=1`; the default `SACDFS_CACHE_MB` (32 since #150; these tests ran with 16,
+  which also works).
 - Give sacdfs a fixed address on a Docker network of its own so that Roon can reach SMB on
   port 445, and give Roon's container `cap_add: [SYS_ADMIN, DAC_READ_SEARCH]` and
   `security_opt: [apparmor=unconfined]` so it may mount the share. The
@@ -165,7 +166,7 @@ transcode (FFmpeg, on request) of a 5.1 DST track returned the whole track (10.1
 7.6 s, with sacdfs at 20 CPU-seconds.
 
 **Recommended setup.** `--format dsf` (or `dsf,wav` if you want both), `--flatten`,
-`--cache-mb 16` on a NAS. Keep the default `(Multichannel)` album suffix if you want Stereo and
+the default `--cache-mb` (32 since #150; tested with 16). Keep the default `(Multichannel)` album suffix if you want Stereo and
 Multichannel as separate albums.
 
 ## Lyrion / Logitech Media Server
@@ -266,10 +267,14 @@ documented but have no test report on #82.
 - **Deploy server-side on the NAS.** sacdfs runs next to the images in the container and the
   clients see ordinary files over SMB or NFS. A cold seek costs about 5 to 6 ms over SMB on a
   gigabit LAN ([deployment](deployment.md)).
-- **Use `--cache-mb 16` on a NAS.** All the 0.3.0-rc.1 server tests ran with it, with no
-  errors and sacdfs at 24 to 60 MiB RSS. In MPD's first scan with `dsf,wav`, sacdfs peaked at 300 MiB RSS at the
-  default 256 MiB cache against 58 MiB at 16 MiB, and the scan took the same 5.6 s. See
-  [Memory](deployment.md#memory) and [#94](https://github.com/aclater/sacdfs/issues/94).
+- **The default cache suits a NAS.** Since #150 the default `--cache-mb` is 32 (was 256), and
+  a Plex-like scan of the bench images peaks at 46 MiB RSS (0.3.0 at its default: 103 MiB), a
+  Roon-like import replay at 45 MiB (134 MiB). The 0.3.0-rc.1 server tests ran with
+  `--cache-mb 16`, with no errors and sacdfs at 24 to 60 MiB RSS; in MPD's first scan with
+  `dsf,wav`, sacdfs peaked at 300 MiB RSS at the old default of 256 MiB against 58 MiB at 16, and
+  the scan took the same 5.6 s. 16 still works; 32 keeps several fast readers of one image at
+  full speed. See [Memory](deployment.md#memory) and
+  [#94](https://github.com/aclater/sacdfs/issues/94).
 - **Containers on a host that mounts sacdfs:** bind the mount's *parent* directory with
   `rslave` (`-v /srv/sacd:/media:ro,rslave`), not the mount point. Tested on 0.3.0-rc.1 with
   rootless Podman: after sacdfs was killed and started again, a container that bound the mount

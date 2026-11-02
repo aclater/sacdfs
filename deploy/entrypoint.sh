@@ -15,7 +15,7 @@ on() { case "${1,,}" in 1 | yes | true | on) return 0 ;; *) return 1 ;; esac; }
 # --- sacdfs options ---------------------------------------------------------------------
 SOURCE=${SACDFS_SOURCE:-/images}
 [ -e "$SOURCE" ] || die "SACDFS_SOURCE $SOURCE does not exist (mount the images there, read-only)"
-args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}" --cache-mb "${SACDFS_CACHE_MB:-256}")
+args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}" --cache-mb "${SACDFS_CACHE_MB:-32}")
 [ -n "${SACDFS_THREADS:-}" ] && args+=(--threads "$SACDFS_THREADS")
 [ -n "${SACDFS_MAX_OPEN_IMAGES:-}" ] && args+=(--max-open-images "$SACDFS_MAX_OPEN_IMAGES")
 [ -n "${SACDFS_REQUEST_TIMEOUT:-}" ] && args+=(--request-timeout "$SACDFS_REQUEST_TIMEOUT")
