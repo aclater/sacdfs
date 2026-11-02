@@ -6,6 +6,16 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **scarletbook and scarletbook-pcm 0.5.3 → 0.5.6** (#128). Output bytes are unchanged: the DSF
+  gate (all 93 tracks), the golden PCM and DSF hashes and the real-disc WAV test pass. Straight
+  reads through the mount, against 0.2.0 (means of 3, same machine): plain-DSD stereo WAV
+  2.14 s against 2.63 s (-19 %), plain-DSD DSF 1.28 s against 1.65 s (-22 %), DST stereo WAV
+  3.80 s against 3.83 s, DST stereo DSF 3.46 s against 3.55 s, DST 6-channel DSF 11.68 s
+  against 11.89 s. **This supersedes 0.2.0's known issue** (plain-DSD WAV about 29 % slower
+  than in 0.1.1, scarletbook-rs#216): the plain-DSD WAV read is back at 0.1.1's speed.
+
 ## [0.2.0] - 2026-11-02
 
 Tested as four release candidates, the last of them (rc.4) on a NAS with Roon: memory
