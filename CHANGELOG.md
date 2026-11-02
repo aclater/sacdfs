@@ -20,6 +20,13 @@ All notable changes to sacdfs are recorded here. The format follows
   modification time of the disc's folders and every folder above, as a new sidecar does, so
   that scanners that skip unchanged folders (Roon) find it. See the user guide, "Your own tags".
 
+### Fixed
+
+- A sacdfs that got its stop signal after its mount had already been unmounted from outside
+  (`fusermount3 -u`) could unmount the next sacdfs mounted on the same path (#54). The kernel
+  reuses a freed device number at once, and sacdfs told its own mount by that number alone;
+  it now also checks that its own FUSE connection is still up.
+
 ## [0.2.0] - 2026-11-02
 
 Tested as four release candidates, the last of them (rc.4) on a NAS with Roon: memory

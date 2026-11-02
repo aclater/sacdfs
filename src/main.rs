@@ -4,7 +4,7 @@
 
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -373,9 +373,13 @@ fn run(args: Args) -> io::Result<()> {
             return Err(e);
         }
     };
-    // This mount's identity: its device number, unique while the mount exists. Read from
-    // the mount table, which asks the file system nothing (a stat would wait for the session).
-    let own = top_mount_device(&mountpoint);
+    // This mount's identity: its device number, read from the mount table (which asks the
+    // file system nothing; a stat would wait for the session), plus its FUSE connection,
+    // which tells whether the number is still this mount's (#54).
+    let own = Arc::new(OwnMount {
+        dev: top_mount_device(&mountpoint),
+        conn: session.as_fd().try_clone_to_owned()?,
+    });
     let at = mountpoint.clone();
     let mine = own.clone();
     let detached = Arc::new(AtomicBool::new(false));
@@ -385,7 +389,7 @@ fn run(args: Args) -> io::Result<()> {
             // Unmounting goes by path, so only while the mount on top at the path is still
             // this one: once it was unmounted or detached, or something else was mounted
             // over it, the path names another mount, which must be left alone (#51).
-            if mine.is_none() || top_mount_device(&at) != mine {
+            if !mine.is_on_top(&at) {
                 log::warn!(
                     "signal {sig}: {} is no longer this mount (unmounted, or another is mounted \
                      over it): not unmounting it; sacdfs stops when its mount is gone",
@@ -399,7 +403,7 @@ fn run(args: Args) -> io::Result<()> {
                 // Busy (open files, or an NFS server exporting the mount): detach it, as
                 // fusermount3 does for users other than root. sacdfs then serves the files
                 // still open and exits when the last is closed.
-                if top_mount_device(&at) != mine {
+                if !mine.is_on_top(&at) {
                     log::warn!("unmount: {e}; {} is no longer this mount: not detaching it", at.display());
                     return;
                 }
@@ -434,10 +438,9 @@ fn run(args: Args) -> io::Result<()> {
     log::info!("mounted {} on {}", source.display(), mountpoint.display());
     let result = serve(session);
     let failed = result.as_ref().err().filter(|e| e.raw_os_error() != Some(libc::ECONNABORTED));
-    if let Some(e) = failed.filter(|_| own.is_some() && top_mount_device(&mountpoint) == own) {
+    if let Some(e) = failed.filter(|_| own.is_on_top(&mountpoint)) {
         // The session failed while still mounted (an error, not an unmount): don't leave a
-        // dead mount behind. The device number is still this mount's: the mount still
-        // exists, so no other can have it.
+        // dead mount behind.
         log::warn!("session ended: {e}; detaching {}", mountpoint.display());
         let _ = lazy_unmount(&mountpoint);
     }
@@ -799,6 +802,40 @@ fn outside_path(path: &Path) -> PathBuf {
         (Some(parent), Some(name)) => parent.canonicalize().map_or_else(|_| abs.clone(), |p| p.join(name)),
         _ => abs,
     }
+}
+
+/// The identity of sacdfs's own mount, to unmount by path only while the path is still it.
+///
+/// The device number alone is not enough (#54): the kernel hands a freed number to the next
+/// mount at once, so after an unmount from outside (`fusermount3 -u`) a new mount on the
+/// same path usually has the old one's number, and an old sacdfs that then got a signal
+/// unmounted the new mount. The FUSE connection closes the gap: the kernel aborts it when
+/// the mount's superblock goes, before the number is freed, so while the connection is
+/// still up the number is this mount's and no other's.
+struct OwnMount {
+    /// The device number read from the mount table right after mounting.
+    dev: Option<String>,
+    /// A duplicate of the session's `/dev/fuse` descriptor.
+    conn: OwnedFd,
+}
+
+impl OwnMount {
+    /// Whether the mount on top at `at` is this one. The mount table is read first and the
+    /// connection checked after: up then, the number read was this mount's.
+    fn is_on_top(&self, at: &Path) -> bool {
+        self.dev.is_some() && top_mount_device(at) == self.dev && fuse_connected(&self.conn)
+    }
+}
+
+/// Whether the FUSE connection of `/dev/fuse` descriptor `fd` is still up: the device
+/// reports `POLLERR` once the connection is aborted (unmounted, or the mount went away).
+/// `poll` with no wait asks the file system nothing.
+#[allow(unsafe_code)]
+fn fuse_connected(fd: &OwnedFd) -> bool {
+    let mut p = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    // SAFETY: one valid pollfd, an open descriptor, no wait.
+    let n = unsafe { libc::poll(&mut p, 1, 0) };
+    n >= 0 && p.revents & (libc::POLLERR | libc::POLLNVAL) == 0
 }
 
 /// The device number (`major:minor`) of the mount on top at `at`, if `at` is a mount point.
