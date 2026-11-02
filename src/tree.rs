@@ -985,7 +985,7 @@ impl Tree {
     /// moves the mtime of every directory above it (#123) without any of them being listed:
     /// a scanner that skips unchanged directories from the top then finds it. A changed
     /// directory is read again (its own entries, and any new subdirectory in full) and its
-    /// stamp passed up ([`Tree::bump`]). Called when the root's attributes are asked for,
+    /// stamp passed up (`Tree::bump`). Called when the root's attributes are asked for,
     /// which a scan does first. Nothing on a mount that does not re-read (#101).
     pub fn sweep(&self) {
         if !self.watching {
