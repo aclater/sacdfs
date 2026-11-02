@@ -297,8 +297,8 @@ fn run(args: Args) -> io::Result<()> {
     );
 
     // Before daemonizing, which changes the working directory.
-    if let Some(dir) = cache_dir {
-        open_index_cache(&dir);
+    if let Some(dir) = &cache_dir {
+        open_index_cache(dir);
     }
 
     // Become a daemon before any thread exists; the parent waits for the mount.
@@ -327,11 +327,14 @@ fn run(args: Args) -> io::Result<()> {
     let tree = Tree::with_options(root, Tuning::default(), output)
         .with_flatten(args.flatten)
         .with_pcm(&pcm)
-        .excluding(&mountpoint);
+        .excluding(&mountpoint)
+        // The tags files' state is kept with the seek index (#81).
+        .with_tag_watch(cache_dir.as_ref().map(|d| d.join("tag-keys")));
     // A directory SOURCE is re-read when it changes (#101); a single image has no directory.
     let tree = Arc::new(if source.is_dir() { tree.watching(&args.sidecars) } else { tree });
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
+    let tags_tree = tree.clone();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;
 
     let mut config = Config::default();
@@ -438,6 +441,7 @@ fn run(args: Args) -> io::Result<()> {
         log::warn!("session ended: {e}; detaching {}", mountpoint.display());
         let _ = lazy_unmount(&mountpoint);
     }
+    tags_tree.save_tag_watch();
     if let Some(cache) = index_cache::global() {
         match cache.flush() {
             Ok(n) => log::debug!("seek index cache: {n} entries written"),
@@ -1070,12 +1074,14 @@ mod tests {
             dirs: vec![],
             images: vec!["/s/m/x.iso".into()],
             sidecars: vec![],
+            stamp: Default::default(),
         };
         let root = SourceDir {
             path: "/s".into(),
             dirs: vec![("m".into(), leaf)],
             images: vec!["/s/a.iso".into()],
             sidecars: vec![],
+            stamp: Default::default(),
         };
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/m")).is_err());
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/n")).is_ok());

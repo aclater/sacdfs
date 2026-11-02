@@ -61,8 +61,8 @@ after the share test (SMB and NFS) passed on that very image, on a native runner
 architecture:
 
 ```sh
-docker pull ghcr.io/aclater/sacdfs:0.1.1       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.1.1 -R aclater/sacdfs
+docker pull ghcr.io/aclater/sacdfs:0.2.0       # a release; :latest is the newest
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.2.0 -R aclater/sacdfs
 ```
 
 The attestation shows which commit and workflow built it. In the commands below, use
@@ -279,7 +279,7 @@ The names of screens and fields may differ between releases.
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.1.1
+       image: ghcr.io/aclater/sacdfs:0.2.0
        restart: unless-stopped
        devices:
          - /dev/fuse

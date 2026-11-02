@@ -514,6 +514,185 @@ pub fn lookup(toc: &Toc) -> Option<Arc<DiscTags>> {
     store.get(toc)
 }
 
+/// Whether the process has a tags directory (`--tags`).
+pub fn installed() -> bool {
+    STORE.read().unwrap_or_else(|p| p.into_inner()).is_some()
+}
+
+/// The key of the disc with `toc`, when the process has a tags directory.
+pub fn key_of(toc: &Toc) -> Option<String> {
+    installed().then(|| disc_key(toc))
+}
+
+/// What a tags file is like now, to tell an edit (live reload): its modification time and
+/// size; `None` if there is none (or no tags directory). One `stat`.
+pub type FileState = Option<(SystemTime, u64)>;
+
+/// The [`FileState`] of the tags file of the disc with key `key`.
+pub fn state_of(key: &str) -> FileState {
+    let store = STORE.read().unwrap_or_else(|p| p.into_inner()).clone()?;
+    let meta = fs::symlink_metadata(store.path(key)).ok().filter(fs::Metadata::is_file)?;
+    Some((meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
+}
+
+/// The tags files of a directory: key to [`FileState`], from one listing (one `stat` per
+/// tags file).
+fn list_dir(dir: &Path) -> HashMap<String, (SystemTime, u64)> {
+    let Ok(rd) = fs::read_dir(dir) else { return HashMap::new() };
+    rd.filter_map(Result::ok)
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let key = name.strip_suffix(".toml")?;
+            if key.len() != 32 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
+            let meta = fs::symlink_metadata(e.path()).ok().filter(fs::Metadata::is_file)?;
+            Some((key.to_owned(), (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len())))
+        })
+        .collect()
+}
+
+/// The first line of the file of [`Watch`].
+const WATCH_HEADER: &str = "sacdfs tag-keys 1";
+
+/// The tags files of the images of a mount (#81), watched so that adding, editing or
+/// removing one moves the mtime of its image's directories and of every directory above,
+/// as a new sidecar does (#123): scanners that skip unchanged folders (Roon) then find the
+/// files whose tags changed.
+///
+/// *Why kept across mounts* (in the seek index's cache directory, by a hash of each image's
+/// path, never the path): a disc's key needs its TOC, and an image is opened only when its
+/// directory is listed. Without it, a tags file edited while sacdfs was stopped, or for an
+/// image not opened yet, would move nothing above the image, and a scanner that skips
+/// unchanged folders would never open it. A stale entry (an image replaced under the same
+/// path) only moves a few mtimes once; the image's own change moves them anyway.
+#[derive(Debug, Default)]
+pub struct Watch {
+    images: HashMap<PathBuf, (String, FileState)>,
+    /// The tags directory's mtime when last listed; `listed` false until then.
+    dir_mtime: Option<SystemTime>,
+    listed: bool,
+    file: Option<PathBuf>,
+    dirty: bool,
+}
+
+/// The name of an image in the file of [`Watch`]: a hash of its path.
+fn path_hash(p: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_bytes())[..16])
+}
+
+impl Watch {
+    /// The watch of `images` (the mount's image files), from `file` (kept across mounts;
+    /// `None`: not kept). A file that cannot be read is as an empty one.
+    pub fn load<'a>(file: Option<PathBuf>, images: impl Iterator<Item = &'a Path>) -> Watch {
+        let mut known: HashMap<String, (String, FileState)> = HashMap::new();
+        if let Some(text) = file.as_deref().and_then(|f| fs::read_to_string(f).ok()) {
+            let mut lines = text.lines();
+            if lines.next() == Some(WATCH_HEADER) {
+                for line in lines {
+                    let f: Vec<&str> = line.split('\t').collect();
+                    let [hash, key, mtime, len] = f[..] else { continue };
+                    let state = match (mtime.parse::<u64>(), len.parse::<u64>()) {
+                        (Ok(m), Ok(l)) => {
+                            Some((SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(m), l))
+                        }
+                        _ => None,
+                    };
+                    known.insert(hash.to_owned(), (key.to_owned(), state));
+                }
+            }
+        }
+        let images = if known.is_empty() {
+            HashMap::new()
+        } else {
+            images.filter_map(|p| Some((p.to_owned(), known.remove(&path_hash(p))?))).collect()
+        };
+        Watch { images, file, ..Watch::default() }
+    }
+
+    /// Notes the image `image`, just opened, whose TOC is `toc`: the mtime its directories
+    /// and those above show at least, if its disc has a tags file.
+    pub fn opened(&mut self, image: &Path, toc: &Toc) -> Option<SystemTime> {
+        let key = key_of(toc)?;
+        if self.images.get(image).is_some_and(|(k, _)| *k == key) {
+            return None;
+        }
+        let state = state_of(&key);
+        self.images.insert(image.to_owned(), (key, state));
+        self.dirty = true;
+        state.map(|(m, _)| m)
+    }
+
+    /// Looks at the tags files (one `stat` of the directory and of each tags file known, a
+    /// listing when the directory changed): each image whose tags file was added, edited or
+    /// removed, with the mtime its directories show from now on: the tags file's when it
+    /// moved forward, else the time now, so that they move. `initial`: also each image
+    /// with a tags file, unchanged, with its mtime (at the mount, before anything is shown).
+    pub fn check(&mut self, initial: bool) -> Vec<(PathBuf, SystemTime)> {
+        let Some(dir) = STORE.read().unwrap_or_else(|p| p.into_inner()).as_ref().map(|s| s.dir().to_owned())
+        else {
+            return Vec::new();
+        };
+        let dm = fs::metadata(&dir).and_then(|m| m.modified()).ok();
+        let listing = (!self.listed || dm != self.dir_mtime).then(|| {
+            self.listed = true;
+            self.dir_mtime = dm;
+            list_dir(&dir)
+        });
+        let mut out = Vec::new();
+        for (image, (key, was)) in &mut self.images {
+            let now = match &listing {
+                Some(l) => l.get(key.as_str()).copied(),
+                None if was.is_some() => state_of(key),
+                None => continue,
+            };
+            if now == *was {
+                if let (true, Some((m, _))) = (initial, now) {
+                    out.push((image.clone(), m));
+                }
+                continue;
+            }
+            let t = match (now, *was) {
+                (Some((m, _)), Some((w, _))) if m > w => m,
+                (Some((m, _)), None) => m,
+                _ => SystemTime::now(),
+            };
+            *was = now;
+            self.dirty = true;
+            out.push((image.clone(), t));
+        }
+        out
+    }
+
+    /// Writes the watch to its file if it changed (atomically: a temporary file, then a
+    /// rename). A failure is logged: it only costs mtime moves after a remount.
+    pub fn save(&mut self) {
+        let Some(file) = self.file.clone().filter(|_| self.dirty) else { return };
+        let mut text = format!("{WATCH_HEADER}\n");
+        for (image, (key, state)) in &self.images {
+            let (m, l) = match state {
+                Some((m, l)) => {
+                    let ns = m.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+                    (ns.to_string(), l.to_string())
+                }
+                None => ("-".to_owned(), "-".to_owned()),
+            };
+            text.push_str(&format!("{}\t{key}\t{m}\t{l}\n", path_hash(image)));
+        }
+        let tmp = file.with_extension("tmp");
+        let r = file
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| fs::write(&tmp, text))
+            .and_then(|()| fs::rename(&tmp, &file));
+        match r {
+            Ok(()) => self.dirty = false,
+            Err(e) => log::warn!("tags: {}: {e}; not kept", file.display()),
+        }
+    }
+}
+
 /// An ID3v2.4 frame: `id`, a body of `body`.
 fn frame(out: &mut Vec<u8>, id: [u8; 4], body: &[u8]) {
     out.extend_from_slice(&id);

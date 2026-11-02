@@ -418,7 +418,8 @@ plus two offsets, in whole seconds:
 - a version offset: 25,203 s per output version after the first (`DSF_VERSION`,
   `WAV_VERSION`), more than any PCM offset.
 
-Directories keep their own mtime.
+A directory shows the newest mtime of what is shown below it (#123), see
+[Directory times](#directory-times-123) below.
 
 - *Why derive it, not document "re-copy after changing options":* rsync, Plex, Roon and the
   like rely on mtime and would silently keep stale WAV copies or analyses. Deriving costs
@@ -448,6 +449,66 @@ Directories keep their own mtime.
   generation hash itself is unchanged from 0.1, so an upgrade keeps every handle valid. Unit
   tests (`ident::tests::mtime_offsets`, `tree::tests::pcm_options_change_wav_numbers_and_generations_only`)
   and a mount test (`tests/probes.rs`) check this.
+
+### Directory times (#123)
+
+A directory's mtime is the newest of its source directory's own mtime and the mtimes of
+everything shown below it, at any depth: source directories, sidecar files and folders, and
+each image's track files (its image's mtime moved by the largest offset of the formats shown,
+`ident::newest_offset`). An image's own folder and its area folders show their image's files
+and their folder art. Up to the mount root, then, every directory moves when anything below it
+moves: an output-version bump, new tags (which come with one), a new, removed or changed
+sidecar or image.
+
+- *Why:* Roon (and other scanners that keep a directory's mtime from the last scan) skip a
+  directory whose mtime did not change, and everything below it. Found testing 0.2.0-rc.1 with
+  Roon (#123): an upgrade moved every DSF file's mtime and a new playlist sat next to an image,
+  yet Roon reported nothing, because the directories above them kept their source's mtime. The
+  owner's decision: "fix it, ship it", in 0.2.0 (as rc.2).
+- *How, at mount:* the scan `stat`s every image and sidecar it notes (one `stat` each, beside
+  the `readdir` it already does; over NFS the attributes usually come with the listing) and keeps
+  a `tree::Stamp` per source directory: its own mtime, the newest of the rest, and the newest
+  image. The output offset is added when the time is shown, so `--format` and the PCM options
+  count without a rescan. No disc is opened for it.
+- *How, while mounted (#101):* every time a directory is re-read, its stamp is passed up to each
+  ancestor (`Tree::bump`). A change deep in the tree must also surface without anything above
+  it being listed, since that is exactly what a scanner skips; so when the root's attributes are
+  asked for (a scan starts there), at most once per refresh interval (2 s), `Tree::sweep`
+  compares the mtime of every known source directory and sidecar folder (one `stat` each) and
+  re-reads only those that changed (their own entries; a new subdirectory in full). A listing
+  whose directory's shown mtime moved since it was made is compared with its source at once,
+  not after the refresh interval: in rc.2 the sweep could move a folder's mtime while its
+  re-read was still throttled, and an SMB client, which keeps a listing until the folder's mtime
+  moves, then kept the old listing under the new mtime for good (a new playlist never listed).
+  Change detection still uses each listing's stored source mtimes, never the shown one.
+  A directory's *first* listing compares its source mtime (each directory's of a `--flatten`
+  chain) with the one recorded when what it would be listed from was read (the mount's scan,
+  or its parent's re-read), and re-reads it if they differ. In rc.3 a folder not listed since
+  the mount was listed from the scan unchecked, so a sidecar added after the mount never
+  showed in it (the Roon-after-restart case). *Why compare, not always re-read:* one `stat`
+  per folder, against a `readdir` and a `stat` per entry, on a first scan of every folder. *Considered:*
+  inotify (not on NFS or SMB sources, which are the NAS case); re-reading a directory's
+  descendants on its own `getattr` (the same `stat`s, made many times per scan).
+- *Deterministic, no wall clock:* the time is a maximum of source mtimes and fixed offsets, so a
+  fresh mount of the same source shows the same times (the NFS case, #17). While mounted the
+  times only move forward; if the newest thing below is deleted, its directory's mtime (when it
+  changed) is newer anyway, and a remount shows the new maximum. A file changed in place moves
+  no directory mtime on the source, so the sweep does not see it (#101 does not either); its own
+  mtime moves, for a scanner that reads it.
+- *ctime moves with it, generations do not:* the kernel and NFS servers use ctime as the change
+  attribute, so clients revalidate a directory's cached listing when it moves. A directory's
+  inode number and generation (0) stay the same: its handle stays valid; only the time moves.
+- *`--flatten`:* a collapsed folder shows the newest of its whole chain (the chain's directories
+  and sidecars and its one image); a change in any directory of the chain moves it, as its
+  source path is the chain's top.
+- *Limits:* a folder gaining its first image is found by its parent's re-read (#101), not the
+  sweep (which knows only folders that held something). An area folder's copy of the folder art
+  follows when the area is re-read; the album folder, where the art file is, moves at once.
+- *Cost:* one `stat` per image and sidecar at mount; one `stat` per source directory per sweep
+  (at most every 2 s, only while the root is looked at). Tests:
+  `tree::tests::directory_mtimes_show_the_newest_below`,
+  `tree::tests::a_change_deep_below_moves_every_ancestor_and_matches_a_remount`, and the mount
+  test `directory_mtimes_move_with_what_is_below_through_the_kernel`.
 
 **Export support.** `init` asks for `FUSE_EXPORT_SUPPORT`. `lookup` answers `.` (the inode
 itself) and `..` (its directory's parent), which the kernel sends to turn a file handle into
@@ -1332,8 +1393,36 @@ MusicBrainz IDs on 26.
 - **Reading:** a tags file is read when a track file is made, that is when its area is first
   listed, and kept while its mtime and size are unchanged. A file that does not parse (unknown
   key or section) is ignored with a warning, so a typo never changes the served files.
-  *Trade-off:* an edit shows after a remount; re-making a listed area's files on a tags change
-  is a follow-up (its sizes change, so the tree's nodes must be replaced).
+- **Live reload (owner requirement: pruning scanners such as Roon must see tag edits).** On a
+  directory SOURCE (a watching tree, #101), adding, editing or removing a tags file changes the
+  affected files' tags, size, mtime and generation and moves the mtime of the image's folder,
+  its area folders and every folder above, exactly as a new sidecar does (#123), within the
+  refresh interval (2 s). The sweep (`Tree::sweep`, run when the root's attributes are asked
+  for) looks at the tags files of the images: one `stat` of the tags directory, one per tags
+  file known, and a listing of the directory only when its mtime moved (a file added or
+  removed). A change is a bump under the image's path (`Tree::bump`), so the image and area
+  folders, which now key their mtime on that path, move with their ancestors. An area listed
+  again re-makes its track files; one whose tag changed replaces its node under the same
+  number (`Tree::renew`), and a file whose tag is the same keeps its node, so open files and
+  caches stay as they are (an open handle keeps the file it opened). The mtime of a bump is
+  the tags file's when it moved forward (a remount shows the same), else the time now (a
+  removal, or an older time put back), so that the folders always move.
+  *Why the image's path, not the disc key:* scanners walk folders, and the image's path is
+  what the folders above it are made of.
+  *Why also across mounts:* a disc's key needs its TOC, read only when the image is opened
+  (on its folder's first listing). A tags file written while sacdfs was stopped, or for an
+  image not opened yet, would otherwise move nothing above the image, and a pruning scanner
+  would never open it. So each opened image's key and its tags file's last state are kept in
+  `tag-keys` in the seek index's cache directory, by a SHA-256 of the image's path (never the
+  path), and checked at the mount, before anything is shown: every folder above an image with
+  a tags file shows an mtime no older than it, and one changed or removed since moves.
+  *Alternatives:* opening every image at the mount for its key costs a TOC read per image
+  ("latency is important"); putting the tags directory's mtime in every folder's would make a
+  scanner rescan the whole library for one edit. *Trade-off:* a stale entry (an image
+  replaced under the same path) only moves a few mtimes once, and the image's own change
+  moves them anyway; without a cache directory (`--no-index-cache`), an image not yet opened
+  in this mount is found on its first listing only. A single-image SOURCE does not watch:
+  there an edit shows after a remount.
 - **Import** runs `verify` with the user's arguments and keeps only IDENTICAL and
   IDENTICAL-PAUSE rows: the matching is verify's, so a tag is never attached to a track whose
   audio differs. Per extract it takes the frames `Losses::between` calls lost against the

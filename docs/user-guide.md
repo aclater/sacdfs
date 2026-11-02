@@ -216,8 +216,12 @@ The mount stays read-only; the files are edited out of band.
 - **A disc without a file is unchanged**, byte for byte, and so is a track the file sets
   nothing for. A changed file gets a new size, a modification time no older than the tags
   file, and a new NFS generation, so players and `rsync` see it.
-- **When edits show:** a disc's tags file is read when its area folder is first listed. After
-  editing, restart the mount (or unmount and mount again) and let the player rescan.
+- **When edits show:** when SOURCE is a directory, adding, editing or removing a tags file
+  shows within a few seconds, without a remount: the files' tags, sizes and modification
+  times change, and so do the modification times of the disc's folders and every folder above,
+  so players that skip unchanged folders (Roon) find the edit on their next scan. Edits made
+  while sacdfs is stopped show after the mount the same way (sacdfs keeps which disc each image
+  is in its cache directory). With a single image as SOURCE, remount after editing.
 
 ```toml
 [album]                         # every file of the disc
@@ -392,6 +396,15 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   images' own.
   With non-default options, a file whose image changed in the last few hours can show a
   time slightly in the future (up to 7 hours ahead); tools such as `tar` may warn about it.
+- **Folder times and library scanners.** A folder shows the newest time of anything shown
+  below it, at any depth: a new or changed playlist, scan or image, or a sacdfs release that
+  moves the files' times, moves every folder above it up to the mount's root. Roon and other
+  scanners that skip folders whose time did not change therefore find the change with a plain
+  rescan; no Force Rescan is needed. A change made while mounted shows within about 2 seconds of
+  the next look at the mount's root. Only the times move: folders keep their inode numbers, so
+  NFS clients keep working. The same source always shows the same folder times, across
+  remounts. After upgrading to 0.2.0, an existing Roon library sees every album as modified
+  once.
 - **`df` and free space.** The mount reports the size of the filesystem that holds SOURCE,
   all of it used: `df` shows that size with 0 available, and SMB clients (Explorer, Finder)
   see a full drive of that size. Nothing can be written to the mount anyway.

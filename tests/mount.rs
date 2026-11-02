@@ -127,8 +127,7 @@ impl Drop for Mount {
             let _ = Command::new("fusermount3").arg("-u").arg("-z").arg(&p).status();
         }
         if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
+            common::stop_gracefully(&mut c);
         }
     }
 }
@@ -933,5 +932,296 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
     // A new image shows, with its audio.
     wait_for("the new image", || has("Artist", "Second"));
     assert!(ls("Artist/Second/d/Stereo").iter().any(|n| n.ends_with(".dsf")));
+    m.stop("TERM");
+}
+
+#[test]
+fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
+    // #123: a scanner that skips unchanged directories from the top (Roon) must see every
+    // directory above a change move: the output version (files later than their image),
+    // and a new sidecar deep in the tree, without a remount.
+    use std::time::SystemTime;
+    if !fuse_available() {
+        return;
+    }
+    let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let album = src.join("Artist/Album");
+    std::fs::create_dir_all(&album).unwrap();
+    std::fs::copy(corpus().join("images/dsd-stereo-mch-2048.iso"), album.join("disc.iso")).unwrap();
+    for p in [album.join("disc.iso"), album.clone(), src.join("Artist"), src.clone()] {
+        set(&p, old);
+    }
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    let dirs = ["", "Artist", "Artist/Album", "Artist/Album/disc", "Artist/Album/disc/Stereo"];
+    let mtime = |p: &str| std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
+    let shown = old + sacdfs::ident::newest_offset(true, true, 0);
+    for p in dirs {
+        assert_eq!(mtime(p), shown, "{p}");
+    }
+    let newest_file = std::fs::read_dir(mnt.join("Artist/Album/disc/Stereo"))
+        .unwrap()
+        .map(|e| e.unwrap().metadata().unwrap().modified().unwrap())
+        .max()
+        .unwrap();
+    assert_eq!(newest_file, shown);
+    let ino = |p: &str| {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(mnt.join(p)).unwrap().ino()
+    };
+    let inos: Vec<u64> = dirs.iter().map(|p| ino(p)).collect();
+
+    // A new playlist two levels down, newer than anything shown.
+    let later = old + Duration::from_secs(10 * 86_400);
+    std::fs::write(album.join("new.m3u8"), b"#EXTM3U\n").unwrap();
+    set(&album.join("new.m3u8"), later);
+    set(&album, later - Duration::from_secs(1));
+    wait_for("the root to move", || mtime("") == later);
+    for p in &dirs[..3] {
+        assert_eq!(mtime(p), later, "{p}");
+    }
+    // The image's own folders do not show the playlist: they keep their time.
+    for p in &dirs[3..] {
+        assert_eq!(mtime(p), shown, "{p}");
+    }
+    // Only the times move: the same numbers, and the new file is there.
+    assert_eq!(dirs.iter().map(|p| ino(p)).collect::<Vec<_>>(), inos);
+    assert!(mnt.join("Artist/Album/new.m3u8").exists());
+    m.stop("TERM");
+    // The next mount shows the same times (stable for NFS clients, #17).
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    assert_eq!(std::fs::metadata(&mnt).unwrap().modified().unwrap(), later);
+    assert_eq!(std::fs::metadata(mnt.join("Artist/Album")).unwrap().modified().unwrap(), later);
+    m.stop("TERM");
+}
+
+#[test]
+fn a_new_sidecar_is_listed_and_moves_its_ancestors() {
+    // #123 with #101: a playlist dropped next to an image while mounted must be listed
+    // within a few seconds, with and without --flatten, and every folder above it must move.
+    // The root's attributes are looked at first, as a scanner does (that runs the sweep).
+    use std::time::SystemTime;
+    if !fuse_available() {
+        return;
+    }
+    let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    for flatten in [false, true] {
+        let top = tempfile::tempdir().unwrap();
+        let src = top.path().canonicalize().unwrap();
+        let album = src.join("Artist/Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::copy(corpus().join("images/dsd-stereo-mch-2048.iso"), album.join("disc.iso")).unwrap();
+        std::fs::write(album.join("folder.jpg"), b"art").unwrap();
+        for p in
+            [album.join("disc.iso"), album.join("folder.jpg"), album.clone(), src.join("Artist"), src.clone()]
+        {
+            set(&p, old);
+        }
+        let m = Mount::foreground(&src, if flatten { &["--flatten"] } else { &[] });
+        let mnt = m.path();
+        let mtime = |p: &str| std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
+        let names = |p: &str| -> Vec<String> {
+            std::fs::read_dir(mnt.join(p))
+                .unwrap()
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .collect()
+        };
+        // Everything listed once, as a first scan does.
+        let before: Vec<SystemTime> = ["", "Artist", "Artist/Album"].iter().map(|p| mtime(p)).collect();
+        assert!(names("").contains(&"Artist".to_owned()));
+        assert!(names("Artist").contains(&"Album".to_owned()));
+        assert!(names("Artist/Album").contains(&"folder.jpg".to_owned()));
+
+        // The root looked at (the sweep runs), then the folder listed a second later, so
+        // that the next sweep comes before the folder's next re-read is due.
+        let _ = mtime("");
+        std::thread::sleep(Duration::from_secs(1));
+        let _ = names("Artist/Album");
+        std::fs::write(album.join("new.m3u8"), b"#EXTM3U\n").unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        let t0 = Instant::now();
+        let listed = loop {
+            // A client that caches a listing until its folder's mtime moves (SMB clients do)
+            // must never see the new mtime with the old listing: it would keep that forever.
+            let _ = mtime("");
+            let _ = mtime("Artist");
+            let moved = mtime("Artist/Album") > before[2];
+            let now = names("Artist/Album");
+            let has = now.contains(&"new.m3u8".to_owned());
+            assert!(
+                !moved || has,
+                "flatten {flatten}: the folder's mtime moved, its listing did not: {now:?}"
+            );
+            if has {
+                break true;
+            }
+            if t0.elapsed() > Duration::from_secs(3) {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(listed, "flatten {flatten}: new.m3u8 not listed after 3 s: {:?}", names("Artist/Album"));
+        wait_for("the ancestors to move", || {
+            ["", "Artist", "Artist/Album"].iter().zip(&before).all(|(p, b)| mtime(p) > *b)
+        });
+        assert_eq!(std::fs::read(mnt.join("Artist/Album/new.m3u8")).unwrap(), b"#EXTM3U\n");
+        m.stop("TERM");
+    }
+}
+
+#[test]
+fn new_sidecars_are_listed_in_folders_listed_before_and_not() {
+    // rc.3 on a NAS: of four album folders, two listed since the mount and two not, a new
+    // playlist in each showed only in the two listed before (1, 1, 0, 0). A folder's first
+    // listing must read its source again if it changed since the mount (#101, #123).
+    if !fuse_available() {
+        return;
+    }
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let albums = ["A1", "A2", "A3", "A4"];
+    for a in albums {
+        let d = src.join("Artist").join(a);
+        std::fs::create_dir_all(&d).unwrap();
+        std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), d.join("disc.iso"))
+            .unwrap();
+    }
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    let names = |a: &str| -> Vec<String> {
+        std::fs::read_dir(mnt.join("Artist").join(a))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect()
+    };
+    assert!(names("A1").contains(&"disc".to_owned()));
+    assert!(names("A2").contains(&"disc".to_owned()));
+    for a in albums {
+        std::fs::write(src.join("Artist").join(a).join("new.m3u8"), b"#EXTM3U\n").unwrap();
+    }
+    let t0 = Instant::now();
+    let listed = |a: &str| names(a).contains(&"new.m3u8".to_owned());
+    // Each folder once only, as a scanner looks: the first listing of A3 and A4 must have it.
+    let mut seen = [false; 4];
+    while t0.elapsed() < Duration::from_secs(3) && !seen.iter().all(|s| *s) {
+        let _ = std::fs::metadata(&mnt);
+        for (i, a) in albums.iter().enumerate() {
+            if !seen[i] && (i < 2 || t0.elapsed() > Duration::from_millis(200)) {
+                seen[i] = listed(a);
+                if i >= 2 {
+                    assert!(seen[i], "{a}: its first listing misses the new file");
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(seen, [true; 4], "listed in A1..A4");
+    m.stop("TERM");
+}
+
+#[test]
+fn a_tags_file_edit_moves_the_files_and_their_ancestors() {
+    // #81 with #123: adding, editing or removing a tags file while mounted changes the
+    // files' tags, size and mtime within a few seconds, and moves the mtime of every folder
+    // above them, as a new sidecar does, so that a scanner that skips unchanged folders
+    // (Roon) finds the edit. The root's attributes are looked at first, as a scanner does.
+    use std::time::SystemTime;
+    if !fuse_available() {
+        return;
+    }
+    let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap().join("src");
+    let album = src.join("Artist/Album");
+    std::fs::create_dir_all(&album).unwrap();
+    let image = album.join("disc.iso");
+    std::fs::copy(corpus().join("images/dsd-stereo-mch-2048.iso"), &image).unwrap();
+    for p in [image.clone(), album.clone(), src.join("Artist"), src.clone()] {
+        set(&p, old);
+    }
+    let tags = top.path().join("tags");
+    std::fs::create_dir_all(&tags).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs")).args(["tags", "key"]).arg(&image).output().unwrap();
+    assert!(out.status.success());
+    let key = String::from_utf8(out.stdout).unwrap().split('\t').next().unwrap().to_owned();
+    let file = tags.join(format!("{key}.toml"));
+    std::fs::write(&file, "[track.1]\ntitle = \"First Title\"\n").unwrap();
+
+    // Kept across the remount below, with what is known of the tags files.
+    let cache = top.path().join("cache");
+    let args = ["--tags", tags.to_str().unwrap(), "--index-cache", cache.to_str().unwrap()];
+    let m = Mount::foreground(&src, &args);
+    let mnt = m.path();
+    let mtime = |p: &str| std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
+    let dirs = ["", "Artist", "Artist/Album", "Artist/Album/disc", "Artist/Album/disc/Stereo"];
+    let stereo = mnt.join(dirs[4]);
+    let mut names: Vec<PathBuf> = std::fs::read_dir(&stereo)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "dsf"))
+        .collect();
+    names.sort();
+    let track = names[0].clone();
+    let has = |b: &[u8], n: &[u8]| b.windows(n.len()).any(|w| w == n);
+    let state = || {
+        let meta = std::fs::metadata(&track).unwrap();
+        (std::fs::read(&track).unwrap(), meta.len(), meta.modified().unwrap())
+    };
+    let (bytes, _, _) = state();
+    assert!(has(&bytes, b"First Title"));
+
+    // An edit, then the tags file removed: each moves the file and every folder above it.
+    for (step, text) in [("edit", Some("[track.1]\ntitle = \"A Second, Longer Title\"\n")), ("remove", None)]
+    {
+        // Past the kernel's attribute timeout, so that `before` is what sacdfs shows now.
+        std::thread::sleep(Duration::from_millis(2100));
+        let before: Vec<SystemTime> = dirs.iter().map(|p| mtime(p)).collect();
+        let (_, size, file_mtime) = state();
+        match text {
+            Some(t) => std::fs::write(&file, t).unwrap(),
+            None => std::fs::remove_file(&file).unwrap(),
+        }
+        let t0 = Instant::now();
+        let done = loop {
+            let _ = mtime("");
+            let moved = dirs.iter().zip(&before).all(|(p, b)| mtime(p) > *b);
+            let (bytes, now_size, now_mtime) = state();
+            let tagged = match text {
+                Some(_) => has(&bytes, b"A Second, Longer Title"),
+                None => !has(&bytes, b"Title"),
+            };
+            if moved && tagged && now_size != size && now_mtime != file_mtime {
+                break true;
+            }
+            if t0.elapsed() > Duration::from_secs(3) {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        let after: Vec<SystemTime> = dirs.iter().map(|p| mtime(p)).collect();
+        assert!(done, "{step}: not seen after 3 s: folders {before:?} -> {after:?}, file {:?}", state().1);
+    }
+    let rel = track.strip_prefix(&mnt).unwrap().to_owned();
+    m.stop("TERM");
+
+    // A tags file written while sacdfs is stopped: after the remount, before anything
+    // below is listed (the image is not opened yet), every folder above the image already
+    // shows an mtime no older than it, so that a scanner that skips unchanged folders goes in.
+    std::fs::write(&file, "[track.1]\ntitle = \"While Stopped\"\n").unwrap();
+    let written = std::fs::metadata(&file).unwrap().modified().unwrap();
+    let m = Mount::foreground(&src, &args);
+    let mnt = m.path();
+    for p in &dirs[..3] {
+        let shown = std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
+        assert!(shown >= written, "after the remount: {p:?} shows {shown:?}, the tags file {written:?}");
+    }
+    let track = mnt.join(&rel);
+    assert!(has(&std::fs::read(&track).unwrap(), b"While Stopped"));
     m.stop("TERM");
 }
