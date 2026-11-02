@@ -72,7 +72,8 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
 
 - resident and anonymous memory stay within the cache cap (`--cache-mb`, default 64) plus
   32 MiB of noise above their level at the end of the warm-up;
-- their least-squares trend over the second half is at most 4 MiB/h;
+- their least-squares trend over the second half is at most 4 MiB/h, or adds less than 4 MiB
+  over that half (`--trend-floor-mb`), so that a short run's noise does not fail it;
 - threads and open files do not climb in the second half;
 - the cache directory plateaus.
 

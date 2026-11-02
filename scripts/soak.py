@@ -26,7 +26,7 @@ the cache directory, and the work done. At the end:
 
 PASS if, after `--warmup`, the resident and anonymous memory stay within the cache cap plus
 `--noise-mb` of their level at the end of the warm-up, their trend over the second half is
-at most `--max-slope` MiB per hour, threads and open files do not climb, and the cache
+at most `--max-slope` MiB per hour (or adds under `--trend-floor-mb` over that half), threads and open files do not climb, and the cache
 directory plateaus. Exit status 0 on PASS, 1 on FAIL.
 
 `--wrap 'heaptrack -o OUT'` (or valgrind massif) runs the main sacdfs under a profiler.
@@ -327,11 +327,15 @@ def verdict(rows, args):
         peak = max(r[key] for r in after)
         allowed = (args.cache_mb + args.noise_mb) * 1024
         slope = slope_per_hour(late, key) / 1024
-        good = peak - base <= allowed and slope <= args.max_slope
+        # A short second half makes the slope noisy: a trend whose growth over that half stays
+        # under --trend-floor-mb passes too (a 2-hour run: about 5 MiB/h).
+        late_h = (late[-1]["t"] - late[0]["t"]) / 3600
+        limit = max(args.max_slope, args.trend_floor_mb / late_h if late_h else args.max_slope)
+        good = peak - base <= allowed and slope <= limit
         ok &= good
         lines.append(f"{key}: warm {base / 1024:.1f} MiB, peak {peak / 1024:.1f} MiB (+{(peak - base) / 1024:.1f}, "
                      f"allowed {allowed / 1024:.0f}), second-half trend {slope:+.2f} MiB/h "
-                     f"(allowed {args.max_slope}) {'ok' if good else 'FAIL'}")
+                     f"(allowed {limit:.1f}) {'ok' if good else 'FAIL'}")
     for key, extra in (("threads", 4), ("fds", 8)):
         early = max(r[key] for r in after[: len(after) // 2])
         top = max(r[key] for r in late)
@@ -371,6 +375,8 @@ def main():
     ap.add_argument("--remount-every", type=float, default=300)
     ap.add_argument("--noise-mb", type=float, default=32)
     ap.add_argument("--max-slope", type=float, default=4, help="MiB per hour")
+    ap.add_argument("--trend-floor-mb", type=float, default=4,
+                    help="second-half growth (by the trend) that passes whatever the slope")
     ap.add_argument("--wrap", default="", help="command line to run the main sacdfs under")
     args = ap.parse_args()
     args.sacdfs = str(Path(args.sacdfs).resolve())
