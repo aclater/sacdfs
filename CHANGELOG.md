@@ -40,6 +40,10 @@ All notable changes to sacdfs are recorded here. The format follows
   against 11.89 s. **This supersedes 0.2.0's known issue** (plain-DSD WAV about 29 % slower
   than in 0.1.1, scarletbook-rs#216): the plain-DSD WAV read is back at 0.1.1's speed.
 
+- Each listed image's table of contents is held once, by scarletbook's disc, instead of twice
+  (#136): one TOC's size less per listed image, about 14 KB on small discs and up to 60 KB (see
+  docs/performance.md).
+
 ### Fixed
 
 - A stalled source (a hung NFS or SMB share, or a slow disk) no longer blocks other requests

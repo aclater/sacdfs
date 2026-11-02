@@ -51,7 +51,7 @@ fn kept_tracks_are_the_toc_pause_plus_track_range() {
     let mut longer = 0;
     for ((pp, pf, pb), (kp, kf, kb)) in plain.iter().zip(&kept) {
         assert_eq!(pp, kp);
-        let a = &kf.disc.toc.areas[kf.area];
+        let a = &kf.disc.toc().areas[kf.area];
         let (first, end) = scarletbook::audio::track_range_with_pause(a, u32::from(kf.number)).unwrap();
         assert_eq!((kf.start_frame, kf.layout.frames), (first, end - first), "{kp:?}");
         // The kept file is exactly the range's audio: 4704 bytes per channel per frame;
@@ -81,7 +81,7 @@ fn default_is_unchanged_and_wav_follows() {
     let plain: Vec<u64> = files(&lib, false, true).iter().map(|(_, f, _)| f.size).collect();
     assert_eq!(dflt, plain);
     for (_, f, _) in files(&lib, true, false) {
-        let a = &f.disc.toc.areas[f.area];
+        let a = &f.disc.toc().areas[f.area];
         let (first, end) = scarletbook::audio::track_range_with_pause(a, u32::from(f.number)).unwrap();
         assert_eq!((f.start_frame, f.layout.frames), (first, end - first));
     }

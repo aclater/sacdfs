@@ -32,7 +32,7 @@ type Img = Image<ReadAtReader<Arc<File>>>;
 
 fn library_image(disc: &Disc) -> Img {
     let file = Arc::new(File::open(&disc.path).unwrap());
-    Image::with_format(ReadAtReader::new(file), disc.toc.sector_format).unwrap()
+    Image::with_format(ReadAtReader::new(file), disc.toc().sector_format).unwrap()
 }
 
 /// The positions `[first, end)` of an area read by `cursor`.
@@ -46,9 +46,9 @@ fn read_all(mut cursor: TrackCursor, image: &mut Img) -> Vec<FrameContent> {
 
 /// A complete seek index of area `a` of `disc`, built in one pass.
 fn complete_index(disc: &Disc, a: usize, interval: u32, image: &mut Img) -> AreaIndex {
-    let area = &disc.toc.areas[a];
+    let area = &disc.toc().areas[a];
     let mut index =
-        AreaIndex::new(area, disc.toc.sectors, IndexOptions::new().with_interval(interval)).unwrap();
+        AreaIndex::new(area, disc.toc().sectors, IndexOptions::new().with_interval(interval)).unwrap();
     while !index.extend(image, 4096).unwrap() {}
     index
 }
@@ -74,21 +74,21 @@ fn next(seed: &mut u64) -> u64 {
 fn check_image(path: &Path, tuning: Tuning, interval: u32, every_frame: bool, ranges: usize) -> u64 {
     let Ok(disc) = Disc::open_with(path, 1, tuning, None) else { return 0 };
     let mut image = library_image(&disc);
-    let mut seed = 0x9E37_79B9_7F4A_7C15u64 ^ disc.toc.sectors;
+    let mut seed = 0x9E37_79B9_7F4A_7C15u64 ^ disc.toc().sectors;
     let mut compared = 0;
-    for (a, area) in disc.toc.areas.iter().enumerate() {
+    for (a, area) in disc.toc().areas.iter().enumerate() {
         let p = area.playtime_frames();
-        if p == 0 || scarletbook::audio::check_range(area, 0, p, disc.toc.sectors).is_err() {
+        if p == 0 || scarletbook::audio::check_range(area, 0, p, disc.toc().sectors).is_err() {
             continue;
         }
-        let straight = read_all(TrackCursor::for_range(area, 0, p, disc.toc.sectors).unwrap(), &mut image);
+        let straight = read_all(TrackCursor::for_range(area, 0, p, disc.toc().sectors).unwrap(), &mut image);
         assert_eq!(straight.len(), p as usize);
         let index = complete_index(&disc, a, interval, &mut image);
         // sacdfs reading the area straight through, as a player of every track would.
         assert!(located(&disc, a, 0, p) == straight, "{}: area {a}: straight read differs", path.display());
         let indexed = |first: u32, end: u32, image: &mut Img| {
             read_all(
-                TrackCursor::for_range_indexed(area, first, end, disc.toc.sectors, &index).unwrap(),
+                TrackCursor::for_range_indexed(area, first, end, disc.toc().sectors, &index).unwrap(),
                 image,
             )
         };
@@ -156,25 +156,32 @@ fn provisional_readings(path: &Path, locator_exact: bool) -> (usize, usize, bool
     let disc = Disc::open_with(path, 1, Tuning::default(), None).unwrap();
     let mut image = library_image(&disc);
     let (mut provisional, mut differ, mut all_refuted, mut refuted, mut located_differ) = (0, 0, true, 0, 0);
-    for (a, area) in disc.toc.areas.iter().enumerate() {
+    for (a, area) in disc.toc().areas.iter().enumerate() {
         let p = area.playtime_frames();
         if p < 2 {
             continue;
         }
-        let mut index = AreaIndex::new(area, disc.toc.sectors, IndexOptions::new().with_interval(1)).unwrap();
+        let mut index =
+            AreaIndex::new(area, disc.toc().sectors, IndexOptions::new().with_interval(1)).unwrap();
         let options = SpeculativeOptions::new().with_min_gap_sectors(0);
         let mut differing = Vec::new();
         for first in 1..p {
             let end = (first + 4).min(p);
-            let mut c =
-                TrackCursor::for_range_speculative(area, first, end, disc.toc.sectors, Some(&index), options)
-                    .unwrap();
+            let mut c = TrackCursor::for_range_speculative(
+                area,
+                first,
+                end,
+                disc.toc().sectors,
+                Some(&index),
+                options,
+            )
+            .unwrap();
             let mut got = Vec::new();
             while let Some(f) = c.next_frame(&mut image) {
                 got.push(f.unwrap().content);
             }
             let exact =
-                read_all(TrackCursor::for_range(area, first, end, disc.toc.sectors).unwrap(), &mut image);
+                read_all(TrackCursor::for_range(area, first, end, disc.toc().sectors).unwrap(), &mut image);
             if located(&disc, a, first, end) != exact {
                 assert!(!locator_exact, "sacdfs differs at {first}");
                 located_differ += 1;

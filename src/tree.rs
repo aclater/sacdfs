@@ -1081,7 +1081,7 @@ impl Tree {
         if !crate::tags::installed() {
             return;
         }
-        let t = self.tagged.lock().unwrap_or_else(|p| p.into_inner()).opened(&disc.path, &disc.toc);
+        let t = self.tagged.lock().unwrap_or_else(|p| p.into_inner()).opened(&disc.path, disc.toc());
         if let Some(t) = t {
             self.bump(&disc.path, Stamp { own: None, other: Some(t), image: None });
         }
@@ -1352,7 +1352,7 @@ impl Tree {
                 self.list_sidecars(list, parent, &mut dedup, &mut out);
             }
             DirKind::Image(disc) => {
-                for (i, area) in disc.toc.areas.iter().enumerate() {
+                for (i, area) in disc.toc().areas.iter().enumerate() {
                     let name = match area.slot {
                         Slot::TwoChannel => STEREO,
                         Slot::Multichannel => MULTICHANNEL,
@@ -1435,14 +1435,14 @@ impl Tree {
                 self.list_sidecars(&sidecars, parent, &mut dedup, &mut out);
             }
             DirKind::Area(disc, i) => {
-                let Some(area) = disc.toc.areas.get(*i) else { return out };
-                cx.tags = crate::tags::key_of(&disc.toc).map(|k| {
+                let Some(area) = disc.toc().areas.get(*i) else { return out };
+                cx.tags = crate::tags::key_of(disc.toc()).map(|k| {
                     let state = crate::tags::state_of(&k);
                     (k, state)
                 });
                 let mut seen = std::collections::HashSet::new();
                 for track in &area.tracks {
-                    if let Err(e) = check_track(area, track, disc.toc.sectors) {
+                    if let Err(e) = check_track(area, track, disc.toc().sectors) {
                         log::info!(
                             "{}: {} track {}: not shown: {e}",
                             disc.path.display(),

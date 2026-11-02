@@ -79,7 +79,7 @@ fn key(dir: Option<&Path>, images: &[PathBuf]) -> io::Result<()> {
     for image in images {
         let disc = Disc::open(image, 0, Tuning::default())
             .map_err(|e| io::Error::other(format!("{}: {e}", image.display())))?;
-        let key = tags::disc_key(&disc.toc);
+        let key = tags::disc_key(disc.toc());
         match dir {
             Some(d) => {
                 let p = d.join(format!("{key}.toml"));
@@ -159,14 +159,14 @@ pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
 
 fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut ImportSummary) -> io::Result<()> {
     let disc = Arc::new(Disc::open(image, 0, Tuning::default()).map_err(io::Error::other)?);
-    let key = tags::disc_key(&disc.toc);
+    let key = tags::disc_key(disc.toc());
     let mut areas: [AreaFields; 2] = Default::default();
     let mut art: Option<Vec<u8>> = None;
     for row in rows {
         let slot = if row.area == "Multichannel" { Slot::Multichannel } else { Slot::TwoChannel };
         let Some(number) = row.track else { continue };
-        let Some(i) = disc.toc.areas.iter().position(|a| a.slot == slot) else { continue };
-        let area = &disc.toc.areas[i];
+        let Some(i) = disc.toc().areas.iter().position(|a| a.slot == slot) else { continue };
+        let area = &disc.toc().areas[i];
         let Some(track) = area.tracks.iter().find(|t| t.number == number) else { continue };
         // Compared with the file as sacdfs serves it without a tags file.
         let served = TrackFile::new(disc.clone(), i, track).map(|f| id3::frames(f.tag())).unwrap_or_default();
@@ -210,7 +210,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
             continue;
         }
         let all: BTreeSet<u8> =
-            disc.toc.area(*slot).map(|a| a.tracks.iter().map(|t| t.number).collect()).unwrap_or_default();
+            disc.toc().area(*slot).map(|a| a.tracks.iter().map(|t| t.number).collect()).unwrap_or_default();
         let level = match slot {
             Slot::TwoChannel => &mut file.stereo,
             _ => &mut file.multichannel,

@@ -118,7 +118,7 @@ fn import_then_serve() {
         assert_eq!(&sha(&ext.join(format!("{i:02}.dsf"))), h, "an extract changed");
     }
     let key =
-        tags::disc_key(&Disc::open(&lib.join(format!("{TAGGED}.iso")), 0, Tuning::default()).unwrap().toc);
+        tags::disc_key(Disc::open(&lib.join(format!("{TAGGED}.iso")), 0, Tuning::default()).unwrap().toc());
     let toml_path = tags_dir.join(format!("{key}.toml"));
     let file = TagsFile::parse(&fs::read_to_string(&toml_path).unwrap()).unwrap();
     assert_eq!(file.stereo.album.get("genre").map(String::as_str), Some("Jazz"), "{file:?}");
