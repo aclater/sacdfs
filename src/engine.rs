@@ -1212,6 +1212,26 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_engine_drops_its_pools() {
+        let e = Arc::new(Engine::new(2, 4 << 20).unwrap());
+        e.start_idle_release().unwrap();
+        // A converter and a decoder are pooled after use.
+        e.with_converter(2, |_| ());
+        with_decoder(|_| ());
+        let mine = || CONVERTERS.lock().unwrap().iter().filter(|(id, _, _)| *id == e.id).count();
+        assert_eq!(mine(), 1);
+        e.with_converter(2, |_| ());
+        assert_eq!(mine(), 1, "reused, not made again");
+        let b = e.cache().buffer(9408);
+        e.cache().insert(key(0), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
+        assert!(!e.release_if_idle(Duration::from_secs(60)));
+        assert!(e.release_if_idle(Duration::ZERO));
+        assert_eq!(mine(), 0);
+        assert_eq!(e.cache().bytes(), 0);
+        assert_eq!(e.cache().mapped(), 0);
+    }
+
+    #[test]
     fn pooled_frames_stay_within_the_cap() {
         let cap = 4 << 20;
         let c = FrameCache::new(cap);
