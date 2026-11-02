@@ -1,8 +1,22 @@
 # sacdfs user guide
 
 How to use sacdfs: its options, the files it shows, how taggers and players are served, and
-what to do when something goes wrong. Installing is in the [README](../README.md#install),
-running it on a NAS in [deployment.md](deployment.md).
+what to do when something goes wrong. Installing is in the [install guides](install/README.md) (without a container:
+[binary.md](install/binary.md)), running it on a NAS in [deployment.md](deployment.md).
+
+## Quick start
+
+```sh
+mkdir -p ~/sacd
+sacdfs ~/music/sacd-images ~/sacd       # returns once mounted
+ls ~/sacd/"Some Disc"/Stereo
+mpv ~/sacd/"Some Disc"/Stereo/"01 - First Track.wav"
+fusermount3 -u ~/sacd
+```
+
+`~/music/sacd-images` is one `.iso` image or a directory searched recursively for them. Add
+`-f` to stay in the foreground and see the log, `--flatten` to drop the folders that hold
+nothing but one image, and `--format dsf` if a library scanner should see only the DSF files.
 
 ## Options
 
@@ -12,7 +26,7 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 
 `SOURCE` is one image file, or a directory that is searched recursively for `*.iso` files
 (any case); symbolic links to files are followed, links to directories are not.
-`MOUNTPOINT` is an existing directory. The [README](../README.md#options) lists every
+`MOUNTPOINT` is an existing directory. [options.md](options.md) lists every
 option; this is what they do.
 
 **Where it can mount.** sacdfs reads the images through their paths, so none of them may be
@@ -75,8 +89,8 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
 - `--pcm-rate`, `--pcm-cutoff` and `--pcm-gain` choose how the WAV files are made
   ([Formats](#wav-files)). `--pcm-cutoff wide` needs `--pcm-rate 176400` or `352800`; with
   `88200` sacdfs refuses to start, since 88.2 kHz cannot hold an 80 kHz band.
-- `--flatten` collapses folders that hold nothing but one image (see the
-  [README](../README.md#layout)).
+- `--flatten` collapses folders that hold nothing but one image (see
+  [layout](layout.md#layout)).
 - `--sidecars LIST` chooses which other files of `SOURCE` (folder art, scans, playlists) are
   passed through next to the images ([Sidecar files](#sidecar-files-art-scans-playlists)).
 

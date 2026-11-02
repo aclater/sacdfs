@@ -1,0 +1,52 @@
+# sacdfs with Docker or Podman (any Linux host)
+
+**Validated** with sacdfs 0.4.0 (a build of `main`) under rootful Podman on Fedora 44: the
+container turned healthy in about 30 s; NFS and SMB clients read every DSF track of five test
+discs, matching the reference hashes (93 of 93 over each), and a Fedora 44 VM mounted both
+shares. The same command with `docker run` and `apparmor=unconfined` (step 3) was validated
+with Docker 29 on Debian 13: healthy in 8 s, both shares mounted. Reference:
+[deployment guide](../deployment.md).
+
+1. Pick the folder that holds your SACD images (`.iso`), for example `/srv/music`.
+2. Make sure nothing on the host already uses ports 445 (SMB) and 2049 (NFS):
+
+   ```sh
+   sudo ss -ltn | grep -E ':(445|2049) ' || echo free
+   ```
+
+   If they are taken, publish other ports instead (`-p 10445:445 -p 12049:2049`) and see
+   [linux-client.md](linux-client.md#on-other-ports).
+3. Start the container (as root: NFS needs a rootful container). With Docker, write
+   `docker run` for `sudo podman run`:
+
+   ```sh
+   sudo podman run -d --name sacdfs --restart unless-stopped \
+     --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
+     --security-opt label=disable \
+     -p 445:445 -p 2049:2049 \
+     -v /srv/music:/images:ro \
+     -v sacdfs-cache:/cache \
+     ghcr.io/aclater/sacdfs:0.4.0
+   ```
+
+   - `label=disable` is for SELinux hosts (Fedora, RHEL); it leaves your folder's labels alone.
+   - On AppArmor hosts (Debian, Ubuntu) use `--security-opt apparmor=unconfined` instead.
+   - For a password on the SMB share, add `-e SMB_USER=music -e SMB_PASSWORD=...`. Windows 11
+     needs one: it refuses guest shares.
+   - For music servers that scan with FFmpeg (Jellyfin, MPD) or for Roon, add
+     `-e SACDFS_FORMATS=dsf`; see your server's guide.
+
+## Check it works
+
+```sh
+sudo podman inspect -f '{{.State.Health.Status}}' sacdfs     # healthy, within a minute
+sudo podman logs sacdfs 2>&1 | grep -E 'cache-mb|image files|mounted|NFS SERVER INITIALIZED'
+```
+
+The log shows `--cache-mb 32` (the default), the number of image files, `mounted`, and the
+SMB and NFS servers starting. Then mount it from a client:
+[linux-client.md](linux-client.md).
+
+Compose: [openmediavault.md](openmediavault.md) has a validated Compose file. Not validated
+here: rootless Podman (SMB only; NFS needs root, see the
+[deployment guide](../deployment.md#privileges)).

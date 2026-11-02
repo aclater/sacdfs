@@ -46,7 +46,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is tag v0.5.6** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.5.7, from crates.io (`=0.5.7`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -56,7 +56,9 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   [PCM conversion](#pcm-conversion)). 0.5.6 (#128) for the plain-DSD speed it restored
   (scarletbook-rs#216) and its run-time DST dispatch, with unchanged bytes; *why not stay:* it
   removes the known plain-DSD WAV slowdown for free, and every gate passed; *trade-off:* none
-  measured (no read got slower).
+  measured (no read got slower). 0.5.7 (#155) came from crates.io, pinned exactly: *why:* the
+  registry is the only source a published crate may use and cargo's checksum pins the bytes; the
+  tag is no longer needed; bytes unchanged, gated as above.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -1540,11 +1542,16 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   is the tested one. That job alone has `packages: write`. `:latest` follows releases
   without a hyphen.
 - **Permissions:** `contents: read` for the workflow; `contents: write` (the release) and
-  `id-token`/`attestations: write` only in the two publishing jobs, which run only when
+  `id-token`/`attestations: write` only in the publishing jobs (the release, the image,
+  and `id-token` alone in crates.io's), which run only when
   `github.ref_type == 'tag'`. No caches (nothing a pull request writes can reach a release
   build), no persisted credentials, actions pinned by SHA.
-- **Not crates.io.** scarletbook is a git dependency and crates.io refuses those
-  (`publish = false`). Publishing waits for scarletbook on crates.io (scarletbook-rs#39).
+- **crates.io (#155):** final versions only (a crates.io version can never be deleted or
+  reused, only yanked; release candidates are tested from the GitHub release), after the
+  GitHub release, through trusted publishing: the `crates-publish` job has `contents: read`
+  and `id-token: write`, and no crates.io token is stored in the repository. A version already on crates.io is skipped, because trusted publishing
+  cannot create a crate and the first version (0.4.0) is published by hand. The package
+  holds only `src/`, Cargo.toml, Cargo.lock, README.md, COPYING and CHANGELOG.md (`include`).
 
 ## Tag layer (#81)
 
@@ -1885,7 +1892,7 @@ each tool is in [development.md](development.md).
 
 ### Oldest distributions (#58)
 
-*Why:* the README promises RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, but CI tests only
+*Why:* the install docs ([binary.md](install/binary.md#binaries)) promise RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, but CI tests only
 a current runner (`fusermount3` 3.18, a current kernel), and the reviewed changelogs of other
 FUSE projects show `fusermount3` behaviour changing across libfuse versions (3.0 renamed
 the helpers and dropped `nonempty`; 3.15 stopped silently accepting unsupported options),

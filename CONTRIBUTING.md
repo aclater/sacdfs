@@ -28,8 +28,8 @@ see [SECURITY.md](SECURITY.md).
    `--device /dev/fuse --cap-add SYS_ADMIN`. `tests/no_growth.rs` checks that mount cycles
    leave no heap behind. For the long checks (the soak, heap profiles, memcheck), see
    [docs/development.md](docs/development.md).
-4. Update the documentation with the code: README.md and docs/user-guide.md for anything a
-   user sees (the README's options table must match `sacdfs --help`; CI checks it with
+4. Update the documentation with the code: README.md, docs/options.md and docs/user-guide.md for anything a
+   user sees (the options table in docs/options.md must match `sacdfs --help`; CI checks it with
    `.github/scripts/check-readme-options.py`), docs/design.md when the design changes, with
    the reason for each decision, docs/performance.md with new measurements, and CHANGELOG.md
    under "Unreleased".
@@ -94,9 +94,26 @@ never moved.
 6. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
    in aclater/sacd (the minor version's summary and release list).
 
-**Not on crates.io (yet).** scarletbook is a git dependency, and crates.io refuses crates
-with git dependencies, so `cargo publish` is not part of the release (`publish = false` in
-Cargo.toml). It can be added once scarletbook is on crates.io.
+**crates.io (#155).** On a tag of a final version (no hyphen, so not `0.4.0-rc.1`), the
+`crates-publish` job runs after the GitHub release: it asks the crates.io API whether that
+version is there already, and if so logs it and stops; otherwise it publishes with
+crates.io trusted publishing (`rust-lang/crates-io-auth-action`, no stored token). The crate
+holds only what `cargo install` and `cargo build` need (`include` in Cargo.toml): check
+with `cargo package --list` when adding files that the build reads. Pre-releases are not
+published to crates.io.
+
+**The first publish, once, by the owner.** Trusted publishing can only be set up on a
+crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:
+
+1. Tag v0.4.0 as above and let the release workflow finish. Its `crates-publish` job fails,
+   saying sacdfs is not on crates.io yet; that is expected.
+2. From a clean checkout of the tag: `cargo publish --locked`, with a crates.io token
+   (scope `publish-new`, short expiry), entered with `cargo login` or `CARGO_REGISTRY_TOKEN`.
+   Revoke the token afterwards.
+3. On crates.io, the crate's Settings, "Trusted Publishing": add GitHub, repository
+   `aclater/sacdfs`, workflow `release.yml`, no environment.
+4. Re-run the failed `crates-publish` job: it finds 0.4.0 on crates.io and succeeds without
+   publishing. From 0.4.1 on, the job publishes by itself.
 
 ## Ground rules
 

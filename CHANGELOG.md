@@ -6,7 +6,27 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **sacdfs on crates.io, from 0.4.0** (#155): `cargo install --locked sacdfs`. The release
+  workflow publishes final versions (not pre-releases) through crates.io trusted publishing,
+  after the GitHub release; the first version is published by hand. The crate holds only
+  the sources, Cargo.toml, Cargo.lock, README.md, COPYING and CHANGELOG.md. The crates.io
+  install path is not yet validated.
+- Leak hunting tools (#151). `tests/no_growth.rs` runs in CI and checks that mount cycles leave no
+  heap behind. Off CI, `scripts/soak.py` runs hours of reads and churn and judges the memory trend,
+  and `scripts/leak-check.sh` runs valgrind memcheck over the test suite and massif over a soak.
+  A weekly workflow runs memcheck and a short soak. See `docs/development.md`.
+
 ### Changed
+
+- **Shorter README** (#159, docs). The README is now a two-minute read: what sacdfs is, a
+  quick start (container, then a build), links to the install guides and client notes, a
+  pointer to `sacdfs verify`, and a docs index. Its details moved, unchanged, to
+  docs/options.md (the options table; the `readme options` CI check now reads it there),
+  docs/layout.md (layout, formats and quality), docs/limits.md, docs/install/binary.md
+  (release binaries, crates.io, from source; the download example now names 0.3.0), the
+  user guide (the quick start with its tips) and the deployment guide (where to run it).
 
 - **Less memory** (#150). The default `--cache-mb` is now 32 (was 256; `SACDFS_CACHE_MB` in the
   container too): the smallest size whose reads, seeks and scans stay within 5 % of a 256 MiB
@@ -17,12 +37,21 @@ All notable changes to sacdfs are recorded here. The format follows
   decoder thread. An idle mount (no reads for 60 s) gives its cache and decoders back, about
   11 MiB idle. The served bytes are unchanged (DSF gate 93/93).
 
-### Added
+- **scarletbook and scarletbook-pcm 0.5.6 → 0.5.7, now from crates.io** (#155). The two crates
+  are taken from the registry, pinned exactly (`=0.5.7`), instead of from a git tag, which also
+  lets cargo-deny drop its git exception. Output bytes are unchanged: the DSF gate (93/93), the
+  golden PCM and DSF hashes and the real-disc WAV test pass. Straight reads through the mount,
+  0.5.6 (main) → 0.5.7 (means of 3, alternating): plain-DSD DSF 1.45 → 1.29 s, plain-DSD WAV
+  2.30 → 2.26 s, DST stereo DSF 4.93 → 4.65 s, DST 6-channel DSF 13.33 → 13.13 s; the import
+  replay peaks at 44 → 45 MiB at the default 32 MiB cache.
 
-- Leak hunting tools (#151). `tests/no_growth.rs` runs in CI and checks that mount cycles leave no
-  heap behind. Off CI, `scripts/soak.py` runs hours of reads and churn and judges the memory trend,
-  and `scripts/leak-check.sh` runs valgrind memcheck over the test suite and massif over a soak.
-  A weekly workflow runs memcheck and a short soak. See `docs/development.md`.
+### Documentation
+
+- Short install guides in `docs/install/` (#82), one per NAS system and music server, each
+  with numbered steps and a check that it works: TrueNAS SCALE, Docker or Podman, OpenMediaVault,
+  Linux clients (NFS, SMB, fstab), Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD. Each says what
+  it was validated on; Unraid, Synology, QNAP and UGREEN UGOS are placeholders until someone
+  reports a run. `docs/deployment.md` stays the reference and points to them first.
 
 ## [0.3.0] - 2026-11-02
 

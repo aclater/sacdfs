@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Checks that the README's options table matches `sacdfs --help`.
+"""Checks that the options table in a Markdown file matches `sacdfs --help`.
 
-    sacdfs --help | check-readme-options.py README.md
+    sacdfs --help | check-readme-options.py docs/options.md
+
+(The table was in the README until #159, hence the script's name.)
 
 The table is the one whose header is `| Option | Meaning |`. Its rows must name exactly the
 options of `--help`, in the same order: the short and long flags and the value name, written
@@ -44,19 +46,19 @@ def readme_options(text: str) -> list[tuple[tuple[str, str, str], str]]:
     try:
         start = next(i for i, l in enumerate(lines) if re.match(r"^\|\s*Option\s*\|\s*Meaning\s*\|", l))
     except StopIteration:
-        sys.exit("README: no table with the header | Option | Meaning |")
+        sys.exit("no table with the header | Option | Meaning |")
     rows = []
     for line in lines[start + 2 :]:
         if not line.startswith("|"):
             break
         cells = [c.strip() for c in line.strip().strip("|").split("|", 1)]
         if len(cells) != 2:
-            sys.exit(f"README: options table row without two cells: {line}")
+            sys.exit(f"options table row without two cells: {line}")
         short = long = value = ""
         for span in re.findall(r"`([^`]+)`", cells[0]):
             m = re.fullmatch(r"(--?[A-Za-z0-9][A-Za-z0-9-]*)(?: ([A-Z_]+))?", span)
             if not m:
-                sys.exit(f"README: not an option in the first column: `{span}`")
+                sys.exit(f"not an option in the first column: `{span}`")
             if m.group(1).startswith("--"):
                 long, value = m.group(1), m.group(2) or ""
             else:
@@ -84,12 +86,12 @@ def main(argv: list[str]) -> int:
     want = [o for o, _ in helps]
     have = [o for o, _ in readme]
     if want != have:
-        errors.append("the options differ (--help, then README):")
+        errors.append("the options differ (--help, then the table):")
         errors.append("  --help: " + "; ".join(show(o) for o in want))
-        errors.append("  README: " + "; ".join(show(o) for o in have))
+        errors.append("  table:  " + "; ".join(show(o) for o in have))
         for o in want:
             if o not in have:
-                errors.append(f"  missing in the README: {show(o)}")
+                errors.append(f"  missing in the table: {show(o)}")
         for o in have:
             if o not in want:
                 errors.append(f"  not in --help: {show(o)}")
@@ -100,13 +102,13 @@ def main(argv: list[str]) -> int:
             continue
         token = re.compile(r"(?<![\w.,-])" + re.escape(default) + r"(?![\w.,-])")
         if "default" not in meaning or not token.search(meaning):
-            errors.append(f"{show(opt)}: --help says [default: {default}], the README's meaning doesn't")
+            errors.append(f"{show(opt)}: --help says [default: {default}], the table's meaning doesn't")
     if errors:
-        print("README.md's options table doesn't match `sacdfs --help`:", file=sys.stderr)
+        print(f"{argv[0]}: the options table doesn't match `sacdfs --help`:", file=sys.stderr)
         for e in errors:
             print(e, file=sys.stderr)
         return 1
-    print(f"README options table matches --help: {len(want)} options")
+    print(f"{argv[0]}: options table matches --help: {len(want)} options")
     return 0
 
 
