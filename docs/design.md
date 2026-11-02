@@ -96,23 +96,51 @@ before. Two changes, each needed:
   what one setting does); `malloc_trim` after evictions (gives back only whole free pages,
   and walks the heap). This is the one `unsafe` call outside the daemonising code: `mallopt`
   takes two integers.
-- **The cache reuses the buffers of evicted frames** (`FrameCache::buffers`, `spares`): DST
-  frames are decoded straight into them (`DstDecoder::decode`, with scarletbook's fills for
-  missing and invalid frames, as `audio::decode_frame` does), plain DSD and PCM frames are
-  copied in. An eighth of the cap, at most 32 MiB, is kept for spare buffers, so frames and
-  spares together stay within the cap. *Why:* freeing evicted frames left holes between the
-  cached frames and the short-lived allocations of decoding (read buffers of up to 1 MiB,
-  compressed frames) that the heap could not give back; a malloc profile showed the cache's
-  count was right and the excess was the heap's. With one arena, reuse took 339 → 271 MiB at
-  256. *Why 32 MiB:* a read-ahead's worth of frames, so that straight reads reuse buffers
-  rather than allocate; a 4 MiB reserve held 314 MiB. *Trade-off:* the cache holds an eighth
-  fewer frames.
-- **What is left above the cap** (#73 item 3): about 32 MiB that a mount holds with no cache:
-  12 MiB at mount (binary, FUSE buffers, the scan), then the decoders' tables (256 KiB per
-  decoder thread), the image cursors' read buffers (up to 1 MiB each while a file is open),
-  the seek indexes and the open images. It levels off after the first few hundred files and
-  does not depend on `--max-open-images`. With more decoder threads (`--threads`, one per
-  CPU by default) it grows by about 0.3 MiB per thread.
+- **The cache's frames live in slabs outside the heap** (`engine::Pool`, `FrameBuf`; this
+  replaced the reuse of evicted frames' buffers, `FrameCache::spares`, of the first fix).
+  Each frame takes a slot of a slab of slots of its length (512 KiB, mapped with `mmap`), DST
+  frames are decoded straight into it, and its slot is given back when the frame is dropped.
+  The slabs together never pass the cap; a slab is unmapped only when it is empty and a
+  frame of another length needs the room. When the slabs are full, a new frame evicts the
+  least recently used frames until a slot is free. *Why:* frames on the heap left holes when
+  they were evicted, because frames of 2, 5 and 6 channels and PCM frames differ in size and
+  readers drop frames late; the allocator could neither give these back nor fill them with
+  frames of another size. Reusing evicted buffers of the same size (the first fix) helped,
+  but a full-library replay (271 images, on 4 CPUs) still ended with 7 MiB free in the heap
+  at `--cache-mb 256` and 12 MiB at 16. With slabs, the cache's memory is its cap: `--cache-mb
+  16` went from 73 to 62 MiB (66 to 53 MiB on 4 CPUs), and `--cache-mb 256` from 304 to
+  300 MiB (292 MiB either way on 4 CPUs), about what `--cache-mb 0` holds plus the cap. Cached frames still leave an eighth of the cap (at most 32 MiB) free, now as free
+  slots (`free_reserve`). *Why:* with frames filling the whole cap, each new frame evicted one
+  first and straight reads of a plain DSD stereo area took 5 to 10 % longer; with the reserve
+  they take free slots, as the spare buffers did. *Why 512 KiB:* a slab empties soon after
+  its frames stop being used, and a 256 MiB cache is 512 mappings, far below the kernel's default limit of 65 530. *Measured
+  alternatives:* `malloc_trim` after the replay gave back only 5 MiB of the 7 MiB of holes at
+  256; slabs mapped with `MAP_POPULATE`, or 2 MiB slabs with `MADV_HUGEPAGE`, read no faster
+  (stereo plain DSD, medians of 6: 1.92 and 1.98 s against 1.95 s). *Cache colouring:* slots start at multiples of the frame length, so the frames a
+  thread decodes one after another do not all start at the same offset within a page, which
+  would make them collide in the CPU's cache sets ([Drepper, "What every programmer should
+  know about memory", 2007](https://www.akkadia.org/drepper/cpumemory.pdf),
+  on cache associativity; [mmap(2)](https://man7.org/linux/man-pages/man2/mmap.2.html):
+  mappings are page-aligned). *Trade-off:* `unsafe` code for the mapping and its slots
+  (`mmap`, `munmap` and raw slices into the slab), kept to one type.
+- **What is left above the cap** (#73 item 3), measured with a heap walk (glibc's chunks and
+  `/proc/PID/pagemap`) after the 271-image replay: about 45 to 50 MiB on a 32-thread host,
+  none of it the cache's:
+  - about 7 MiB for the program at mount;
+  - about 16 MiB for the images and their files once listed (the tree, two copies of each
+    image's TOC: scarletbook's and the one `Disc` keeps, its text and track lists), about
+    60 KB per image. Raw-sector images (2 054 or 2 064 bytes per sector) also keep an 80 KiB
+    read buffer in scarletbook (the replay's library had 54 of them: 9 MiB);
+  - about 18 MiB more during the replay: each decoder thread's DST tables and buffers (roughly
+    300 to 350 KB per thread that decoded DST; 17 threads here), the seek indexes' pending readings
+    (80 bytes per seek, at most 256 per area) and seek hints, and smaller objects;
+  - the FUSE threads' 16 MiB receive buffers are allocated but almost never touched (under
+    1 MiB resident in all).
+
+  It grows with the number of images listed (about 60 KB each) and with decoder threads,
+  not with the cache, and does not depend on `--max-open-images`. *Not done here:* keeping
+  one TOC per image instead of two (`Disc::toc` becoming a method over scarletbook's copy)
+  needs changes in `tree.rs` and the tag code, left for after the tag work (#121).
 
 ## Layout
 
@@ -398,7 +426,8 @@ copies get their own album name in the tags, by default, with an option to turn 
 comment tag (servers group by album name); hiding an area (loses content). *Trade-off:* the
 tag bytes differ from an extract's, which the owner allows (only audio must match); the
 output versions move (DSF 3, WAV 4). The option is a process-wide switch in `dsf.rs`, and
-toggling it does not move mtimes. The tag layer (#81) will override the album name.
+toggling it does not move mtimes. A tags file's album name wins and gets no suffix
+([Tag layer](#tag-layer-81)).
 
 **Generation numbers.** A track file's generation is 32 bits (all the kernel keeps) of a hash
 of its image's sector count and mtime, its format, size and an output version per format, and
@@ -547,14 +576,28 @@ mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a
   as a user and as root: the new mount was lost in 200 of 200 when the old one was detached
   from outside (`fusermount3 -u -z`, a file open) and exited after the new one mounted, and in
   200 of 200 when the old one, unmounted, was held stopped until the new one had mounted.
-  With the fix, 2 of about 5,000 fixed-binary restarts lost the new mount, both with a file
-  open and the old mount detached from outside, and neither sacdfs logged an unmount: not
-  explained yet, and not an unmount by sacdfs. This was the failure seen in #51.
+  With the fix, 2 of about 5,000 fixed-binary restarts still lost the new mount; that was the
+  device-number reuse of the next rule (#54). This was the failure seen in #51.
 - On SIGINT, SIGTERM or SIGHUP, sacdfs unmounts (or detaches, if busy) only if the mount on top at
   its path still has its own device number, read from `/proc/self/mountinfo` right after
-  mounting; otherwise it logs why and leaves the path alone. *Why:* the device number is
-  unique while the mount exists, which is the only time it is compared; the mount table asks
-  the file system nothing, so the check cannot wait on a stopping session.
+  mounting, **and** its own FUSE connection is still up (`poll` on a duplicate of its
+  `/dev/fuse` descriptor shows no `POLLERR`); otherwise it logs why and leaves the path alone.
+  The same check guards the detach after a failed session. *Why the connection (#54):* the
+  kernel hands a freed device number (and mount id) to the next mount at once, so after an
+  unmount from outside, a new mount on the same path usually has the old one's number (178 of
+  200 restarts on Linux 7.2). An old sacdfs that got its signal only then (held stopped,
+  busy, or simply late: a service manager sends SIGTERM and then SIGCONT) saw "its" number on
+  top and unmounted the new mount: 28 of 50 restarts as a user and 13 of 20 as root, every
+  one with the number reused. The kernel aborts a mount's FUSE connection when its superblock
+  goes, before the number is freed, so a connection still up means the number read just
+  before is this mount's. Both checks ask the file system nothing, so they cannot wait on a
+  stopping session. With it: 0 lost in 200 such restarts, and 0 in a 14,000-iteration
+  restart loop (user and root, 10 stop scenarios, 2,800 of them late-signal).
+  Rejected: the 64-bit unique mount id (`statmount`/`listmount`, Linux 6.8+), which needs raw
+  syscalls and a fallback on older kernels for the same answer; holding an `O_PATH` descriptor
+  on the mount to pin its number, which makes a plain `fusermount3 -u` fail as busy.
+  The #53 note that "neither sacdfs logged an unmount" came from runs at the default log
+  level, where "signal N: unmounting" (info) is not shown.
 - A new sacdfs whose mount point is still a live FUSE mount of its user's (the previous one
   has not unmounted yet) waits for it to go, up to 10 s, then fails with "still mounted there
   after 10 s"; a dead one is cleared at once (below, #57). *Why:* mounted
@@ -1227,6 +1270,31 @@ alternatives and the trade-off.
 - `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
 - A short frame (which the decoder never makes) is padded with silence.
 
+## Client-side start-up over NFS from hard disks (#71)
+
+**Decision:** no code change; tuning guidance in the deployment guide
+([client-side](deployment.md#client-side-images-on-hard-disks-over-nfs)), and a proposal to
+state the concurrency target of #6 as *no read over 50 ms while playing*, with start-up
+judged by the cold-seek target.
+
+- **Why:** the measurement on an emulated hard disk
+  ([performance](performance.md#client-side-where-the-slow-reads-come-from-71)) found every
+  read over 20 ms in a player's start-up, when it fills its buffer after a cold seek; while
+  playing, no read took over 0.5 ms. The slow start-up reads are the disk seeks of four cold
+  starts at once, queued on one disk. A player is not yet playing then, so they delay its
+  start but cannot cause a dropout.
+- **Alternatives measured:** a larger NFS client read-ahead and other `rsize` values (worse),
+  `nconnect` (no change: one disk), `--threads 4` (lower worst read, slower start-ups),
+  `--cache-mb 1024` (no change). *Not tried:* read-ahead in a reader's first 1 MiB, which #78
+  removed for library scanners; at start-up it would add reads to the same disk queue, which
+  is what costs.
+- **Trade-off:** four players started at the same instant from one hard disk still wait up to
+  0.31 s for a full buffer, against the 50 ms cold-seek target. Without any disk delay, start-up
+  reads still take 40 to 57 ms when four start together: the start-ups' round trips and
+  decoding. Shortening that would mean fewer dependent reads of the image per cold seek,
+  which is scarletbook's seeking (#28).
+- **Owner direction:** "performance will be key", "latency is important".
+
 ## Performance basis
 
 scarletbook decodes a stereo DST frame in about 0.17 ms on one core (about 78x real time per
@@ -1347,6 +1415,92 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   build), no persisted credentials, actions pinned by SHA.
 - **Not crates.io.** scarletbook is a git dependency and crates.io refuses those
   (`publish = false`). Publishing waits for scarletbook on crates.io (scarletbook-rs#39).
+
+## Tag layer (#81)
+
+User tags are kept in a tags directory and merged into the TOC's tags when a track file is
+made (`src/tags.rs`, `dsf::tagged`); `sacdfs tags import` fills it from extracts
+(`src/tags_cli.rs`). *Why it matters:* storage reclamation (#82). A library check found that
+deleting extracts would lose user genres (TCON) on 827 of 1,066 files, embedded art on 33 and
+MusicBrainz IDs on 26.
+
+- **A tags directory, one TOML file per disc, named by the disc's TOC identity.** *Owner
+  decision (#81, 2026-11-01):* "a tags directory, one file per disc, keyed by the disc's TOC
+  identity. The images' dataset stays read-only." *Why:* edits survive renames and moves, and
+  two copies of a disc share them; the images stay read-only; sacdfs does not depend on beets.
+  *Alternatives:* a file next to each ISO (needs a writable image dataset), the beets
+  database (a dependency). *Trade-off:* a user must look the key up (`sacdfs tags key`).
+- **The key** is 128 bits of a SHA-256 of the master and area TOCs' numbers: catalogue
+  numbers as stored, set size and position, date, disc flags, and each area's slot, channels,
+  TOC and audio sectors and each track's sectors and frames. *Why not the path-based inode
+  key:* that changes on a rename. *Why numbers and not the raw TOC sectors:* the library hands
+  over the parsed TOC; these fields sit at fixed offsets of the specification, so a newer
+  scarletbook gives the same key, and any copy of the same pressing does too. Text is left out
+  so that a TOC text decoding fix can't move a key. *Trade-off:* two pressings with identical
+  numbers would share a file; with sector-exact track positions that needs the same master.
+- **Out of band only; no writable mount.** *Owner decision:* "out-of-band only:
+  `sacdfs tags import` from extracts, beets-pysacd export, and a CLI/TOML for hand edits. The
+  mount stays read-only; a writable mount is not planned." *Why:* taggers rewrite whole
+  multi-gigabyte files; accepting that over FUSE, NFS and SMB is a lot of risk for what the
+  importer and beets already give.
+- **Art only when named.** *Owner decision:* "embedded only when a disc's tags file names an
+  image. With no tags file, output stays byte-identical." The picture is an `APIC` front cover
+  appended to scarletbook's tag (as `Tags::Raw`), at most 960 KiB, since scarletbook caps a tag
+  at 1 MiB. *Trade-off:* the tag is held in memory per listed track file, so a picture costs
+  its size per track and format of the discs that embed one (33 of 1,066 files in the library
+  check); sharing it between files is a follow-up if it matters.
+- **Byte identity.** Without `--tags`, nothing is looked up. With it, a file whose tag comes
+  out equal to the TOC's (no tags file, or nothing set for that track) keeps its bytes, mtime
+  and generation. *Why not bump `DSF_VERSION`/`WAV_VERSION`:* those move every file; only the
+  files a tags file changes get a new generation (the old one hashed with the tag's hash) and
+  an mtime no older than the tags file's. The audio never changes, so the DSF gate and the
+  golden audio hashes are untouched.
+- **Merging:** items the library knows (title, genre, album ...) are set in its `TagSet`, so
+  they are written as the TOC's are, in sacdfs's frame order; `TXXX` too. Other frames (`UFID`,
+  `COMM`, other text frames) and the picture are appended after them. Levels: album, area
+  album, track, area track; the later wins. An `album` from the tags file gets no multichannel
+  suffix (#97 hook): the user named it.
+- **Reading:** a tags file is read when a track file is made, that is when its area is first
+  listed, and kept while its mtime and size are unchanged. A file that does not parse (unknown
+  key or section) is ignored with a warning, so a typo never changes the served files.
+- **Live reload (owner requirement: pruning scanners such as Roon must see tag edits).** On a
+  directory SOURCE (a watching tree, #101), adding, editing or removing a tags file changes the
+  affected files' tags, size, mtime and generation and moves the mtime of the image's folder,
+  its area folders and every folder above, exactly as a new sidecar does (#123), within the
+  refresh interval (2 s). The sweep (`Tree::sweep`, run when the root's attributes are asked
+  for) looks at the tags files of the images: one `stat` of the tags directory, one per tags
+  file known, and a listing of the directory only when its mtime moved (a file added or
+  removed). A change is a bump under the image's path (`Tree::bump`), so the image and area
+  folders, which now key their mtime on that path, move with their ancestors. An area listed
+  again re-makes its track files; one whose tag changed replaces its node under the same
+  number (`Tree::renew`), and a file whose tag is the same keeps its node, so open files and
+  caches stay as they are (an open handle keeps the file it opened). The mtime of a bump is
+  the tags file's when it moved forward (a remount shows the same), else the time now (a
+  removal, or an older time put back), so that the folders always move.
+  *Why the image's path, not the disc key:* scanners walk folders, and the image's path is
+  what the folders above it are made of.
+  *Why also across mounts:* a disc's key needs its TOC, read only when the image is opened
+  (on its folder's first listing). A tags file written while sacdfs was stopped, or for an
+  image not opened yet, would otherwise move nothing above the image, and a pruning scanner
+  would never open it. So each opened image's key and its tags file's last state are kept in
+  `tag-keys` in the seek index's cache directory, by a SHA-256 of the image's path (never the
+  path), and checked at the mount, before anything is shown: every folder above an image with
+  a tags file shows an mtime no older than it, and one changed or removed since moves.
+  *Alternatives:* opening every image at the mount for its key costs a TOC read per image
+  ("latency is important"); putting the tags directory's mtime in every folder's would make a
+  scanner rescan the whole library for one edit. *Trade-off:* a stale entry (an image
+  replaced under the same path) only moves a few mtimes once, and the image's own change
+  moves them anyway; without a cache directory (`--no-index-cache`), an image not yet opened
+  in this mount is found on its first listing only. A single-image SOURCE does not watch:
+  there an edit shows after a remount.
+- **Import** runs `verify` with the user's arguments and keeps only IDENTICAL and
+  IDENTICAL-PAUSE rows: the matching is verify's, so a tag is never attached to a track whose
+  audio differs. Per extract it takes the frames `Losses::between` calls lost against the
+  untagged served file (so nothing the TOC already says is copied) and the front cover. Values
+  shared by every track of an area become area-album values, shared by both areas album
+  values. Existing tags files keep their values (hand edits win), and files are written
+  through a rename. *Why reuse verify:* the owner asked for verify's matching, and it is the
+  proof the extract may be deleted.
 
 ## Verifying extracts (`sacdfs verify`, #80)
 

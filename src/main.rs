@@ -4,7 +4,7 @@
 
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -34,7 +34,8 @@ use sacdfs::tree::{Output, SourceDir, Tree};
 /// Unmount with `fusermount3 -u MOUNTPOINT`, or stop sacdfs with SIGINT, SIGTERM or SIGHUP.
 ///
 /// `sacdfs verify SOURCE [EXTRACTS]...` checks extracted DSF and DFF files against what
-/// sacdfs serves, before they are deleted: see `sacdfs verify --help`.
+/// sacdfs serves, before they are deleted: see `sacdfs verify --help`. `sacdfs tags` keeps
+/// user tags for the files (`--tags`): see `sacdfs tags --help`.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Args {
@@ -69,6 +70,11 @@ struct Args {
     /// (by default they get it, so players and servers show them as an album of their own).
     #[arg(long)]
     no_multichannel_album_suffix: bool,
+    /// Directory of tags files (#81), one per disc, named by its disc key
+    /// (`sacdfs tags key IMAGE`): their tags override and add to the TOC's. Without it, or
+    /// for a disc without a file, the files are as the TOC gives them.
+    #[arg(long, value_name = "DIR")]
+    tags: Option<PathBuf>,
     /// Collapse each chain of folders below the top level that holds a single image into
     /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
     #[arg(long)]
@@ -159,6 +165,10 @@ fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_some_and(|a| a == "verify") {
         return sacdfs::verify::main(std::env::args_os().skip(1));
     }
+    // `sacdfs tags ...` (#81): see `sacdfs tags --help`.
+    if std::env::args_os().nth(1).is_some_and(|a| a == "tags") {
+        return sacdfs::tags_cli::main(std::env::args_os().skip(1));
+    }
     // `-o` options, as `mount -t fuse.sacdfs` and fstab pass them (#60).
     let argv = match mount_opts::expand(std::env::args_os().collect()) {
         Ok(v) => v,
@@ -239,6 +249,16 @@ fn run(args: Args) -> io::Result<()> {
     // combination before mounting.
     let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
     sacdfs::dsf::set_mc_album_suffix(!args.no_multichannel_album_suffix);
+    if let Some(dir) = &args.tags {
+        let dir = dir.canonicalize().map_err(|e| with_path(e, dir))?;
+        if !dir.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                format!("--tags {}: not a directory", dir.display()),
+            ));
+        }
+        sacdfs::tags::install(Some(sacdfs::tags::Store::new(&dir)));
+    }
     let pcm = PcmConfig { rate, cutoff: args.pcm_cutoff, gain_db: args.pcm_gain };
     if let Err(e) = pcm.validate() {
         return Err(io::Error::new(
@@ -277,8 +297,8 @@ fn run(args: Args) -> io::Result<()> {
     );
 
     // Before daemonizing, which changes the working directory.
-    if let Some(dir) = cache_dir {
-        open_index_cache(&dir);
+    if let Some(dir) = &cache_dir {
+        open_index_cache(dir);
     }
 
     // Become a daemon before any thread exists; the parent waits for the mount.
@@ -307,11 +327,14 @@ fn run(args: Args) -> io::Result<()> {
     let tree = Tree::with_options(root, Tuning::default(), output)
         .with_flatten(args.flatten)
         .with_pcm(&pcm)
-        .excluding(&mountpoint);
+        .excluding(&mountpoint)
+        // The tags files' state is kept with the seek index (#81).
+        .with_tag_watch(cache_dir.as_ref().map(|d| d.join("tag-keys")));
     // A directory SOURCE is re-read when it changes (#101); a single image has no directory.
     let tree = Arc::new(if source.is_dir() { tree.watching(&args.sidecars) } else { tree });
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
+    let tags_tree = tree.clone();
     let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?;
 
     let mut config = Config::default();
@@ -350,9 +373,13 @@ fn run(args: Args) -> io::Result<()> {
             return Err(e);
         }
     };
-    // This mount's identity: its device number, unique while the mount exists. Read from
-    // the mount table, which asks the file system nothing (a stat would wait for the session).
-    let own = top_mount_device(&mountpoint);
+    // This mount's identity: its device number, read from the mount table (which asks the
+    // file system nothing; a stat would wait for the session), plus its FUSE connection,
+    // which tells whether the number is still this mount's (#54).
+    let own = Arc::new(OwnMount {
+        dev: top_mount_device(&mountpoint),
+        conn: session.as_fd().try_clone_to_owned()?,
+    });
     let at = mountpoint.clone();
     let mine = own.clone();
     let detached = Arc::new(AtomicBool::new(false));
@@ -362,7 +389,7 @@ fn run(args: Args) -> io::Result<()> {
             // Unmounting goes by path, so only while the mount on top at the path is still
             // this one: once it was unmounted or detached, or something else was mounted
             // over it, the path names another mount, which must be left alone (#51).
-            if mine.is_none() || top_mount_device(&at) != mine {
+            if !mine.is_on_top(&at) {
                 log::warn!(
                     "signal {sig}: {} is no longer this mount (unmounted, or another is mounted \
                      over it): not unmounting it; sacdfs stops when its mount is gone",
@@ -376,7 +403,7 @@ fn run(args: Args) -> io::Result<()> {
                 // Busy (open files, or an NFS server exporting the mount): detach it, as
                 // fusermount3 does for users other than root. sacdfs then serves the files
                 // still open and exits when the last is closed.
-                if top_mount_device(&at) != mine {
+                if !mine.is_on_top(&at) {
                     log::warn!("unmount: {e}; {} is no longer this mount: not detaching it", at.display());
                     return;
                 }
@@ -411,13 +438,13 @@ fn run(args: Args) -> io::Result<()> {
     log::info!("mounted {} on {}", source.display(), mountpoint.display());
     let result = serve(session);
     let failed = result.as_ref().err().filter(|e| e.raw_os_error() != Some(libc::ECONNABORTED));
-    if let Some(e) = failed.filter(|_| own.is_some() && top_mount_device(&mountpoint) == own) {
+    if let Some(e) = failed.filter(|_| own.is_on_top(&mountpoint)) {
         // The session failed while still mounted (an error, not an unmount): don't leave a
-        // dead mount behind. The device number is still this mount's: the mount still
-        // exists, so no other can have it.
+        // dead mount behind.
         log::warn!("session ended: {e}; detaching {}", mountpoint.display());
         let _ = lazy_unmount(&mountpoint);
     }
+    tags_tree.save_tag_watch();
     if let Some(cache) = index_cache::global() {
         match cache.flush() {
             Ok(n) => log::debug!("seek index cache: {n} entries written"),
@@ -775,6 +802,40 @@ fn outside_path(path: &Path) -> PathBuf {
         (Some(parent), Some(name)) => parent.canonicalize().map_or_else(|_| abs.clone(), |p| p.join(name)),
         _ => abs,
     }
+}
+
+/// The identity of sacdfs's own mount, to unmount by path only while the path is still it.
+///
+/// The device number alone is not enough (#54): the kernel hands a freed number to the next
+/// mount at once, so after an unmount from outside (`fusermount3 -u`) a new mount on the
+/// same path usually has the old one's number, and an old sacdfs that then got a signal
+/// unmounted the new mount. The FUSE connection closes the gap: the kernel aborts it when
+/// the mount's superblock goes, before the number is freed, so while the connection is
+/// still up the number is this mount's and no other's.
+struct OwnMount {
+    /// The device number read from the mount table right after mounting.
+    dev: Option<String>,
+    /// A duplicate of the session's `/dev/fuse` descriptor.
+    conn: OwnedFd,
+}
+
+impl OwnMount {
+    /// Whether the mount on top at `at` is this one. The mount table is read first and the
+    /// connection checked after: up then, the number read was this mount's.
+    fn is_on_top(&self, at: &Path) -> bool {
+        self.dev.is_some() && top_mount_device(at) == self.dev && fuse_connected(&self.conn)
+    }
+}
+
+/// Whether the FUSE connection of `/dev/fuse` descriptor `fd` is still up: the device
+/// reports `POLLERR` once the connection is aborted (unmounted, or the mount went away).
+/// `poll` with no wait asks the file system nothing.
+#[allow(unsafe_code)]
+fn fuse_connected(fd: &OwnedFd) -> bool {
+    let mut p = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    // SAFETY: one valid pollfd, an open descriptor, no wait.
+    let n = unsafe { libc::poll(&mut p, 1, 0) };
+    n >= 0 && p.revents & (libc::POLLERR | libc::POLLNVAL) == 0
 }
 
 /// The device number (`major:minor`) of the mount on top at `at`, if `at` is a mount point.

@@ -10,6 +10,8 @@ use scarletbook::output::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::tags::Stamp;
+
 use scarletbook::{Area, Slot, Toc, Track};
 
 /// DSD bytes per channel in one SACD frame (1/75 s at 2.8224 MHz).
@@ -90,8 +92,8 @@ pub const MC_ALBUM_SUFFIX: &str = " (Multichannel)";
 /// Multichannel copies as one album (merged, tracks up to 4 times, or two albums with the same
 /// name). Only the audio must match an extract's, not the tag (#82, #97).
 ///
-/// Hook for the tag layer (#81): an album name it supplies for the disc wins and gets no
-/// suffix, unless its tags file asks for one; apply that before calling this.
+/// The tag layer (#81): an album name a tags file supplies wins and gets no suffix
+/// ([`tagged`]); a tags file that wants one writes it in `[multichannel.album]`.
 fn apply_mc_album_suffix(set: &mut TagSet, slot: Slot, on: bool) {
     if !on || slot != Slot::Multichannel {
         return;
@@ -109,6 +111,13 @@ fn apply_mc_album_suffix(set: &mut TagSet, slot: Slot, on: bool) {
 /// - the album gets [`MC_ALBUM_SUFFIX`] in a multichannel area (#97), unless turned off.
 /// - no album set for a one-disc set. *Why:* "1/1" says nothing, and sacdfs 0.1 left it out.
 pub fn tag_set(toc: &Toc, area: &Area, track: &Track, options: &OutputOptions) -> TagSet {
+    let mut set = base_tag_set(toc, area, track, options);
+    apply_mc_album_suffix(&mut set, area.slot, MC_ALBUM_SUFFIX_ON.load(Ordering::Relaxed));
+    set
+}
+
+/// [`tag_set`] without the multichannel suffix.
+fn base_tag_set(toc: &Toc, area: &Area, track: &Track, options: &OutputOptions) -> TagSet {
     let album = options.clone().with_text_source(TextSource::Album);
     let mut set = TagSet::from_toc(toc, area, Some(track), &album);
     let disc = TagSet::from_toc(toc, area, Some(track), &options.clone().with_text_source(TextSource::Disc));
@@ -119,7 +128,6 @@ pub fn tag_set(toc: &Toc, area: &Area, track: &Track, options: &OutputOptions) -
             }
         }
     }
-    apply_mc_album_suffix(&mut set, area.slot, MC_ALBUM_SUFFIX_ON.load(Ordering::Relaxed));
     if set.get(TagItem::DiscCount).first().is_some_and(|c| c == "1") {
         set.remove(TagItem::DiscNumber);
         set.remove(TagItem::DiscCount);
@@ -127,16 +135,83 @@ pub fn tag_set(toc: &Toc, area: &Area, track: &Track, options: &OutputOptions) -
     set
 }
 
+/// A track's DSF layout with its tag items, and what the tag layer (#81) changed.
+#[derive(Debug)]
+pub struct Tagged {
+    /// The DSF layout, with the tag.
+    pub layout: LibLayout,
+    /// The tag items (for a WAV file's INFO chunk).
+    pub set: TagSet,
+    /// Set when a tags file changed the tag: then the file's mtime and generation change.
+    pub stamp: Option<Stamp>,
+}
+
+/// The DSF layout of `track` of `area`, with its tag: [`tag_set`]'s items, changed by the
+/// disc's tags file if there is one ([`crate::tags`]). `None` if the library refuses the
+/// track (then no file is shown for it).
+///
+/// A tags file's album name gets no multichannel suffix (#97): the user named the album.
+/// A file whose tag comes out the same as without the tags file has no stamp: its bytes,
+/// mtime and generation are those without the tag layer.
+pub fn tagged(toc: &Toc, area: &Area, track: &Track) -> Option<Tagged> {
+    let options = options(area, track);
+    let default = tag_set(toc, area, track, &options);
+    let make = |tags: Tags| {
+        LibLayout::new(
+            toc,
+            area.slot,
+            track.start_frame,
+            track.end_frame(),
+            Format::Dsf,
+            &options.clone().with_tags(tags),
+        )
+    };
+    let of_set = |s: &TagSet| if s.is_empty() { Tags::None } else { Tags::Set(s.clone()) };
+    let user = crate::tags::lookup(toc).and_then(|d| Some((d.mtime, d.overrides(area.slot, track.number)?)));
+    if let Some((mtime, o)) = user {
+        let mut set = base_tag_set(toc, area, track, &options);
+        o.apply(&mut set);
+        if !o.names_album {
+            apply_mc_album_suffix(&mut set, area.slot, MC_ALBUM_SUFFIX_ON.load(Ordering::Relaxed));
+        }
+        if set != default || !o.only_items() {
+            match make(of_set(&set)) {
+                Ok(l) => {
+                    let mut l = l;
+                    let mut tag = region(&l, RegionKind::Trailer);
+                    if !o.only_items() {
+                        match crate::tags::append_frames(&tag, &o)
+                            .map(|raw| (make(Tags::Raw(raw.clone())), raw))
+                        {
+                            Some((Ok(raw_layout), raw)) => {
+                                l = raw_layout;
+                                tag = raw;
+                            }
+                            _ => log::warn!(
+                                "{:?} area track {}: the tags file's frames and art do not fit in the tag; left out",
+                                area.slot,
+                                track.number
+                            ),
+                        }
+                    }
+                    return Some(Tagged { layout: l, set, stamp: Some(Stamp::new(mtime, &tag)) });
+                }
+                Err(e) => {
+                    log::warn!("{:?} area track {}: tags file not applied: {e}", area.slot, track.number)
+                }
+            }
+        }
+    }
+    let layout = make(of_set(&default))
+        .inspect_err(|e| log::debug!("{:?} area track {}: no DSF file: {e}", area.slot, track.number))
+        .ok()?;
+    Some(Tagged { layout, set: default, stamp: None })
+}
+
 /// The DSF layout of `track` of `area`, with its tag; `None` if the library refuses the
 /// track (then no file is shown for it).
 pub fn layout(toc: &Toc, area: &Area, track: &Track) -> Option<LibLayout> {
-    let options = options(area, track);
-    let set = tag_set(toc, area, track, &options);
-    let tags = if set.is_empty() { Tags::None } else { Tags::Set(set) };
-    let options = options.with_tags(tags);
-    LibLayout::new(toc, area.slot, track.start_frame, track.end_frame(), Format::Dsf, &options)
-        .inspect_err(|e| log::debug!("{:?} area track {}: no DSF file: {e}", area.slot, track.number))
-        .ok()
+    tagged(toc, area, track).map(|t| t.layout)
 }
 
 /// The bytes of the regions of `kind` of `layout` (its header or its tag), which hold no

@@ -111,6 +111,7 @@ above it.
 | `--pcm-cutoff KHZ` | Low-pass cutoff of the conversion to PCM: `40` (the default) or `30` kHz, or `wide` (about 80 kHz; with `--pcm-rate 176400` or `352800` only). |
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default `0`). Samples that would clip are clamped, and the log says so once per file. |
 | `--no-multichannel-album-suffix` | Do not add ` (Multichannel)` to the album tag of the multichannel area's DSF and WAV files. By default they get it, so players and servers keep a disc's Stereo and Multichannel copies apart. |
+| `--tags DIR` | Tags files (one per disc, named by its disc key) whose tags override and add to the TOC's in the DSF and WAV files: genres, MusicBrainz IDs, corrected names, embedded art. Discs without one are unchanged ([user guide](docs/user-guide.md#your-own-tags---tags)). |
 | `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder ([Layout](#layout)). Top-level folders of `SOURCE` are never collapsed. |
 | `--sidecars LIST` | Files passed through from `SOURCE`, byte for byte, next to the images: extensions, and folder names ending in `/` whose whole content passes. `default` (the default) is `jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/`; `default,cue` adds to it, `default,-webp` removes from it, `none` passes nothing ([Layout](#layout)). |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
@@ -147,6 +148,11 @@ that deleting the IDENTICAL and IDENTICAL-PAUSE files would free, and which of t
 serve (MusicBrainz IDs, embedded art, ReplayGain, others). Tags, padding and the container
 don't count: only the audio is compared. Details are in the
 [user guide](docs/user-guide.md#before-you-delete-extracts).
+
+To keep those tags, `sacdfs tags import --tags ~/music/sacd-tags SOURCE EXTRACTS...` (with
+verify's arguments) copies them from the IDENTICAL files into a tags directory, and a mount
+with `--tags ~/music/sacd-tags` serves them; only the tags directory is written
+([user guide](docs/user-guide.md#your-own-tags---tags)).
 
 ## Layout
 

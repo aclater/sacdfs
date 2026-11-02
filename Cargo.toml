@@ -32,6 +32,9 @@ rayon = "1.10"
 signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 # Names and checksums of the persistent seek index's files.
 sha2 = "0.11"
+# The tags files (#81): TOML, read and written through serde.
+serde = { version = "1", features = ["derive"] }
+toml = { version = "0.9", default-features = false, features = ["parse", "display", "serde"] }
 
 [dev-dependencies]
 # The converter benchmark (benches/pcm.rs); no plots, no rayon.

@@ -655,6 +655,48 @@ fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
     assert!(wait_exit(&mut new, "the new sacdfs"));
 }
 
+/// An old sacdfs that gets a signal after its mount was unmounted from outside leaves the
+/// next mount on the path alone, though that mount usually has the old one's device number
+/// (#54): the kernel reuses a freed number at once, and the old sacdfs, which told its mount
+/// by that number alone, unmounted the new one. SIGTERM followed by SIGCONT is what a
+/// service manager sends on stop. Several rounds: the number is reused in most, not all.
+#[test]
+fn a_late_signal_leaves_the_next_mount_alone() {
+    if !fuse_available() {
+        return;
+    }
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    for round in 0..6 {
+        let mut old = Mount::foreground(&image, &[]);
+        let at = old.path();
+        let file = at
+            .join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
+        let whole = std::fs::read(&file).unwrap();
+        let mut old_child = old.child.take().unwrap();
+        let pid = old_child.id().to_string();
+        assert!(Command::new("kill").arg("-STOP").arg(&pid).status().unwrap().success());
+        unmount_retrying(&at);
+        let cache = tempfile::tempdir().unwrap();
+        let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
+            .arg("-f")
+            .arg(&image)
+            .arg(&at)
+            .spawn()
+            .unwrap();
+        wait_for("the new mount", || std::fs::read(&file).is_ok_and(|d| d == whole));
+        assert!(Command::new("kill").arg("-TERM").arg(&pid).status().unwrap().success());
+        assert!(Command::new("kill").arg("-CONT").arg(&pid).status().unwrap().success());
+        assert!(wait_exit(&mut old_child, "the old sacdfs"));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (round {round})");
+        assert_eq!(fuse_mounts_on(&at), 1, "round {round}");
+        assert_eq!(std::fs::read(&file).unwrap(), whole, "round {round}");
+        unmount_retrying(&at);
+        assert!(wait_exit(&mut new, "the new sacdfs"));
+    }
+}
+
 /// The source field of the mount on `mountpoint` in `/proc/self/mountinfo` (escaped).
 fn mount_source(mountpoint: &Path) -> Option<String> {
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
@@ -1121,5 +1163,107 @@ fn new_sidecars_are_listed_in_folders_listed_before_and_not() {
         std::thread::sleep(Duration::from_millis(100));
     }
     assert_eq!(seen, [true; 4], "listed in A1..A4");
+    m.stop("TERM");
+}
+
+#[test]
+fn a_tags_file_edit_moves_the_files_and_their_ancestors() {
+    // #81 with #123: adding, editing or removing a tags file while mounted changes the
+    // files' tags, size and mtime within a few seconds, and moves the mtime of every folder
+    // above them, as a new sidecar does, so that a scanner that skips unchanged folders
+    // (Roon) finds the edit. The root's attributes are looked at first, as a scanner does.
+    use std::time::SystemTime;
+    if !fuse_available() {
+        return;
+    }
+    let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap().join("src");
+    let album = src.join("Artist/Album");
+    std::fs::create_dir_all(&album).unwrap();
+    let image = album.join("disc.iso");
+    std::fs::copy(corpus().join("images/dsd-stereo-mch-2048.iso"), &image).unwrap();
+    for p in [image.clone(), album.clone(), src.join("Artist"), src.clone()] {
+        set(&p, old);
+    }
+    let tags = top.path().join("tags");
+    std::fs::create_dir_all(&tags).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs")).args(["tags", "key"]).arg(&image).output().unwrap();
+    assert!(out.status.success());
+    let key = String::from_utf8(out.stdout).unwrap().split('\t').next().unwrap().to_owned();
+    let file = tags.join(format!("{key}.toml"));
+    std::fs::write(&file, "[track.1]\ntitle = \"First Title\"\n").unwrap();
+
+    // Kept across the remount below, with what is known of the tags files.
+    let cache = top.path().join("cache");
+    let args = ["--tags", tags.to_str().unwrap(), "--index-cache", cache.to_str().unwrap()];
+    let m = Mount::foreground(&src, &args);
+    let mnt = m.path();
+    let mtime = |p: &str| std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
+    let dirs = ["", "Artist", "Artist/Album", "Artist/Album/disc", "Artist/Album/disc/Stereo"];
+    let stereo = mnt.join(dirs[4]);
+    let mut names: Vec<PathBuf> = std::fs::read_dir(&stereo)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "dsf"))
+        .collect();
+    names.sort();
+    let track = names[0].clone();
+    let has = |b: &[u8], n: &[u8]| b.windows(n.len()).any(|w| w == n);
+    let state = || {
+        let meta = std::fs::metadata(&track).unwrap();
+        (std::fs::read(&track).unwrap(), meta.len(), meta.modified().unwrap())
+    };
+    let (bytes, _, _) = state();
+    assert!(has(&bytes, b"First Title"));
+
+    // An edit, then the tags file removed: each moves the file and every folder above it.
+    for (step, text) in [("edit", Some("[track.1]\ntitle = \"A Second, Longer Title\"\n")), ("remove", None)]
+    {
+        // Past the kernel's attribute timeout, so that `before` is what sacdfs shows now.
+        std::thread::sleep(Duration::from_millis(2100));
+        let before: Vec<SystemTime> = dirs.iter().map(|p| mtime(p)).collect();
+        let (_, size, file_mtime) = state();
+        match text {
+            Some(t) => std::fs::write(&file, t).unwrap(),
+            None => std::fs::remove_file(&file).unwrap(),
+        }
+        let t0 = Instant::now();
+        let done = loop {
+            let _ = mtime("");
+            let moved = dirs.iter().zip(&before).all(|(p, b)| mtime(p) > *b);
+            let (bytes, now_size, now_mtime) = state();
+            let tagged = match text {
+                Some(_) => has(&bytes, b"A Second, Longer Title"),
+                None => !has(&bytes, b"Title"),
+            };
+            if moved && tagged && now_size != size && now_mtime != file_mtime {
+                break true;
+            }
+            if t0.elapsed() > Duration::from_secs(3) {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        let after: Vec<SystemTime> = dirs.iter().map(|p| mtime(p)).collect();
+        assert!(done, "{step}: not seen after 3 s: folders {before:?} -> {after:?}, file {:?}", state().1);
+    }
+    let rel = track.strip_prefix(&mnt).unwrap().to_owned();
+    m.stop("TERM");
+
+    // A tags file written while sacdfs is stopped: after the remount, before anything
+    // below is listed (the image is not opened yet), every folder above the image already
+    // shows an mtime no older than it, so that a scanner that skips unchanged folders goes in.
+    std::fs::write(&file, "[track.1]\ntitle = \"While Stopped\"\n").unwrap();
+    let written = std::fs::metadata(&file).unwrap().modified().unwrap();
+    let m = Mount::foreground(&src, &args);
+    let mnt = m.path();
+    for p in &dirs[..3] {
+        let shown = std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
+        assert!(shown >= written, "after the remount: {p:?} shows {shown:?}, the tags file {written:?}");
+    }
+    let track = mnt.join(&rel);
+    assert!(has(&std::fs::read(&track).unwrap(), b"While Stopped"));
     m.stop("TERM");
 }

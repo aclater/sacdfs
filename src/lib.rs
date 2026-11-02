@@ -19,6 +19,8 @@ pub mod index_cache;
 pub mod names;
 pub mod pcm;
 pub mod sidecar;
+pub mod tags;
+pub mod tags_cli;
 pub mod track;
 pub mod tree;
 pub mod verify;

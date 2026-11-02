@@ -6,7 +6,27 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The tag layer (#81): `--tags DIR` (`SACDFS_TAGS` in the container) serves user tags from a
+  tags directory, one TOML file per disc named by its TOC identity (`sacdfs tags key IMAGE`),
+  so edits survive renames. A file overrides and adds album- and track-level tags (genres,
+  MusicBrainz IDs, corrected names, any ID3 text, `TXXX`, `COMM` or `UFID` frame) and embeds a
+  picture only when it names one; an album it names gets no ` (Multichannel)` suffix. Only the
+  files it changes get new bytes, a new mtime and a new generation; every other file is byte
+  for byte as before. `sacdfs tags import` writes tags files from the tags of extracts that
+  `sacdfs verify` matches, so they can be deleted without losing them; it writes only the tags
+  directory. Adding, editing or removing a tags file shows without a remount, and moves the
+  modification time of the disc's folders and every folder above, as a new sidecar does, so
+  that scanners that skip unchanged folders (Roon) find it. See the user guide, "Your own tags".
+
 ### Changed
+
+- The frame cache keeps its frames in slabs of memory mapped outside the heap, at most
+  `--cache-mb` of them, instead of on the heap (#73). Evicted frames no longer leave holes
+  that the process keeps: a full-library import replay (271 images) peaks at the cap plus
+  what sacdfs holds without a cache (`--cache-mb 16`: 73 → 62 MiB; at the default 256:
+  304 → 300 MiB).
 
 - **scarletbook and scarletbook-pcm 0.5.3 → 0.5.6** (#128). Output bytes are unchanged: the DSF
   gate (all 93 tracks), the golden PCM and DSF hashes and the real-disc WAV test pass. Straight
@@ -15,6 +35,14 @@ All notable changes to sacdfs are recorded here. The format follows
   3.80 s against 3.83 s, DST stereo DSF 3.46 s against 3.55 s, DST 6-channel DSF 11.68 s
   against 11.89 s. **This supersedes 0.2.0's known issue** (plain-DSD WAV about 29 % slower
   than in 0.1.1, scarletbook-rs#216): the plain-DSD WAV read is back at 0.1.1's speed.
+
+### Fixed
+
+- A sacdfs that got its stop signal after its mount had already been unmounted from outside
+  (`fusermount3 -u`) could unmount the next sacdfs mounted on the same path (#54). The kernel
+  reuses a freed device number at once, and sacdfs told its own mount by that number alone;
+  it now also checks that its own FUSE connection is still up.
+
 
 ## [0.2.0] - 2026-11-02
 

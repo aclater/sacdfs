@@ -105,6 +105,8 @@ pub struct TrackFile {
     tag: std::ops::Range<usize>,
     /// File size in bytes.
     pub size: u64,
+    /// What a tags file changed in the file's tag (#81), if anything.
+    pub tags: Option<crate::tags::Stamp>,
     warned: AtomicBool,
     warned_clips: AtomicBool,
 }
@@ -127,9 +129,11 @@ impl TrackFile {
         let a = disc.toc.areas.get(area)?;
         let layout = Layout { channels: a.channel_count, frames: track.duration_frames };
         let mut lib = None;
+        let tagged = dsf::tagged(&disc.toc, a, track);
+        let stamp = tagged.as_ref().and_then(|t| t.stamp);
         let (audio, header, trailer, tag) = match format {
             Format::Dsf => {
-                let l = dsf::layout(&disc.toc, a, track)?;
+                let l = tagged?.layout;
                 let header = dsf::region(&l, scarletbook::output::RegionKind::Header);
                 let tag = dsf::region(&l, scarletbook::output::RegionKind::Trailer);
                 let range = 0..tag.len();
@@ -138,11 +142,13 @@ impl TrackFile {
             }
             Format::Wav => {
                 // The DSF file's tag as the `id3 ` chunk, and the INFO chunk from its items.
-                let options = dsf::options(a, track);
-                let set = dsf::tag_set(&disc.toc, a, track, &options);
-                let id3 = dsf::layout(&disc.toc, a, track)
-                    .map(|l| dsf::region(&l, scarletbook::output::RegionKind::Trailer))
-                    .unwrap_or_default();
+                let (set, id3) = match tagged {
+                    Some(t) => {
+                        let id3 = dsf::region(&t.layout, scarletbook::output::RegionKind::Trailer);
+                        (t.set, id3)
+                    }
+                    None => (dsf::tag_set(&disc.toc, a, track, &dsf::options(a, track)), Vec::new()),
+                };
                 let spf = u64::from(samples_per_frame);
                 if spf == 0 || dsf::FRAME_BYTES * 8 % spf != 0 {
                     return None;
@@ -175,6 +181,7 @@ impl TrackFile {
             trailer,
             tag,
             size,
+            tags: stamp,
             warned: AtomicBool::new(false),
             warned_clips: AtomicBool::new(false),
         })

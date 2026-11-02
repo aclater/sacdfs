@@ -12,7 +12,8 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
   read it from its disks ([on a NAS](performance.md#on-a-nas-server-side-21-part-2)).
 - **On a Linux client (client-side).** sacdfs runs on the client and reads the images from a
   network share, as in the [user guide](user-guide.md). Every read of an image is then a
-  network round trip.
+  network round trip; [over NFS from hard disks](#client-side-images-on-hard-disks-over-nfs),
+  what is slow is starting playback, not playing.
 
 This guide covers the first: the container image in this repository (`Containerfile`), how
 to run it with Docker, Podman or Compose and on TrueNAS SCALE, and how clients mount its
@@ -158,6 +159,7 @@ All settings are environment variables.
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
 | `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |
+| `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there, read-only is enough); see the [user guide](user-guide.md#your-own-tags---tags) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | `256` | `--cache-mb`: decoded-frame cache in MiB. On a NAS, `16` is recommended; see [Memory](#memory) |
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
@@ -197,11 +199,13 @@ Measured with sacdfs 0.1.0 replaying a Roon library import (271 images, 3,216 tr
 | `16` | about 90 MB |
 
 That was sacdfs 0.1.0, whose cache grew past its limit when a scan jumps around within files
-([#73](https://github.com/aclater/sacdfs/issues/73)). Since the fix for #73, the cache stays
-within its limit and the rest of sacdfs takes about 30 to 40 MiB, so the memory is about
-`SACDFS_CACHE_MB` + 40 MiB: about 60 MiB at `16`, about 300 MiB at `256` (measured with the
-same reads over 60 images; see [design](design.md#memory-73)). Limiting open images
-(`SACDFS_MAX_OPEN_IMAGES`) makes no measurable difference: an open image costs about 30 KB.
+([#73](https://github.com/aclater/sacdfs/issues/73)). Since the fixes for #73, the cache's
+memory is its limit (its frames live in their own memory mappings, which never pass
+`SACDFS_CACHE_MB`), and the rest of sacdfs takes about 30 to 50 MiB, depending mostly on the
+number of images listed (about 60 KB each) and of CPUs (about 0.3 MiB per decoder thread).
+For a 271-image library: about `SACDFS_CACHE_MB` + 30 to 50 MiB (see
+[design](design.md#memory-73)). Limiting open images (`SACDFS_MAX_OPEN_IMAGES`) makes no
+measurable difference: an open image costs about 30 KB.
 
 ## Running it
 
@@ -505,6 +509,33 @@ Over NFS the names are exactly sacdfs's. Over SMB, `SMB_NAME_MAPPING` chooses ho
 Clients built on Samba's libsmbclient (`smbclient`, and many players and file managers) don't
 map them back. With `sfm` they show the private-use character, as Windows does, and must ask
 for a name in that same form: a name typed with the real `:` is not found.
+
+## Client-side: images on hard disks over NFS
+
+This guide is about running sacdfs on the NAS. If you run it on a Linux client instead, over
+an NFS share of images on hard disks, these are the measured findings (#71,
+[performance](performance.md#client-side-where-the-slow-reads-come-from-71)):
+
+- **Once a player is playing, its reads are fast:** under 0.5 ms each, with four players and
+  a tagger at once, in every setting tried. sacdfs decodes 1 to 2 s ahead of each player and
+  the NFS client reads the image ahead of that.
+- **Starting playback is what the disks slow down.** A cold seek reads the image several
+  times, one disk seek each. When four players start at the same instant, their seeks queue
+  on the disks, and a player's 2 s buffer is full only after 0.27 to 0.31 s, single reads
+  taking up to 116 to 156 ms. Players started 2 s apart took 87 to 126 ms to fill their
+  buffers. Players buffer more than that, so it delays the start of playback, not the music
+  once it plays.
+- **Keep the defaults.** None of these improved the start-up, and some made it worse:
+  - a larger NFS client read-ahead (`read_ahead_kb` of the mount: 1 MiB made the worst read
+    up to 313 ms);
+  - `rsize` below the default 1 MiB, and `nconnect=4`;
+  - `--threads 4` (it made every start-up read slower), and `--cache-mb 1024`.
+- **What does help:**
+  - keep the seek index (the default; `--no-index-cache` turns it off): a seek that the
+    index knows reads the image once instead of 3 to 5 times;
+  - more disks working at once, or a NAS cache that holds the images;
+  - best of all, run sacdfs on the NAS ([above](#deploying-sacdfs-on-a-nas)), where sacdfs's
+    reads of the image don't cross the network.
 
 ## NFS and restarts
 

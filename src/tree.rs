@@ -389,8 +389,11 @@ fn changed_since_read(d: &Dir) -> bool {
 fn live(d: &Dir) -> bool {
     match d.kind {
         DirKind::Source(_) | DirKind::Flat(..) | DirKind::Folder(..) => true,
-        DirKind::Area(..) => d.art.is_some(),
-        DirKind::Image(_) => false,
+        // An area's files follow its folder art and its disc's tags file (#81).
+        DirKind::Area(..) => d.art.is_some() || crate::tags::installed(),
+        // Never re-read, but its mtime moves with the tags file: kept by the kernel no
+        // longer than a re-read directory's.
+        DirKind::Image(_) => crate::tags::installed(),
     }
 }
 
@@ -457,7 +460,9 @@ impl Dir {
         match &self.kind {
             DirKind::Source(d) | DirKind::Flat(_, d) => Some(&d.path),
             DirKind::Folder(p, _) => Some(p),
-            DirKind::Image(_) | DirKind::Area(..) => None,
+            // An image's own directories move with its tags file (#81), noted under the
+            // image's path (`Tree::bump`).
+            DirKind::Image(disc) | DirKind::Area(disc, _) => Some(&disc.path),
         }
     }
 
@@ -483,6 +488,8 @@ struct Listing {
     head: usize,
     /// The directory's mtime as shown when the listing was made or last compared (#123).
     served: SystemTime,
+    /// An area's disc's tags file key and what that file was like when listed (#81).
+    tags: Option<(String, crate::tags::FileState)>,
 }
 
 #[derive(Debug)]
@@ -500,6 +507,7 @@ struct Cx {
     snapshot: Option<Snapshot>,
     art_version: u64,
     head: usize,
+    tags: Option<(String, crate::tags::FileState)>,
 }
 
 /// The folder art of the directory (or chain of directories) of an image: the image files
@@ -638,6 +646,9 @@ pub struct Tree {
     bumps: RwLock<HashMap<PathBuf, Stamp>>,
     /// Every source directory and sidecar folder, looked at for changes (#123).
     sweep: Mutex<Option<Sweep>>,
+    /// Each opened image with its tags file key and what that file was like when last
+    /// looked at (#81), for the sweep.
+    tagged: Mutex<crate::tags::Watch>,
 }
 
 /// The directories [`Tree::sweep`] looks at: each with its modification time when last read
@@ -705,6 +716,7 @@ impl Tree {
             refresh: REFRESH,
             bumps: RwLock::new(HashMap::new()),
             sweep: Mutex::new(None),
+            tagged: Mutex::new(crate::tags::Watch::default()),
         }
     }
 
@@ -914,6 +926,7 @@ impl Tree {
             art_version: cx.art_version,
             head: cx.head,
             served: self.dir_mtime(dir),
+            tags: cx.tags,
         }));
         Some(entries)
     }
@@ -924,8 +937,20 @@ impl Tree {
         if !self.watching || !live(dir) {
             return false;
         }
-        if let (DirKind::Area(..), Some(art)) = (&dir.kind, &dir.art) {
-            return art.current(self).1 != l.art_version;
+        if let DirKind::Area(..) = &dir.kind {
+            let art = dir.art.as_ref().is_some_and(|a| a.current(self).1 != l.art_version);
+            // The tags file (#81): one `stat` per refresh interval, or now if the area's
+            // mtime moved (the sweep found the edit).
+            let served = self.dir_mtime(dir);
+            let tags = match &l.tags {
+                Some((key, was)) if l.checked.elapsed() >= self.refresh || served != l.served => {
+                    l.checked = Instant::now();
+                    l.served = served;
+                    crate::tags::state_of(key) != *was
+                }
+                _ => false,
+            };
+            return art || tags;
         }
         // A directory whose mtime moved (the sweep found a change below it, #123) is compared
         // now, whatever the interval: a client that keeps a listing until its directory's
@@ -1009,6 +1034,66 @@ impl Tree {
         }
     }
 
+    /// The same tree, watching the tags files of its images (#81, see
+    /// [`crate::tags::Watch`]), kept across mounts in `file` (`None`: not kept). Every
+    /// directory above an image whose disc has a tags file shows an mtime no older than it
+    /// from the start. Nothing without a tags directory.
+    #[must_use]
+    pub fn with_tag_watch(self, file: Option<PathBuf>) -> Tree {
+        if !crate::tags::installed() {
+            return self;
+        }
+        let mut images = Vec::new();
+        if let Some(Node::Dir(Dir { kind: DirKind::Source(top), .. })) = self.get(ROOT).as_deref() {
+            let mut stack = vec![top];
+            while let Some(d) = stack.pop() {
+                images.extend(d.images.iter().cloned());
+                stack.extend(d.dirs.iter().map(|(_, s)| s));
+            }
+        }
+        let mut w = crate::tags::Watch::load(file, images.iter().map(PathBuf::as_path));
+        for (image, t) in w.check(true) {
+            self.bump(&image, Stamp { own: None, other: Some(t), image: None });
+        }
+        w.save();
+        *self.tagged.lock().unwrap_or_else(|p| p.into_inner()) = w;
+        self
+    }
+
+    /// Writes what is known of the tags files, if it changed (at unmount).
+    pub fn save_tag_watch(&self) {
+        self.tagged.lock().unwrap_or_else(|p| p.into_inner()).save();
+    }
+
+    /// Notes `disc`, just opened, for the tag layer (#81): its tags file is looked at by
+    /// [`Tree::sweep`], and if it has one, the image's directories and every directory above
+    /// show an mtime no older than it (its files' are, see [`ident::mtime`]).
+    fn opened(&self, disc: &Disc) {
+        if !crate::tags::installed() {
+            return;
+        }
+        let t = self.tagged.lock().unwrap_or_else(|p| p.into_inner()).opened(&disc.path, &disc.toc);
+        if let Some(t) = t {
+            self.bump(&disc.path, Stamp { own: None, other: Some(t), image: None });
+        }
+    }
+
+    /// Looks at the tags files of the images (#81, [`crate::tags::Watch::check`]): one
+    /// added, edited or removed moves the mtime of its image's directories and of every
+    /// directory above, as a new sidecar does (#123), so that a scanner that skips unchanged
+    /// folders finds the files whose tags changed. Their areas list them again
+    /// (`Tree::stale`).
+    fn sweep_tags(&self) {
+        if !crate::tags::installed() {
+            return;
+        }
+        let mut w = self.tagged.lock().unwrap_or_else(|p| p.into_inner());
+        for (image, t) in w.check(false) {
+            self.bump(&image, Stamp { own: None, other: Some(t), image: None });
+        }
+        w.save();
+    }
+
     /// Looks, at most once per refresh interval, at the modification time of every source
     /// directory and sidecar folder (one `stat` each), so that a change deep in SOURCE
     /// moves the mtime of every directory above it (#123) without any of them being listed:
@@ -1032,6 +1117,7 @@ impl Tree {
             return;
         }
         st.checked = Some(Instant::now());
+        self.sweep_tags();
         let changed: Vec<(PathBuf, bool)> = st
             .dirs
             .iter()
@@ -1202,6 +1288,7 @@ impl Tree {
                     let ino = self.ids.image(path);
                     if !self.exists(ino) {
                         let Some(disc) = opened.remove(path) else { continue };
+                        self.opened(&disc);
                         let mtime = disc.mtime;
                         let stamp = image_stamp(mtime, art.as_deref());
                         let image = Dir::new(DirKind::Image(Arc::new(disc)), mtime, parent)
@@ -1312,6 +1399,7 @@ impl Tree {
                             // Listed exactly as the image's own directory would be, then the
                             // sidecars of the chain.
                             Ok(disc) => {
+                                self.opened(&disc);
                                 let mtime = dir.mtime;
                                 let art = self.art_of(chain.chain_dirs(), &sidecars);
                                 let stamp = image_stamp(disc.mtime, Some(&art));
@@ -1332,6 +1420,11 @@ impl Tree {
             }
             DirKind::Area(disc, i) => {
                 let Some(area) = disc.toc.areas.get(*i) else { return out };
+                cx.tags = crate::tags::key_of(&disc.toc).map(|k| {
+                    let state = crate::tags::state_of(&k);
+                    (k, state)
+                });
+                let mut seen = std::collections::HashSet::new();
                 for track in &area.tracks {
                     if let Err(e) = check_track(area, track, disc.toc.sectors) {
                         log::info!(
@@ -1353,7 +1446,14 @@ impl Tree {
                         let name =
                             track_file_name(track.number, track.text.title.as_deref(), format.extension());
                         let ino = ident::file(parent, area.slot, track.number, format, self.wav_flavour);
-                        if !self.add(ino, Node::File(Arc::new(file))) {
+                        // Listed again (art or tags file changed): a file whose tags changed
+                        // gets a new node under the same number, with a new generation (#81).
+                        let added = if prev.is_some() {
+                            seen.insert(ino) && self.renew(ino, file)
+                        } else {
+                            self.add(ino, Node::File(Arc::new(file)))
+                        };
+                        if !added {
                             continue;
                         }
                         out.push(Entry { name: dedup.unique(OsStr::new(&name), true), ino, is_dir: false });
@@ -1435,6 +1535,24 @@ impl Tree {
             }
             out.push(Entry { name: dedup.unique(&sc.name, !is_dir), ino, is_dir });
         }
+    }
+
+    /// Makes `file` the track file `ino` when listing its area again: the node there is kept
+    /// if its tag is the same (open files and caches stay as they are), else replaced;
+    /// `false` if that number is taken by something else.
+    fn renew(&self, ino: u64, file: TrackFile) -> bool {
+        let mut nodes = self.nodes.write().unwrap_or_else(|p| p.into_inner());
+        match nodes.get(&ino).map(|n| &**n) {
+            None => {}
+            Some(Node::File(old)) => {
+                if old.tags == file.tags && old.size == file.size {
+                    return true;
+                }
+            }
+            Some(_) => return false,
+        }
+        nodes.insert(ino, Arc::new(Node::File(Arc::new(file))));
+        true
     }
 
     /// Makes `node`, a sidecar file or folder, the node `ino` (see [`Tree::list_sidecars`]);
