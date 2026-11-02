@@ -61,7 +61,7 @@ gh attestation verify oci://ghcr.io/aclater/sacdfs:0.2.0 -R aclater/sacdfs
 ```
 
 It runs sacdfs with Samba and NFS-Ganesha for a NAS, for x86_64 and arm64; how to run it
-is in [docs/deployment.md](docs/deployment.md).
+is in [docs/deployment.md](docs/deployment.md). What it has been tested with, and how to set up each client, is in [docs/clients.md](docs/clients.md).
 
 ### From source
 
