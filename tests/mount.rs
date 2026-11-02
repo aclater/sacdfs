@@ -655,6 +655,48 @@ fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
     assert!(wait_exit(&mut new, "the new sacdfs"));
 }
 
+/// An old sacdfs that gets a signal after its mount was unmounted from outside leaves the
+/// next mount on the path alone, though that mount usually has the old one's device number
+/// (#54): the kernel reuses a freed number at once, and the old sacdfs, which told its mount
+/// by that number alone, unmounted the new one. SIGTERM followed by SIGCONT is what a
+/// service manager sends on stop. Several rounds: the number is reused in most, not all.
+#[test]
+fn a_late_signal_leaves_the_next_mount_alone() {
+    if !fuse_available() {
+        return;
+    }
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    for round in 0..6 {
+        let mut old = Mount::foreground(&image, &[]);
+        let at = old.path();
+        let file = at
+            .join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
+        let whole = std::fs::read(&file).unwrap();
+        let mut old_child = old.child.take().unwrap();
+        let pid = old_child.id().to_string();
+        assert!(Command::new("kill").arg("-STOP").arg(&pid).status().unwrap().success());
+        unmount_retrying(&at);
+        let cache = tempfile::tempdir().unwrap();
+        let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
+            .arg("-f")
+            .arg(&image)
+            .arg(&at)
+            .spawn()
+            .unwrap();
+        wait_for("the new mount", || std::fs::read(&file).is_ok_and(|d| d == whole));
+        assert!(Command::new("kill").arg("-TERM").arg(&pid).status().unwrap().success());
+        assert!(Command::new("kill").arg("-CONT").arg(&pid).status().unwrap().success());
+        assert!(wait_exit(&mut old_child, "the old sacdfs"));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (round {round})");
+        assert_eq!(fuse_mounts_on(&at), 1, "round {round}");
+        assert_eq!(std::fs::read(&file).unwrap(), whole, "round {round}");
+        unmount_retrying(&at);
+        assert!(wait_exit(&mut new, "the new sacdfs"));
+    }
+}
+
 /// The source field of the mount on `mountpoint` in `/proc/self/mountinfo` (escaped).
 fn mount_source(mountpoint: &Path) -> Option<String> {
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
@@ -1072,4 +1114,54 @@ fn a_new_sidecar_is_listed_and_moves_its_ancestors() {
         assert_eq!(std::fs::read(mnt.join("Artist/Album/new.m3u8")).unwrap(), b"#EXTM3U\n");
         m.stop("TERM");
     }
+}
+
+#[test]
+fn new_sidecars_are_listed_in_folders_listed_before_and_not() {
+    // rc.3 on a NAS: of four album folders, two listed since the mount and two not, a new
+    // playlist in each showed only in the two listed before (1, 1, 0, 0). A folder's first
+    // listing must read its source again if it changed since the mount (#101, #123).
+    if !fuse_available() {
+        return;
+    }
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let albums = ["A1", "A2", "A3", "A4"];
+    for a in albums {
+        let d = src.join("Artist").join(a);
+        std::fs::create_dir_all(&d).unwrap();
+        std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), d.join("disc.iso"))
+            .unwrap();
+    }
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    let names = |a: &str| -> Vec<String> {
+        std::fs::read_dir(mnt.join("Artist").join(a))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect()
+    };
+    assert!(names("A1").contains(&"disc".to_owned()));
+    assert!(names("A2").contains(&"disc".to_owned()));
+    for a in albums {
+        std::fs::write(src.join("Artist").join(a).join("new.m3u8"), b"#EXTM3U\n").unwrap();
+    }
+    let t0 = Instant::now();
+    let listed = |a: &str| names(a).contains(&"new.m3u8".to_owned());
+    // Each folder once only, as a scanner looks: the first listing of A3 and A4 must have it.
+    let mut seen = [false; 4];
+    while t0.elapsed() < Duration::from_secs(3) && !seen.iter().all(|s| *s) {
+        let _ = std::fs::metadata(&mnt);
+        for (i, a) in albums.iter().enumerate() {
+            if !seen[i] && (i < 2 || t0.elapsed() > Duration::from_millis(200)) {
+                seen[i] = listed(a);
+                if i >= 2 {
+                    assert!(seen[i], "{a}: its first listing misses the new file");
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(seen, [true; 4], "listed in A1..A4");
+    m.stop("TERM");
 }

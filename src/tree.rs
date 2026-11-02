@@ -310,6 +310,13 @@ impl SourceDir {
         Ok(out)
     }
 
+    /// Whether a directory of this chain (`--flatten`), or this directory alone, changed
+    /// since it was read.
+    fn chain_changed(&self) -> bool {
+        mtime_of(&self.path) != self.stamp.own
+            || matches!((self.dirs.as_slice(), self.images.as_slice()), ([(_, sub)], []) if sub.chain_changed())
+    }
+
     /// The directories of a collapsed chain, outermost first.
     fn chain_dirs(&self) -> Vec<PathBuf> {
         let mut out = vec![self.path.clone()];
@@ -365,6 +372,17 @@ fn is_iso(path: &Path) -> bool {
 /// the folder art of its directory.
 fn image_stamp(image: SystemTime, art: Option<&Art>) -> Stamp {
     Stamp { own: None, other: art.and_then(Art::newest), image: Some(image) }
+}
+
+/// Whether the source of directory `d`, not listed yet, changed since what it would be
+/// listed from was read: one `stat` (per directory of a `--flatten` chain).
+fn changed_since_read(d: &Dir) -> bool {
+    match &d.kind {
+        DirKind::Source(s) => mtime_of(&s.path) != s.stamp.own,
+        DirKind::Flat(_, top) => top.chain_changed(),
+        DirKind::Folder(p, _) => mtime_of(p) != d.stamp.own,
+        DirKind::Image(_) | DirKind::Area(..) => false,
+    }
 }
 
 /// Whether a directory is re-read when its source changes (on a watching tree).
@@ -1109,7 +1127,10 @@ impl Tree {
         let mut out = Vec::new();
         let exclude = self.exclude_abs();
         // Only a watching tree re-reads, and only on a later listing.
-        let reread = self.watching && prev.is_some();
+        // A directory listed for the first time is read again too if its source changed
+        // since what it would be listed from was read (the mount's scan, or its parent's
+        // last re-read): else it would show that until a later change.
+        let reread = self.watching && (prev.is_some() || changed_since_read(dir));
         match &dir.kind {
             DirKind::Source(first) => {
                 let known = match prev.and_then(|p| p.snapshot.as_ref()) {
@@ -1371,8 +1392,10 @@ impl Tree {
                 let rel = sc.path.strip_prefix(src).ok()?;
                 let node = match &sc.kind {
                     SidecarKind::Folder(inner) => sidecar::stat_dir(root, rel).map(|m| {
+                        // `own` is the folder's mtime when its content was read, to tell
+                        // whether its first listing must read it again.
                         let stamp =
-                            Stamp { own: Some(m.mtime), other: sc.newest().max(Some(m.mtime)), image: None };
+                            Stamp { own: sc.mtime, other: sc.newest().max(Some(m.mtime)), image: None };
                         Node::Dir(
                             Dir::new(DirKind::Folder(sc.path.clone(), inner.clone()), m.mtime, parent)
                                 .with_stamp(stamp),
@@ -2329,6 +2352,27 @@ mod tests {
             let after = t.mtime(&t.get(album).unwrap());
             assert!(after > before, "flatten {flatten}");
             assert!(names().iter().any(|n| n == "new.m3u8"), "flatten {flatten}: {:?}", names());
+        }
+    }
+
+    #[test]
+    fn a_folder_listed_first_after_a_change_shows_it() {
+        // rc.3: a folder not listed since the mount was listed from the mount's scan, so a
+        // sidecar added before its first listing never showed (#101, #123).
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        for flatten in [false, true] {
+            let dir = old_tree(old);
+            fs::create_dir(dir.path().join("Artist/Album/Artwork")).unwrap();
+            fs::write(dir.path().join("Artist/Album/Artwork/back.png"), b"b").unwrap();
+            let t = watching(dir.path(), "default", flatten);
+            assert!(t.resolve(Path::new("Artist/Album")).is_some());
+            fs::write(dir.path().join("Artist/Album/new.m3u8"), b"#EXTM3U\n").unwrap();
+            fs::write(dir.path().join("Artist/Album/Artwork/front.png"), b"f").unwrap();
+            let names = |p: &str| -> Vec<OsString> {
+                t.children(t.resolve(Path::new(p)).unwrap()).unwrap().iter().map(|e| e.name.clone()).collect()
+            };
+            assert!(names("Artist/Album").iter().any(|n| n == "new.m3u8"), "flatten {flatten}");
+            assert!(names("Artist/Album/Artwork").iter().any(|n| n == "front.png"), "flatten {flatten}");
         }
     }
 }

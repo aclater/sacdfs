@@ -111,7 +111,7 @@ the same seek.
 | NFS, warm seek index | within 2x local + one round trip + the first read's transfer: about 4.7 ms plain DSD, 5.2 ms DST | **1.8 ms** plain DSD, **2.3 ms** DST | met |
 | SMB, cold seek, server's page cache evicted | < 80 ms | **4.3 ms** plain DSD (worst 4.5 ms), **5.3 ms** DST (worst 6.2 ms); 3.4 / 4.8 ms with the server's cache warm | met on an SSD; a NAS's hard disks add a disk seek per call (#21) |
 | SMB, warm seek index | the same formula, from this harness's local seeks (0.40 / 1.40 ms) and its round trip (0.69 ms): about 2.9 ms plain DSD, 4.1 ms DST | **2.4 ms** plain DSD, **2.6 ms** DST | met |
-| NFS, 4 players and a tagger | no read over 50 ms | players' 99th percentile **5.3 to 22.2 ms**; the tagger's worst file 8 to 10 ms in five rounds of six (124 ms once); players' worst reads 75 to 170 ms | not met: a player's reads of parts of an image the NAS reads from its hard disks take up to 170 ms |
+| NFS, 4 players and a tagger | no read over 50 ms | players' 99th percentile **5.3 to 22.2 ms**; the tagger's worst file 8 to 10 ms in five rounds of six (124 ms once); players' worst reads 75 to 170 ms | not met: a player's reads of parts of an image the NAS reads from its hard disks take up to 170 ms; re-measured in [where the slow reads come from](#client-side-where-the-slow-reads-come-from-71): all of them are in a player's start-up, and none while it plays |
 
 - Calls per seek: 3 (plain DSD) and 5 to 5.7 (DST) cold, 1 warm, over both protocols, each
   call one request; 9 and 13 NFS or SMB READs per mount cold (the TOCs take 6 to 8), 7 and 9
@@ -121,6 +121,70 @@ the same seek.
 - First touches are disk seeks on the NAS, one per call: a DST cold seek makes about two more
   calls than a plain DSD one, which is why it costs more there and why its worst case is over
   50 ms.
+
+### Client-side: where the slow reads come from (#71)
+
+The 4 players and a tagger of the table above, measured again on 2026-11-02 to find which
+reads are slow and whether a setting helps. sacdfs `main` at 75a1f93 (0.2.0-rc.2), generic
+build, defaults unless noted.
+
+- **The setup:** a 20-thread test machine (not the desktop above). The five discs on an
+  *emulated hard disk*: an XFS image served by nbdkit's `spinning` filter (one head; 4 ms to
+  the next track, 9 ms across half the disk, 14 ms across all of it; a random 4 KiB read took
+  8 to 9 ms and a sequential read 164 MB/s), exported by the kernel NFS server and mounted
+  over loopback with NFS 4.2 (default `rsize` 1 MiB), a 0.1 ms delay each way and a 1 Gbit/s
+  rate limit, NFS LOCALIO off (it skips the network on a local mount) and no FS-Cache. All
+  page caches dropped before each round, so each round starts with nothing cached, as a NAS
+  whose cache doesn't hold those parts of the images.
+- **The scenario** of [concurrency](#concurrency-and-memory): four players reading the DSF
+  files of four images (two plain DSD stereo, two DST stereo), each reading its file's header
+  and then 128 KiB at a time from a random position, as fast as it can until it holds 2 s
+  of audio and then in real time; the tagger walking the whole mount over and over. All
+  start together, 30 s, 3 rounds. *Filling* is a player's reads until its 2 s buffer is
+  full, *playing* those after. Worst reads per round in ms, without each player's first read.
+
+| Setting | Players' worst read | 99th percentile | Worst read while playing | 2 s buffer full after | Tagger's worst file |
+|---|---|---|---|---|---|
+| defaults | 155.5, 123.4, 116.1 | 1.9 to 4.1 | 0.3 | 269 to 305 | 202 to 282 |
+| NFS client read-ahead 1 MiB (`read_ahead_kb`, default 128 KiB) | 312.6, 152.4, 118.7 | 0.5 to 2.7 | 0.3 | 345 to 465 | 216 to 234 |
+| `nconnect=4` | 155.4, 118.6, 120.1 | 1.4 to 3.0 | 0.3 | 280 to 335 | 207 to 244 |
+| `rsize=262144` | 137.6, 184.2, 125.5 | 2.3 to 2.4 | 0.2 | 300 to 348 | 194 to 250 |
+| `--threads 4` | 109.0, 105.7, 78.2 | 32.2 to 36.8 | 0.4 | 351 to 407 | 219 to 232 |
+| `--cache-mb 1024` | 166.2, 137.0, 119.3 | 2.0 to 2.7 | 0.3 | 303 to 358 | 201 to 307 |
+| the players start 2 s apart | 38.6, 47.6, 61.8 | 4.0 to 7.6 | 0.2 | 87 to 126 | 58 to 77 |
+| a disk with 4 independent heads | 84.9, 52.7, 73.8 | 1.7 to 2.8 | 0.3 | 118 to 143 | 64 |
+| no disk delay (the same NFS, the image on an SSD) | 51.1, 52.1, 56.8 | 2.7 to 3.9 | 0.2 | 73 to 75 | 40 to 47 |
+
+- **Every read over 20 ms is in a player's start-up**, among its first 10 reads after the
+  cold seek, and nearly all are its third read: 256 KiB after the start, the first one that
+  the kernel's read-ahead of the first read doesn't cover. While playing, no read took over
+  0.5 ms in any round of any setting, with or without the tagger: sacdfs's read-ahead keeps
+  1 to 2 s decoded ahead of each player, and the NFS client's read-ahead the image ahead of
+  that.
+- **Where a start-up read's time goes:** to the disk, mostly. Four cold starts at the same
+  instant each make dependent reads of the image (the TOCs, the seek's search, then the
+  audio), and on one disk they queue behind each other: 2 s apart, the worst start-up read
+  falls to 39 to 62 ms; with independent heads, to 53 to 85. What is left with no disk delay
+  at all, 50 to 57 ms (40 to 45 without the tagger), is the four start-ups' round trips and
+  decoding at the same time. Not the round trip alone (a READ took 5.9 ms on average,
+  disk included), nor the frame cache (`--cache-mb` changes nothing), nor sacdfs's
+  read-ahead (it doesn't run in a reader's first 1 MiB, [why](design.md#read-ahead)).
+- **The settings don't help.** A larger NFS read-ahead or `rsize` makes each start-up read
+  move more data before the next one: worse. `nconnect` adds connections but not disks.
+  `--threads 4` lowers the worst read a little, but slows every start-up read (99th
+  percentile 32 to 37 ms) and the buffer fill. The defaults stay the advice; see
+  [deployment.md](deployment.md#client-side-images-on-hard-disks-over-nfs).
+- **The tagger** was not the cause: without it the players' worst reads were 143.0, 117.7 and
+  131.9 ms. Its own worst file is its first walk of the mount, from the disk; after that the
+  kernel serves its reads from cache.
+- **What it means for the target:** a player doesn't play while it fills its buffer, so a
+  slow read then delays the start of playback but can't make a dropout; that is the
+  cold-seek target's job (< 50 ms on the client side). While playing, the target of no read
+  over 50 ms is met by two orders of magnitude. The proposal (#71) is to state the
+  concurrency target as *no read over 50 ms while playing*, and to judge a start-up by the
+  cold-seek target. Four cold starts at the same instant on one hard disk don't meet that
+  (the buffer is full 0.27 to 0.31 s after the first read). A single player starting alone
+  on the same disk took 33 ms for its first read and at most 13 ms for the others (one run).
 
 ## Calls and bytes per seek
 

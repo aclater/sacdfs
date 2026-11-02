@@ -507,7 +507,13 @@ sidecar or image.
   not after the refresh interval: in rc.2 the sweep could move a folder's mtime while its
   re-read was still throttled, and an SMB client, which keeps a listing until the folder's mtime
   moves, then kept the old listing under the new mtime for good (a new playlist never listed).
-  Change detection still uses each listing's stored source mtimes, never the shown one. *Considered:*
+  Change detection still uses each listing's stored source mtimes, never the shown one.
+  A directory's *first* listing compares its source mtime (each directory's of a `--flatten`
+  chain) with the one recorded when what it would be listed from was read (the mount's scan,
+  or its parent's re-read), and re-reads it if they differ. In rc.3 a folder not listed since
+  the mount was listed from the scan unchecked, so a sidecar added after the mount never
+  showed in it (the Roon-after-restart case). *Why compare, not always re-read:* one `stat`
+  per folder, against a `readdir` and a `stat` per entry, on a first scan of every folder. *Considered:*
   inotify (not on NFS or SMB sources, which are the NAS case); re-reading a directory's
   descendants on its own `getattr` (the same `stat`s, made many times per scan).
 - *Deterministic, no wall clock:* the time is a maximum of source mtimes and fixed offsets, so a
@@ -566,14 +572,28 @@ mounts over a live FUSE mount. Unmounting goes by path, and nothing else names a
   as a user and as root: the new mount was lost in 200 of 200 when the old one was detached
   from outside (`fusermount3 -u -z`, a file open) and exited after the new one mounted, and in
   200 of 200 when the old one, unmounted, was held stopped until the new one had mounted.
-  With the fix, 2 of about 5,000 fixed-binary restarts lost the new mount, both with a file
-  open and the old mount detached from outside, and neither sacdfs logged an unmount: not
-  explained yet, and not an unmount by sacdfs. This was the failure seen in #51.
+  With the fix, 2 of about 5,000 fixed-binary restarts still lost the new mount; that was the
+  device-number reuse of the next rule (#54). This was the failure seen in #51.
 - On SIGINT, SIGTERM or SIGHUP, sacdfs unmounts (or detaches, if busy) only if the mount on top at
   its path still has its own device number, read from `/proc/self/mountinfo` right after
-  mounting; otherwise it logs why and leaves the path alone. *Why:* the device number is
-  unique while the mount exists, which is the only time it is compared; the mount table asks
-  the file system nothing, so the check cannot wait on a stopping session.
+  mounting, **and** its own FUSE connection is still up (`poll` on a duplicate of its
+  `/dev/fuse` descriptor shows no `POLLERR`); otherwise it logs why and leaves the path alone.
+  The same check guards the detach after a failed session. *Why the connection (#54):* the
+  kernel hands a freed device number (and mount id) to the next mount at once, so after an
+  unmount from outside, a new mount on the same path usually has the old one's number (178 of
+  200 restarts on Linux 7.2). An old sacdfs that got its signal only then (held stopped,
+  busy, or simply late: a service manager sends SIGTERM and then SIGCONT) saw "its" number on
+  top and unmounted the new mount: 28 of 50 restarts as a user and 13 of 20 as root, every
+  one with the number reused. The kernel aborts a mount's FUSE connection when its superblock
+  goes, before the number is freed, so a connection still up means the number read just
+  before is this mount's. Both checks ask the file system nothing, so they cannot wait on a
+  stopping session. With it: 0 lost in 200 such restarts, and 0 in a 14,000-iteration
+  restart loop (user and root, 10 stop scenarios, 2,800 of them late-signal).
+  Rejected: the 64-bit unique mount id (`statmount`/`listmount`, Linux 6.8+), which needs raw
+  syscalls and a fallback on older kernels for the same answer; holding an `O_PATH` descriptor
+  on the mount to pin its number, which makes a plain `fusermount3 -u` fail as busy.
+  The #53 note that "neither sacdfs logged an unmount" came from runs at the default log
+  level, where "signal N: unmounting" (info) is not shown.
 - A new sacdfs whose mount point is still a live FUSE mount of its user's (the previous one
   has not unmounted yet) waits for it to go, up to 10 s, then fails with "still mounted there
   after 10 s"; a dead one is cleared at once (below, #57). *Why:* mounted
@@ -1245,6 +1265,31 @@ alternatives and the trade-off.
 - `convert_f32` gives the same samples as floats, for tools and tests.
 - `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
 - A short frame (which the decoder never makes) is padded with silence.
+
+## Client-side start-up over NFS from hard disks (#71)
+
+**Decision:** no code change; tuning guidance in the deployment guide
+([client-side](deployment.md#client-side-images-on-hard-disks-over-nfs)), and a proposal to
+state the concurrency target of #6 as *no read over 50 ms while playing*, with start-up
+judged by the cold-seek target.
+
+- **Why:** the measurement on an emulated hard disk
+  ([performance](performance.md#client-side-where-the-slow-reads-come-from-71)) found every
+  read over 20 ms in a player's start-up, when it fills its buffer after a cold seek; while
+  playing, no read took over 0.5 ms. The slow start-up reads are the disk seeks of four cold
+  starts at once, queued on one disk. A player is not yet playing then, so they delay its
+  start but cannot cause a dropout.
+- **Alternatives measured:** a larger NFS client read-ahead and other `rsize` values (worse),
+  `nconnect` (no change: one disk), `--threads 4` (lower worst read, slower start-ups),
+  `--cache-mb 1024` (no change). *Not tried:* read-ahead in a reader's first 1 MiB, which #78
+  removed for library scanners; at start-up it would add reads to the same disk queue, which
+  is what costs.
+- **Trade-off:** four players started at the same instant from one hard disk still wait up to
+  0.31 s for a full buffer, against the 50 ms cold-seek target. Without any disk delay, start-up
+  reads still take 40 to 57 ms when four start together: the start-ups' round trips and
+  decoding. Shortening that would mean fewer dependent reads of the image per cold seek,
+  which is scarletbook's seeking (#28).
+- **Owner direction:** "performance will be key", "latency is important".
 
 ## Performance basis
 
