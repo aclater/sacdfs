@@ -1296,6 +1296,16 @@ so reads of one disc by several players, a tagger and read-ahead run at once.
   keep no file open.
 - Images in 2064-byte raw sectors are read through a buffer per clone (scarletbook's), so
   each call allocates it again; the straight-read figures show no cost.
+- *Decision (#28, 2026-11-02): this is the whole of #28's step 1; no disc per worker thread and
+  no further change.* Measured with 1, 4 and 8 readers at full speed, readers of one DST image
+  reach the same aggregate as readers of different images, and the CPU per MB does not grow
+  with the readers ([performance.md](performance.md#concurrency-and-memory)): the limit is the
+  decoder's CPU, not the read path. *Why not hold a `Disc` clone per worker:* it would only
+  save the clone of an `Image` per cursor (no I/O) and the handle lookup per call, neither of
+  which shows in the figures, and would pin a file per worker past the `--max-open-images`
+  bound. *Alternatives considered:* a lock-free handle fast path per source (no measured
+  contention on the cache's lock, so more code for nothing); the library's `parallel`
+  cursor window (more memory per open file, see the PCM and memory notes of #28).
 
 ## PCM conversion
 
