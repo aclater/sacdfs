@@ -28,7 +28,7 @@ use fuser::{
 
 use crate::engine::Engine;
 use crate::track::Reader;
-use crate::tree::{Entry, Node, ROOT, Tree};
+use crate::tree::{Entry, Node, ROOT, SidecarFile, Tree};
 use crate::watchdog::{self, Fail, Watchdog, What};
 
 /// How long the kernel may cache entries and attributes: the tree never changes.
@@ -216,7 +216,8 @@ pub struct SacdFs {
 #[derive(Debug)]
 struct Shared {
     tree: Arc<Tree>,
-    handles: Mutex<HashMap<u64, Open>>,
+    /// The open files, by file handle, with their inode numbers.
+    handles: Mutex<HashMap<u64, (u64, Open)>>,
     next_fh: AtomicU64,
     uid: u32,
     gid: u32,
@@ -227,8 +228,19 @@ struct Shared {
 enum Open {
     /// A track file, read through the engine.
     Track(Arc<Reader>),
-    /// A sidecar file: its source file, open.
-    Sidecar(Arc<std::fs::File>),
+    /// A sidecar file: its source file, open, and its node.
+    Sidecar(Arc<std::fs::File>, Arc<SidecarFile>),
+}
+
+impl Open {
+    /// The node the handle was opened on: what its attributes are answered from once the
+    /// tree has freed it (its image or file removed from SOURCE, #153).
+    fn node(&self) -> Node {
+        match self {
+            Open::Track(r) => Node::File(r.file.clone()),
+            Open::Sidecar(_, s) => Node::Sidecar(s.clone()),
+        }
+    }
 }
 
 /// Reads up to `size` bytes at `offset` of `file`, fewer only at its end.
@@ -408,7 +420,16 @@ impl Shared {
     }
 
     fn handle(&self, fh: u64) -> Option<Open> {
-        self.handles.lock().unwrap_or_else(|p| p.into_inner()).get(&fh).cloned()
+        self.handles.lock().unwrap_or_else(|p| p.into_inner()).get(&fh).map(|(_, o)| o.clone())
+    }
+
+    /// The node of a file open as `ino`, once the tree has freed it (#153): its handle
+    /// (`fh`, if the kernel sent it, else any handle open on `ino`) answers for it until
+    /// it is released.
+    fn opened_node(&self, ino: u64, fh: Option<u64>) -> Option<Arc<Node>> {
+        let handles = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        let by_fh = fh.and_then(|fh| handles.get(&fh)).filter(|(i, _)| *i == ino);
+        by_fh.or_else(|| handles.values().find(|(i, _)| *i == ino)).map(|(_, o)| Arc::new(o.node()))
     }
 
     fn lookup(&self, parent: u64, name: &OsStr) -> Result<(Duration, FileAttr, Generation), Errno> {
@@ -453,12 +474,12 @@ impl Shared {
     }
 
     /// Opens `node`: a new file handle.
-    fn open(&self, node: Option<Arc<Node>>) -> Result<u64, Errno> {
+    fn open(&self, ino: u64, node: Option<Arc<Node>>) -> Result<u64, Errno> {
         let Some(node) = node else { return Err(Errno::ENOENT) };
         let open = match &*node {
             Node::File(file) => Open::Track(Arc::new(Reader::new(file.clone()))),
             Node::Sidecar(s) => match self.tree.open_sidecar(s) {
-                Ok(f) => Open::Sidecar(Arc::new(f)),
+                Ok(f) => Open::Sidecar(Arc::new(f), s.clone()),
                 Err(e) => {
                     log::info!("sidecar {}: open: {e}", s.target.display());
                     return Err(Errno::from_i32(e.raw_os_error().unwrap_or(libc::EIO)));
@@ -467,7 +488,7 @@ impl Shared {
             Node::Dir(_) => return Err(Errno::EISDIR),
         };
         let fh = self.next_fh.fetch_add(1, Ordering::Relaxed);
-        self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(fh, open);
+        self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(fh, (ino, open));
         Ok(fh)
     }
 
@@ -586,7 +607,7 @@ impl Filesystem for SacdFs {
         );
     }
 
-    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
+    fn getattr(&self, _req: &Request, ino: INodeNo, fh: Option<FileHandle>, reply: ReplyAttr) {
         // A node made already is answered here, from memory: no handover for the most
         // frequent request. The root first sweeps the source (#123), and a node not made
         // yet is looked for along its path: both read the source.
@@ -604,7 +625,10 @@ impl Filesystem for SacdFs {
                     // A scan starts at the root: changes anywhere below move its mtime first.
                     sh.tree.sweep();
                 }
-                sh.getattr(ino.0, sh.tree.get(ino.0))
+                // A file open from before its image was removed (#153) is answered from its
+                // handle.
+                let node = sh.tree.get(ino.0).or_else(|| sh.opened_node(ino.0, fh.map(|f| f.0)));
+                sh.getattr(ino.0, node)
             },
             |reply, r| {
                 if let Some(reply) = reply {
@@ -623,7 +647,7 @@ impl Filesystem for SacdFs {
         self.serve(
             What::new("open", Ino(ino.0)),
             reply,
-            move |sh| (sh.open(sh.tree.get(ino.0)), sh.clone()),
+            move |sh| (sh.open(ino.0, sh.tree.get(ino.0)), sh.clone()),
             |reply, (r, sh)| match reply {
                 Some(reply) => reply_opened(reply, r.map(|fh| (fh, FopenFlags::FOPEN_KEEP_CACHE))),
                 // Too late: the kernel never learns of the handle, so it is closed here.
@@ -649,7 +673,7 @@ impl Filesystem for SacdFs {
     ) {
         let reader = match self.shared.handle(fh.0) {
             Some(Open::Track(r)) => r,
-            Some(Open::Sidecar(file)) => {
+            Some(Open::Sidecar(file, _)) => {
                 // The source may be slow (a network filesystem): read on a request thread.
                 let pending = self.watchdog.watch(What::new("sidecar read", Ino(ino.0)), reply);
                 self.requests.spawn(move || {

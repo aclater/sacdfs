@@ -45,6 +45,23 @@ All notable changes to sacdfs are recorded here. The format follows
   2.30 → 2.26 s, DST stereo DSF 4.93 → 4.65 s, DST 6-channel DSF 13.33 → 13.13 s; the import
   replay peaks at 44 → 45 MiB at the default 32 MiB cache.
 
+### Fixed
+
+- **Removed and renamed images are freed** (#153). A folder that is re-read now frees what it
+  no longer lists, and everything below it: the image's directory, its areas and track files,
+  and the disc they hold (its seek state and image handle). Before, every image ever opened
+  stayed in memory, so a library whose folders a tagger renames, or whose albums come and go,
+  grew for as long as it was mounted (9 nodes and one disc per removed album). Inode numbers do
+  not change: they come from paths, so a freed number is never given to anything else.
+  A file that is open when its image is removed reads on until it is closed, with the same
+  bytes, as long as the cache of open images keeps the image's handle (`--max-open-images`, and
+  5 minutes idle); before, its reads failed with `EIO` a second after the removal.
+  In a 20-minute soak on the test corpus (an album added or removed every 5 s, every one under
+  a new name), the mount's node count stays flat at about 1,400 (was +27 a minute, 1,378 to
+  1,915); resident memory moved the same before and after, as corpus discs are small (the
+  soak on real discs is still to run). DST stereo reads are unchanged (0.517 ms before and
+  after, median of 3,000).
+
 ### Documentation
 
 - Short install guides in `docs/install/` (#82), one per NAS system and music server, each
