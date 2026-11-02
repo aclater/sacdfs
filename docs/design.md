@@ -1848,7 +1848,7 @@ the owner's NAS already used.
 
 ### Oldest distributions (#58)
 
-*Why:* the README promises RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, but CI tests only
+*Why:* the install docs ([binary.md](install/binary.md#binaries)) promise RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, but CI tests only
 a current runner (`fusermount3` 3.18, a current kernel), and the reviewed changelogs of other
 FUSE projects show `fusermount3` behaviour changing across libfuse versions (3.0 renamed
 the helpers and dropped `nonempty`; 3.15 stopped silently accepting unsupported options),

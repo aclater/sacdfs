@@ -16,6 +16,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- **Shorter README** (#159, docs). The README is now a two-minute read: what sacdfs is, a
+  quick start (container, then a build), links to the install guides and client notes, a
+  pointer to `sacdfs verify`, and a docs index. Its details moved, unchanged, to
+  docs/options.md (the options table; the `readme options` CI check now reads it there),
+  docs/layout.md (layout, formats and quality), docs/limits.md, docs/install/binary.md
+  (release binaries, crates.io, from source; the download example now names 0.3.0), the
+  user guide (the quick start with its tips) and the deployment guide (where to run it).
+
 - **Less memory** (#150). The default `--cache-mb` is now 32 (was 256; `SACDFS_CACHE_MB` in the
   container too): the smallest size whose reads, seeks and scans stay within 5 % of a 256 MiB
   cache. On the bench images a Roon-like import replay peaks at 45 MiB instead of 134, and a

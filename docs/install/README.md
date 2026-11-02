@@ -24,7 +24,7 @@ nobody has run sacdfs there and reported back. Reports are welcome on
 | UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated |
 
 Without a container, on any Linux host (x86_64; FUSE 3's `fusermount3`, package `fuse3`):
-a [release binary](../../README.md#binaries), or, from 0.4.0, `cargo install --locked sacdfs`
+a [release binary](binary.md#binaries), or, from 0.4.0, `cargo install --locked sacdfs`
 from crates.io (Rust 1.85 or later). The crates.io path is available from 0.4.0 but **not yet
 validated**. The [user guide](../user-guide.md) covers running it.
 
