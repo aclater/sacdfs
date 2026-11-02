@@ -127,8 +127,7 @@ impl Drop for Mount {
             let _ = Command::new("fusermount3").arg("-u").arg("-z").arg(&p).status();
         }
         if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
+            common::stop_gracefully(&mut c);
         }
     }
 }

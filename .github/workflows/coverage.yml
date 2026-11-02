@@ -46,7 +46,17 @@ jobs:
         env:
           SACDFS_FUSE_TESTS: "1"
         run: |
-          cargo llvm-cov --locked --lcov --output-path lcov.info
+          cargo llvm-cov --locked --no-report
+          # #127: a process killed while writing its profile leaves a truncated .profraw, and
+          # one bad file fails the whole merge. Drop unreadable profiles, with a warning.
+          llvm_profdata=$(find "$(rustc --print sysroot)" -name llvm-profdata -type f | head -n1)
+          while IFS= read -r -d '' p; do
+            if [ ! -s "$p" ] || ! "$llvm_profdata" merge -o /dev/null "$p" 2>/dev/null; then
+              echo "::warning::dropping invalid profile $p ($(stat -c %s "$p") bytes)"
+              rm -f "$p"
+            fi
+          done < <(find target/llvm-cov-target -name '*.profraw' -print0)
+          cargo llvm-cov report --lcov --output-path lcov.info
           {
             echo "## Coverage"
             echo '```'
