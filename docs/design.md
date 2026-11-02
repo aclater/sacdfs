@@ -1218,6 +1218,31 @@ alternatives and the trade-off.
 - `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
 - A short frame (which the decoder never makes) is padded with silence.
 
+## Client-side start-up over NFS from hard disks (#71)
+
+**Decision:** no code change; tuning guidance in the deployment guide
+([client-side](deployment.md#client-side-images-on-hard-disks-over-nfs)), and a proposal to
+state the concurrency target of #6 as *no read over 50 ms while playing*, with start-up
+judged by the cold-seek target.
+
+- **Why:** the measurement on an emulated hard disk
+  ([performance](performance.md#client-side-where-the-slow-reads-come-from-71)) found every
+  read over 20 ms in a player's start-up, when it fills its buffer after a cold seek; while
+  playing, no read took over 0.5 ms. The slow start-up reads are the disk seeks of four cold
+  starts at once, queued on one disk. A player is not yet playing then, so they delay its
+  start but cannot cause a dropout.
+- **Alternatives measured:** a larger NFS client read-ahead and other `rsize` values (worse),
+  `nconnect` (no change: one disk), `--threads 4` (lower worst read, slower start-ups),
+  `--cache-mb 1024` (no change). *Not tried:* read-ahead in a reader's first 1 MiB, which #78
+  removed for library scanners; at start-up it would add reads to the same disk queue, which
+  is what costs.
+- **Trade-off:** four players started at the same instant from one hard disk still wait up to
+  0.31 s for a full buffer, against the 50 ms cold-seek target. Without any disk delay, start-up
+  reads still take 40 to 57 ms when four start together: the start-ups' round trips and
+  decoding. Shortening that would mean fewer dependent reads of the image per cold seek,
+  which is scarletbook's seeking (#28).
+- **Owner direction:** "performance will be key", "latency is important".
+
 ## Performance basis
 
 scarletbook decodes a stereo DST frame in about 0.17 ms on one core (about 78x real time per
