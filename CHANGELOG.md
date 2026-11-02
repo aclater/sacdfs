@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **sacdfs on crates.io, from 0.4.0** (#155): `cargo install --locked sacdfs`. The release
+  workflow publishes final versions (not pre-releases) through crates.io trusted publishing,
+  after the GitHub release; the first version is published by hand. The crate holds only
+  the sources, Cargo.toml, Cargo.lock, README.md, COPYING and CHANGELOG.md. The crates.io
+  install path is not yet validated.
+
 ### Changed
 
 - **Less memory** (#150). The default `--cache-mb` is now 32 (was 256; `SACDFS_CACHE_MB` in the

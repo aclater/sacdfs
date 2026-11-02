@@ -1542,11 +1542,16 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   is the tested one. That job alone has `packages: write`. `:latest` follows releases
   without a hyphen.
 - **Permissions:** `contents: read` for the workflow; `contents: write` (the release) and
-  `id-token`/`attestations: write` only in the two publishing jobs, which run only when
+  `id-token`/`attestations: write` only in the publishing jobs (the release, the image,
+  and `id-token` alone in crates.io's), which run only when
   `github.ref_type == 'tag'`. No caches (nothing a pull request writes can reach a release
   build), no persisted credentials, actions pinned by SHA.
-- **Not crates.io.** scarletbook is a git dependency and crates.io refuses those
-  (`publish = false`). Publishing waits for scarletbook on crates.io (scarletbook-rs#39).
+- **crates.io (#155):** final versions only (a crates.io version can never be deleted or
+  reused, only yanked; release candidates are tested from the GitHub release), after the
+  GitHub release, through trusted publishing: the `crates-publish` job has `contents: read`
+  and `id-token: write`, and no crates.io token is stored in the repository. A version already on crates.io is skipped, because trusted publishing
+  cannot create a crate and the first version (0.4.0) is published by hand. The package
+  holds only `src/`, Cargo.toml, Cargo.lock, README.md, COPYING and CHANGELOG.md (`include`).
 
 ## Tag layer (#81)
 

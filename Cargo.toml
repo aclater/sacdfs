@@ -9,8 +9,16 @@ repository = "https://github.com/aclater/sacdfs"
 readme = "README.md"
 keywords = ["sacd", "dsd", "dsf", "fuse", "filesystem"]
 categories = ["filesystem", "multimedia::audio", "command-line-utilities"]
-publish = false
-exclude = ["tests/corpus/images"]
+# What `cargo install sacdfs` and `cargo build` need, nothing else (#155): no tests, test
+# images, benches, CI, deploy files or docs. The examples aren't declared here, so they stay out.
+include = [
+    "/src/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/COPYING",
+    "/CHANGELOG.md",
+]
 
 [dependencies]
 # The engine: SACD parsing, demultiplexing and DST decoding, from crates.io, pinned exactly

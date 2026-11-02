@@ -17,8 +17,9 @@ extracting anything first. Seeks return in a few milliseconds, locally or over t
 
 sacdfs runs on Linux (x86_64) and needs FUSE 3's `fusermount3` helper (package `fuse3` on
 most distributions). Each [release](https://github.com/aclater/sacdfs/releases) has two
-builds, and the container image for a NAS is on GitHub's registry. sacdfs itself is not on crates.io yet (#155), but its engine,
-scarletbook, is, since 0.5.7, so `cargo install` from crates.io comes with the publishing step of #155.
+builds, and the container image for a NAS is on GitHub's registry. From 0.4.0, sacdfs is
+also on crates.io (`cargo install sacdfs`, [below](#from-source); #155). That path is
+available from 0.4.0 but not yet validated.
 
 ### Binaries
 
@@ -68,6 +69,8 @@ sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through
 and mounts with `fusermount3`, without linking libfuse.
 
 ```sh
+cargo install --locked sacdfs     # from crates.io, from 0.4.0 (not yet validated)
+# before 0.4.0, from the release tag:
 cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.3.0
 # or, in a clone:
 cargo build --release && target/release/sacdfs --help
