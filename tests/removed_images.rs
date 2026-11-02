@@ -26,10 +26,22 @@ fn watching(lib: &Path) -> Tree {
         .with_refresh(Duration::ZERO)
 }
 
-/// Lets the source's mtimes move, then lets the tree see the change, as a scan does.
-fn settle(tree: &Tree) {
+/// Makes a change to the source, after a pause (so that the directories' mtimes move past
+/// those last listed), then waits until the tree shows it (`shown`), sweeping as a scan does.
+/// *Why wait:* under load, a sweep may look before the change's mtime is visible; checking
+/// once made the test flaky.
+fn change(tree: &Tree, what: &str, f: impl FnOnce(), shown: impl Fn(&Tree) -> bool) {
     std::thread::sleep(Duration::from_millis(20));
-    tree.sweep();
+    f();
+    let start = std::time::Instant::now();
+    loop {
+        std::thread::sleep(Duration::from_millis(20));
+        tree.sweep();
+        if shown(tree) {
+            return;
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "the tree never showed {what}");
+    }
 }
 
 /// Lists everything, as a scanner does (opens the images and makes their files), and
@@ -65,22 +77,43 @@ fn removed_and_renamed_images_are_freed() {
     let mut discs = Vec::new();
     for n in 0..20 {
         // Added, listed, then removed (the reproducer of #153).
-        let album = lib.join(format!("album-{n}"));
-        std::fs::create_dir(&album).unwrap();
-        std::os::unix::fs::symlink(&img, album.join("disc.iso")).unwrap();
-        settle(&tree);
+        let (name, renamed) = (format!("album-{n}"), format!("album-{n} (renamed)"));
+        let (album, moved) = (lib.join(&name), lib.join(&renamed));
+        let at = |p: String| move |t: &Tree| t.resolve(Path::new(&p)).is_some();
+        change(
+            &tree,
+            "the new album",
+            || {
+                std::fs::create_dir(&album).unwrap();
+                std::os::unix::fs::symlink(&img, album.join("disc.iso")).unwrap();
+            },
+            at(format!("{name}/disc/Stereo")),
+        );
         discs.extend(scan(&tree));
         // Renamed as a tagger does: the folder, then the image in it.
-        let renamed = lib.join(format!("album-{n} (renamed)"));
-        std::fs::rename(&album, &renamed).unwrap();
-        settle(&tree);
+        change(
+            &tree,
+            "the renamed folder",
+            || std::fs::rename(&album, &moved).unwrap(),
+            at(format!("{renamed}/disc/Stereo")),
+        );
         discs.extend(scan(&tree));
-        std::fs::rename(renamed.join("disc.iso"), renamed.join("other.iso")).unwrap();
-        settle(&tree);
+        change(
+            &tree,
+            "the renamed image",
+            || std::fs::rename(moved.join("disc.iso"), moved.join("other.iso")).unwrap(),
+            at(format!("{renamed}/other/Stereo")),
+        );
         discs.extend(scan(&tree));
-        std::fs::remove_file(renamed.join("other.iso")).unwrap();
-        std::fs::remove_dir(&renamed).unwrap();
-        settle(&tree);
+        change(
+            &tree,
+            "the removal",
+            || {
+                std::fs::remove_file(moved.join("other.iso")).unwrap();
+                std::fs::remove_dir(&moved).unwrap();
+            },
+            |t| t.resolve(Path::new(&renamed)).is_none(),
+        );
         let _ = tree.children(ROOT);
         sizes.push(tree.len());
     }
@@ -117,10 +150,15 @@ fn an_open_file_reads_on_after_its_image_is_removed() {
     let half = whole.len() as u64 / 2;
     let (first, _) = open.read(&engine, 0, half).unwrap();
 
-    std::fs::remove_file(lib.join("album/disc.iso")).unwrap();
-    std::fs::remove_dir(lib.join("album")).unwrap();
-    settle(&tree);
-    assert!(tree.children(ROOT).unwrap().is_empty());
+    change(
+        &tree,
+        "the removal",
+        || {
+            std::fs::remove_file(lib.join("album/disc.iso")).unwrap();
+            std::fs::remove_dir(lib.join("album")).unwrap();
+        },
+        |t| t.children(ROOT).unwrap().is_empty(),
+    );
     assert!(tree.loaded(ino).is_none(), "the removed file's node is freed");
     assert_eq!(tree.len(), 1, "only the root is left");
     assert!(tree.get(ino).is_none(), "the removed file is unknown");

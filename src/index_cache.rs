@@ -217,6 +217,9 @@ struct Live {
     disc: Arc<LibDisc>,
     /// Set by the disc's cursors when they hand their records to its seek index.
     changed: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when the disc is dropped (its image removed from SOURCE or renamed): the next
+    /// flush saves what changed and lets go of it (#153).
+    retired: Arc<std::sync::atomic::AtomicBool>,
     /// The slot of each area of `shapes`.
     slots: Vec<Slot>,
     /// What the entry holds now (loaded or last written), per area.
@@ -312,17 +315,25 @@ impl IndexCache {
     /// Saves the seek indexes of `disc` (of `slots`, one per shape) by
     /// [`IndexCache::flush`] from now on; `saved` is what the entry holds now (what was
     /// loaded and used, per area).
+    #[allow(clippy::too_many_arguments)] // Each is one of the disc's parts, as it opens.
     pub(crate) fn register(
         &self,
         key: ImageKey,
         shapes: Vec<AreaShape>,
         disc: Arc<LibDisc>,
         changed: Arc<std::sync::atomic::AtomicBool>,
+        retired: Arc<std::sync::atomic::AtomicBool>,
         slots: Vec<Slot>,
         saved: Vec<Saved>,
     ) {
         let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
-        live.push(Live { key, shapes, disc, changed, slots, saved, touched: false });
+        live.push(Live { key, shapes, disc, changed, retired, slots, saved, touched: false });
+    }
+
+    /// Discs whose seek indexes are saved by [`IndexCache::flush`] (for tests and
+    /// diagnostics): those open, and those dropped since the last flush.
+    pub fn live_count(&self) -> usize {
+        self.live.lock().unwrap_or_else(|p| p.into_inner()).len()
     }
 
     /// Writes the entry of every registered disc whose saved form changed since its last
@@ -332,7 +343,10 @@ impl IndexCache {
         let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
         let mut written = 0;
         let mut first_err = None;
+        let mut done = Vec::with_capacity(live.len());
         for d in live.iter_mut() {
+            // Read before the save: a disc dropped meanwhile is saved at the next flush.
+            let retired = d.retired.load(Ordering::Acquire);
             let path = self.dir.join(d.key.file_name());
             // Only a disc whose cursors handed records to its index may have changed: the
             // others' saved form is not built again (a copy of the index and its encoding).
@@ -357,8 +371,26 @@ impl IndexCache {
                 }
                 d.touched = true;
             }
+            // A dropped disc saved (or with nothing to save) is let go of.
+            done.push(retired && !d.changed.load(Ordering::Relaxed));
         }
+        let mut done = done.into_iter();
+        let mut gone = Vec::new();
+        let kept = std::mem::take(&mut *live)
+            .into_iter()
+            .filter_map(|d| {
+                if done.next().unwrap_or(false) {
+                    gone.push(d);
+                    None
+                } else {
+                    Some(d)
+                }
+            })
+            .collect();
+        *live = kept;
         drop(live);
+        // The discs (and their seek indexes) are freed outside the lock.
+        drop(gone);
         if written > 0 {
             self.trim()?;
         }
