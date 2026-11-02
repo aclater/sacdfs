@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A folder's modification time is now the newest of everything shown below it, up to the
+  mount's root (#123), not its source folder's own. Roon, which skips folders whose time did
+  not change, missed new output versions (and so new tags) and new playlists or art deeper
+  down; a plain rescan now finds them. Times stay the same across remounts; folders keep their
+  inode numbers and NFS handles. A change while mounted shows within about 2 seconds.
+
 ## [0.2.0-rc.1] - 2026-11-01
 
 ### Added

@@ -148,9 +148,20 @@ pub struct Sidecar {
     pub path: PathBuf,
     /// What it is.
     pub kind: SidecarKind,
+    /// Its modification time when it was found (a link's target's), for its directory's
+    /// (#123).
+    pub mtime: Option<SystemTime>,
 }
 
 impl Sidecar {
+    /// The newest modification time of it and, for a folder, of everything in it (#123).
+    pub fn newest(&self) -> Option<SystemTime> {
+        match &self.kind {
+            SidecarKind::Folder(inner) => inner.iter().map(Sidecar::newest).max().flatten().max(self.mtime),
+            _ => self.mtime,
+        }
+    }
+
     /// Whether it is folder art: an image file (or link to one), not a playlist or a folder.
     /// Folder art is also shown inside the areas of the images beside it (#95).
     pub fn is_art(&self) -> bool {
