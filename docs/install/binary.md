@@ -25,7 +25,7 @@ archive holds `sacdfs`, `COPYING`, `README.md` and `CHANGELOG.md`. To download, 
 install one:
 
 ```sh
-v=0.3.0 a=x86_64          # or a=x86_64-v3
+v=0.4.0 a=x86_64          # or a=x86_64-v3
 gh release download "v$v" -R aclater/sacdfs -p "sacdfs-$v-$a-linux.tar.gz*"
 sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
 gh attestation verify "sacdfs-$v-$a-linux.tar.gz" -R aclater/sacdfs
