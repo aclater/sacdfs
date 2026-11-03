@@ -3,7 +3,8 @@
 sacdfs runs on Linux (x86_64) and needs FUSE 3's `fusermount3` helper (package `fuse3` on
 most distributions). Each [release](https://github.com/aclater/sacdfs/releases) has two
 builds. From 0.4.0, sacdfs is also on crates.io (`cargo install sacdfs`,
-[below](#from-source); #155). That path is available from 0.4.0 but not yet validated.
+[below](#from-source); #155). Tested on 0.4.0: `cargo install --locked sacdfs` in a clean
+`rust:1.99.1` container, with no other packages, installs a working `sacdfs`.
 Running it is in the [user guide](../user-guide.md); the options are in
 [options.md](../options.md).
 
@@ -45,7 +46,7 @@ sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through
 and mounts with `fusermount3`, without linking libfuse.
 
 ```sh
-cargo install --locked sacdfs     # from crates.io, from 0.4.0 (not yet validated)
+cargo install --locked sacdfs     # from crates.io, from 0.4.0
 # before 0.4.0, from the release tag:
 cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.3.0
 # or, in a clone:
