@@ -25,8 +25,7 @@ nobody has run sacdfs there and reported back. Reports are welcome on
 
 Without a container, on any Linux host (x86_64; FUSE 3's `fusermount3`, package `fuse3`):
 a [release binary](binary.md#binaries), or, from 0.4.0, `cargo install --locked sacdfs`
-from crates.io (Rust 1.85 or later). The crates.io path is available from 0.4.0 but **not yet
-validated**. The [user guide](../user-guide.md) covers running it.
+from crates.io (Rust 1.85 or later; tested on 0.4.0 in a clean Rust container). The [user guide](../user-guide.md) covers running it.
 
 **2. How other computers reach it:**
 
