@@ -6,7 +6,7 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.4.0-rc.4] - 2026-11-02
+## [0.4.0-rc.5] - 2026-11-03
 
 ### Added
 
@@ -455,8 +455,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.0-rc.4...HEAD
-[0.4.0-rc.4]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0-rc.4
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.0-rc.5...HEAD
+[0.4.0-rc.5]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0-rc.5
 [0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
