@@ -52,11 +52,14 @@ All notable changes to sacdfs are recorded here. The format follows
 - **`ls -l` over NFS no longer prints "Unknown error 524"** (#174). sacdfs answered
   extended-attribute requests with `ENOSYS` (since 0.1.1, #61), which NFS-Ganesha passed on as
   "not supported" and the Linux NFS client showed as error 524 on every entry of `ls -l` and
-  `getfattr -d`. sacdfs now says there are none: an empty attribute list, and "No such
-  attribute" for any name. The cost is one cheap request per entry of an `ls -l`
-  on the mount (1245 on the corpus, about 4 µs each, against 1 before); a scan that stats and
-  opens every file sends none, as before, and so does Samba as the container sets it up. The
-  container test now runs `ls -lR` over SMB and NFS and `getfattr -R -d` over NFS.
+  `getfattr -d`. `listxattr` now answers an empty list, one cheap request per entry of an
+  `ls -l` (1245 on the corpus, about 4 µs each, against 1 before). `getxattr` still answers
+  `ENOSYS`, so the kernel asks once per mount. On 0.4.0-rc.4 it answered `ENODATA`, which
+  regressed Roon over SMB: Samba then asked for `security.capability` and the POSIX ACLs on
+  every file, 21,767 `GETXATTR` in a Roon force rescan (0 on rc.3), 35,892 requests in all
+  against 14,970, and 1,314 in an hour with no scan. Known limit: `getfattr -n <name>` over
+  NFS still prints error 524. The container test now runs `ls -lR` over SMB and NFS and
+  `getfattr -R -d` over NFS.
 
 - **Removed and renamed images no longer stay in memory** (#153, after #163). The persistent
   seek index kept the disc of every image opened, with its seek index, for as long as the mount

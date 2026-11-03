@@ -142,30 +142,51 @@ fn probes_are_answered_once() {
     let area = mount.path().join("dsd-stereo-mch-2048/Stereo");
     assert!(std::fs::read_dir(&area).unwrap().count() > 2);
 
-    // Extended attributes (#174): none, said as an empty list and "no such attribute", not
-    // ENOSYS (which NFS clients saw as "Unknown error 524"). A scanner's stat and open send no
-    // xattr request. `ls -l` prints no error and sends a few xattr requests per entry: which
-    // ones depends on coreutils and the security module (on Fedora with SELinux, one
-    // LISTXATTR; elsewhere GETXATTRs for ACL or label names as well).
+    // Extended attributes (#174): none. getxattr answers ENOSYS, which the kernel remembers for
+    // the whole mount: at most one GETXATTR ever (ENODATA brought back one per open through
+    // Samba, about 3.4 per file in a Roon scan). listxattr answers an empty list (ENOSYS there
+    // made NFS clients print "Unknown error 524" on `ls -l`), one LISTXATTR per entry listed.
     let entries = std::fs::read_dir(&area).unwrap().count();
+    let files: Vec<PathBuf> = std::fs::read_dir(&area).unwrap().map(|e| e.unwrap().path()).collect();
     let scan = || {
-        for e in std::fs::read_dir(&area).unwrap() {
-            let p = e.unwrap().path();
-            std::fs::metadata(&p).unwrap();
-            drop(std::fs::File::open(&p).unwrap());
+        for p in &files {
+            std::fs::metadata(p).unwrap();
+            drop(std::fs::File::open(p).unwrap());
         }
     };
     assert_eq!(mount.requests("XATTR", scan), 0, "stat and open");
     assert_eq!(mount.requests("XATTR", scan), 0, "stat and open, again");
-    let n = mount.requests("XATTR", || ls_l(&area));
-    assert!(n <= 4 * (entries + 1), "ls -l: {n} xattr requests for {entries} entries");
-    let one = std::fs::read_dir(&area).unwrap().next().unwrap().unwrap().path();
-    let out = Command::new("getfattr").arg("-d").arg(&one).output();
-    if let Ok(out) = out {
+    let before = mount.count("GETXATTR");
+    let n = mount.requests("LISTXATTR", || ls_l(&area));
+    assert!(n <= 2 * (entries + 1), "ls -l: {n} LISTXATTR for {entries} entries");
+    mount.requests("LISTXATTR", || ls_l(&area));
+    // Named attributes, as Samba asks on every open: "not supported", from the kernel.
+    let enotsup = |p: &Path, name: &str| {
+        let out = Command::new("getfattr").args(["-n", name]).arg(p).output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(
+            !out.status.success() && err.contains("Operation not supported"),
+            "getfattr -n {name}: {err}"
+        );
+    };
+    let have_getfattr = Command::new("getfattr").arg("--version").output().is_ok();
+    if have_getfattr {
+        mount.requests("GETXATTR", || {
+            for _ in 0..2 {
+                for p in &files {
+                    enotsup(p, "security.capability");
+                    enotsup(p, "user.x");
+                }
+            }
+        });
+    }
+    let getxattr = mount.count("GETXATTR") - before;
+    assert!(getxattr <= 1, "{getxattr} GETXATTR in all (ls -l twice, getfattr -n on every file)");
+    if have_getfattr {
+        // A dump lists nothing and prints no error.
+        let out = Command::new("getfattr").arg("-d").arg(&files[0]).output().unwrap();
         assert!(out.status.success(), "getfattr -d: {}", String::from_utf8_lossy(&out.stderr));
-        assert!(out.stdout.is_empty());
-        let out = Command::new("getfattr").args(["-n", "user.x"]).arg(&one).output().unwrap();
-        assert!(String::from_utf8_lossy(&out.stderr).contains("No such attribute"), "getfattr -n");
+        assert!(out.stdout.is_empty() && out.stderr.is_empty());
     }
 
     // Missing names: one LOOKUP each, then the kernel's negative entry answers.

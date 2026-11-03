@@ -849,14 +849,16 @@ impl Filesystem for SacdFs {
         );
     }
 
-    // No extended attributes: an empty list, and ENODATA for any name (#174). Not ENOSYS, which
-    // the kernel remembers for the whole mount (#61): FUSE then fails every xattr call with
-    // EOPNOTSUPP, which NFS-Ganesha passes on as NFS4ERR_NOTSUPP and the Linux NFS client shows
-    // as "Unknown error 524" on every `ls -l`. The cost: one LISTXATTR per `ls -l` entry,
-    // answered here without touching the tree. Scanners that stat and open files, and Samba as
-    // the container sets it up, send none (docs/design.md).
+    // No extended attributes (#174, docs/design.md). getxattr: ENOSYS, which the kernel
+    // remembers for the whole mount (#61) and then answers every later call itself, with
+    // EOPNOTSUPP. ENODATA is an answer about one file: Samba asked it again for every open
+    // (security.capability, the POSIX ACL names), about 3.4 times per file in a Roon scan.
+    // listxattr: an empty list, not ENOSYS. NFS-Ganesha forwards an NFSv4.2 client's
+    // LISTXATTRS here and passes EOPNOTSUPP on as NFS4ERR_NOTSUPP, which the Linux NFS client
+    // shows as "Unknown error 524" on every `ls -l`. Each `ls -l` entry costs one LISTXATTR,
+    // answered here without touching the tree.
     fn getxattr(&self, _req: &Request, _ino: INodeNo, _name: &OsStr, _size: u32, reply: ReplyXattr) {
-        reply.error(Errno::ENODATA);
+        reply.error(Errno::ENOSYS);
     }
 
     fn listxattr(&self, _req: &Request, _ino: INodeNo, size: u32, reply: ReplyXattr) {

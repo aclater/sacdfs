@@ -438,8 +438,11 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
 - **`df` and free space.** The mount reports the size of the filesystem that holds SOURCE,
   all of it used: `df` shows that size with 0 available, and SMB clients (Explorer, Finder)
   see a full drive of that size. Nothing can be written to the mount anyway.
-- **Extended attributes.** There are none: `listxattr` gives an empty list and `getfattr -n`
-  says "No such attribute", locally and over NFS (#174).
+- **Extended attributes.** There are none: `getfattr -d` and `listxattr` give an empty list,
+  locally and over NFS. Asking for one by name (`getfattr -n user.x`) says "Operation not
+  supported" locally (the kernel answers this itself after the first request). Over NFS
+  that shows as "Unknown error 524": a known limit, kept because the alternative made Samba
+  ask sacdfs for attributes on every file opened (#174). `ls -l` over NFS shows no error.
 
 ## Before you delete extracts
 
