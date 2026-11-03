@@ -24,7 +24,7 @@ sudo podman run -d --name sacdfs --restart unless-stopped \
   -p 445:445 -p 2049:2049 \
   -v /srv/music:/images:ro \
   -v sacdfs-cache:/cache \
-  ghcr.io/aclater/sacdfs:0.3.0
+  ghcr.io/aclater/sacdfs:0.4.0
 ```
 
 The [Docker and Podman guide](docs/install/docker-podman.md) explains each line and how to

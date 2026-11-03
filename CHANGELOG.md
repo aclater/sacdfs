@@ -6,7 +6,16 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.4.0-rc.5] - 2026-11-03
+## [0.4.0] - 2026-11-03
+
+Tested as five release candidates. On rc.2 to rc.5, a TrueNAS SCALE NAS ran the TrueNAS guide
+as written, with Roon and Plex imports. A Fedora client with SELinux enforcing found no errors
+from `ls -l` or `getfattr -d` over NFS on rc.5. A Roon Force Rescan over SMB sent no
+extended-attribute requests on rc.5 (21,767 on rc.4). A 2-hour soak on real disc images, with a
+new album name on every add, levelled off (second-half trend −0.89 MiB/h). Jellyfin, Navidrome,
+LMS, MPD and MinimServer were re-checked on rc.2. Against 0.3.0, peak memory of an import-like
+scan fell from 109 to 45 MiB, and the first listing of a 200-image library was 55 % faster, with
+no read slower by more than noise (docs/clients.md, #151).
 
 ### Added
 
@@ -455,8 +464,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.0-rc.5...HEAD
-[0.4.0-rc.5]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0-rc.5
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
