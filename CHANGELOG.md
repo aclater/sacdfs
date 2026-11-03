@@ -6,6 +6,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
+  `rust:1.99.1` container with no other packages, it installs a working `sacdfs` (#155).
+
 ## [0.4.0] - 2026-11-03
 
 Tested as five release candidates. On rc.2 to rc.5, a TrueNAS SCALE NAS ran the TrueNAS guide
