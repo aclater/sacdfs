@@ -38,8 +38,8 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use rayon::prelude::*;
-use scarletbook::Slot;
 use scarletbook::audio::check_track;
+use scarletbook::{MASTER_TOC_LSN, SectorFormat, Slot};
 
 use crate::disc::{Disc, Tuning};
 use crate::ident::{self, Ids};
@@ -244,6 +244,12 @@ impl SourceDir {
                     Err(err) => log::warn!("{}: {err}", path.display()),
                 }
             } else if is_iso(&path) && (ft.is_file() || (ft.is_symlink() && path.is_file())) {
+                // An image that is not an SACD (a DVD-Video or Blu-ray image, say) is not
+                // a candidate: a folder with none is hidden (#175).
+                if !may_be_sacd(&path) {
+                    log::info!("{}: not an SACD image: not listed", path.display());
+                    continue;
+                }
                 stamp.image = stamp.image.max(mtime_of(&path));
                 images.push(path);
             } else if note
@@ -365,6 +371,30 @@ impl SourceDir {
 /// The modification time of `path` (a link's target's), if it can be read.
 fn mtime_of(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// Whether the image at `path` can be an SACD: it holds the master TOC signature where any
+/// sector format puts it (what opening the image checks first, with one small read per
+/// format tried). *Why here and not when the folder is listed:* the parents of a folder
+/// are listed before it, and must not show it if nothing below it is an SACD (#175). An image
+/// that cannot be read now counts as a candidate: opening it later reports why.
+fn may_be_sacd(path: &Path) -> bool {
+    use std::os::unix::fs::FileExt;
+    let Ok(file) = fs::File::open(path) else { return true };
+    let Ok(len) = file.metadata().map(|m| m.len()) else { return true };
+    let mut sig = [0u8; 8];
+    for format in SectorFormat::DETECTION_ORDER {
+        let at = u64::from(MASTER_TOC_LSN) * format.stored_size() + format.data_offset();
+        if at + 8 > len {
+            continue;
+        }
+        match file.read_exact_at(&mut sig, at) {
+            Ok(()) if &sig == b"SACDMTOC" => return true,
+            Ok(()) => {}
+            Err(_) => return true,
+        }
+    }
+    false
 }
 
 fn is_iso(path: &Path) -> bool {
@@ -1900,18 +1930,13 @@ mod tests {
 
     #[test]
     fn flattening_opens_no_image_until_looked_into() {
-        // Images that are not SACD images still count (decided from names); the collapsed
-        // folder shows up, empty, as a folder of such images does without the option.
-        let dir = tempfile::tempdir().unwrap();
-        for p in ["Artist/A/Rip/x.iso", "Artist/B/y.iso"] {
-            let path = dir.path().join(p);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, vec![0u8; 4096]).unwrap();
-        }
+        // The image is probed for the SACD signature (one small read) when the mount scans,
+        // but not opened (its TOCs parsed) until the folder is looked into.
+        let dir = source(&["Artist/A/Rip/x.iso", "Artist/B/y.iso"]);
         let t = tree(dir.path(), true);
         assert_eq!(names(&t, "Artist"), ["A", "B"]);
         assert_eq!(t.next_disc.load(Ordering::Relaxed), 1, "listing opened an image");
-        assert!(names(&t, "Artist/A").is_empty());
+        assert_eq!(names(&t, "Artist/A"), ["Stereo", "Multichannel"]);
         assert_eq!(t.next_disc.load(Ordering::Relaxed), 2);
     }
 
@@ -2124,6 +2149,50 @@ mod tests {
         "Artist/NoImages/cover.jpg",
     ];
 
+    /// Writes a file named `.iso` that is no SACD (a DVD-Video image, say), at `rel`.
+    fn other_iso(dir: &Path, rel: &str) {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Long enough for every sector format's signature position, holding no signature.
+        fs::write(&path, vec![0u8; 600 * 2064]).unwrap();
+    }
+
+    #[test]
+    fn folders_without_an_sacd_image_are_hidden_with_their_sidecars() {
+        // 175: a folder whose only image is not an SACD showed its art, and its parents showed.
+        let dir = source(&["Good/Album/x.iso", "Good/Album/cover.jpg", "Good/Album/Artwork/front.jpg"]);
+        other_iso(dir.path(), "Dvd/Album/movie.iso");
+        fs::write(dir.path().join("Dvd/Album/cover.jpg"), b"art").unwrap();
+        fs::create_dir_all(dir.path().join("Dvd/Album/Artwork")).unwrap();
+        fs::write(dir.path().join("Dvd/Album/Artwork/front.jpg"), b"art").unwrap();
+        for flatten in [false, true] {
+            let t = tree_sc(dir.path(), flatten);
+            assert_eq!(names(&t, ""), ["Good"], "flatten {flatten}");
+            assert!(t.resolve(Path::new("Dvd")).is_none());
+            assert!(names(&t, "Good/Album").contains(&"cover.jpg".to_owned()), "flatten {flatten}");
+        }
+    }
+
+    #[test]
+    fn a_box_set_drops_its_non_sacd_discs() {
+        let dir = source(&["Set/Disc 1/x.iso", "Set/cover.jpg"]);
+        other_iso(dir.path(), "Set/Disc 2/movie.iso");
+        other_iso(dir.path(), "Set/Disc 3/BDMV/disc.iso");
+        fs::write(dir.path().join("Set/Disc 2/cover.jpg"), b"art").unwrap();
+        let t = tree_sc(dir.path(), false);
+        let set = names(&t, "Set");
+        assert!(set.contains(&"Disc 1".to_owned()) && set.contains(&"cover.jpg".to_owned()), "{set:?}");
+        assert!(!set.iter().any(|n| n.starts_with("Disc 2") || n.starts_with("Disc 3")), "{set:?}");
+    }
+
+    #[test]
+    fn a_non_sacd_image_beside_an_sacd_is_not_listed() {
+        let dir = source(&["Album/x.iso", "Album/cover.jpg"]);
+        other_iso(dir.path(), "Album/movie.iso");
+        let t = tree_sc(dir.path(), false);
+        assert_eq!(names(&t, "Album"), ["x", "cover.jpg"]);
+    }
+
     #[test]
     fn sidecars_are_listed_after_the_images() {
         let dir = source(ALBUM);
@@ -2208,12 +2277,11 @@ mod tests {
         // `..` of a sidecar folder in the collapsed directory is that directory.
         let scans = flat.resolve(Path::new("Artist/Album/Scans")).unwrap();
         assert_eq!(flat.parent_of(scans), flat.resolve(Path::new("Artist/Album")).unwrap());
-        // A collapsed image that is not an SACD image still shows its sidecars.
+        // A chain whose image is not an SACD image is hidden, sidecars included (#175).
         let bad = tempfile::tempdir().unwrap();
-        fs::create_dir_all(bad.path().join("Artist/Album/Rip")).unwrap();
-        fs::write(bad.path().join("Artist/Album/Rip/x.iso"), vec![0u8; 4096]).unwrap();
+        other_iso(bad.path(), "Artist/Album/Rip/x.iso");
         fs::write(bad.path().join("Artist/Album/folder.jpg"), b"art").unwrap();
-        assert_eq!(names(&tree_sc(bad.path(), true), "Artist/Album"), ["folder.jpg"]);
+        assert!(names(&tree_sc(bad.path(), true), "").is_empty());
     }
 
     #[test]
@@ -2302,7 +2370,7 @@ mod tests {
         assert_eq!(read_sidecar(&t, "Artist/Album/inside.jpg"), b"shared art");
         assert_eq!(read_sidecar(&t, "Artist/Album/absolute.jpg"), b"shared art");
         // Nothing in the mount point is a sidecar.
-        fs::write(root.join("mnt/x.iso"), b"").unwrap();
+        symlink(corpus_image(), root.join("mnt/x.iso")).unwrap();
         fs::write(root.join("mnt/folder.jpg"), b"").unwrap();
         let s = SourceDir::scan_with(&root, &Sidecars::standard(), Some(&root.join("mnt"))).unwrap();
         let mnt = &s.dirs.iter().find(|(n, _)| n == "mnt").unwrap().1;

@@ -6,6 +6,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Folders with no SACD image are hidden, art included** (#175). A folder whose only `.iso`
+  files were DVD-Video or Blu-ray images showed on the share holding just its `Artwork/` folder,
+  and its parents showed too; a box set mixing an SACD with DVD discs showed the DVD disc
+  folders. The mount's walk now reads the 8 signature bytes of each `.iso` and leaves out
+  files that are not SACD images. On a real library (414 `.iso` files, 20 of them not SACDs)
+  the share lost 649 entries, 4 top-level folders among them, and not one DSF file.
+
 ### Documentation
 
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean

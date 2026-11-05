@@ -1177,8 +1177,11 @@ mod tests {
         let src = base.join("src");
         std::fs::create_dir_all(src.join("A")).unwrap();
         std::fs::create_dir_all(&mnt).unwrap();
-        std::fs::write(mnt.join("real.iso"), b"x").unwrap();
-        std::fs::write(src.join("ok.iso"), b"x").unwrap();
+        // Images are listed only if they hold the SACD master TOC signature (#175).
+        let mut sacd = vec![0u8; 511 * 2048];
+        sacd[510 * 2048..510 * 2048 + 8].copy_from_slice(b"SACDMTOC");
+        std::fs::write(mnt.join("real.iso"), &sacd).unwrap();
+        std::fs::write(src.join("ok.iso"), &sacd).unwrap();
         std::os::unix::fs::symlink(mnt.join("real.iso"), src.join("A/link.iso")).unwrap();
         let mut root = SourceDir::scan_with(&src, &Default::default(), Some(&mnt)).unwrap();
         assert_eq!(root.image_count(), 2);
