@@ -731,6 +731,7 @@ impl Filesystem for SacdFs {
             match result {
                 Ok(Ok((data, ahead))) => {
                     reply.data(&data);
+                    crate::track::give_back(data);
                     if let Some(ahead) = ahead {
                         pool.spawn(move || {
                             let _ = catch_unwind(AssertUnwindSafe(|| reader.read_ahead(&engine, ahead)));

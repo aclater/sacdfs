@@ -656,6 +656,7 @@ impl Engine {
         }
         drop(std::mem::take(&mut *DECODERS.lock().unwrap_or_else(|p| p.into_inner())));
         drop_converters(self.id);
+        crate::track::drop_read_buffers();
         trim_heap();
         true
     }

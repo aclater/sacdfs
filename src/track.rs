@@ -399,18 +399,26 @@ impl TrackFile {
         first: u32,
         frames: &[Arc<Frame>],
     ) -> Vec<u8> {
-        let mut out = vec![0u8; end.saturating_sub(offset) as usize];
+        let mut out = read_buffer();
+        out.resize(end.saturating_sub(offset) as usize, 0);
         if out.is_empty() {
             return out;
         }
+        let channels = usize::from(self.layout.channels);
         let mut src = Frames {
             frames,
             first: self.start_frame.saturating_add(first),
-            zeros: vec![0; usize::from(self.layout.channels) * dsf::FRAME_BYTES as usize],
+            zeros: ZEROS.get(..channels * dsf::FRAME_BYTES as usize).unwrap_or(&[]),
             fill: None,
         };
-        if let Err(e) = l.fill(offset, &mut out, &mut src) {
-            log::debug!("{} area {} track {}: {e}", self.disc.path.display(), self.area, self.number);
+        match l.fill(offset, &mut out, &mut src) {
+            // Whatever the layout left out is zeros, not an earlier read's bytes.
+            Ok(n) => out.get_mut(n..).unwrap_or(&mut []).fill(0),
+            Err(e) => {
+                log::debug!("{} area {} track {}: {e}", self.disc.path.display(), self.area, self.number);
+                out.fill(0);
+                let _ = l.fill(offset, &mut out, &mut src);
+            }
         }
         self.warn(src.fill, 0);
         out
@@ -438,12 +446,49 @@ impl TrackFile {
     }
 }
 
+/// A frame of zeros of six channels, whose start is the padding of fewer.
+static ZEROS: [u8; 6 * dsf::FRAME_BYTES as usize] = [0; 6 * dsf::FRAME_BYTES as usize];
+
+/// Most reply buffers kept ([`give_back`]): as many as reads ever overlap in a straight read,
+/// and a few more.
+const READ_BUFFERS_KEPT: usize = 8;
+
+/// Longest reply buffer kept, the largest read the kernel is asked to send.
+const READ_BUFFER_MAX: usize = crate::fs::MAX_READ as usize;
+
+/// Reply buffers not in use (#210), taken and given back as the DST decoders are.
+///
+/// *Why:* a new zeroed buffer per read, 128 KiB at glibc's mapping threshold, took about a
+/// tenth of a straight read of plain DSD, whose reads are answered within some 30 us. A
+/// buffer keeps its length, so a read of the same size as the last writes no zeros.
+static READ_BUFFERS: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+
+/// A reply buffer of any length, holding an earlier read's bytes.
+fn read_buffer() -> Vec<u8> {
+    READ_BUFFERS.lock().unwrap_or_else(|p| p.into_inner()).pop().unwrap_or_default()
+}
+
+/// Gives a read's bytes back, once they are sent, for the next read's reply.
+pub fn give_back(buffer: Vec<u8>) {
+    if buffer.capacity() <= READ_BUFFER_MAX {
+        let mut kept = READ_BUFFERS.lock().unwrap_or_else(|p| p.into_inner());
+        if kept.len() < READ_BUFFERS_KEPT {
+            kept.push(buffer);
+        }
+    }
+}
+
+/// Drops the reply buffers kept (an idle engine, #150).
+pub fn drop_read_buffers() {
+    drop(std::mem::take(&mut *READ_BUFFERS.lock().unwrap_or_else(|p| p.into_inner())));
+}
+
 /// The decoded frames of a read, as scarletbook's layout asks for them: by timeline position.
 struct Frames<'a> {
     frames: &'a [Arc<Frame>],
     /// The timeline position of `frames[0]`.
     first: u32,
-    zeros: Vec<u8>,
+    zeros: &'a [u8],
     /// Whether any frame given was filled.
     fill: Option<Fill>,
 }
@@ -458,7 +503,7 @@ impl scarletbook::output::PositionSource for Frames<'_> {
                 }
                 std::borrow::Cow::Borrowed(&f.data[..])
             }
-            _ => std::borrow::Cow::Borrowed(&self.zeros[..]),
+            _ => std::borrow::Cow::Borrowed(self.zeros),
         })
     }
 }
