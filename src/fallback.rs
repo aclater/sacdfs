@@ -132,8 +132,8 @@ fn has_control(s: &str) -> bool {
 
 /// Whether `s` can name something: it has a letter or digit, and is no placeholder.
 fn is_name(s: &str) -> bool {
-    const PLACEHOLDERS: [&str; 8] =
-        ["unknown", "unknown album", "unknown artist", "untitled", "no name", "none", "artist", "album"];
+    const PLACEHOLDERS: [&str; 6] =
+        ["unknown", "unknown album", "unknown artist", "untitled", "no name", "none"];
     s.chars().any(char::is_alphanumeric) && !PLACEHOLDERS.contains(&s.to_lowercase().as_str())
 }
 
@@ -169,6 +169,23 @@ mod tests {
 
     fn album(album: &str) -> (Option<String>, Option<String>) {
         (Some(album.to_owned()), None)
+    }
+
+    /// The table in docs/user-guide.md, "Tagging behaviour".
+    #[test]
+    fn the_user_guides_table() {
+        for (path, want) in [
+            ("Artist - 2001 - Album [SACD].iso", both("Album", "Artist")),
+            ("Artist - 2001 - Album [SACD]/disc.iso", both("Album", "Artist")),
+            ("Artist/2001 - Album [SACD]/Artist - Album.iso", both("Album", "Artist")),
+            ("Artist/2001 - Album [SACD]/Artist.2001.Album.iso", both("Album", "Artist")),
+            ("Genre/2001 - Album [SACD]/Artist - Album.iso", both("Album", "Artist")),
+            ("Artist/2001 - Album [SACD]/disc.iso", album("Album")),
+            ("Artist/Album/Artist - Album.iso", album("Artist - Album")),
+            ("Artist/Album/disc.iso", album("disc")),
+        ] {
+            assert_eq!(names(path), want, "{path}");
+        }
     }
 
     #[test]
