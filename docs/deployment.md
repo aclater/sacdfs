@@ -216,6 +216,28 @@ build of #150:
 | `256` | 108 MiB | 66 MiB |
 | `256` with 0.3.0 | 134 MiB | 103 MiB |
 
+Peak resident memory by workload on the six synthetic bench discs (103 files per format, default
+cache, a fresh mount, one run each, a 32-thread host), 0.4.0 against 0.4.1-rc.1 (#211):
+
+| Workload | 0.4.0 | 0.4.1-rc.1 |
+|---|---|---|
+| Plex-like scan, WAV (first and last 128 KiB of each file) | 30 MiB | 32 MiB |
+| Import replay, DSF | 47 MiB | 49 MiB |
+| Import replay, WAV | 49 MiB | 49 MiB |
+| Full read of the 14 stereo files of one DST disc as WAV (2.97 GiB), one reader | 64 MiB | 66 MiB |
+| the same, 4 readers | 76 MiB | 85 MiB |
+| Full read of the same files as DSF (1.98 GiB), 4 readers | 50 MiB | 54 MiB |
+
+So a scan that only reads the ends of files stays under 50 MiB, but a scan that reads whole files,
+which a media server does when it re-analyses or upgrades its library, does not: more readers at
+once hold more frames, and WAV holds more than DSF. Real servers on a NAS showed more: 160 MB for
+a Plex upgrade scan that read 18.25 GiB over 801 opened files, 85 MB for a Roon import after an
+upgrade and 72 MB after 2.4 days of Roon running. Plan for up to about 100 MiB at the default
+cache with one server scanning, and more with several readers at once or a larger library. The
+rise from 0.4.0 here is 0 to 9 MiB (single runs, within their noise), so it is not new in 0.4.1. The
+process keeps 70 threads after a listing in both versions; the extra walker threads of #175 are not
+among them. After 60 s without reads memory falls back to 9 to 20 MiB.
+
 The cache's memory is its limit (its frames live in their own memory mappings, which never pass
 `SACDFS_CACHE_MB`), and the rest of sacdfs takes about 13 MiB here, a little more for each
 image listed (its TOC, text and track lists) and for each frame decoded at once. After 60 s
@@ -330,7 +352,7 @@ The names of screens and fields may differ between releases.
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
-   - `SACDFS_CACHE_MB: "32"`, the default, keeps a library scan under 50 MiB of memory ([Memory](#memory)).
+   - `SACDFS_CACHE_MB: "32"`, the default, keeps a scan that reads only the ends of files under 50 MiB of memory, and whole-file reads up to about 100 MiB ([Memory](#memory)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and
