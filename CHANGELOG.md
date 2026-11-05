@@ -11,6 +11,7 @@ All notable changes to sacdfs are recorded here. The format follows
 - Pull requests that touch the code run an informational benchmark: base and head read DST stereo,
   DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
   summary and as a warning. Not a required check (#162).
+
 ### Fixed
 
 - **`sacdfs verify` could exit 0 with files not checked (#196).** A panic while checking a file
