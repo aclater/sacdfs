@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Continuous integration
+
+- Pull requests that touch the code run an informational benchmark: base and head read DST stereo,
+  DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
+  summary and as a warning. Not a required check (#162).
+
 ### Documentation
 
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
