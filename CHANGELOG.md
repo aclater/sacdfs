@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Continuous integration
+
+- Pull requests that touch the code run an informational benchmark: base and head read DST stereo,
+  DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
+  summary and as a warning. Not a required check (#162).
+
 ### Fixed
 
 - **Folders with no SACD image are hidden, art included** (#175). A folder whose only `.iso`
