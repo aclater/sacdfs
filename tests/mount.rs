@@ -321,6 +321,46 @@ fn flatten_through_the_kernel() {
 /// Folder art, scans and playlists next to an image are served byte for byte (#79, #75),
 /// with and without `--flatten`; other files are not, nor a link into the mount (#67); the
 /// audio files are the same as without them.
+/// The longest names that can collide in a mount (#161): an image's folder and a sidecar with
+/// the same name, of an extension too long to keep with a ` (2)`. A client sees both, under names
+/// it can use, and the rest of the listing.
+#[test]
+fn colliding_name_with_a_long_extension_through_the_kernel() {
+    if !fuse_available() {
+        return;
+    }
+    let source = tempfile::tempdir().unwrap();
+    for ext_len in [241, 242, 243, 249] {
+        let ext = "b".repeat(ext_len);
+        let name = format!("a.{ext}");
+        let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+        let dir = source.path().join(ext_len.to_string());
+        std::fs::create_dir(&dir).unwrap();
+        std::os::unix::fs::symlink(&image, dir.join(format!("{name}.iso"))).unwrap();
+        std::os::unix::fs::symlink(&image, dir.join("other.iso")).unwrap();
+        std::fs::write(dir.join(&name), b"sidecar").unwrap();
+        std::fs::write(dir.join("z.jpg"), b"art").unwrap();
+
+        let list = format!("default,{ext}");
+        let m = Mount::foreground(&dir, &["--sidecars", &list]);
+        let mut names: Vec<String> = std::fs::read_dir(m.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 4, "{names:?}");
+        assert!(names.contains(&name) && names.contains(&"other".to_owned()), "{names:?}");
+        assert!(names.contains(&"z.jpg".to_owned()), "{names:?}");
+        let renamed = names.iter().find(|n| !["other", "z.jpg", &name].contains(&n.as_str())).unwrap();
+        assert!(renamed.len() <= sacdfs::names::NAME_MAX, "{} bytes", renamed.len());
+        assert!(renamed.contains(" (2)"), "{renamed}");
+        assert_eq!(std::fs::read(m.path().join(renamed)).unwrap(), b"sidecar");
+        assert!(m.path().join(&name).join("Stereo").is_dir());
+        assert_eq!(std::fs::read(m.path().join("z.jpg")).unwrap(), b"art");
+        m.stop("TERM");
+    }
+}
+
 #[test]
 fn sidecars_through_the_kernel() {
     if !fuse_available() {

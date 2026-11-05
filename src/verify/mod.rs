@@ -14,8 +14,8 @@
 
 pub mod container;
 pub mod id3;
-mod pause;
-mod report;
+pub mod pause;
+pub mod report;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;

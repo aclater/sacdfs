@@ -6,8 +6,25 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Fuzz targets for sacdfs's own parsers and paths (#161): tags files, sidecar lists and paths,
+  names, the ID3, DSF and WAV writers, the tree, and the `verify` readers, in `fuzz/` (see
+  fuzz/README.md). A CI job runs each for about 60 s on every pull request and 20 minutes every
+  week. It is not a required check.
+
 ### Fixed
 
+- Found by those fuzz targets; none of these changes a served file (#161):
+  - `sacdfs verify` and `sacdfs tags import` no longer panic on an ID3v2.3 tag whose extended
+    header claims 4 GiB, and `sacdfs verify` no longer panics on a DFF file whose sound chunk
+    claims 2^61 bytes or more: these are read as damaged files.
+  - A repeated name with an extension of 243 bytes or more now gives `name (2)`, cut to fit,
+    without keeping the extension apart. In the library such a name could pass the 255 bytes the
+    kernel accepts. No such name was found to be reachable in a mount, where colliding names are
+    shorter: they gave a usable name before as well.
+  - A `verify` report's `loses` column is written the same after `--resume` when frame keys hold
+    `,` or `|`.
 - **`sacdfs verify` could exit 0 with files not checked (#196).** A panic while checking a file
   ended that worker silently, so the report and summary left the file out, and with one thread
   every file after it too. The exit status said that all was identical. A panic now gives that file
