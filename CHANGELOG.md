@@ -13,9 +13,49 @@ All notable changes to sacdfs are recorded here. The format follows
   when every extract was handled, 2 when any didn't match or couldn't be read, with the rows
   still written and the count in the summary, and 1 when it couldn't run. A script that ran it
   over extracts that don't all match, and took any non-zero status as a failure, now sees one.
+### Added
+
+- Fuzz targets for sacdfs's own parsers and paths (#161): tags files, sidecar lists and paths,
+  names, the ID3, DSF and WAV writers, the tree, and the `verify` readers, in `fuzz/` (see
+  fuzz/README.md). A CI job runs each for about 60 s on every pull request and 20 minutes every
+  week. It is not a required check.
 
 ### Fixed
 
+- Found by those fuzz targets; none of these changes a served file (#161):
+  - `sacdfs verify` and `sacdfs tags import` no longer panic on an ID3v2.3 tag whose extended
+    header claims 4 GiB, and `sacdfs verify` no longer panics on a DFF file whose sound chunk
+    claims 2^61 bytes or more: these are read as damaged files.
+  - A repeated name with an extension of 243 bytes or more now gives `name (2)`, cut to fit,
+    without keeping the extension apart. In the library such a name could pass the 255 bytes the
+    kernel accepts. No such name was found to be reachable in a mount, where colliding names are
+    shorter: they gave a usable name before as well.
+  - A `verify` report's `loses` column is written the same after `--resume` when frame keys hold
+    `,` or `|`.
+- **MPD finds folder art** (#148). When an image's art has no file named `cover.*`, one of the
+  images (`folder.*`, then `front.*`, then the first by name) is also listed as `cover.jpg`
+  (`cover.png`, `cover.webp`) inside each `Stereo` and `Multichannel` folder, as the same file
+  (the same inode), after the tracks. MPD 0.24.15 found art in 6 of 6 areas with a cover, against
+  1 of 6 with the 0.4.0 release on the same discs. It follows `--sidecars`; no audio file changes.
+### Continuous integration
+
+- Pull requests that touch the code run an informational benchmark: base and head read DST stereo,
+  DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
+  summary and as a warning. Not a required check (#162).
+
+### Fixed
+
+- **Folders with no SACD image are hidden, art included** (#175). A folder whose only `.iso`
+  files were DVD-Video or Blu-ray images showed on the share holding just its `Artwork/` folder,
+  and its parents showed too; a box set mixing an SACD with DVD discs showed the DVD disc
+  folders. The mount's walk now reads the 8 signature bytes of each `.iso` and leaves out
+  files that are not SACD images. On a real library (414 `.iso` files, 20 of them not SACDs)
+  the share lost 649 entries, 4 top-level folders among them, and not one DSF file. A file
+  that is not an SACD image yet (a download filling a file made at full size) comes back within
+  the 2-second refresh once the TOC is written; a rescan reads no image it has looked at
+  before unless its size or time changed. The mount's walk reads the top-level folders on
+  16 threads, so the whole-library mount took 0.65 to 0.72 s against 3.6 to 3.8 s on 0.4.0
+  (NFS cache warm; cold not measured).
 - **`sacdfs verify` could exit 0 with files not checked (#196).** A panic while checking a file
   ended that worker silently, so the report and summary left the file out, and with one thread
   every file after it too. The exit status said that all was identical. A panic now gives that file

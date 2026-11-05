@@ -213,8 +213,23 @@ MOUNT/
   are made when the area directory is first looked into. *Why:* mounting a library costs a
   walk of its names, whatever its size, and a seek right after a listing finds the image
   open.
-- A file that is not an SACD image (no master TOC), or that fails to open, is left out; a
-  directory whose `*.iso` files all turn out not to be SACD images shows up empty.
+- A file that is not an SACD image is left out, and so is a folder with none below it, sidecars
+  included (#175). The mount's walk of names reads 8 bytes of each `*.iso` (the master TOC
+  signature, where each sector format puts it) to tell; the image is opened (its TOCs read)
+  only when its folder is first listed. *Why at the walk:* the parents of a folder are listed
+  before it, so they can only leave it out if the walk knows. *Alternative:* open each image
+  when its parent is listed, which would read its TOCs in every parent listing; one small read
+  per image is far less. *Parallel walk:* the source's top-level folders are read on 16 scoped threads (joined before
+  the fork into the background, which needs one thread), so the probes of a network share
+  overlap; the result is sorted by name as before. *Rescans:* the folder's non-SACD images, and those of the subfolders
+  left out for holding no SACD, are on its watch list (`SourceDir::rejected`) with their
+  modification times, so a file written into place (which changes the file, not its folder)
+  brings the folder back at the next refresh. The answer for each image is kept while its size
+  and time are the same, so a rescan reads nothing of an image it has looked at: only a `stat`
+  of each rejected image. Nothing is stored across mounts: the persistent seek index holds
+  only discs that opened. An image that cannot be read at the walk counts as an SACD, so that
+  opening it later reports why. An image that has the signature but fails to open is left out
+  as before; its folder shows up with its sidecars only.
 - An image directory whose name collides with a source subdirectory gets ` (2)`. A track
   that fails scarletbook's `check_track` (empty, too many channels, or past the area's
   capacity) is left out. Names are cut to fit 255 bytes.
@@ -264,15 +279,16 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   in memory), when the parent directory is listed. No image is opened for it, so mounting
   costs the same with and without the option, and listing a folder of collapsed albums opens
   nothing: the collapsed folder (`DirKind::Flat`) opens its image when it is first looked
-  into, exactly when the image's own folder would have been. The price: an `*.iso` that
-  turns out not to be an SACD image still counts as the chain's image, so its collapsed
-  folder shows up empty, as a folder of such files does without the option.
+  into, exactly when the image's own folder would have been. A file that has no SACD master TOC
+  signature is not an image to the walk (#175), so it does not make a chain; one that has the
+  signature but fails to open still counts as the chain's image, and its collapsed folder shows
+  up with its sidecars only.
 - *Why these rules* (#13): always flattening would change paths for existing users;
   collapsing the top level too would drop the album name of a single-album artist; naming
   folders from the TOC's text is a separate option if ever wanted, since disc titles are
-  often less descriptive than the owner's folder names. Deciding from the TOCs (for
-  example, not counting files that are not SACD images) would mean opening every image at
-  mount, which is the cost the lazy tree exists to avoid.
+  often less descriptive than the owner's folder names. Deciding from the TOCs
+  would mean opening every image at mount, which is the cost the lazy tree exists to avoid; the
+  walk reads only the signature of each (#175).
 
 ### Sidecar files (#79, #75)
 
@@ -382,6 +398,15 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   list:* `Art` holds the image sidecars of the image's folder (with `--flatten`, of the chain,
   as the collapsed folder shows them); images in one folder share it. `nlink` stays 1 (the
   kernel does not need it, and a changing count would need an invalidation).
+  *MPD's name (#148):* MPD's `albumart` finds a cover only in a file named `cover.<ext>`, so
+  when the art holds no `cover.*` (any case), the area listing adds one more name for the first
+  of it (`folder.*`, then `front.*`, then by name) as `cover.<ext>`, with the extension in
+  lower case and `jpeg` as `jpg`: the same node again, not a copy, and only in the areas
+  (the album folder is the source's). *Why only when there is no `cover.*`:* the owner's own
+  cover wins, and a library that already names its covers sees no change. *Alternative:*
+  name the art `cover.*` in the source, which a library of thousands cannot be asked to do.
+  *Trade-off:* a `Cover.PNG` (other case) counts as a cover and gets no alias, so if MPD matches
+  names by case (not tested), it finds no art for it; the file can be renamed.
 - **Re-reading changed folders (#101).** A tree made `watching` (the mount, when SOURCE is a
   directory) re-reads a folder of SOURCE when it is listed or looked up and the folder's
   modification time differs from the one noted at its last reading (`Listing::watch`,
@@ -1781,7 +1806,8 @@ the owner's NAS already used.
   two more files beside it.
 - **Hostile input.** Extracts are untrusted like images: every size in a DSF or DFF header is
   checked against the file's length before use, chunk walks are bounded, and the readers are
-  fuzzed in the unit tests by truncating and corrupting every header byte. The DSF and DFF
+  fuzzed in the unit tests by truncating and corrupting every header byte, and by the fuzz
+  targets `verify_container` and `verify_id3` (#161). The DSF and DFF
   readers are container parsing written here from the published format descriptions; no SACD
   parsing or DST code is involved on the extract side.
 
@@ -1789,7 +1815,17 @@ the owner's NAS already used.
 
 - **Unit tests:** DSF header and tag layout, offset-to-frame mapping (including the padded
   last block and every channel count 1 to 6), name sanitising; proptest of the offset
-  mapping. Fuzzing the image layer is scarletbook's job.
+  mapping. Fuzzing the image layer's parsers is scarletbook's job.
+- **Fuzzing (#161).** `fuzz/` has cargo-fuzz targets for what sacdfs adds on top of the
+  library: tags files, sidecar paths, names, the tag and header writers, the tree, and the
+  `verify` readers; fuzz/README.md lists them. They check more than "no panic": a name the
+  kernel accepts, a tag with its true size, nothing read from outside SOURCE. *Why in CI as a
+  job of its own, not required:* a fuzzer's result depends on the run, and a new crash in old
+  code shouldn't block an unrelated pull request. *Why a crate of its own:* cargo-fuzz needs a
+  nightly toolchain, which stays away from sacdfs's build and locked dependencies.
+  *Alternative:* longer runs on every pull request, rejected by the CI speed rule.
+  *Trade-off:* 60 s per target finds only the easy bugs, so a weekly run goes on for 20 minutes
+  per target from the corpus the last one left.
 - **The corpus.** Integration tests run against the synthetic CC0 conformance corpus of
   [sacd-spec](https://github.com/aclater/sacd-spec) (copied into `tests/corpus/` with its
   licence). `tests/corpus.rs` reads every case through the tree and readers without

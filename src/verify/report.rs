@@ -142,7 +142,8 @@ impl Row {
         self
     }
 
-    fn line(&self) -> String {
+    /// The row's line in a report, without its line end.
+    pub fn line(&self) -> String {
         let opt = |v: Option<String>| v.unwrap_or_default();
         let fields = [
             self.status.as_str().to_owned(),
@@ -161,7 +162,8 @@ impl Row {
         fields.join("\t")
     }
 
-    fn parse(line: &str) -> Option<Row> {
+    /// The row of a report's line; `None` if it is not one.
+    pub fn parse(line: &str) -> Option<Row> {
         let f: Vec<&str> = line.split('\t').collect();
         if f.len() != COLUMNS.len() {
             return None;

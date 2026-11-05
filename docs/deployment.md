@@ -399,7 +399,8 @@ host networking, on the same NAS as sacdfs.
   to its online art (#79). With `SACDFS_FLATTEN: "1"` the art of a disc's folders sits next
   to its `Stereo` and `Multichannel` folders. `SACDFS_SIDECARS` changes which files pass.
   The cover images are also inside each `Stereo` and `Multichannel` folder, so servers that
-  look only beside the audio find them (#95). Images, covers and playlists added to or removed
+  look only beside the audio find them (#95); a cover that is not named `cover.*` is also shown as
+  `cover.jpg` (or `.png`, `.webp`) there, which MPD needs (#148). Images, covers and playlists added to or removed
   from the share later show up within a few seconds, with no restart (#101).
 - **Playlists** work: an `.m3u` or `.m3u8` file next to the images is on the share, so Roon,
   which imports playlist entries only from inside the same storage location, imports it
