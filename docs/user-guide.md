@@ -467,7 +467,7 @@ mounted: the files sacdfs would serve are read in-process, through the same code
 |---|---|
 | `--map FROM TO` | Extracts under `FROM` belong to the images under `TO`, a directory in `SOURCE`; for extracts kept in a tree of their own that mirrors the images' folders. Repeat it for more trees; the longest `FROM` that applies wins. |
 | `-o`, `--output FILE` | Write the report to `FILE` instead of standard output. |
-| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. An interrupted run leaves every row it finished in `FILE`, so `--resume` picks up where it stopped. |
+| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. An interrupted run leaves every row it finished in `FILE.partial`, so `--resume` picks up where it stopped. |
 | `--threads N` | Files checked at once, and DST decoder threads; `0` (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded frames, in MiB (default `64`). |
 | `-q`, `--quiet` | No progress line on standard error. |
@@ -523,7 +523,29 @@ goes to standard error: counts and bytes by status, the reclaimable bytes (the I
 files), and the tags they carry.
 
 **Exit status:** 0 when every DSF and DFF file is IDENTICAL, 2 when any is not, 1 when the
-check couldn't run.
+check couldn't run or didn't finish.
+
+> **On 0.4.0 and earlier, don't delete on the exit status alone.** Tested on the 0.4.0 release: an
+> extract that made the check panic left no row in the report, and the exit status was 0 (#196).
+> The recipe below, which lists files by their IDENTICAL row, is the safe way on every version:
+> a file with no row isn't listed. On those versions, also check that the report has one row per
+> file.
+
+**A report under its own name is a finished one.** A file that can't be checked, for any reason,
+gets an ERROR row. While a run is under way its rows go to `FILE.partial`, and `FILE` appears only
+when every file has been checked. Once the run has started writing, a report already at `FILE`
+moves to `FILE.previous` (the log says so), and is removed when the run finishes. So after a run
+that stopped, there is no `FILE`:
+
+- `FILE.partial` holds what it had checked. `--resume` picks up from there.
+- `FILE.previous` is the last finished report, from before that run. Rows in it may be out of date:
+  look at it, or rename it back, knowing that. `--resume` uses its rows only for files with the
+  same size and modification time.
+
+A run that fails before it starts writing (a bad path, for example) leaves `FILE` as it was. A
+run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming something that
+isn't a regular file (`/dev/stdout`, a named pipe), the rows are written as they are made and
+only the exit status says whether the run finished; `--resume` has nothing to read there.
 
 Examples:
 

@@ -12,7 +12,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use sacdfs::disc::Tuning;
@@ -309,6 +309,203 @@ fn separate_tree_without_map_finds_nothing() {
     let s = run(&args(&lib, vec![ext], Vec::new(), None)).unwrap();
     assert!(s.rows.iter().all(|r| r.status == Status::NoMatch), "{:?}", s.rows);
     assert!(s.rows[0].reason.contains("--map"));
+}
+
+/// The extracts of the crash tests: `n` copies of each served track beside the image, and a
+/// bin to run on them.
+fn copies(dir: &Path, n: usize) -> PathBuf {
+    let lib = dir.join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    std::os::unix::fs::symlink(common::corpus().join("images/dsd-stereo-mch-2048.iso"), lib.join("x.iso"))
+        .unwrap();
+    let files = served(&lib);
+    for (i, (_, _, bytes)) in files.iter().enumerate() {
+        fs::write(lib.join(format!("t{i}.dsf")), bytes).unwrap();
+        for c in 1..n {
+            fs::hard_link(lib.join(format!("t{i}.dsf")), lib.join(format!("t{i}-{c}.dsf"))).unwrap();
+        }
+    }
+    lib
+}
+
+fn run_verify(lib: &Path, report: &Path, extra: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .args(["verify", "-q", "--threads", "1", "-o"])
+        .arg(report)
+        .args(extra)
+        .arg(lib)
+        .output()
+        .unwrap()
+}
+
+/// `sacdfs verify` killed with SIGKILL once its partial report has rows, or `None` if it
+/// finished first.
+fn killed_verify(lib: &Path, report: &Path, extra: &[&str]) -> Option<()> {
+    use std::os::unix::process::ExitStatusExt;
+    let partial = PathBuf::from(format!("{}.partial", report.display()));
+    let _ = fs::remove_file(&partial);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .args(["verify", "-q", "--threads", "1", "-o"])
+        .arg(report)
+        .args(extra)
+        .arg(lib)
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    while fs::read_to_string(&partial).map_or(0, |t| t.lines().count()) < 3 {
+        if child.try_wait().unwrap().is_some() {
+            return None;
+        }
+    }
+    child.kill().unwrap();
+    let status = child.wait().unwrap();
+    assert!(!status.success());
+    // It may have finished just before the signal.
+    (status.signal() == Some(9) && !report.exists()).then_some(())
+}
+
+/// #196: killed runs leave nothing that reads as finished, and resuming ends with what a run
+/// that was never killed writes, from a stopped run's rows and from a finished report.
+#[test]
+fn kill_and_resume() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = copies(dir.path(), 1500);
+    let report = dir.path().join("r.tsv");
+    let partial = dir.path().join("r.tsv.partial");
+    let previous = dir.path().join("r.tsv.previous");
+
+    // The first run, killed: no report at all to read, only rows named as partial.
+    killed_verify(&lib, &report, &[]).expect("the run ended before it could be killed");
+    assert!(!report.exists() && partial.exists() && !previous.exists());
+    let rows = fs::read_to_string(&partial).unwrap().lines().count();
+    assert!(rows >= 3);
+
+    // Resumed from those rows: a finished report, the same as a run from nothing.
+    let out = run_verify(&lib, &report, &["--resume"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!partial.exists() && !previous.exists());
+    let finished = fs::read_to_string(&report).unwrap();
+    assert!(finished.lines().all(|l| l.starts_with("IDENTICAL") || l.starts_with("status")));
+    let total = finished.lines().count();
+    assert!(total > rows, "resumed before the first run was through");
+    let fresh = dir.path().join("fresh.tsv");
+    assert_eq!(run_verify(&lib, &fresh, &[]).status.code(), Some(0));
+    assert_eq!(fs::read_to_string(&fresh).unwrap(), finished);
+
+    // Resumed from a finished report: nothing to do, the same report, no leftovers.
+    assert_eq!(run_verify(&lib, &report, &["--resume"]).status.code(), Some(0));
+    assert_eq!(fs::read_to_string(&report).unwrap(), finished);
+    assert!(!partial.exists() && !previous.exists());
+
+    // A run killed with a finished report in place keeps that report aside, under a name
+    // that isn't the report's. So does a second one, with no report left to move.
+    for _ in 0..2 {
+        killed_verify(&lib, &report, &[]).expect("the run ended before it could be killed");
+        assert!(!report.exists());
+        assert_eq!(fs::read_to_string(&previous).unwrap(), finished);
+    }
+
+    // Resuming after that keeps the rows of the report aside, and tidies up. The kept rows go
+    // to the partial report at once, so that killing this one costs nothing.
+    let out = run_verify(&lib, &report, &["--resume"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(fs::read_to_string(&report).unwrap(), finished);
+    assert!(!partial.exists() && !previous.exists());
+
+    // A run that can't start touches nothing.
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .args(["verify", "-q", "-o"])
+        .arg(&report)
+        .arg(dir.path().join("no-such-source"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(fs::read_to_string(&report).unwrap(), finished);
+    assert!(!partial.exists() && !previous.exists());
+}
+
+/// A DFF file whose sound chunk claims so much that a sample count overflowed in 0.4.0, which
+/// panicked: damaged, or at worst a bug. In no case a clean run without it (#196).
+fn huge_dff() -> Vec<u8> {
+    fn chunk(out: &mut Vec<u8>, id: &[u8; 4], size: u64, body: &[u8]) {
+        out.extend_from_slice(id);
+        out.extend_from_slice(&size.to_be_bytes());
+        out.extend_from_slice(body);
+    }
+    let mut snd = b"SND ".to_vec();
+    chunk(&mut snd, b"FS  ", 4, &2_822_400u32.to_be_bytes());
+    chunk(&mut snd, b"CHNL", 2, &1u16.to_be_bytes());
+    let mut form = b"DSD ".to_vec();
+    chunk(&mut form, b"PROP", snd.len() as u64, &snd);
+    chunk(&mut form, b"DSD ", 1 << 61, &[0; 16]);
+    let mut file = Vec::new();
+    chunk(&mut file, b"FRM8", form.len() as u64, &form);
+    file
+}
+
+/// #196 through the command line, with any number of threads: an extract that makes a worker
+/// panic is an ERROR row and exit status 2, the other files are all checked, and the guide's
+/// list of what to delete holds only those that are IDENTICAL.
+#[test]
+fn a_file_that_panicked_is_not_a_clean_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = copies(dir.path(), 1);
+    fs::write(lib.join("a-first.dff"), huge_dff()).unwrap();
+    let dsf = walkdir(&lib).into_iter().filter(|p| p.extension().is_some_and(|e| e == "dsf")).count();
+    assert!(dsf >= 2);
+    for threads in ["1", "3"] {
+        let report = dir.path().join(format!("r{threads}.tsv"));
+        let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .args(["verify", "-q", "--threads", threads, "-o"])
+            .arg(&report)
+            .arg(&lib)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
+        let text = fs::read_to_string(&report).unwrap();
+        assert_eq!(text.lines().count(), dsf + 2, "a row per file and the header: {text}");
+        let status = |path: &str| {
+            text.lines().find(|l| l.split('\t').nth(1).is_some_and(|p| p.ends_with(path))).unwrap()
+        };
+        assert!(status("a-first.dff").starts_with("ERROR\t"), "{text}");
+        let listed = Command::new("awk")
+            .args(["-F\t", "$1 == \"IDENTICAL\" && $11 == \"\" {print $2}"])
+            .arg(&report)
+            .output()
+            .unwrap();
+        let listed = String::from_utf8(listed.stdout).unwrap();
+        assert_eq!(listed.lines().count(), dsf);
+        assert!(!listed.contains("a-first.dff"));
+    }
+}
+
+/// #196: a report to a pipe is a stream: every row comes through, and only the exit status says
+/// how it went. Standard output too.
+#[test]
+fn report_to_a_pipe() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = copies(dir.path(), 1);
+    fs::write(lib.join("a-first.dff"), huge_dff()).unwrap();
+    let dsf = walkdir(&lib).into_iter().filter(|p| p.extension().is_some_and(|e| e == "dsf")).count();
+    let bin = env!("CARGO_BIN_EXE_sacdfs");
+    let check = |out: std::process::Output| {
+        assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(text.lines().count(), dsf + 2, "{text}");
+        assert!(text.lines().any(|l| l.starts_with("ERROR\t")), "{text}");
+    };
+    // No -o; and -o /dev/stdout, with standard output a pipe.
+    check(Command::new(bin).args(["verify", "-q"]).arg(&lib).output().unwrap());
+    check(Command::new(bin).args(["verify", "-q", "-o", "/dev/stdout"]).arg(&lib).output().unwrap());
+    check(
+        Command::new(bin).args(["verify", "-q", "-o", "/dev/stdout", "--resume"]).arg(&lib).output().unwrap(),
+    );
+    let leftovers: Vec<_> = fs::read_dir("/dev")
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("stdout."))
+        .collect();
+    assert!(leftovers.is_empty());
 }
 
 #[test]
