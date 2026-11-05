@@ -40,7 +40,7 @@
 //! cover goes stale the same way.
 //! A track file whose tag a tags file changed (#81) mixes a hash of that tag into its
 //! generation, and its mtime is no older than the tags file. A track file with text its disc
-//! lacks (#185) counts as one output version on ([`file_version`]).
+//! lacks (#185) counts as one output version on (`file_version`).
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::ffi::OsStrExt;

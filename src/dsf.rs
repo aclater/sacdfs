@@ -112,7 +112,7 @@ fn apply_mc_album_suffix(set: &mut TagSet, slot: Slot, on: bool) {
 ///   album title, so players group them as one album; a disc title ("Disc 2") would split it.
 /// - the album gets [`MC_ALBUM_SUFFIX`] in a multichannel area (#97), unless turned off.
 /// - no album set for a one-disc set. *Why:* "1/1" says nothing, and sacdfs 0.1 left it out.
-/// - with `image`, the text the disc lacks comes from [`fill_gaps`] (#185).
+/// - with `image`, the text the disc lacks comes from `fill_gaps` (#185).
 ///
 /// Also whether anything came from there.
 pub fn tag_set(
@@ -203,7 +203,7 @@ pub struct Tagged {
     pub set: TagSet,
     /// Set when a tags file changed the tag: then the file's mtime and generation change.
     pub stamp: Option<Stamp>,
-    /// Whether the tag has text the disc lacks ([`fill_gaps`]): then too (#185).
+    /// Whether the tag has text the disc lacks (`fill_gaps`): then too (#185).
     pub filled: bool,
 }
 
