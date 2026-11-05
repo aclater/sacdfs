@@ -198,6 +198,9 @@ fn file_offset(version: u32, pcm_offset: u64) -> Duration {
     Duration::from_secs(step + pcm_offset.min(PCM_OFFSETS - 1))
 }
 
+/// How far a track file's mtime moves for having text its disc lacks (#185): one output version.
+pub const FILLED_STEP: Duration = Duration::from_secs(VERSION_STEP);
+
 /// How far the newest track file an image could show moves past its mtime (see [`mtime`]): the
 /// largest offset of the formats shown, DSF and/or WAV with the PCM options' `pcm_offset`, for a
 /// file with text its disc lacks (#185). A directory's mtime counts its images' mtimes moved by

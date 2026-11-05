@@ -221,7 +221,7 @@ with no network and nothing stored:
 - Your own [tags file](#your-own-tags---tags) wins over all of this, an empty value included.
   It changes the tags, not the file names: a track you give a title there stays
   `NN - Track NN.dsf`.
-- These files show a new modification time once, and every folder does ([Times, sizes and free
+- These files show a new modification time once, and so does every folder with a disc below it ([Times, sizes and free
   space](#times-sizes-and-free-space)). Moving the image to another folder can change what it's
   called; to keep a name for good, put it in a tags file. The audio is unaffected.
 
@@ -455,7 +455,8 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   With non-default options, a file whose image changed in the last few hours can show a
   time slightly in the future (up to 7 hours ahead); tools such as `tar` may warn about it.
 - **Folder times and library scanners.** A folder shows the newest time of anything shown
-  below it, at any depth: a new or changed playlist, scan or image, or a sacdfs release that
+  below it, at any depth (from 0.4.1, with a disc below it, 7 hours later than that, so a folder
+  can show a time up to 7 hours ahead of a file you just added): a new or changed playlist, scan or image, or a sacdfs release that
   moves the files' times, moves every folder above it up to the mount's root. Roon and other
   scanners that skip folders whose time did not change therefore find the change with a plain
   rescan; no Force Rescan is needed. A change made while mounted shows within about 2 seconds of

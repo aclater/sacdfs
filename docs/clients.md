@@ -336,7 +336,7 @@ documented but have no test report on #82.
   sidecars and images show up within a few seconds without a restart
   ([#101](https://github.com/aclater/sacdfs/issues/101),
   [#123](https://github.com/aclater/sacdfs/issues/123); tested with Roon on 0.2.0). 0.4.1 moves
-  every folder's time once, and only the times of files of discs without text (the
+  the time of every folder with a disc below it once, and only the times of files of discs without text (the
   [user guide](user-guide.md#tagging-behaviour); untested with Roon, Plex and the other servers on
   0.4.1 at the time of writing, see the CHANGELOG). Server
   rescans with nothing changed read nothing: 0 opens for MPD, MinimServer and LMS on

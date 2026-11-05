@@ -537,7 +537,8 @@ A directory's mtime is the newest of its source directory's own mtime and the mt
 everything shown below it, at any depth: source directories, sidecar files and folders, and
 each image's track files (its image's mtime moved by the largest offset of the formats shown,
 `ident::newest_offset`, which counts the extra version of a file with filled-in text whether
-the image has such files or not, [#185](#discs-without-text-185)). An image's own folder and its area folders show their image's files
+the image has such files or not, [#185](#discs-without-text-185)). With an image below, the
+other times count one step later too (`ident::FILLED_STEP`), for the same reason. An image's own folder and its area folders show their image's files
 and their folder art. Up to the mount root, then, every directory moves when anything below it
 moves: an output-version bump, new tags (which come with one), a new, removed or changed
 sidecar or image.
@@ -1708,13 +1709,16 @@ with no network and no stored state; the lookups of its later phases write tags 
 - **Times, and why not the output-version rule as written.** *Choice:* a file with filled-in text
   counts as one output version past its format's (`ident::file_version`), which moves its mtime
   by one step and changes its generation; other files keep theirs, byte for byte. Folders move one
-  step for every image (`ident::newest_offset`). *Why:* as with tags files, only those files'
+  step if they have an image below (`ident::newest_offset`, `ident::FILLED_STEP`), and that includes
+a folder newer than its images, whose own time would otherwise hide the move; folders with only
+sidecars below stay. *Why:* as with tags files, only those files'
   bytes change, and a bump of `DSF_VERSION`/`WAV_VERSION` would make every scanner re-read, and a
   player like Plex or Roon possibly re-analyse, every file of a large library for a few tracks. *Why
   all folders:* whether a disc has text takes its TOC, and no image is opened at the mount; a
-  scanner that prunes unchanged folders (#123) would never reach the disc otherwise. *Trade-off:* a
+  scanner that prunes unchanged folders (#123) would never reach the disc otherwise. *Measured:* before the folders newer than their images moved too, 24 of 259 changed files on the
+  0.4.0 survey library had a folder above them that kept its time. *Trade-off:* a
   pruning scanner walks all its folders once after the upgrade, and a folder can show a time up to
-  one step (7 hours) newer than anything below it. Files keep their inode numbers, so a rename
+  one step (7 hours) newer than anything below it, or ahead of the clock just after a change. Files keep their inode numbers, so a rename
   is only a new name for the same number. `golden_dsf_corpus` hashes paths and header sizes, so
   its value moved without a version bump, this once; the audio was compared with 0.4.0's on the
   pull request.

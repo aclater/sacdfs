@@ -1021,9 +1021,11 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
     std::fs::write(album.join("new.m3u8"), b"#EXTM3U\n").unwrap();
     set(&album.join("new.m3u8"), later);
     set(&album, later - Duration::from_secs(1));
-    wait_for("the root to move", || mtime("") == later);
+    // One step on (#185), as for any folder with an image below.
+    let moved = later + sacdfs::ident::FILLED_STEP;
+    wait_for("the root to move", || mtime("") == moved);
     for p in &dirs[..3] {
-        assert_eq!(mtime(p), later, "{p}");
+        assert_eq!(mtime(p), moved, "{p}");
     }
     // The image's own folders do not show the playlist: they keep their time.
     for p in &dirs[3..] {
@@ -1036,8 +1038,8 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
     // The next mount shows the same times (stable for NFS clients, #17).
     let m = Mount::foreground(&src, &[]);
     let mnt = m.path();
-    assert_eq!(std::fs::metadata(&mnt).unwrap().modified().unwrap(), later);
-    assert_eq!(std::fs::metadata(mnt.join("Artist/Album")).unwrap().modified().unwrap(), later);
+    assert_eq!(std::fs::metadata(&mnt).unwrap().modified().unwrap(), moved);
+    assert_eq!(std::fs::metadata(mnt.join("Artist/Album")).unwrap().modified().unwrap(), moved);
     m.stop("TERM");
 }
 
