@@ -1303,7 +1303,12 @@ mod tests {
         let kinds: Vec<_> = got.iter().map(|(n, f)| (*n, f.fill, f.data.len())).collect();
         assert_eq!(
             kinds,
-            [(1, Fill::Invalid, len), (2, Fill::Missing, len), (3, Fill::Audio, len), (4, Fill::Invalid, len)]
+            [
+                (1, Fill::Invalid, len),
+                (2, Fill::Missing, len),
+                (3, Fill::Audio, len),
+                (4, Fill::Invalid, len)
+            ]
         );
         assert!(got[0].1.data.iter().all(|&b| b == scarletbook::audio::INVALID_FILL));
         assert!(got[1].1.data.iter().all(|&b| b == scarletbook::audio::MISSING_FILL));
