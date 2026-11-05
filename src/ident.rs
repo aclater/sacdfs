@@ -205,7 +205,7 @@ pub const FILLED_STEP: Duration = Duration::from_secs(VERSION_STEP);
 /// largest offset of the formats shown, DSF and/or WAV with the PCM options' `pcm_offset`, for a
 /// file with text its disc lacks (#185). A directory's mtime counts its images' mtimes moved by
 /// this (#123). *Why every image, when few have such files:* whether one does takes its TOC, and
-/// no image is opened at the mount. So every folder moves once, a scanner that prunes unchanged
+/// the mount reads no TOC, only a small probe of each image (#175). So every folder moves once, a scanner that prunes unchanged
 /// folders walks them all, and it re-reads only the files whose own mtime moved.
 pub fn newest_offset(dsf: bool, wav: bool, pcm_offset: u64) -> Duration {
     let d = if dsf { file_offset(DSF_VERSION + 1, 0) } else { Duration::ZERO };

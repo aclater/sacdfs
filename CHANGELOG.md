@@ -25,7 +25,7 @@ All notable changes to sacdfs are recorded here. The format follows
   only, as with a tags file, so `DSF_VERSION` and `WAV_VERSION` stay. All other files keep their
   bytes, time and generation.
 - **What scanners see.** The time of every folder with a disc below it moves one step once, because knowing which discs lack
-  text takes opening each image. A scanner that skips unchanged folders (Roon) walks all folders
+  text takes reading each image's table of contents, which the mount doesn't do. A scanner that skips unchanged folders (Roon) walks all folders
   once and re-reads only the changed files, and a scanner that compares files (Plex, Navidrome,
   LMS, MPD) just re-reads those. A renamed track looks to a scanner like a removal and an addition,
   so its play counts and edits in the player may not carry over.

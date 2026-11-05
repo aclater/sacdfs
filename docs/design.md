@@ -1730,7 +1730,8 @@ a folder newer than its images, whose own time would otherwise hide the move; fo
 sidecars below stay. *Why:* as with tags files, only those files'
   bytes change, and a bump of `DSF_VERSION`/`WAV_VERSION` would make every scanner re-read, and a
   player like Plex or Roon possibly re-analyse, every file of a large library for a few tracks. *Why
-  all folders:* whether a disc has text takes its TOC, and no image is opened at the mount; a
+  all folders:* whether a disc has text takes its TOC, and the mount reads no TOC, only a small probe of each
+  image (#175); a
   scanner that prunes unchanged folders (#123) would never reach the disc otherwise. *Measured:* before the folders newer than their images moved too, 24 of 259 changed files on the
   0.4.0 survey library had a folder above them that kept its time. *Trade-off:* a
   pruning scanner walks all its folders once after the upgrade, and a folder can show a time up to
