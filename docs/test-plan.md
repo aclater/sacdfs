@@ -50,7 +50,7 @@ otherwise stated as untested.
 | Client | Tier | Connection | How it runs | Last result before this plan |
 |---|---|---|---|---|
 | Roon | 1 | SMB, same NAS | Long-running NAS install | In daily use on 0.4.0; clients.md records 0.2.0 |
-| Plex | 1 | SMB, same NAS; and rslave bind | Long-running NAS install, API checks | In daily use on 0.4.0; clients.md records 0.2.0-rc.4 |
+| Plex | 1 | SMB, same NAS; and rslave bind | Long-running NAS install, API checks. The scripts in the scripted-server harness do not cover Plex; its image was not run there | In daily use on 0.4.0; clients.md records 0.2.0-rc.4 |
 | Jellyfin | 1 | rslave bind | Scripted container | 0.4.0-rc.2 |
 | Navidrome | 1 | rslave bind | Scripted container | 0.4.0-rc.2 |
 | Lyrion (LMS) | 1 | rslave bind | Scripted container | 0.4.0-rc.2 |
@@ -127,7 +127,7 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 | [#96](https://github.com/aclater/sacdfs/issues/96) | MPD's first scan cost, `dsf` against `dsf,wav` |
 | [#101](https://github.com/aclater/sacdfs/issues/101) | Sidecars added after the mount appear |
 | [#138](https://github.com/aclater/sacdfs/issues/138) | Plex with the documented setting keeps the album copies apart |
-| [#174](https://github.com/aclater/sacdfs/issues/174) | `ls -l` over NFS works, **and** Roon's Force Rescan sends no extended-attribute storm. These two pulled against each other once, so they are always checked together |
+| [#174](https://github.com/aclater/sacdfs/issues/174) | `ls -l` over NFS works, **and** Roon's Force Rescan sends no extended-attribute storm. These two pulled against each other once, so they are always checked together. Checked in 0.4.1-rc.1 by `ls -lR`, `find` with `getfattr` and `ls -lRZ` over NFS and SMB from a Linux client, counting `GETXATTR` and `LISTXATTR` in sacdfs's FUSE request log against 0.4.0; the Roon half needs Roon |
 | [#175](https://github.com/aclater/sacdfs/issues/175) | Folders with no SACD below them are hidden |
 | `verify` | A file it can't check gives an ERROR row and a non-zero exit, and an interrupted run leaves nothing that reads as a finished report. Users delete extracts on its word |
 
@@ -135,10 +135,14 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 
 Run on the release they describe, following the docs as written, in a clean environment.
 
-- **Binary archive** on the oldest supported distribution and on current Fedora, RHEL (UBI), Debian
-  and Ubuntu; checksum and attestation verified.
+- **Binary archive** on the oldest supported distributions (RHEL 8.10, Debian 10, Ubuntu 20.04, Fedora 29, each in a VM with its own kernel, 4.18 to 5.4) and on current Fedora, RHEL (UBI), Debian
+  and Ubuntu (containers); checksum verified in the clean environment, attestation verified where `gh` is installed. RHEL 8 needs the UBI repositories for `fuse3` when the VM is not registered; UBI 9 has no `fuse3`; Debian 10's repositories moved to archive.debian.org.
 - **Container,** x86-64 and arm64, anonymous pull, under Docker and rootful and rootless Podman.
-  arm64 runs under CI only: there is no arm64 NAS to test on, and the docs say so.
+  Rootless Podman runs SMB only (NFS needs a rootful container, documented). Podman has no
+  health check from the published OCI image: give it `--health-*` options. Docker reads it from the
+  image. arm64 runs natively under CI only: there is no arm64 NAS to test on, and the docs say so;
+  on an x86-64 host with `qemu-user` binfmt, `podman run --platform linux/arm64` can start the
+  arm64 image for a smoke test of SMB.
 - **crates.io:** `cargo install --locked sacdfs` in a clean container. 0.4.1 is the first release
   published by the workflow rather than by hand, so also confirm the published version and its
   source.
@@ -162,7 +166,7 @@ On the whole library, with an existing index cache and tags directory:
 ## Performance and endurance
 
 Every report has a table with a column per release, flags regressions, and says when runs aren't
-comparable. Every timed run is under the benchmark lock.
+comparable. Every timed run is under the benchmark lock. Other jobs on the same host (a VM, a log follower) distort a run even so: record the load and, where the CPU has them, the thermal-throttle counters per run, alternate the builds, and repeat a round that was disturbed. Machines are separate tables.
 
 - Reads: DST stereo, DST multichannel, plain DSD; DSF and WAV; 11 alternating rounds, medians.
 - Whole library: mount, first listing, import-style scan.
@@ -170,7 +174,7 @@ comparable. Every timed run is under the benchmark lock.
 - Memory: import replay and the default cache's peak.
 - **Soak:** two hours with induced stalls (`scripts/soak.py`), passing its memory, thread, file and
   cache checks.
-- Weekly leak checks and fuzzing are green on the release commit.
+- Weekly leak checks and fuzzing are green on the release commit. (For 0.4.1-rc.1 the fuzz workflow was green on the tag commit; the `leaks` workflow had no run at all to read.)
 
 ## Scenarios for this release
 

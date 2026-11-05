@@ -18,17 +18,18 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 
 | Client | Version tested | sacdfs tested | Connection | Result | Notes |
 |---|---|---|---|---|---|
-| [Roon](#roon) | Roon 2.x (Roon Server official image) | 0.1.1, 0.2.0-rc.1 to rc.4, 0.2.0 final | SMB, same NAS | Works (0.2.0) | Use `dsf` only; needs the SMB-mount rights; art and playlists work; picks up upgrades by itself; multichannel areas are separate albums |
-| [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used ([#95](https://github.com/aclater/sacdfs/issues/95)) |
-| [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
-| [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
-| [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
-| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
-| [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
+| [Roon](#roon) | Roon 2.x (Roon Server official image); 2.74 build 1719 on 0.4.1-rc.1 | 0.1.1, 0.2.0-rc.1 to rc.4, 0.2.0 final, 0.4.1-rc.1 | SMB, same NAS | Works (0.4.1-rc.1: no regression, no extended-attribute requests in a Force Rescan) | Use `dsf` only; needs the SMB-mount rights; art and playlists work; picks up upgrades by itself; multichannel areas are separate albums |
+| [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4, 0.4.1-rc.1 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 0.4.1-rc.1: healthy, upgrade and rollback from 0.4.0 fine, 279 untitled tracks named, 3 albums (26 tracks) still blank in Plex (cause unknown); 0.1.1: 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used ([#95](https://github.com/aclater/sacdfs/issues/95)) |
+| [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
+| [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
+| [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
+| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
+| [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
 | [Windows Explorer, PowerShell, Robocopy](#windows-explorer-and-robocopy) | Windows 11 build 26200 | 0.2.0-rc.1, 0.4.1-rc.1 | SMB 3.1.1, same host | Works | 0.4.1-rc.1: 186 of 186 audio copies byte-identical, a second Robocopy pass skips all 196 files; RF64 reads and seeks past 4 GiB; another SMB port works (`/TCPPORT`) |
-| [foobar2000](#foobar2000) | 2.26.2 (portable) | 0.2.0-rc.1 | SMB 3 | Partial | Opened a DSF without errors; tags, art and seek not verified |
-| [JRiver Media Center](#jriver-media-center) | 36 | none | SMB 3 | Untested | The trial was not run |
-| [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | kernel clients | see [deployment](deployment.md) and [performance](performance.md) | NFSv4, SMB | Works | The container's own share tests; see below |
+| [foobar2000](#foobar2000) | 2.26.2 (portable), foo_input_sacd 2.0.27 | 0.2.0-rc.1, 0.4.1-rc.1 | SMB 3.1.1 | Works (0.4.1-rc.1) | 186 files found with tags and length; stereo, 5ch, 6ch start in under 0.4 s; seek to 60 % works; audio not heard |
+| [JRiver Media Center](#jriver-media-center) | 36.0.38 (trial) | 0.4.1-rc.1 | SMB 3.1.1 | Partial | 186 files, 7 albums, tags, art for 3 of 5 artists; plays; seek, multichannel and rescan not checked |
+| [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | Fedora 44, RHEL 10.1 and 9.7, Debian 13 and 12, Ubuntu 26.04 and 24.04 kernels | 0.4.1-rc.1 | NFSv4.2, SMB 3.1.1 | Works | All checks pass; Ubuntu 24.04 cloud image needs `linux-modules-extra` for non-ASCII names over SMB; after a Podman container restart NFS needs a remount |
+| [FFmpeg, sox, mediainfo, ExifTool, mpv, VLC](#ffmpeg-sox-mediainfo-exiftool-mpv-and-vlc) | 7.1.5, 14.4.2, 25.04, 13.25, 0.40.0, VLC 3 | 0.4.1-rc.1 | Mount | Works | sox and ExifTool do not read DSF; this VLC cannot decode DSD (also true of a plain copy) |
 
 ## How the 0.4.0-rc.2 tests were run
 
@@ -55,6 +56,35 @@ the host was quiet or where load does not change the result: Navidrome's scans a
 desktop. Times taken under load are marked as such; counts, art, names, playback and memory do
 not depend on it.
 
+## How the 0.4.1-rc.1 tests were run
+
+The five scripted servers were run on the release binary of 0.4.1-rc.1 and, alternating, on the
+0.4.0 release binary, with the same images (no client changed since the 0.4.0-rc.2 tests: Jellyfin
+12.4.0, Navidrome 0.64.2, Lyrion 9.1.1, MPD 0.24.15, MinimServer 2.2) and the same setup as
+[above](#how-the-040-rc2-tests-were-run): the 5 test images, 93 tracks, 7 album areas, `dsf` and
+`dsf,wav`, `--flatten`, the default cache, a fresh index cache, a rootless Podman container with
+the mount's parent bound `ro,rslave`. The first pass ran while other jobs shared the test host;
+the timings below are from a repeat on a quiet host, in the order 0.4.0, rc.1, rc.1, 0.4.0 (the
+first 0.4.0 run and the first rc.1 run are marked where they differ).
+
+Every server is judged against the 12 behaviours of the [test plan](test-plan.md#behaviour-every-client).
+What the scripts check, and so what is "not checked":
+
+| Behaviour | Result on rc.1 | Checked by the script? |
+|---|---|---|
+| 1 Found | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`) on Jellyfin, Navidrome, Lyrion, MPD; 93 of 93 on MinimServer | Yes |
+| 2 Metadata | Codec, channels (2, 5, 6) and a non-zero duration on every file; track numbers and titles on Jellyfin and Navidrome (title and year on the rest were not compared) | Yes for the first three; counts only for the others |
+| 3 Albums | 7 albums, the 2 multichannel areas as "… (Multichannel)", no merged or duplicate albums (the extracted copy gives 5 distinct names, as before) | Yes |
+| 4 Art | Areas with a cover: MPD 4 of 4 (0.4.0: 1 of 4), MinimServer 4 of 4, Lyrion 4 of 7 albums, Navidrome one cover per album (identical bytes to 0.4.0, although both `cover.jpg` and `folder.jpg` now appear in the areas), Jellyfin 5 or 6 of 7 (it fetches online art for some) | Yes |
+| 5 Playback | MPD plays DSD (`dsd64:2`, `dsd64:6`); Lyrion starts DSF as DSD to PCM; Navidrome streams raw and transcodes a 5.1 track to MP3; Jellyfin transcodes whole tracks; MinimServer streams a 447 MB 5.1 DST file in full | Partly: MPD and Lyrion for seconds, not to the end |
+| 6 Seek | MPD to 100 s; Jellyfin transcode from 60 %; a 1 MiB range at mid-file of MinimServer in 3.4 ms; Navidrome range read in 22 ms | Partly: not Lyrion |
+| 7 Quiet rescan | 0 opens and 0 reads on Lyrion, MPD and MinimServer after a restart or an update; Navidrome full rescan after a sacdfs restart 2.0 s | Yes |
+| 8 Library changes | Navidrome followed a renamed image and a removed one (93 files, 18 marked missing, 7 then 6 albums); no server was shown a new image or a new sidecar (the sidecar case is in the file-system checks) | Partly |
+| 9 Restart | A sacdfs restart under a running Navidrome and a bound parent directory: listing and reads work, the direct bind of the mount point does not recover (documented); not during playback or a scan | Partly |
+| 10 Output version change | Not checked with a server; the file-system check shows `--pcm-cutoff` changes the WAV files' size and time and no DSF file | **Not checked** |
+| 11 Load on sacdfs | Peak RSS 46 to 47 MiB (MinimServer, Navidrome), 0.4.0: 43; CPU 20 to 25 s per scan; Jellyfin's LUFS task reads 39.6 to 41 GiB of 22 GiB, as before | Totals only: not the requests by kind |
+| 12 Logs | No WARN or ERROR line in sacdfs's log in any run; the servers' own logs were not read | sacdfs's side only |
+
 ## Roon
 
 **Tested.** Roon Server's official image as a TrueNAS app on the same NAS as sacdfs, with the
@@ -71,6 +101,8 @@ separate albums, under its own canonical titles, so the suffix is not visible th
 already split them before [#97](https://github.com/aclater/sacdfs/issues/97)); and playback
 continued through a sacdfs restart. A library import of 271 images and 3,216 tracks was replayed against 0.1.0 for #73's memory
 figures; the deployment guide's figures are now the replay of #150 over the bench images.
+
+**0.4.1-rc.1** (Roon 2.74 build 1719, same NAS, SMB, whole library). Moving from 0.4.0 changed 241 track names, retagged 30 files, hid 11 art-only folder trees holding no audio and added 359 `cover` images. Roon's scan matched a tree comparison of the two versions: 4,902 DSF files on both and no album lost. A Force Rescan afterwards took 3.2 s, reported no changes and sent 19,324 FUSE requests, none for extended attributes. A periodic scan 4 hours later also reported no changes. Playback continued through a sacdfs restart. Peak RSS over about 4 hours was 88 MB with the default cache, in light use. Not tested: a restart during a scan, rollback.
 
 **Recommended setup.**
 - `SACDFS_FORMATS=dsf` (`--format dsf`): with both formats every track appears twice. Roon
@@ -105,6 +137,8 @@ times; see [restarts and rescans](#restarts-and-rescans).
 - A container reading the host's mount: its nightly deep analysis read every file once (55 GiB
   in 874 s, RSS 701 MiB).
 
+**0.4.1-rc.1** (Plex 1.43.5, same NAS, SMB, WAV, flattened, 5,132 tracks in 466 albums). Upgrading from 0.4.0 named all 279 untitled tracks, and "Various Artists" albums with no album name went from 7 to 0. 3 albums (26 tracks) still show a blank album title in Plex although sacdfs serves one; the cause is not established. Plex re-read the changed files once: 140 s against 20 s for a scan with no changes, 18 GiB served, 643 CPU-seconds and 160 MB peak RSS in sacdfs. A later scan with no changes read almost nothing. Renamed tracks get new Plex items. Rolling back to 0.4.0 and forward again restored every count and path, and the 2 tracks with play counts kept them; none of the renamed tracks had plays, so whether a play carries across a rename is untested. Multichannel copies stayed separate with the documented setting. Playback through a Plex client was not tested on this candidate.
+
 **Recommended setup.**
 - `--cache-mb 16`.
 - Turn on **Prefer local metadata** (library settings, Advanced) or use the "Plex Personal
@@ -127,6 +161,9 @@ times; see [restarts and rescans](#restarts-and-rescans).
 - 20 of the 291 images were not seen in Plex's paths in that run, and the cause was not found.
 
 ## Jellyfin
+
+**0.4.1-rc.1:** same image (12.4.0), 93 of 93 with `dsf`, 186 of 186 with `dsf,wav`, 7 albums with distinct names (2 "… (Multichannel)"), art for 5 or 6 of 7 (it fetches online art for some); first scan on a quiet host 52.5 s on both 0.4.0 and rc.1 (one run each); the LUFS task 508 s on rc.1 against 478 s on 0.4.0 (+6 %, one run each, 39.6 and 39.8 GiB served). Twice, 0.4.0 was the first Jellyfin start of a run and reported 0 albums after 8 s while sacdfs saw no reads; the same binary worked on its next run, so this is taken as a race in the test script, not a sacdfs result.
+
 
 **Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). Jellyfin 12.4.0 (official
 image, 2 CPUs), one music library.
@@ -162,6 +199,9 @@ image, 2 CPUs), one music library.
 
 ## Navidrome
 
+**0.4.1-rc.1:** same image (0.64.2), 93 of 93 and 186 of 186, 7 albums, a cover for every album with the same bytes as on 0.4.0 (the area folders now hold both `cover.jpg` and `folder.jpg`, and Navidrome serves one picture); a renamed image and a removed one were followed (93 files, 18 marked missing, 6 albums present); a full rescan after a sacdfs restart took 2.0 s. In the first pass, on a shared host, a raw range read of 1 MiB took 22 ms and an MP3 transcode of a 5.1 track 11.7 s (0.4.0: 50 ms and 12.4 s); sacdfs peaked at 47 MiB RSS (0.4.0: 43).
+
+
 **Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). Navidrome 0.64.2 (official image). First scan
 0.42 s with `dsf` (Navidrome's figure), 93 of 93 files, no errors; 0.54 s and 186 of 186
 with `dsf,wav`. Album art: **4 of 4** album areas with a cover show it, the Multichannel one
@@ -193,6 +233,9 @@ Multichannel as separate albums.
 
 ## Lyrion / Logitech Media Server
 
+**0.4.1-rc.1:** same image (9.1.1), 93 of 93 and 186 of 186, 7 albums, artwork for 4 of 7 (the same as 0.4.0); a first scan took 1.1 s in both and 101 opens and 192 reads (`dsf`); a rescan with nothing changed made 0 opens and 0 reads; DSF started as DSD-to-PCM for 2 and 5 channels.
+
+
 **Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). Lyrion Music Server 9.1.1 (official image), scanned
 and browsed through JSON-RPC, with squeezelite 2.0 (Fedora package, DSD support) in the same
 pod as the player. First scan (`wipecache`) 1.1 s for 93 of 93 files with `dsf`; 186 of 186
@@ -215,6 +258,9 @@ owner); that is what the test ran. Reading the container's SMB or NFS share inst
 validated with LMS.
 
 ## MPD, moOde, Volumio
+
+**0.4.1-rc.1:** MPD 0.24.15 in the same container. 93 of 93 and 186 of 186, 7 albums, 2 "… (Multichannel)". **Art ([#148](https://github.com/aclater/sacdfs/issues/148)): `albumart` found the cover in 4 of 4 album areas that have one, against 1 of 4 on the 0.4.0 release binary** (the 3 areas without a cover still have none). First scan with `dsf`: 0.47 s on rc.1, 0.46 s on 0.4.0; `mpc update` with nothing changed 0.05 s, 0 opens. DSF plays as `dsd64:2` and `dsd64:6`, and `seekcur 100` worked in both.
+
 
 **Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). MPD 0.24.15 (Fedora 44 package, in a container),
 null output with `sync yes`. moOde and Volumio use MPD, but neither was run itself. MPD's
@@ -244,6 +290,9 @@ cover still has none. When the art has no `cover.*`, sacdfs shows one of its ima
   named `Cover.PNG`, in other case, counts as a cover and is not aliased; untested with MPD.)
 
 ## MinimServer
+
+**0.4.1-rc.1:** 2.2 (the same image), 93 audio files in 17 folders, art on 63 of 93 items (4 of 4 album areas with a cover), 7 albums; a restart with its cache made 0 opens and 0 reads; a 1 MiB range at mid-file answered in 3.4 ms, and a whole 5.1 DST DSF (447 MB) streamed in 5.6 s on rc.1 and 5.3 s on 0.4.0 (quiet host, one run each); sacdfs peaked at 46 MiB RSS (0.4.0: 43).
+
 
 **Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). MinimServer 2.2 (official image, starter licence),
 browsed with UPnP ContentDirectory `Browse` calls. The scan finished within 1 s (every file
@@ -309,11 +358,56 @@ results do not depend on the sacdfs version, since the bytes of the files are un
 
 ## Linux NFS and SMB mounts
 
-The container's share tests (SMB and NFS) pass on its published image, and sacdfs also runs
-directly on a Linux client. Cold-seek and read-latency figures for NFS and SMB, server-side and
-client-side, are in [performance](performance.md#client-side). The mount commands are in the
-[deployment guide](deployment.md#linux). No further per-client report exists; macOS mounts are
-documented but have no test report on #82.
+**Tested on 0.4.1-rc.1** (the published image, rootful Podman in a Fedora 44 VM; 0.4.0 was
+the baseline for the restart test). The server held the 5 test images and one multichannel
+disc whose WAV file passes 4 GiB (`SACDFS_PCM_RATE=352800`): 103 DSF and 103 WAV files, 206 in
+all. Each client mounted NFSv4.2 on the default port and SMB 3.1.1 on a custom port, in a VM
+with its own kernel and `nfs-utils` and `cifs-utils`:
+
+| Client | Kernel | Result |
+|---|---|---|
+| Fedora 44 | 6.19 | All checks pass |
+| RHEL 10.1 | 6.12 | All checks pass |
+| RHEL 9.7 | 5.14 | All checks pass |
+| Debian 13 | 6.12 | All checks pass |
+| Debian 12 | 6.1 | All checks pass |
+| Ubuntu 26.04 | 7.0 | All checks pass |
+| Ubuntu 24.04 | 6.8 | All pass except that non-ASCII names are shown in ISO-8859-1 over SMB (below) |
+
+The checks, on each of NFS and SMB: `find` lists all 206 files; `ls -lR` exits 0 with no
+error output (the NFS half of [#174](https://github.com/aclater/sacdfs/issues/174));
+`stat` sizes of all 206 files equal the server's; `df` reports a non-zero size; `du` works; `getfattr -d` on a file returns
+at once with no attributes; `touch`, `mkdir`, `rm`, `mv`, `truncate` and an append all fail
+at once, none hangs; 19 sample files (DSF, WAV and the over-4 GiB WAV) hash like the server's
+read; five 1 MiB ranges of the over-4 GiB WAV, at, across and past 4 GiB, equal the server's, and
+its header is `RF64`; four readers of one file plus a tagger reading the head and tail of 40
+files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network, cold).
+
+- **Ubuntu 24.04 over SMB:** the cloud image has no `nls_utf8` module (it is in
+  `linux-modules-extra-$(uname -r)`), so the kernel's CIFS client falls back to ISO-8859-1 and
+  shows a name with a non-ASCII character (an acute accent) as a single byte, which a path from
+  the server then does not match (`stat` fails for 4 of 206 files). With the package installed
+  the 4 files are found. Ubuntu 26.04 was fine. This is the client's packaging, not sacdfs.
+- **Extended attributes** ([#174](https://github.com/aclater/sacdfs/issues/174)), counted from
+  sacdfs's FUSE request log (the published 0.4.0 and 0.4.1-rc.1 images under rootful Podman,
+  alternating, two runs each, Fedora 44 client): `ls -lR` over NFS, which exited 0 with no
+  errors, caused 1 `GETXATTR` and 238 `LISTXATTR` requests for the 206 files, the same on both
+  versions; over SMB, `ls -lR` caused none of either. There is no request storm. (Roon's own
+  Force Rescan was not part of this run.)
+- **fstab and systemd** (Fedora 44, 0.4.1-rc.1): the documented fstab line for a local mount
+  (with `mount.fuse` linked) mounted with `mount -a` and after a reboot; the documented
+  `Type=notify` unit started, survived a reboot, and stopped without a failed state (a
+  non-root user gets "Permission denied" on its mount without `allow_other`, as documented);
+  the NFS and SMB lines of [the Linux client guide](install/linux-client.md) (with `port=` for
+  SMB) mounted, were mounted after a reboot with the server up, the boot finished in 56 s with
+  the server down, and the SMB automount worked once it was back.
+- **Restart of the container:** [NFS and restarts](deployment.md#nfs-and-restarts).
+- **Container channels:** see [the Docker and Podman guide](install/docker-podman.md).
+
+Cold-seek and read-latency figures for NFS and SMB, server-side and client-side, are in
+[performance](performance.md#client-side). The mount commands are in the
+[deployment guide](deployment.md#linux). macOS mounts are documented but have no test report
+on #82.
 
 ## General recommendations
 
