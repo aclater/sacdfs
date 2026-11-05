@@ -13,6 +13,16 @@ All notable changes to sacdfs are recorded here. The format follows
   when every extract was handled, 2 when any didn't match or couldn't be read, with the rows
   still written and the count in the summary, and 1 when it couldn't run. A script that ran it
   over extracts that don't all match, and took any non-zero status as a failure, now sees one.
+- **scarletbook and scarletbook-pcm 0.5.7 → 0.5.8** (#206). The release fixes the saved seek
+  index loader (`AreaIndex::from_bytes` now refuses a form the library never writes, so saved
+  indexes keep loading) and reports no speed change. Output bytes are unchanged: the DSF and PCM
+  golden tests and the corpus tests pass, and every DSF and WAV file served from the 136-image
+  corpus and from the five bench discs hashes the same as with 0.4.0. Saved seek indexes: a
+  mount of 4 890 DSF files over 394 images with a real cache of 399 files loaded all 32 454 saved
+  hints on both 0.5.7 and 0.5.8, and discarded none. Straight reads through the mount, 0.4.0 →
+  this branch (medians of 11, alternating, 2026-11-05): DST stereo DSF 8.75 → 8.72 s, DST
+  6-channel DSF 28.28 → 28.30 s, plain-DSD DSF 2.83 → 2.55 s (runs overlap), DST stereo WAV
+  9.40 → 9.43 s, mount and first listing of the corpus 0.087 → 0.091 s.
 ### Added
 
 - **Names for discs without text, with no network** (#185, phase 1; the lookups are later
