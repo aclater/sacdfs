@@ -14,6 +14,17 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- **Folders with no SACD image are hidden, art included** (#175). A folder whose only `.iso`
+  files were DVD-Video or Blu-ray images showed on the share holding just its `Artwork/` folder,
+  and its parents showed too; a box set mixing an SACD with DVD discs showed the DVD disc
+  folders. The mount's walk now reads the 8 signature bytes of each `.iso` and leaves out
+  files that are not SACD images. On a real library (414 `.iso` files, 20 of them not SACDs)
+  the share lost 649 entries, 4 top-level folders among them, and not one DSF file. A file
+  that is not an SACD image yet (a download filling a file made at full size) comes back within
+  the 2-second refresh once the TOC is written; a rescan reads no image it has looked at
+  before unless its size or time changed. The mount's walk reads the top-level folders on
+  16 threads, so the whole-library mount took 0.65 to 0.72 s against 3.6 to 3.8 s on 0.4.0
+  (NFS cache warm; cold not measured).
 - **`sacdfs verify` could exit 0 with files not checked (#196).** A panic while checking a file
   ended that worker silently, so the report and summary left the file out, and with one thread
   every file after it too. The exit status said that all was identical. A panic now gives that file

@@ -213,8 +213,23 @@ MOUNT/
   are made when the area directory is first looked into. *Why:* mounting a library costs a
   walk of its names, whatever its size, and a seek right after a listing finds the image
   open.
-- A file that is not an SACD image (no master TOC), or that fails to open, is left out; a
-  directory whose `*.iso` files all turn out not to be SACD images shows up empty.
+- A file that is not an SACD image is left out, and so is a folder with none below it, sidecars
+  included (#175). The mount's walk of names reads 8 bytes of each `*.iso` (the master TOC
+  signature, where each sector format puts it) to tell; the image is opened (its TOCs read)
+  only when its folder is first listed. *Why at the walk:* the parents of a folder are listed
+  before it, so they can only leave it out if the walk knows. *Alternative:* open each image
+  when its parent is listed, which would read its TOCs in every parent listing; one small read
+  per image is far less. *Parallel walk:* the source's top-level folders are read on 16 scoped threads (joined before
+  the fork into the background, which needs one thread), so the probes of a network share
+  overlap; the result is sorted by name as before. *Rescans:* the folder's non-SACD images, and those of the subfolders
+  left out for holding no SACD, are on its watch list (`SourceDir::rejected`) with their
+  modification times, so a file written into place (which changes the file, not its folder)
+  brings the folder back at the next refresh. The answer for each image is kept while its size
+  and time are the same, so a rescan reads nothing of an image it has looked at: only a `stat`
+  of each rejected image. Nothing is stored across mounts: the persistent seek index holds
+  only discs that opened. An image that cannot be read at the walk counts as an SACD, so that
+  opening it later reports why. An image that has the signature but fails to open is left out
+  as before; its folder shows up with its sidecars only.
 - An image directory whose name collides with a source subdirectory gets ` (2)`. A track
   that fails scarletbook's `check_track` (empty, too many channels, or past the area's
   capacity) is left out. Names are cut to fit 255 bytes.
@@ -264,15 +279,16 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   in memory), when the parent directory is listed. No image is opened for it, so mounting
   costs the same with and without the option, and listing a folder of collapsed albums opens
   nothing: the collapsed folder (`DirKind::Flat`) opens its image when it is first looked
-  into, exactly when the image's own folder would have been. The price: an `*.iso` that
-  turns out not to be an SACD image still counts as the chain's image, so its collapsed
-  folder shows up empty, as a folder of such files does without the option.
+  into, exactly when the image's own folder would have been. A file that has no SACD master TOC
+  signature is not an image to the walk (#175), so it does not make a chain; one that has the
+  signature but fails to open still counts as the chain's image, and its collapsed folder shows
+  up with its sidecars only.
 - *Why these rules* (#13): always flattening would change paths for existing users;
   collapsing the top level too would drop the album name of a single-album artist; naming
   folders from the TOC's text is a separate option if ever wanted, since disc titles are
-  often less descriptive than the owner's folder names. Deciding from the TOCs (for
-  example, not counting files that are not SACD images) would mean opening every image at
-  mount, which is the cost the lazy tree exists to avoid.
+  often less descriptive than the owner's folder names. Deciding from the TOCs
+  would mean opening every image at mount, which is the cost the lazy tree exists to avoid; the
+  walk reads only the signature of each (#175).
 
 ### Sidecar files (#79, #75)
 
