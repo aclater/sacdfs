@@ -34,8 +34,35 @@ All notable changes to sacdfs are recorded here. The format follows
 - `sacdfs verify` and `sacdfs tags import` don't count text from the path as the disc's, so they
   still report and keep an extract's album or title that happens to match its folder's name.
 
+### Fixed
+
+- **`sacdfs verify` could exit 0 with files not checked (#196).** A panic while checking a file
+  ended that worker silently, so the report and summary left the file out, and with one thread
+  every file after it too. The exit status said that all was identical. A panic now gives that file
+  an ERROR row, which `--resume` checks again, and the exit status is 2. `sacdfs tags import` runs
+  the same check, so it no longer skips such a file without a row in its report.
+
+  **Upgrade note.** On 0.4.0 and earlier, don't delete extracts on the exit status alone (tested
+  on the 0.4.0 release). List them by their IDENTICAL rows, as the user guide does, and check that
+  the report has one row per file.
+- **A stopped `verify` no longer leaves a report that looks finished (#196).** Rows go to
+  `FILE.partial`, and `FILE` appears only when every file has been checked. A report already at
+  `FILE` moves to `FILE.previous` once a run starts writing, and is removed when it finishes.
+  `--resume` reads all three. Anything that reads `FILE` during a run should read `FILE.partial`.
+  `-o` naming something that isn't a regular file (`/dev/stdout`, a named pipe) now works as a
+  stream, where only the exit status tells whether the run finished.
+
+### Changed
+
+- `scripts/soak.py` judges threads by the median and end level of each half, with a hard
+  ceiling (`--thread-spike`), instead of the maximum of each half. A single sample taken during
+  an induced stall no longer fails a run, and accumulating threads still do (#179).
+
 ### Documentation
 
+- The TrueNAS SCALE guide is re-validated with the published 0.4.0 image, and notes the harmless
+  `parse_dfs_path_strict ... is not ours` Samba lines, that `NFS_CLIENTS` takes one address, and
+  that TrueNAS's "SMB share" app storage has no port field (#176).
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
   `rust:1.99.1` container with no other packages, it installs a working `sacdfs` (#155).
 

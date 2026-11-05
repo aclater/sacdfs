@@ -765,6 +765,27 @@ fn human(b: u64) -> String {
 
 /// Runs the check: writes the report and returns every row.
 pub fn run(args: &Args) -> io::Result<Summary> {
+    run_with(args, &check)
+}
+
+/// What [`check`] says of an item, or, if it panics, an ERROR row: a bug must not take the other
+/// files' results with it, nor pass as a clean run with this file left out (#196).
+fn check_caught(item: &Item, ctx: &Ctx<'_>, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> Row {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(item, ctx))).unwrap_or_else(|panic| {
+        let what = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown".to_owned());
+        Row::new(item.path.clone(), item.bytes, item.mtime.clone()).with(
+            Status::Error,
+            format!("not checked: sacdfs panicked ({what}); please report this as a bug"),
+        )
+    })
+}
+
+/// [`run`] with `check` as the check of a DSF or DFF file.
+fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io::Result<Summary> {
     let with = |e: io::Error, p: &Path| io::Error::new(e.kind(), format!("{}: {e}", p.display()));
     let source = args.source.canonicalize().map_err(|e| with(e, &args.source))?;
     let mounts = sacdfs_mounts();
@@ -813,7 +834,7 @@ pub fn run(args: &Args) -> io::Result<Summary> {
     found.dedup_by(|a, b| a.0 == b.0);
 
     let earlier = match (&args.output, args.resume) {
-        (Some(p), true) if p.exists() => report::read(p)?,
+        (Some(p), true) => report::read_earlier(p)?,
         _ => HashMap::new(),
     };
     let mut kept = Vec::new();
@@ -863,11 +884,7 @@ pub fn run(args: &Args) -> io::Result<Summary> {
         eprintln!();
     }
 
-    let mut out = report::Writer::create(args.output.as_deref())?;
-    for r in &kept {
-        out.row(r)?;
-    }
-    let out = Mutex::new(out);
+    let out = Mutex::new(report::Writer::create(args.output.as_deref(), &kept)?);
     let ctx = Ctx { engine: &engine, candidates: &candidates, read: AtomicU64::new(0) };
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
@@ -887,7 +904,7 @@ pub fn run(args: &Args) -> io::Result<Summary> {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(item) = items.get(i) else { break };
                         let row = match item.kind {
-                            ExtractKind::Dsd => check(item, &ctx),
+                            ExtractKind::Dsd => check_caught(item, &ctx, check),
                             ExtractKind::Pcm(what) => {
                                 Row::new(item.path.clone(), item.bytes, item.mtime.clone())
                                     .with(Status::NotComparable, pcm_reason(what))
@@ -913,6 +930,14 @@ pub fn run(args: &Args) -> io::Result<Summary> {
         return Err(e);
     }
     let mut rows = rows.into_inner().unwrap_or_else(|p| p.into_inner());
+    // A worker gone (its panic is caught above, so this is for what is not): the report stays
+    // partial, and this is no clean exit (#196).
+    if rows.len() != total {
+        return Err(io::Error::other(format!(
+            "{} of {total} files were not checked; see the messages above",
+            total - rows.len()
+        )));
+    }
     rows.extend(kept);
     rows.sort_by(|a, b| a.path.cmp(&b.path));
     out.into_inner().unwrap_or_else(|p| p.into_inner()).finish(&rows)?;
@@ -958,6 +983,108 @@ fn progress_loop(done: &AtomicUsize, total: usize, kept: usize, read: &AtomicU64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A library of one image, and its track files as extracts beside it.
+    fn library(dir: &Path) -> (PathBuf, Vec<PathBuf>) {
+        let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/images");
+        let lib = dir.join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::os::unix::fs::symlink(corpus.join("dsd-stereo-mch-2048.iso"), lib.join("x.iso")).unwrap();
+        let tree = Tree::with_options(
+            SourceDir::scan(&lib).unwrap(),
+            Tuning::default(),
+            Output { pauses_kept: false, ..Output::dsf_only() },
+        );
+        let engine = Engine::new(2, 16 << 20).unwrap();
+        let mut files = Vec::new();
+        for (i, (_, f)) in tree.all_files().into_iter().enumerate() {
+            let (bytes, _) = crate::track::Reader::new(f.clone()).read(&engine, 0, f.size).unwrap();
+            let path = lib.join(format!("{i:02}.dsf"));
+            std::fs::write(&path, bytes).unwrap();
+            files.push(path);
+        }
+        assert!(files.len() >= 2);
+        (lib, files)
+    }
+
+    fn args(lib: &Path, output: &Path, threads: usize) -> Args {
+        Args {
+            pauses: "dropped".into(),
+            source: lib.to_owned(),
+            extracts: Vec::new(),
+            map: Vec::new(),
+            output: Some(output.to_owned()),
+            resume: false,
+            threads,
+            cache_mb: 8,
+            quiet: true,
+            verbose: 0,
+        }
+    }
+
+    /// A check that panics is one file's ERROR, whatever the number of workers: not a clean
+    /// run with that file, or with the rest, left out. It failed this before #196.
+    #[test]
+    fn a_panic_in_a_check_is_an_error_row_not_a_clean_exit() {
+        for threads in [1, 3] {
+            let dir = tempfile::tempdir().unwrap();
+            let (lib, files) = library(dir.path());
+            let report_path = dir.path().join("r.tsv");
+            let bad = files[0].clone();
+            let a = args(&lib, &report_path, threads);
+            let sum = run_with(&a, &|item, ctx| {
+                assert!(item.path != bad, "the injected bug");
+                check(item, ctx)
+            })
+            .unwrap();
+            assert_eq!(sum.rows.len(), files.len(), "every file has its row");
+            assert!(!sum.all_identical(), "exit status 0 with a file not checked");
+            let row = sum.rows.iter().find(|r| r.path == bad).unwrap();
+            assert_eq!(row.status, Status::Error);
+            assert!(row.reason.contains("the injected bug"), "{}", row.reason);
+            assert_eq!(sum.rows.iter().filter(|r| r.status == Status::Identical).count(), files.len() - 1);
+            assert!(sum.render().contains("ERROR"));
+
+            // Resuming checks it again, and with the bug gone comes out clean.
+            let a = Args { resume: true, ..a };
+            let again = run(&a).unwrap();
+            assert!(again.all_identical(), "{}", again.render());
+        }
+    }
+
+    /// While a run is under way, what it has so far is not under the report's name, and a run
+    /// that resumes it ends with a whole report. A real interruption is this and no more: rows
+    /// flushed to the partial file, and an exit status that is not 0.
+    #[test]
+    fn no_report_under_its_name_until_every_file_is_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (lib, files) = library(dir.path());
+        let report_path = dir.path().join("r.tsv");
+        let partial = report::partial_path(&report_path);
+        let a = args(&lib, &report_path, 2);
+        run(&a).unwrap();
+        let whole = std::fs::read_to_string(&report_path).unwrap();
+        assert_eq!(whole.lines().count(), files.len() + 1);
+        assert!(!partial.exists());
+
+        // A later run, seen from inside: no report under its name, the last one aside, the kept
+        // rows safe.
+        let a = Args { resume: true, ..a };
+        std::fs::write(files.last().unwrap(), b"not what it was").unwrap();
+        let seen = AtomicUsize::new(0);
+        let sum = run_with(&a, &|item, ctx| {
+            assert!(!report_path.exists(), "a partial report passes for a finished one");
+            assert_eq!(std::fs::read_to_string(report::previous_path(&report_path)).unwrap(), whole);
+            assert!(report::read(&partial).unwrap().len() >= files.len() - 1, "the kept rows");
+            seen.fetch_add(1, Ordering::Relaxed);
+            check(item, ctx)
+        })
+        .unwrap();
+        assert_eq!(seen.load(Ordering::Relaxed), 1, "only the changed file");
+        assert!(sum.rows.iter().any(|r| r.status == Status::Error), "{}", sum.render());
+        assert_eq!(std::fs::read_to_string(&report_path).unwrap().lines().count(), files.len() + 1);
+        assert!(!partial.exists() && !report::previous_path(&report_path).exists());
+    }
 
     #[test]
     fn folders_and_maps() {
