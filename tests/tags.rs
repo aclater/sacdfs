@@ -284,3 +284,75 @@ fn key_command_and_mount_with_tags() {
     common::unmount_retrying(&mp);
     let _ = child.wait();
 }
+
+/// The exit status of `sacdfs tags import` (#198): 0 when every extract was handled, 2 when any
+/// wasn't, with what could be done done and the rows written, and 1 when it couldn't run.
+#[test]
+fn import_exit_status() {
+    let (dir, lib) = library();
+    fs::remove_file(lib.join(format!("{OTHER}.iso"))).unwrap();
+    let image = lib.join(format!("{TAGGED}.iso"));
+    let import = |tags: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .args(["tags", "import", "-q", "--tags"])
+            .arg(tags)
+            .arg(&lib)
+            .output()
+            .unwrap()
+    };
+    let say = |o: &std::process::Output| String::from_utf8_lossy(&o.stderr).into_owned();
+
+    // Every extract matches: 0. Its tag is the served one, so nothing is added.
+    let tree = Tree::new(SourceDir::scan(&lib).unwrap());
+    let engine = Engine::new(2, 32 << 20).unwrap();
+    let file = tree.all_files().into_iter().next().unwrap().1;
+    let (bytes, _) = Reader::new(file.clone()).read(&engine, 0, file.size).unwrap();
+    fs::write(lib.join("good.dsf"), &bytes).unwrap();
+    let tags = dir.path().join("t0");
+    let out = import(&tags);
+    assert_eq!(out.status.code(), Some(0), "{}", say(&out));
+    assert!(say(&out).contains("1 matched extracts read"), "{}", say(&out));
+    assert!(!say(&out).contains("not imported"), "{}", say(&out));
+
+    // A FLAC file can't be compared, and verify doesn't count it: still 0.
+    fs::write(lib.join("note.flac"), b"fLaC").unwrap();
+    assert_eq!(import(&dir.path().join("t1")).status.code(), Some(0));
+
+    // An extract with an ERROR row: 2; the other is read, and the report has both.
+    fs::write(lib.join("broken.dsf"), b"DSD not really").unwrap();
+    let tags = dir.path().join("t2");
+    let out = import(&tags);
+    assert_eq!(out.status.code(), Some(2), "{}", say(&out));
+    assert!(say(&out).contains("1 matched extracts read"), "{}", say(&out));
+    assert!(say(&out).contains("not imported: 1 extracts"), "{}", say(&out));
+    let report = fs::read_to_string(tags.join(".last-import.tsv")).unwrap();
+    assert!(report.lines().any(|l| l.starts_with("ERROR\t") && l.contains("broken.dsf")), "{report}");
+    assert!(report.lines().any(|l| l.starts_with("IDENTICAL\t") && l.contains("good.dsf")), "{report}");
+    fs::remove_file(lib.join("broken.dsf")).unwrap();
+
+    // A tags file that can't be read or written: 2, with a `failed:` line. An extract with a tag
+    // of its own, so that there is something to write.
+    let key = tags::disc_key(Disc::open(&image, 0, Tuning::default()).unwrap().toc());
+    let mut tag = file.tag().to_vec();
+    frame(&mut tag, b"TCON", b"\x03Jazz");
+    let audio_end = bytes.len() - file.tag().len();
+    let mut tagged = bytes[..audio_end].to_vec();
+    tagged.extend_from_slice(&tag);
+    let total = (tagged.len() as u64).to_le_bytes();
+    tagged[12..20].copy_from_slice(&total);
+    fs::write(lib.join("good.dsf"), &tagged).unwrap();
+    let tags = dir.path().join("t3");
+    fs::create_dir_all(tags.join(format!("{key}.toml"))).unwrap();
+    let out = import(&tags);
+    assert_eq!(out.status.code(), Some(2), "{}", say(&out));
+    assert!(say(&out).contains("failed: "), "{}", say(&out));
+
+    // It can't run: 1.
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .args(["tags", "import", "-q", "--tags"])
+        .arg(dir.path().join("t4"))
+        .arg(dir.path().join("no-such-source"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", say(&out));
+}
