@@ -26,9 +26,15 @@ with Docker 29 on Debian 13: healthy in 8 s, both shares mounted. Reference:
      -p 445:445 -p 2049:2049 \
      -v /srv/music:/images:ro \
      -v sacdfs-cache:/cache \
+     --health-cmd /usr/local/bin/healthcheck.sh --health-interval 30s \
+     --health-timeout 10s --health-start-period 60s --health-retries 3 \
      ghcr.io/aclater/sacdfs:0.4.0
    ```
 
+   - The four `--health-*` options give Podman the health check. The published image is in OCI
+     format, which has no field for one, so without them Podman has no health check and
+     `podman inspect` below fails. Docker reads the check from the image: leave the options out
+     there.
    - `label=disable` is for SELinux hosts (Fedora, RHEL); it leaves your folder's labels alone.
    - On AppArmor hosts (Debian, Ubuntu) use `--security-opt apparmor=unconfined` instead.
    - For a password on the SMB share, add `-e SMB_USER=music -e SMB_PASSWORD=...`. Windows 11
@@ -39,13 +45,17 @@ with Docker 29 on Debian 13: healthy in 8 s, both shares mounted. Reference:
 ## Check it works
 
 ```sh
-sudo podman inspect -f '{{.State.Health.Status}}' sacdfs     # healthy, within a minute
+sudo podman inspect -f '{{.State.Health.Status}}' sacdfs     # healthy, within a minute (needs the --health-* options)
 sudo podman logs sacdfs 2>&1 | grep -E 'cache-mb|image files|mounted|NFS SERVER INITIALIZED'
 ```
 
 The log shows `--cache-mb 32` (the default), the number of image files, `mounted`, and the
 SMB and NFS servers starting. Then mount it from a client:
 [linux-client.md](linux-client.md).
+
+Rootless Podman, SMB only (`-e NFS=0`; the `--health-*` options as above), was run with the
+0.4.1-rc.1 image: `podman inspect` showed `healthy` within 25 s. Without the options it fails
+with a nil-pointer error, because the image has no health check for Podman to run.
 
 Compose: [openmediavault.md](openmediavault.md) has a validated Compose file. Not validated
 here: rootless Podman (SMB only; NFS needs root, see the
