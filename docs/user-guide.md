@@ -190,13 +190,40 @@ with a copyright text, so those files show a new modification time once.
 `Multichannel` folder (DSF and WAV) ends in ` (Multichannel)`, so "Album" is the stereo copy
 and "Album (Multichannel)" the multichannel one. *Why:* in client tests, Navidrome, LMS, MPD
 and MinimServer all showed a disc's two copies as one album, either merged (each track up to
-four times) or as two albums with the same name. Stereo files are unchanged, and so is a
-disc with no album text. Only tags change: the audio is the same, and `sacdfs verify`
+four times) or as two albums with the same name. Stereo files are unchanged. Only tags change: the audio is the same, and `sacdfs verify`
 compares audio only, so extracts of multichannel tracks still verify. `--no-multichannel-album-suffix`
 (`SACDFS_MC_ALBUM_SUFFIX=0` in the container) leaves the album as the disc has it. Switching
 it does not change the files' modification times, so restart the mount and have your player
 rescan. A disc's [tags file](#your-own-tags---tags) that names the album wins, and gets no
 suffix.
+
+**Discs without text.** Some discs carry little or no text. sacdfs then fills the gaps, always,
+with no network and nothing stored:
+
+- A track without a title is tagged `Track NN` and named `NN - Track NN.dsf`.
+- A disc without album or artist text takes them from where its image is:
+
+  | The image | Album | Artist |
+  |---|---|---|
+  | `Artist - 2001 - Album [SACD].iso` | `Album` | `Artist` |
+  | `Artist - 2001 - Album [SACD]/disc.iso` | `Album` | `Artist` |
+  | `Artist/2001 - Album [SACD]/Artist - Album.iso` | `Album` | `Artist` |
+  | `Artist/2001 - Album [SACD]/Artist.2001.Album.iso` | `Album` | `Artist` |
+  | `Genre/2001 - Album [SACD]/Artist - Album.iso` | `Album` | `Artist` |
+  | `Artist/2001 - Album [SACD]/disc.iso` | `Album` | none |
+  | `Artist/Album/Artist - Album.iso` | `Artist - Album` | none |
+  | `Artist/Album/disc.iso` | `disc` | none |
+
+  The rule is narrow on purpose, since a wrong artist is worse than none: a year is 1900 to 2099,
+  the separator is ` - ` with its spaces, and trailing `[...]` groups leave the album. Only the
+  table's shapes count. The year isn't used as a date. Disc text always comes first: a disc with
+  an album and no artist keeps its album. A disc that names any performer gets no artist.
+- Your own [tags file](#your-own-tags---tags) wins over all of this, an empty value included.
+  It changes the tags, not the file names: a track you give a title there stays
+  `NN - Track NN.dsf`.
+- These files show a new modification time once, and so does every folder with a disc below it ([Times, sizes and free
+  space](#times-sizes-and-free-space)). Moving the image to another folder can change what it's
+  called; to keep a name for good, put it in a tags file. The audio is unaffected.
 
 Plex shows the suffix only with "Prefer local metadata" on in the library's settings; by
 default it uses the matched release's title for both copies (see the deployment guide,
@@ -243,8 +270,8 @@ The mount stays read-only; the files are edited out of band.
   disc's table of contents, not of its path, so renaming or moving the image keeps its tags,
   and two copies of one disc share them. `sacdfs tags key [--tags DIR] IMAGE...` prints it
   (with `--tags`, also the file's path and whether it exists).
-- **A disc without a file is unchanged**, byte for byte, and so is a track the file sets
-  nothing for. A changed file gets a new size, a modification time no older than the tags
+- **A disc without a file is unchanged** by this layer, byte for byte, and so is a track the
+  file sets nothing for. A changed file gets a new size, a modification time no older than the tags
   file, and a new NFS generation, so players and `rsync` see it.
 - **When edits show:** when SOURCE is a directory, adding, editing or removing a tags file
   shows within a few seconds, without a remount: the files' tags, sizes and modification
@@ -428,7 +455,8 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   forward whenever its bytes would differ: a WAV file with a non-default `--pcm-cutoff` or
   `--pcm-gain` shows a later time (by up to 7 hours, a different time for every cutoff and
   0.01 dB of gain), and a sacdfs release that changes the bytes of a format moves that
-  format's times forward again. rsync, Plex, Roon and other tools that compare size and time
+  format's times forward again; one that changes only some files' tags moves only those
+  (0.4.1, [discs without text](#tagging-behaviour)). rsync, Plex, Roon and other tools that compare size and time
   therefore see a change of options or of output as a change of the file, and copy or
   re-analyse it. The same options always show the same times, across remounts and restarts.
   `--pcm-rate` changes the files' size instead. With the default options, the times are the
@@ -436,7 +464,8 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   With non-default options, a file whose image changed in the last few hours can show a
   time slightly in the future (up to 7 hours ahead); tools such as `tar` may warn about it.
 - **Folder times and library scanners.** A folder shows the newest time of anything shown
-  below it, at any depth: a new or changed playlist, scan or image, or a sacdfs release that
+  below it, at any depth (from 0.4.1, with a disc below it, 7 hours later than that, so a folder
+  can show a time up to 7 hours ahead of a file you just added): a new or changed playlist, scan or image, or a sacdfs release that
   moves the files' times, moves every folder above it up to the mount's root. Roon and other
   scanners that skip folders whose time did not change therefore find the change with a plain
   rescan; no Force Rescan is needed. A change made while mounted shows within about 2 seconds of

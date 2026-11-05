@@ -113,6 +113,8 @@ pub struct TrackFile {
     pub size: u64,
     /// What a tags file changed in the file's tag (#81), if anything.
     pub tags: Option<crate::tags::Stamp>,
+    /// Whether the file's tag or name has text the disc lacks (#185).
+    pub filled: bool,
     warned: AtomicBool,
     warned_clips: AtomicBool,
 }
@@ -162,8 +164,9 @@ impl TrackFile {
         };
         let layout = Layout { channels: a.channel_count, frames: track.duration_frames };
         let mut lib = None;
-        let tagged = dsf::tagged(disc.toc(), a, track);
+        let tagged = dsf::tagged(disc.toc(), a, track, Some(&disc.path));
         let stamp = tagged.as_ref().and_then(|t| t.stamp);
+        let mut filled = tagged.as_ref().is_some_and(|t| t.filled);
         let (audio, header, trailer, tag) = match format {
             Format::Dsf => {
                 let l = tagged?.layout;
@@ -181,7 +184,12 @@ impl TrackFile {
                         let id3 = dsf::region(&t.layout, scarletbook::output::RegionKind::Trailer);
                         (t.set, id3)
                     }
-                    None => (dsf::tag_set(disc.toc(), a, track, &dsf::options(a, track)), Vec::new()),
+                    None => {
+                        let options = dsf::options(a, track);
+                        let (set, f) = dsf::tag_set(disc.toc(), a, track, &options, Some(&disc.path));
+                        filled = f;
+                        (set, Vec::new())
+                    }
                 };
                 let spf = u64::from(samples_per_frame);
                 if spf == 0 || dsf::FRAME_BYTES * 8 % spf != 0 {
@@ -216,6 +224,7 @@ impl TrackFile {
             tag,
             size,
             tags: stamp,
+            filled,
             warned: AtomicBool::new(false),
             warned_clips: AtomicBool::new(false),
         })
@@ -253,6 +262,20 @@ impl TrackFile {
     /// The ID3v2.4 tag bytes.
     pub fn tag(&self) -> &[u8] {
         self.trailer.get(self.tag.clone()).unwrap_or(&[])
+    }
+
+    /// The frames an extract's tag is compared with (`verify`, `tags import`): the file's tag,
+    /// without what came from the image's path ([`dsf::stored_tag`]).
+    pub fn stored_frames(&self) -> Vec<crate::verify::id3::Frame> {
+        if !self.filled {
+            return crate::verify::id3::frames(self.tag());
+        }
+        let toc = self.disc.toc();
+        let tag = toc.areas.get(self.area).and_then(|a| {
+            let track = a.tracks.iter().find(|t| t.number == self.number)?;
+            Some(dsf::stored_tag(toc, a, track))
+        });
+        crate::verify::id3::frames(&tag.unwrap_or_default())
     }
 
     /// Length of everything before the first audio byte.

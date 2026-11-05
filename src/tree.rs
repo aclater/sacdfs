@@ -1319,9 +1319,18 @@ impl Tree {
     /// The newest mtime shown below a directory whose content is `stamp` (#123): of its
     /// sidecars and source directories, and of its images' files, whose mtimes are their
     /// images' moved by the output version and PCM options ([`ident::newest_offset`]).
+    ///
+    /// With an image below, the sidecars' and source directories' times move one step too
+    /// ([`ident::FILLED_STEP`], #185). *Why:* a folder newer than its images' files would
+    /// otherwise keep its time when a file below it moves, and a scanner that prunes unchanged
+    /// folders would never reach that file.
     fn served(&self, stamp: &Stamp) -> SystemTime {
         let off = ident::newest_offset(self.output.dsf, self.output.wav, self.wav_mtime_offset);
-        stamp.other.max(stamp.image.map(|i| i + off)).unwrap_or(SystemTime::UNIX_EPOCH)
+        match stamp.image {
+            Some(i) => stamp.other.map(|o| o + ident::FILLED_STEP).max(Some(i + off)),
+            None => stamp.other,
+        }
+        .unwrap_or(SystemTime::UNIX_EPOCH)
     }
 
     /// Notes that `stamp` was found in source directory `path` (#123): it and each of its
@@ -2850,8 +2859,9 @@ mod tests {
 
     #[test]
     fn directory_mtimes_show_the_newest_below() {
-        // #123: every directory up to the root shows its newest track file's mtime (its
-        // image's moved by the output version), not its source directory's own.
+        // #123: every directory up to the root shows the newest mtime a track file of its
+        // images could have (its image's moved by the output version, and a step for a file
+        // with text its disc lacks, #185), not its source directory's own.
         let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
         for flatten in [false, true] {
             let dir = old_tree(old);
@@ -2869,12 +2879,28 @@ mod tests {
             }
             let file = t.children(ino(paths[paths.len() - 1])).unwrap();
             let newest_file = file.iter().map(|e| t.mtime(&t.get(e.ino).unwrap())).max().unwrap();
-            assert_eq!(newest_file, newest);
+            assert!(newest_file > old && newest_file <= newest);
             // DSF only: the DSF output version's offset.
             let dsf = Tree::with_tuning(SourceDir::scan(dir.path()).unwrap(), Tuning::default());
             assert_eq!(dsf.mtime(&dsf.get(ROOT).unwrap()), old + ident::newest_offset(true, false, 0));
             // Directories keep generation 0 and their numbers: only the time moves.
             assert_eq!(t.generation(&t.get(ROOT).unwrap()), 0);
+        }
+    }
+
+    /// #185: a folder newer than its images' files moves too, or a scanner that prunes unchanged
+    /// folders never reaches a file below it whose time moved.
+    #[test]
+    fn a_folder_newer_than_its_images_still_moves_one_step() {
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        let dir = old_tree(old);
+        let newer = old + Duration::from_secs(10_000_000);
+        let album = dir.path().join("Artist/Album");
+        fs::File::open(&album).unwrap().set_modified(newer).unwrap();
+        let t = watching(dir.path(), "default", false);
+        for p in ["", "Artist", "Artist/Album"] {
+            let shown = t.mtime(&t.get(t.resolve(Path::new(p)).unwrap()).unwrap());
+            assert_eq!(shown, newer + ident::FILLED_STEP, "{p:?}");
         }
     }
 
@@ -2895,7 +2921,9 @@ mod tests {
         let after = dir_mtimes(&t);
         // The source directories up to the root move; the image's own folders do not (the
         // playlist is not shown in them).
-        assert!(after[..3].iter().all(|m| *m == later), "{after:?}");
+        // One step on (#185), as for any folder with an image below.
+        let step = ident::FILLED_STEP;
+        assert!(after[..3].iter().all(|m| *m == later + step), "{after:?}");
         assert_eq!(after[3..], before[3..]);
         // A fresh mount shows the same times (#17: stable across remounts).
         let again = watching(dir.path(), "default", false);
@@ -2909,7 +2937,7 @@ mod tests {
         set_mtime(&album.join("back.png"), art);
         set_mtime(&album, later);
         t.children(t.resolve(Path::new("Artist/Album")).unwrap());
-        assert!(dir_mtimes(&t)[..3].iter().all(|m| *m == art));
+        assert!(dir_mtimes(&t)[..3].iter().all(|m| *m == art + step));
         // A new artist folder at the top with a new image.
         let second = dir.path().join("Second");
         fs::create_dir(&second).unwrap();

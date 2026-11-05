@@ -15,6 +15,35 @@ All notable changes to sacdfs are recorded here. The format follows
   over extracts that don't all match, and took any non-zero status as a failure, now sees one.
 ### Added
 
+- **Names for discs without text, with no network** (#185, phase 1; the lookups are later
+  phases). A track without a title is now tagged `Track NN` and named `NN - Track NN.dsf`, where
+  0.4.0 served `NN.dsf` with an empty title. A disc without album or artist text takes them from
+  its image's path, by a narrow rule, since a wrong artist is worse than none: `Artist - YYYY -
+  Album [...]` in the image's or its folder's name, or a `YYYY - Album [...]` folder with an image
+  name that agrees; otherwise the album is the image's file name and there is no artist (the table
+  is in docs/user-guide.md, "Tagging behaviour"). A tags file wins over all of it. Audio is
+  unchanged.
+
+### Upgrade notes
+
+- **Discs without text change once; other discs don't.** Files of a disc that lacks a title, album
+  or artist get new tags, a new size, a modification time one step (7 hours) later and a new NFS
+  generation; those with no title also get a new name. The output version moves for those files
+  only, as with a tags file, so `DSF_VERSION` and `WAV_VERSION` stay. All other files keep their
+  bytes, time and generation.
+- **What scanners see.** The time of every folder with a disc below it moves one step once, because
+  knowing which discs lack text takes reading each image's table of contents, which the mount
+  doesn't do. So a scanner that skips unchanged folders (Roon) should walk those folders once, and
+  any scanner that compares sizes and times should re-read only the changed files. Checked by
+  comparing every file's and folder's size and time over the mount with 0.4.0's, on a library of
+  4,890 tracks: 259 files changed, each with every folder above it moved. Untested with Roon, Plex,
+  Navidrome, LMS or MPD themselves. A renamed track should look to a scanner like a removal and an
+  addition, so its play counts and edits in the player may not carry over (also untested).
+- **A tags file that sets a title** changes the tag and not the file name, as before: such a track
+  is named `NN - Track NN`.
+- `sacdfs verify` and `sacdfs tags import` don't count text from the path as the disc's, so they
+  still report and keep an extract's album or title that happens to match its folder's name.
+
 - Fuzz targets for sacdfs's own parsers and paths (#161): tags files, sidecar lists and paths,
   names, the ID3, DSF and WAV writers, the tree, and the `verify` readers, in `fuzz/` (see
   fuzz/README.md). A CI job runs each for about 60 s on every pull request and 20 minutes every
