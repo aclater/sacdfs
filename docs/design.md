@@ -58,7 +58,7 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   removes the known plain-DSD WAV slowdown for free, and every gate passed; *trade-off:* none
   measured (no read got slower). 0.5.7 (#155) came from crates.io, pinned exactly: *why:* the
   registry is the only source a published crate may use and cargo's checksum pins the bytes; the
-  tag is no longer needed; bytes unchanged, gated as above. 0.5.8 (#PRNUM): a seek-index
+  tag is no longer needed; bytes unchanged, gated as above. 0.5.8 (#206): a seek-index
   fix (`AreaIndex::from_bytes` refuses a form of saved index the library never writes) and no
   speed change; *why:* the pin follows the newest release that passes the gates; bytes unchanged,
   gated as above.
