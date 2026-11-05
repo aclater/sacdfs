@@ -89,7 +89,9 @@ git clone https://github.com/aclater/sacdfs && cd sacdfs
 podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
 ```
 
-`--format docker` keeps the health check, which the OCI image format has no field for. On arm64
+`--format docker` keeps the health check, which the OCI image format has no field for. The
+published image is OCI, so for Podman give the check on `podman run` (see the
+[Docker and Podman guide](install/docker-podman.md)); Docker reads it from the image. On arm64
 the build uses the toolchain's default target and the WAV converter (scarletbook-pcm) picks the
 code its CPU supports. On x86_64 the build compiles sacdfs for generic x86-64, whose converter
 already uses AVX2 where the CPU has it. On a NAS with an AVX2 CPU (most Intel and AMD CPUs since about 2015, including the
@@ -241,6 +243,10 @@ With Podman on an SELinux host, add `:z` to the images volume only if the direct
 relabelled (`-v /path/to/images:/images:ro,z`); don't relabel a directory that other
 services or a network share use. Use `--security-opt label=disable` instead to leave labels
 alone.
+
+For a health check under Podman, add `--health-cmd /usr/local/bin/healthcheck.sh
+--health-interval 30s --health-timeout 10s --health-start-period 60s --health-retries 3`
+(Docker reads it from the image); see the [Docker and Podman guide](install/docker-podman.md).
 
 If the host already serves SMB or NFS itself, ports 445 and 2049 are taken. Either give the
 container its own IP address (a `macvlan` network, or publish on an extra address of the
