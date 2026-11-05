@@ -190,13 +190,40 @@ with a copyright text, so those files show a new modification time once.
 `Multichannel` folder (DSF and WAV) ends in ` (Multichannel)`, so "Album" is the stereo copy
 and "Album (Multichannel)" the multichannel one. *Why:* in client tests, Navidrome, LMS, MPD
 and MinimServer all showed a disc's two copies as one album, either merged (each track up to
-four times) or as two albums with the same name. Stereo files are unchanged, and so is a
-disc with no album text. Only tags change: the audio is the same, and `sacdfs verify`
+four times) or as two albums with the same name. Stereo files are unchanged. Only tags change: the audio is the same, and `sacdfs verify`
 compares audio only, so extracts of multichannel tracks still verify. `--no-multichannel-album-suffix`
 (`SACDFS_MC_ALBUM_SUFFIX=0` in the container) leaves the album as the disc has it. Switching
 it does not change the files' modification times, so restart the mount and have your player
 rescan. A disc's [tags file](#your-own-tags---tags) that names the album wins, and gets no
 suffix.
+
+**Discs without text.** Some discs carry little or no text. sacdfs then fills the gaps, always,
+with no network and nothing stored:
+
+- A track without a title is tagged `Track NN` and named `NN - Track NN.dsf`.
+- A disc without album or artist text takes them from where its image is:
+
+  | The image | Album | Artist |
+  |---|---|---|
+  | `Artist - 2001 - Album [SACD].iso` | `Album` | `Artist` |
+  | `Artist - 2001 - Album [SACD]/disc.iso` | `Album` | `Artist` |
+  | `Artist/2001 - Album [SACD]/Artist - Album.iso` | `Album` | `Artist` |
+  | `Artist/2001 - Album [SACD]/Artist.2001.Album.iso` | `Album` | `Artist` |
+  | `Genre/2001 - Album [SACD]/Artist - Album.iso` | `Album` | `Artist` |
+  | `Artist/2001 - Album [SACD]/disc.iso` | `Album` | none |
+  | `Artist/Album/Artist - Album.iso` | `Artist - Album` | none |
+  | `Artist/Album/disc.iso` | `disc` | none |
+
+  The rule is narrow on purpose, since a wrong artist is worse than none: a year is 1900 to 2099,
+  the separator is ` - ` with its spaces, and trailing `[...]` groups leave the album. Only the
+  table's shapes count. The year isn't used as a date. Disc text always comes first: a disc with
+  an album and no artist keeps its album. A disc that names any performer gets no artist.
+- Your own [tags file](#your-own-tags---tags) wins over all of this, an empty value included.
+  It changes the tags, not the file names: a track you give a title there stays
+  `NN - Track NN.dsf`.
+- These files show a new modification time once, and so does every folder with a disc below it ([Times, sizes and free
+  space](#times-sizes-and-free-space)). Moving the image to another folder can change what it's
+  called; to keep a name for good, put it in a tags file. The audio is unaffected.
 
 Plex shows the suffix only with "Prefer local metadata" on in the library's settings; by
 default it uses the matched release's title for both copies (see the deployment guide,
@@ -243,8 +270,8 @@ The mount stays read-only; the files are edited out of band.
   disc's table of contents, not of its path, so renaming or moving the image keeps its tags,
   and two copies of one disc share them. `sacdfs tags key [--tags DIR] IMAGE...` prints it
   (with `--tags`, also the file's path and whether it exists).
-- **A disc without a file is unchanged**, byte for byte, and so is a track the file sets
-  nothing for. A changed file gets a new size, a modification time no older than the tags
+- **A disc without a file is unchanged** by this layer, byte for byte, and so is a track the
+  file sets nothing for. A changed file gets a new size, a modification time no older than the tags
   file, and a new NFS generation, so players and `rsync` see it.
 - **When edits show:** when SOURCE is a directory, adding, editing or removing a tags file
   shows within a few seconds, without a remount: the files' tags, sizes and modification
@@ -301,6 +328,12 @@ writes nothing but the tags directory (verify's report goes to `DIR/.last-import
 the picture (`PRIV`, `RVA2`, `GEOB` ...) cannot be kept; the summary lists them. DFF text
 chunks are not imported.
 
+**Exit status:** 0 when every extract was handled, as `sacdfs verify` means it: each DSF and DFF
+file matched and its tags were read (a FLAC or WAV file can't be compared, and doesn't count
+against this). 2 when any extract didn't match or couldn't be checked, or when a tag or tags file
+couldn't be read or written: what could be done was done, the rows are in the report, and the
+summary says how many were left out. 1 when the import couldn't run or didn't finish.
+
 **From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).
 
 As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
@@ -337,7 +370,10 @@ player, once as the extract and once as sacdfs's file.
   (`jpg`, `jpeg`, `png`, `webp`; not playlists, scans folders or other files) also show in
   `Stereo/` and `Multichannel/` of every image in the folder, after the tracks, so that
   Lyrion Music Server, MPD, MinimServer and Plex, which look for folder art only in the
-  audio file's own folder, find it. It is the same file with a second name: the same inode
+  audio file's own folder, find it. When the art has no file named `cover.*`, one of the images
+  is also listed as `cover.jpg` (or `cover.png`, `cover.webp`; `folder.*` is preferred, then
+  `front.*`, then the first by name), because MPD looks only for that name (#148). It is the
+  same file with a second name: the same inode
   number, so a server that walks both sees one image. No audio file changes, only the art is
   added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
   is not shown in either place, and `none` shows no art at all. A name that a track file
@@ -419,7 +455,8 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   forward whenever its bytes would differ: a WAV file with a non-default `--pcm-cutoff` or
   `--pcm-gain` shows a later time (by up to 7 hours, a different time for every cutoff and
   0.01 dB of gain), and a sacdfs release that changes the bytes of a format moves that
-  format's times forward again. rsync, Plex, Roon and other tools that compare size and time
+  format's times forward again; one that changes only some files' tags moves only those
+  (0.4.1, [discs without text](#tagging-behaviour)). rsync, Plex, Roon and other tools that compare size and time
   therefore see a change of options or of output as a change of the file, and copy or
   re-analyse it. The same options always show the same times, across remounts and restarts.
   `--pcm-rate` changes the files' size instead. With the default options, the times are the
@@ -427,7 +464,8 @@ number of its own), and sacdfs `--allow-other` when it does not run as root:
   With non-default options, a file whose image changed in the last few hours can show a
   time slightly in the future (up to 7 hours ahead); tools such as `tar` may warn about it.
 - **Folder times and library scanners.** A folder shows the newest time of anything shown
-  below it, at any depth: a new or changed playlist, scan or image, or a sacdfs release that
+  below it, at any depth (from 0.4.1, with a disc below it, 7 hours later than that, so a folder
+  can show a time up to 7 hours ahead of a file you just added): a new or changed playlist, scan or image, or a sacdfs release that
   moves the files' times, moves every folder above it up to the mount's root. Roon and other
   scanners that skip folders whose time did not change therefore find the change with a plain
   rescan; no Force Rescan is needed. A change made while mounted shows within about 2 seconds of
@@ -464,7 +502,7 @@ mounted: the files sacdfs would serve are read in-process, through the same code
 |---|---|
 | `--map FROM TO` | Extracts under `FROM` belong to the images under `TO`, a directory in `SOURCE`; for extracts kept in a tree of their own that mirrors the images' folders. Repeat it for more trees; the longest `FROM` that applies wins. |
 | `-o`, `--output FILE` | Write the report to `FILE` instead of standard output. |
-| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. An interrupted run leaves every row it finished in `FILE`, so `--resume` picks up where it stopped. |
+| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. An interrupted run leaves every row it finished in `FILE.partial`, so `--resume` picks up where it stopped. |
 | `--threads N` | Files checked at once, and DST decoder threads; `0` (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded frames, in MiB (default `64`). |
 | `-q`, `--quiet` | No progress line on standard error. |
@@ -520,7 +558,30 @@ goes to standard error: counts and bytes by status, the reclaimable bytes (the I
 files), and the tags they carry.
 
 **Exit status:** 0 when every DSF and DFF file is IDENTICAL, 2 when any is not, 1 when the
-check couldn't run.
+check couldn't run or didn't finish.
+
+> **On 0.4.0 and earlier, don't delete on the exit status alone.** Tested on the 0.4.0 release: an
+> extract that made the check panic left no row in the report, and the exit status was 0 (#196).
+> The recipe below, which lists files by their IDENTICAL row, is the safe way on every version:
+> a file with no row isn't listed. On those versions, also check that the report has one row per
+> file.
+
+**A report under its own name is a finished one.** A file that can't be checked, for any reason,
+gets an ERROR row. While a run is under way its rows go to `FILE.partial`, and `FILE` appears only
+when every file has been checked. Once the run has started writing, a report already at `FILE`
+moves to `FILE.previous` (the log says so), and is removed when the run finishes. So after a run
+that stopped, there is no `FILE`:
+
+- `FILE.partial` holds what it had checked. `--resume` picks up from there.
+- `FILE.previous` is the last finished report, from before that run. Rows in it may be out of date:
+  look at it, or rename it back, knowing that. `--resume` uses its rows only for files with the
+  same size and modification time.
+
+A run that fails before it starts writing (a bad path, for example) leaves `FILE` as it was. A
+run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming a descriptor
+(`/dev/stdout`, `/dev/stderr`, `/dev/fd/N`, even if it is redirected to a regular file) or a named
+pipe, the rows are written as they are made, after whatever is there, and only the exit status
+says whether the run finished; `--resume` has nothing to read there.
 
 Examples:
 
@@ -649,9 +710,12 @@ goes to the journal: `journalctl -u sacdfs`.
   empty directory to avoid it.
 - **`Illegal instruction` at start:** the x86-64-v3 build on a CPU without AVX2. Use the
   generic build; it converts with AVX2 where the CPU has it anyway.
-- **A directory or disc is missing:** files that are not SACD images, and folders with no
-  `*.iso` file below them, are left out; a damaged image may be too. `-v` logs why. Images
-  added after mounting appear without a remount.
+- **A directory or disc is missing:** files that are not SACD images (a DVD-Video or
+  Blu-ray `.iso`, say), and folders with no SACD image below them, sidecars included, are left
+  out; a damaged image may be too. `-v` logs why. Images added after mounting appear without a
+  remount. A file that is not an SACD image yet (a download still filling a file made at full
+  size, or a copy in progress) appears within about 2 seconds of the write that makes it one
+  (the refresh interval; 2.0 s measured through a real mount, #175).
 - **A track is missing:** a track the disc cannot play (empty, or running past the end of the
   image) is left out; `-v` logs the reason.
 - **`--pcm-cutoff wide needs --pcm-rate 176400 or 352800`:** 88.2 kHz cannot hold the wide

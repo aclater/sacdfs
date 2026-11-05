@@ -2,14 +2,24 @@
 
 //! The report of `sacdfs verify`: one tab-separated row per file, with a header row.
 //!
-//! Fields are escaped so that any path fits on one line: `\\`, `\t`, `\n`, `\r`, and
-//! `\xNN` for bytes of a path that are not UTF-8. Rows are written as they are made, so
-//! an interrupted run leaves the rows it finished (which `--resume` keeps); at the end, the
-//! report is rewritten sorted by path.
+//! Fields are escaped so that any path fits on one line: `\\`, `\\t`, `\\n`, `\\r`, and
+//! `\\xNN` for bytes of a path that are not UTF-8.
+//!
+//! **A report under its own name is a finished run's.** Rows are written as they are made to
+//! `FILE.partial`, so an interrupted run leaves the rows it finished (which `--resume` keeps)
+//! under a name that says so. Once a run has its first rows there, an earlier `FILE` moves to
+//! `FILE.previous`: not gone, since a run may fail and that report took long to make, and not
+//! to be taken for this run's. Only a run that checked every file puts `FILE` back, sorted by
+//! path, and removes the other two. *Why:* `sacdfs verify` is what tells a user that extracts
+//! can be deleted (#196).
+//!
+//! A report to a descriptor (`/dev/stdout`, `/dev/fd/N`, whatever it is redirected to) or to
+//! something else that isn't a regular file (a named pipe) is a stream: nothing can be renamed
+//! there, and only the exit status tells whether it finished.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufWriter, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
@@ -133,7 +143,8 @@ impl Row {
         self
     }
 
-    fn line(&self) -> String {
+    /// The row's line in a report, without its line end.
+    pub fn line(&self) -> String {
         let opt = |v: Option<String>| v.unwrap_or_default();
         let fields = [
             self.status.as_str().to_owned(),
@@ -152,7 +163,8 @@ impl Row {
         fields.join("\t")
     }
 
-    fn parse(line: &str) -> Option<Row> {
+    /// The row of a report's line; `None` if it is not one.
+    pub fn parse(line: &str) -> Option<Row> {
         let f: Vec<&str> = line.split('\t').collect();
         if f.len() != COLUMNS.len() {
             return None;
@@ -244,7 +256,7 @@ pub fn unescape(s: &str) -> Vec<u8> {
     out
 }
 
-/// The rows of an earlier report, by path. Lines that don't parse are skipped.
+/// The rows of the report at `path`, by path. Lines that don't parse are skipped.
 pub fn read(path: &Path) -> io::Result<HashMap<PathBuf, Row>> {
     let f = File::open(path)?;
     let mut out = HashMap::new();
@@ -255,6 +267,81 @@ pub fn read(path: &Path) -> io::Result<HashMap<PathBuf, Row>> {
         }
     }
     Ok(out)
+}
+
+/// `path` with `suffix` after its file name.
+fn beside(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.file_name().map(OsString::from).unwrap_or_default();
+    name.push(suffix);
+    path.with_file_name(name)
+}
+
+/// Where a run writes the report it will finish at `path`.
+pub fn partial_path(path: &Path) -> PathBuf {
+    beside(path, ".partial")
+}
+
+/// Where a run keeps the finished report it found at `path`, until it finishes.
+pub fn previous_path(path: &Path) -> PathBuf {
+    beside(path, ".previous")
+}
+
+/// The open descriptor of this process that `path` names (`/dev/stdout`, `/dev/stderr`,
+/// `/dev/fd/N`, `/proc/self/fd/N`, or a link to one), whatever it is open on: the links are
+/// followed one at a time, as following them all ends at a redirected-to file.
+fn descriptor(path: &Path) -> Option<u32> {
+    let fds = Path::new("/proc").join(std::process::id().to_string()).join("fd");
+    let mut p = path.to_owned();
+    for _ in 0..8 {
+        let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_owned();
+        if fs::canonicalize(&parent).is_ok_and(|d| d == fds) {
+            return p.file_name()?.to_str()?.parse().ok();
+        }
+        p = parent.join(fs::read_link(&p).ok()?);
+    }
+    None
+}
+
+/// Whether a report to `path` is written straight there: it is a descriptor, or exists and is
+/// no regular file.
+fn is_stream(path: &Path) -> bool {
+    descriptor(path).is_some() || fs::metadata(path).is_ok_and(|m| !m.is_file())
+}
+
+/// Opens a report that [`is_stream`]. Standard output and error are written through themselves,
+/// so that a file behind them keeps one position and what else goes there overwrites nothing.
+/// Anything else is opened anew, and adds to what it holds.
+fn open_stream(path: &Path) -> io::Result<Box<dyn Write + Send>> {
+    Ok(match descriptor(path) {
+        Some(1) => Box::new(io::stdout()),
+        Some(2) => Box::new(io::stderr()),
+        _ => Box::new(OpenOptions::new().append(true).open(path)?),
+    })
+}
+
+/// What `--resume` starts from, each over the one before: a finished report that a stopped run
+/// moved aside, a finished report, a stopped run's rows. A row is used only if its file's size
+/// and modification time are unchanged, so an older one does no harm.
+pub fn read_earlier(path: &Path) -> io::Result<HashMap<PathBuf, Row>> {
+    let mut out = HashMap::new();
+    if is_stream(path) {
+        return Ok(out);
+    }
+    for p in [previous_path(path), path.to_owned(), partial_path(path)] {
+        if p.exists() {
+            out.extend(read(&p)?);
+        }
+    }
+    Ok(out)
+}
+
+/// Removes a file a finished report makes useless. The report is done by then, so failing
+/// here is only worth a word.
+fn remove_leftover(path: &Path) {
+    match fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => log::warn!("{}: {e}", path.display()),
+        _ => {}
+    }
 }
 
 /// Where the report goes.
@@ -270,15 +357,31 @@ impl std::fmt::Debug for Writer {
 }
 
 impl Writer {
-    /// A report to `path`, or to standard output; starts with the header row.
-    pub fn create(path: Option<&Path>) -> io::Result<Writer> {
-        let out: Box<dyn Write + Send> = match path {
-            Some(p) => Box::new(BufWriter::new(File::create(p)?)),
-            None => Box::new(io::stdout()),
+    /// A report to `path`, or to standard output: the header row and `kept`, the rows kept
+    /// from an earlier report. A regular file is written as [`partial_path`], and the report
+    /// that was at `path` moves to [`previous_path`] once those rows are safe.
+    pub fn create(path: Option<&Path>, kept: &[Row]) -> io::Result<Writer> {
+        let (out, finished): (Box<dyn Write + Send>, _) = match path {
+            Some(p) if is_stream(p) => (open_stream(p)?, None),
+            Some(p) => (Box::new(BufWriter::new(File::create(partial_path(p))?)), Some(p)),
+            None => (Box::new(io::stdout()), None),
         };
-        let mut w = Writer { path: path.map(Path::to_owned), out };
+        let mut w = Writer { path: finished.map(Path::to_owned), out };
         writeln!(w.out, "{}", COLUMNS.join("\t"))?;
+        for r in kept {
+            writeln!(w.out, "{}", r.line())?;
+        }
         w.out.flush()?;
+        if let Some(p) = finished.filter(|p| p.exists()) {
+            let previous = previous_path(p);
+            fs::rename(p, &previous)?;
+            log::warn!(
+                "{}: the earlier report is now {}, until this run finishes; this run's rows so far are in {}",
+                p.display(),
+                previous.display(),
+                partial_path(p).display()
+            );
+        }
         Ok(w)
     }
 
@@ -288,13 +391,12 @@ impl Writer {
         self.out.flush()
     }
 
-    /// Finishes the report: a file is rewritten with `rows`, sorted, replacing it at once.
+    /// Finishes the report, every file checked: a file gets its own name, with `rows`, sorted,
+    /// at once, and what stood in for it goes.
     pub fn finish(mut self, rows: &[Row]) -> io::Result<()> {
         self.out.flush()?;
         let Some(path) = self.path else { return Ok(()) };
-        let mut name = path.file_name().map(OsString::from).unwrap_or_default();
-        name.push(".tmp");
-        let tmp = path.with_file_name(name);
+        let tmp = beside(&path, ".tmp");
         {
             let mut w = BufWriter::new(File::create(&tmp)?);
             writeln!(w, "{}", COLUMNS.join("\t"))?;
@@ -303,13 +405,79 @@ impl Writer {
             }
             w.flush()?;
         }
-        fs::rename(&tmp, &path)
+        fs::rename(&tmp, &path)?;
+        remove_leftover(&partial_path(&path));
+        remove_leftover(&previous_path(&path));
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_report_has_its_name_only_when_finished() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.tsv");
+        let (partial, previous) = (partial_path(&path), previous_path(&path));
+        assert_eq!(partial, dir.path().join("r.tsv.partial"));
+        assert_eq!(previous, dir.path().join("r.tsv.previous"));
+        let row = |p: &str, st| Row::new(p.into(), 1, "1.5".into()).with(st, String::new());
+        let (a, b) = (row("/a", Status::Identical), row("/b", Status::Different));
+
+        // A finished report.
+        Writer::create(Some(&path), &[]).unwrap().finish(std::slice::from_ref(&a)).unwrap();
+        assert!(path.exists() && !partial.exists() && !previous.exists());
+        let finished = fs::read(&path).unwrap();
+
+        // A run that stops: its rows are partial, and the finished report is kept aside.
+        let mut w = Writer::create(Some(&path), &[]).unwrap();
+        w.row(&b).unwrap();
+        drop(w);
+        assert!(!path.exists(), "an unfinished run's report under the report's name");
+        assert_eq!(fs::read(&previous).unwrap(), finished);
+        assert_eq!(read(&partial).unwrap().len(), 1);
+        assert_eq!(read_earlier(&path).unwrap().len(), 2, "resuming sees both");
+
+        // Another that stops: there is no report to move, and the one aside stays.
+        drop(Writer::create(Some(&path), &[]).unwrap());
+        assert_eq!(fs::read(&previous).unwrap(), finished);
+        assert_eq!(read(&partial).unwrap().len(), 0);
+
+        // One that finishes leaves its report alone.
+        Writer::create(Some(&path), &[]).unwrap().finish(&[a.clone(), b.clone()]).unwrap();
+        assert!(path.exists() && !partial.exists() && !previous.exists());
+        assert_eq!(read_earlier(&path).unwrap().len(), 2);
+
+        // A later source wins: finished report under a stopped run's rows.
+        fs::write(&partial, format!("{}\n", row("/a", Status::Error).line())).unwrap();
+        let earlier = read_earlier(&path).unwrap();
+        assert_eq!(earlier[Path::new("/a")].status, Status::Error);
+        assert_eq!(earlier[Path::new("/b")].status, Status::Different);
+    }
+
+    #[test]
+    fn a_report_to_a_stream_is_written_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR).unwrap();
+        assert!(read_earlier(&fifo).unwrap().is_empty(), "reading it would block");
+        let reader = {
+            let fifo = fifo.clone();
+            std::thread::spawn(move || fs::read_to_string(fifo).unwrap())
+        };
+        let row = Row::new("/a".into(), 1, "1.5".into()).with(Status::Identical, String::new());
+        let mut w = Writer::create(Some(&fifo), &[]).unwrap();
+        w.row(&row).unwrap();
+        w.finish(std::slice::from_ref(&row)).unwrap();
+        let text = reader.join().unwrap();
+        assert_eq!(text.lines().count(), 2);
+        assert!(text.contains("/a"));
+        let names: Vec<_> = fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["pipe"], "nothing beside it, and it is still the pipe");
+        assert!(is_stream(&fifo));
+    }
 
     #[test]
     fn rows_round_trip() {

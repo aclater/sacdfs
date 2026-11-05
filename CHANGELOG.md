@@ -6,8 +6,122 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1-rc.1] - 2026-11-05
+
+### Upgrade notes
+
+- **Discs without text change once; other discs don't.** Files of a disc that lacks a title, album
+  or artist get new tags, a new size, a modification time one step (7 hours) later and a new NFS
+  generation; those with no title also get a new name. The output version moves for those files
+  only, as with a tags file, so `DSF_VERSION` and `WAV_VERSION` stay. All other files keep their
+  bytes, time and generation.
+- **What scanners see.** The time of every folder with a disc below it moves one step once, because
+  knowing which discs lack text takes reading each image's table of contents, which the mount
+  doesn't do. So a scanner that skips unchanged folders (Roon) should walk those folders once, and
+  any scanner that compares sizes and times should re-read only the changed files. Checked by
+  comparing every file's and folder's size and time over the mount with 0.4.0's, on a library of
+  4,890 tracks: 259 files changed, each with every folder above it moved. Untested with Roon, Plex,
+  Navidrome, LMS or MPD themselves. A renamed track should look to a scanner like a removal and an
+  addition, so its play counts and edits in the player may not carry over (also untested).
+- **A tags file that sets a title** changes the tag and not the file name, as before: such a track
+  is named `NN - Track NN`.
+- `sacdfs verify` and `sacdfs tags import` don't count text from the path as the disc's, so they
+  still report and keep an extract's album or title that happens to match its folder's name.
+- **`sacdfs tags import` now exits 2 when some extracts weren't imported (#198).** It exited 0 even
+  with ERROR rows or `failed:` lines, so a script could not tell. It now follows `sacdfs verify`: 0
+  when every extract was handled, 2 when any didn't match or couldn't be read, with the rows
+  still written and the count in the summary, and 1 when it couldn't run. A script that ran it
+  over extracts that don't all match, and took any non-zero status as a failure, now sees one.
+
+### Added
+
+- **Names for discs without text, with no network** (#185, phase 1; the lookups are later
+  phases). A track without a title is now tagged `Track NN` and named `NN - Track NN.dsf`, where
+  0.4.0 served `NN.dsf` with an empty title. A disc without album or artist text takes them from
+  its image's path, by a narrow rule, since a wrong artist is worse than none: `Artist - YYYY -
+  Album [...]` in the image's or its folder's name, or a `YYYY - Album [...]` folder with an image
+  name that agrees; otherwise the album is the image's file name and there is no artist (the table
+  is in docs/user-guide.md, "Tagging behaviour"). A tags file wins over all of it. Audio is
+  unchanged.
+- **MPD finds folder art** (#148). When an image's art has no file named `cover.*`, one of the
+  images (`folder.*`, then `front.*`, then the first by name) is also listed as `cover.jpg`
+  (`cover.png`, `cover.webp`) inside each `Stereo` and `Multichannel` folder, as the same file
+  (the same inode), after the tracks. MPD 0.24.15 found art in 6 of 6 areas with a cover, against
+  1 of 6 with the 0.4.0 release on the same discs. It follows `--sidecars`; no audio file changes.
+- Fuzz targets for sacdfs's own parsers and paths (#161): tags files, sidecar lists and paths,
+  names, the ID3, DSF and WAV writers, the tree, and the `verify` readers, in `fuzz/` (see
+  fuzz/README.md). A CI job runs each for about 60 s on every pull request and 20 minutes every
+  week. It is not a required check.
+
+### Fixed
+
+- **`sacdfs verify` could exit 0 with files not checked (#196).** A panic while checking a file
+  ended that worker silently, so the report and summary left the file out, and with one thread
+  every file after it too. The exit status said that all was identical. A panic now gives that file
+  an ERROR row, which `--resume` checks again, and the exit status is 2. `sacdfs tags import` runs
+  the same check, so it no longer skips such a file without a row in its report.
+
+  **Upgrade note.** On 0.4.0 and earlier, don't delete extracts on the exit status alone (tested
+  on the 0.4.0 release). List them by their IDENTICAL rows, as the user guide does, and check that
+  the report has one row per file.
+- **A stopped `verify` no longer leaves a report that looks finished (#196).** Rows go to
+  `FILE.partial`, and `FILE` appears only when every file has been checked. A report already at
+  `FILE` moves to `FILE.previous` once a run starts writing, and is removed when it finishes.
+  `--resume` reads all three. Anything that reads `FILE` during a run should read `FILE.partial`.
+  `-o` naming a descriptor (`/dev/stdout`, `/dev/stderr`, `/dev/fd/N`, even redirected to a
+  regular file) or a named pipe now works as a stream, where only the exit status tells whether
+  the run finished. On 0.4.0 `-o /dev/stdout` and the like wrote the rows, then always exited 1
+  when the report could not be rewritten beside them, and `>>` lost what the file held; the rows
+  are now added to it (#202).
+- **Folders with no SACD image are hidden, art included** (#175). A folder whose only `.iso`
+  files were DVD-Video or Blu-ray images showed on the share holding just its `Artwork/` folder,
+  and its parents showed too; a box set mixing an SACD with DVD discs showed the DVD disc
+  folders. The mount's walk now reads the 8 signature bytes of each `.iso` and leaves out
+  files that are not SACD images. On a real library (414 `.iso` files, 20 of them not SACDs)
+  the share lost 649 entries, 4 top-level folders among them, and not one DSF file. A file
+  that is not an SACD image yet (a download filling a file made at full size) comes back within
+  the 2-second refresh once the TOC is written; a rescan reads no image it has looked at
+  before unless its size or time changed. The mount's walk reads the top-level folders on
+  16 threads, so the whole-library mount took 0.65 to 0.72 s against 3.6 to 3.8 s on 0.4.0
+  (NFS cache warm; cold not measured).
+- Found by those fuzz targets; none of these changes a served file (#161):
+  - `sacdfs verify` and `sacdfs tags import` no longer panic on an ID3v2.3 tag whose extended
+    header claims 4 GiB, and `sacdfs verify` no longer panics on a DFF file whose sound chunk
+    claims 2^61 bytes or more: these are read as damaged files.
+  - A repeated name with an extension of 243 bytes or more now gives `name (2)`, cut to fit,
+    without keeping the extension apart. In the library such a name could pass the 255 bytes the
+    kernel accepts. No such name was found to be reachable in a mount, where colliding names are
+    shorter: they gave a usable name before as well.
+  - A `verify` report's `loses` column is written the same after `--resume` when frame keys hold
+    `,` or `|`.
+
+### Changed
+
+- **scarletbook and scarletbook-pcm 0.5.7 → 0.5.8** (#206). The release fixes the saved seek
+  index loader (`AreaIndex::from_bytes` now refuses a form the library never writes, so saved
+  indexes keep loading) and reports no speed change. Output bytes are unchanged: the DSF and PCM
+  golden tests and the corpus tests pass, and every DSF and WAV file served from the 136-image
+  corpus and from the five bench discs hashes the same as with 0.4.0. Saved seek indexes: a
+  mount of 4 890 DSF files over 394 images with a real cache of 399 files loaded all 32 454 saved
+  hints on both 0.5.7 and 0.5.8, and discarded none. Straight reads through the mount, 0.4.0 →
+  this branch (medians of 11, alternating, 2026-11-05): DST stereo DSF 8.75 → 8.72 s, DST
+  6-channel DSF 28.28 → 28.30 s, plain-DSD DSF 2.83 → 2.55 s (runs overlap), DST stereo WAV
+  9.40 → 9.43 s, mount and first listing of the corpus 0.087 → 0.091 s.
+- `scripts/soak.py` judges threads by the median and end level of each half, with a hard
+  ceiling (`--thread-spike`), instead of the maximum of each half. A single sample taken during
+  an induced stall no longer fails a run, and accumulating threads still do (#179).
+
+### Continuous integration
+
+- Pull requests that touch the code run an informational benchmark: base and head read DST stereo,
+  DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
+  summary and as a warning. Not a required check (#162).
+
 ### Documentation
 
+- The TrueNAS SCALE guide is re-validated with the published 0.4.0 image, and notes the harmless
+  `parse_dfs_path_strict ... is not ours` Samba lines, that `NFS_CLIENTS` takes one address, and
+  that TrueNAS's "SMB share" app storage has no port field (#176).
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
   `rust:1.99.1` container with no other packages, it installs a working `sacdfs` (#155).
 
@@ -469,7 +583,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.1...HEAD
+[0.4.1-rc.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1-rc.1
 [0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0

@@ -46,7 +46,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.5.7, from crates.io (`=0.5.7`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.5.8, from crates.io (`=0.5.8`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -58,7 +58,10 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   removes the known plain-DSD WAV slowdown for free, and every gate passed; *trade-off:* none
   measured (no read got slower). 0.5.7 (#155) came from crates.io, pinned exactly: *why:* the
   registry is the only source a published crate may use and cargo's checksum pins the bytes; the
-  tag is no longer needed; bytes unchanged, gated as above.
+  tag is no longer needed; bytes unchanged, gated as above. 0.5.8 (#206): a seek-index
+  fix (`AreaIndex::from_bytes` refuses a form of saved index the library never writes) and no
+  speed change; *why:* the pin follows the newest release that passes the gates; bytes unchanged,
+  gated as above.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -213,14 +216,30 @@ MOUNT/
   are made when the area directory is first looked into. *Why:* mounting a library costs a
   walk of its names, whatever its size, and a seek right after a listing finds the image
   open.
-- A file that is not an SACD image (no master TOC), or that fails to open, is left out; a
-  directory whose `*.iso` files all turn out not to be SACD images shows up empty.
+- A file that is not an SACD image is left out, and so is a folder with none below it, sidecars
+  included (#175). The mount's walk of names reads 8 bytes of each `*.iso` (the master TOC
+  signature, where each sector format puts it) to tell; the image is opened (its TOCs read)
+  only when its folder is first listed. *Why at the walk:* the parents of a folder are listed
+  before it, so they can only leave it out if the walk knows. *Alternative:* open each image
+  when its parent is listed, which would read its TOCs in every parent listing; one small read
+  per image is far less. *Parallel walk:* the source's top-level folders are read on 16 scoped threads (joined before
+  the fork into the background, which needs one thread), so the probes of a network share
+  overlap; the result is sorted by name as before. *Rescans:* the folder's non-SACD images, and those of the subfolders
+  left out for holding no SACD, are on its watch list (`SourceDir::rejected`) with their
+  modification times, so a file written into place (which changes the file, not its folder)
+  brings the folder back at the next refresh. The answer for each image is kept while its size
+  and time are the same, so a rescan reads nothing of an image it has looked at: only a `stat`
+  of each rejected image. Nothing is stored across mounts: the persistent seek index holds
+  only discs that opened. An image that cannot be read at the walk counts as an SACD, so that
+  opening it later reports why. An image that has the signature but fails to open is left out
+  as before; its folder shows up with its sidecars only.
 - An image directory whose name collides with a source subdirectory gets ` (2)`. A track
   that fails scarletbook's `check_track` (empty, too many channels, or past the area's
   capacity) is left out. Names are cut to fit 255 bytes.
 - `Stereo` and `Multichannel` appear only for areas the disc has.
 - File names come from the track text (title), with `/`, NUL and control characters
-  replaced; a track without a title is `NN.dsf`. Duplicates get ` (2)`, ` (3)`.
+  replaced; a track without a title is `NN - Track NN.dsf` ([#185](#discs-without-text-185)).
+  Duplicates get ` (2)`, ` (3)`.
 - **DSF and WAV files side by side** in the same folder (owner decision, #11): `--format dsf`,
   `wav` or `dsf,wav` (the default) selects which appear. *Why:* one mount and one tree, no
   duplicate folders to browse or configure; players and taggers handle two files with the
@@ -264,15 +283,16 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   in memory), when the parent directory is listed. No image is opened for it, so mounting
   costs the same with and without the option, and listing a folder of collapsed albums opens
   nothing: the collapsed folder (`DirKind::Flat`) opens its image when it is first looked
-  into, exactly when the image's own folder would have been. The price: an `*.iso` that
-  turns out not to be an SACD image still counts as the chain's image, so its collapsed
-  folder shows up empty, as a folder of such files does without the option.
+  into, exactly when the image's own folder would have been. A file that has no SACD master TOC
+  signature is not an image to the walk (#175), so it does not make a chain; one that has the
+  signature but fails to open still counts as the chain's image, and its collapsed folder shows
+  up with its sidecars only.
 - *Why these rules* (#13): always flattening would change paths for existing users;
   collapsing the top level too would drop the album name of a single-album artist; naming
   folders from the TOC's text is a separate option if ever wanted, since disc titles are
-  often less descriptive than the owner's folder names. Deciding from the TOCs (for
-  example, not counting files that are not SACD images) would mean opening every image at
-  mount, which is the cost the lazy tree exists to avoid.
+  often less descriptive than the owner's folder names. Deciding from the TOCs
+  would mean opening every image at mount, which is the cost the lazy tree exists to avoid; the
+  walk reads only the signature of each (#175).
 
 ### Sidecar files (#79, #75)
 
@@ -382,6 +402,15 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   list:* `Art` holds the image sidecars of the image's folder (with `--flatten`, of the chain,
   as the collapsed folder shows them); images in one folder share it. `nlink` stays 1 (the
   kernel does not need it, and a changing count would need an invalidation).
+  *MPD's name (#148):* MPD's `albumart` finds a cover only in a file named `cover.<ext>`, so
+  when the art holds no `cover.*` (any case), the area listing adds one more name for the first
+  of it (`folder.*`, then `front.*`, then by name) as `cover.<ext>`, with the extension in
+  lower case and `jpeg` as `jpg`: the same node again, not a copy, and only in the areas
+  (the album folder is the source's). *Why only when there is no `cover.*`:* the owner's own
+  cover wins, and a library that already names its covers sees no change. *Alternative:*
+  name the art `cover.*` in the source, which a library of thousands cannot be asked to do.
+  *Trade-off:* a `Cover.PNG` (other case) counts as a cover and gets no alias, so if MPD matches
+  names by case (not tested), it finds no art for it; the file can be renamed.
 - **Re-reading changed folders (#101).** A tree made `watching` (the mount, when SOURCE is a
   directory) re-reads a folder of SOURCE when it is listed or looked up and the folder's
   modification time differs from the one noted at its last reading (`Listing::watch`,
@@ -480,7 +509,9 @@ toggling it does not move mtimes. A tags file's album name wins and gets no suff
 of its image's sector count and mtime, its format, size and an output version per format, and
 for WAV the full PCM flavour; never 0. A handle to a file whose bytes may have changed then
 fails with `ESTALE` instead of serving other audio. The output versions (`DSF_VERSION`,
-`WAV_VERSION`) are bumped by any change that makes the same track's bytes differ.
+`WAV_VERSION`) are bumped by any change that makes the same track's bytes differ, unless
+the change reaches only some tracks and tells which, as a tags file (#81) and text filled in
+for a disc without it ([#185](#discs-without-text-185)) do.
 Directories have generation 0: they are containers found by name, and a handle to one whose
 content changed should still work (a missing area or file is then not found).
 *Why not the image's file size:* the sector count is the image's size in sectors, already in
@@ -533,7 +564,9 @@ A directory shows the newest mtime of what is shown below it (#123), see
 A directory's mtime is the newest of its source directory's own mtime and the mtimes of
 everything shown below it, at any depth: source directories, sidecar files and folders, and
 each image's track files (its image's mtime moved by the largest offset of the formats shown,
-`ident::newest_offset`). An image's own folder and its area folders show their image's files
+`ident::newest_offset`, which counts the extra version of a file with filled-in text whether
+the image has such files or not, [#185](#discs-without-text-185)). With an image below, the
+other times count one step later too (`ident::FILLED_STEP`), for the same reason. An image's own folder and its area folders show their image's files
 and their folder art. Up to the mount root, then, every directory moves when anything below it
 moves: an output-version bump, new tags (which come with one), a new, removed or changed
 sidecar or image.
@@ -1666,6 +1699,62 @@ MusicBrainz IDs on 26.
   through a rename. *Why reuse verify:* the owner asked for verify's matching, and it is the
   proof the extract may be deleted.
 
+### Discs without text (#185)
+
+Some real discs have little or no text in their TOC, so 0.4.0 served `01.wav` with an empty title
+and no album name, and players filed them under "Various Artists". Phase 1 of #185 fills the gaps
+with no network and no stored state; the lookups of its later phases write tags files instead.
+
+- **Titles.** A track without a title gets the title `Track NN` and the file name
+  `NN - Track NN.dsf`. Titles stay per area: a stereo area's title does not fill a multichannel
+  track, since nothing says the two areas hold the same tracks in the same order.
+- **Album and artist from the path.** `fallback.rs` holds the rule. *Owner decision (the phase
+  split was delegated):* this part is always on and never uses the network. *Why so narrow:* a
+  wrong artist is worse than a blank one, because a player then files the disc under someone else.
+  So only a shape that can't be read another way counts (`Artist - YYYY - Album [...]` in the
+  image's or the folder's name), or two names that agree (a `YYYY - Album [...]` folder, with an
+  image name that starts with the folder above it, or reads `Artist - Album` with the same album).
+  The folder above alone is not enough: it may be a genre or a format. Otherwise the album is the
+  image's file name and the artist stays blank.
+  *Why the second shape, beyond the issue's pattern:* the 21 areas with blank titles in the 0.4.0
+  library survey are all laid out `Artist/YYYY - Album [...]/`, and their folders don't match the
+  issue's pattern. *Alternatives:* any folder above as the artist (wrong on `SACD/2001 - Album/`);
+  splitting `Artist - Album` image names without other evidence (wrong on `Album - Disc 1`);
+  reading the year as a date tag (a folder's year may be a reissue's). *Trade-off:* a
+  disc in `Artist/YYYY - Album/disc.iso` gets an album and no artist; a folder with several
+  images gives them all one album name, as a set's discs share theirs.
+- **Who wins.** The disc's own text, then a tags file over all of it, an empty value included:
+  the fill-in is made before the overrides are applied (`dsf::tagged`). An album from the path
+  takes the multichannel suffix (#97) as the disc's own does. The artist is set, as both TPE1 and
+  TPE2, only if the disc has no artist text at all, so that a disc naming some performers isn't
+  split by a guess on the others.
+- **File names stay the disc's.** A tags file changes tags, not names, as before (#81): a track
+  given a title there keeps the name `NN - Track NN`. *Why:* a name that follows the tags file
+  would move a file when a tag is edited, and players would see a removal and an addition.
+- **Path safety.** What comes from the path goes only into tags, never into a path of the mount;
+  a name that isn't valid UTF-8 or holds control characters gives nothing to the patterns, and
+  the plain name goes through `names::sanitize`.
+- **Times, and why not the output-version rule as written.** *Choice:* a file with filled-in text
+  counts as one output version past its format's (`ident::file_version`), which moves its mtime
+  by one step and changes its generation; other files keep theirs, byte for byte. Folders move one
+  step if they have an image below (`ident::newest_offset`, `ident::FILLED_STEP`), and that includes
+a folder newer than its images, whose own time would otherwise hide the move; folders with only
+sidecars below stay. *Why:* as with tags files, only those files'
+  bytes change, and a bump of `DSF_VERSION`/`WAV_VERSION` would make every scanner re-read, and a
+  player like Plex or Roon possibly re-analyse, every file of a large library for a few tracks. *Why
+  all folders:* whether a disc has text takes its TOC, and the mount reads no TOC, only a small probe of each
+  image (#175); a
+  scanner that prunes unchanged folders (#123) would never reach the disc otherwise. *Measured:* before the folders newer than their images moved too, 24 of 259 changed files on the
+  0.4.0 survey library had a folder above them that kept its time. *Trade-off:* a
+  pruning scanner walks all its folders once after the upgrade, and a folder can show a time up to
+  one step (7 hours) newer than anything below it, or ahead of the clock just after a change. Files keep their inode numbers, so a rename
+  is only a new name for the same number. `golden_dsf_corpus` hashes paths and header sizes, so
+  its value moved without a version bump, this once; the audio was compared with 0.4.0's on the
+  pull request.
+- **`verify` and `tags import`** compare an extract with the tag without the fill-in
+  (`TrackFile::stored_frames`). *Why:* text that happens to match the folder's name is still lost
+  if the extract goes and the folder is later renamed, so `verify` reports it and `import` keeps it.
+
 ## Verifying extracts (`sacdfs verify`, #80)
 
 The owner's aim for sacdfs is reclaiming storage (#82): people delete the DSF and DFF files
@@ -1760,14 +1849,29 @@ the owner's NAS already used.
   work stealing) check files at once, with an engine of N DST decoder threads and a small
   frame cache (64 MiB). Each reader holds a few MiB; a tag over 16 MiB is not read (reported
   as `unread`). The images of every folder needed are opened up front, on one thread.
-- **Resumable at no cost.** Rows are written and flushed as they are made, so an interrupted
-  run leaves what it finished; `--resume` keeps rows whose file has the same size and
-  modification time (except ERROR rows) and checks the rest. At the end the report is
-  rewritten sorted, replacing the file at once. *Trade-off:* a resumed row isn't re-checked
-  if only the image changed; deleting the report starts afresh.
+- **Resumable at no cost.** Rows are written and flushed as they are made, to `FILE.partial`,
+  so an interrupted run leaves what it finished; `--resume` keeps rows whose file has the same
+  size and modification time (except ERROR rows) and checks the rest. At the end the report is
+  written sorted to `FILE`, at once. *Trade-off:* a resumed row isn't re-checked if only the
+  image changed; deleting the report starts afresh.
+- **A partial result never looks whole (#196).** `verify` is what a user trusts before deleting
+  extracts, and a panic in a worker used to end that worker unnoticed: exit status 0, and the
+  file (with one thread, every later file) left out of the report. Now a panic is that file's
+  ERROR row, and a run with fewer rows than files fails. `FILE` exists only after a finished
+  run, since a report with rows missing looks like a report of fewer files. *Alternatives:* a
+  last line saying "complete" in `FILE` (every reader of the TSV would have to check it, and the
+  ones that don't are the problem); stopping the whole run at a panic (one bug would hide the
+  other files' results). An earlier report is not deleted when a run starts, since a run that fails
+  should not cost a report that can take half an hour, nor may it be
+  mistaken for the new one: it moves to `FILE.previous` once the run has its first rows, and goes
+  when the run finishes. *Alternative:* keeping `FILE` in place until the end, which was rejected
+  because a stopped run would leave an old report under the name of the new one. *Trade-off:* a
+  tool that watches `FILE` during a run finds nothing until the end, and a stopped run leaves
+  two more files beside it.
 - **Hostile input.** Extracts are untrusted like images: every size in a DSF or DFF header is
   checked against the file's length before use, chunk walks are bounded, and the readers are
-  fuzzed in the unit tests by truncating and corrupting every header byte. The DSF and DFF
+  fuzzed in the unit tests by truncating and corrupting every header byte, and by the fuzz
+  targets `verify_container` and `verify_id3` (#161). The DSF and DFF
   readers are container parsing written here from the published format descriptions; no SACD
   parsing or DST code is involved on the extract side.
 
@@ -1775,7 +1879,17 @@ the owner's NAS already used.
 
 - **Unit tests:** DSF header and tag layout, offset-to-frame mapping (including the padded
   last block and every channel count 1 to 6), name sanitising; proptest of the offset
-  mapping. Fuzzing the image layer is scarletbook's job.
+  mapping. Fuzzing the image layer's parsers is scarletbook's job.
+- **Fuzzing (#161).** `fuzz/` has cargo-fuzz targets for what sacdfs adds on top of the
+  library: tags files, sidecar paths, names, the tag and header writers, the tree, and the
+  `verify` readers; fuzz/README.md lists them. They check more than "no panic": a name the
+  kernel accepts, a tag with its true size, nothing read from outside SOURCE. *Why in CI as a
+  job of its own, not required:* a fuzzer's result depends on the run, and a new crash in old
+  code shouldn't block an unrelated pull request. *Why a crate of its own:* cargo-fuzz needs a
+  nightly toolchain, which stays away from sacdfs's build and locked dependencies.
+  *Alternative:* longer runs on every pull request, rejected by the CI speed rule.
+  *Trade-off:* 60 s per target finds only the easy bugs, so a weekly run goes on for 20 minutes
+  per target from the corpus the last one left.
 - **The corpus.** Integration tests run against the synthetic CC0 conformance corpus of
   [sacd-spec](https://github.com/aclater/sacd-spec) (copied into `tests/corpus/` with its
   licence). `tests/corpus.rs` reads every case through the tree and readers without

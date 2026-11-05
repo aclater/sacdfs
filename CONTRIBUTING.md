@@ -145,8 +145,10 @@ crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:
   grow memory without bound; `clippy::unwrap_used`, `expect_used` and `panic` are warnings,
   and CI treats warnings as errors.
 - **Tests.** New behaviour comes with a test. Test images are synthetic: the corpus in
-  `tests/corpus/` (CC0), never audio from a real disc.
+  `tests/corpus/` (CC0), never audio from a real disc. A new parser of anything from outside
+  gets a fuzz target or joins one ([fuzz/README.md](fuzz/README.md)), and a crash a fuzzer finds
+  becomes a test in `tests/fuzz_regressions.rs`.
 - **Commits.** Small commits with a message that says why. Set your git identity in every clone before committing *or merging*: a merge made without one takes the machine's default, which can leak a private host name. CI's "no private names" check (`scripts/check-private-names.sh`) fails on private details in commit identities and tracked files. Actions in workflows are pinned
   by full commit SHA with a version comment.
 
-- **CI speed.** A pull request's checks finish in about 4 min, and a new push cancels the superseded run (`concurrency`; main runs are never cancelled). Rust jobs restore a cargo cache that only main writes (`Swatinem/rust-cache`, `save-if`). Every required check runs on every pull request: none is path-filtered, because a skipped required check stays pending and blocks the merge. Keep new jobs short, and put slow, rarely-failing ones on main, tags or a schedule.
+- **CI speed.** A pull request's checks finish in about 4 min, and a new push cancels the superseded run (`concurrency`; main runs are never cancelled). Rust jobs restore a cargo cache that only main writes (`Swatinem/rust-cache`, `save-if`). Every required check runs on every pull request: none is path-filtered, because a skipped required check stays pending and blocks the merge. Keep new jobs short, and put slow, rarely-failing ones on main, tags or a schedule. The informational `benchmark` job (about 2 min, [docs/performance.md](docs/performance.md#the-ci-benchmark)) is path-filtered, because it is never required.

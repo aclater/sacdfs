@@ -33,13 +33,13 @@ use std::fs;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use rayon::prelude::*;
-use scarletbook::Slot;
 use scarletbook::audio::check_track;
+use scarletbook::{MASTER_TOC_LSN, SectorFormat, Slot};
 
 use crate::disc::{Disc, Tuning};
 use crate::ident::{self, Ids};
@@ -101,8 +101,14 @@ pub const MULTICHANNEL: &str = "Multichannel";
 /// remembers the names of such a directory (#101).
 pub const REFRESH: Duration = Duration::from_secs(2);
 
+/// Threads that read the top-level directories of the source at mount (#175).
+const SCAN_THREADS: usize = 16;
+
 /// Most nested source directories followed.
 const MAX_DEPTH: usize = 64;
+
+/// A file and its modification time when looked at.
+pub type Watched = (PathBuf, Option<SystemTime>);
 
 /// A directory of the source tree that holds images, directly or below.
 #[derive(Debug, Clone)]
@@ -116,6 +122,10 @@ pub struct SourceDir {
     /// Sidecar files and folders directly in it, sorted by name (none unless scanned with
     /// [`SourceDir::scan_with`]).
     pub sidecars: Vec<Sidecar>,
+    /// `.iso` files in it, and in the subdirectories left out for holding no image, that are
+    /// not SACD images, with their modification times when looked at (#175): watched, so
+    /// that one written into place later brings its folder back.
+    pub rejected: Option<Arc<Vec<Watched>>>,
     /// The modification times found in it and below when it was read (#123). Boxed: a
     /// directory node stays small.
     pub stamp: Box<Stamp>,
@@ -173,6 +183,7 @@ impl SourceDir {
                 dirs: Vec::new(),
                 images: vec![source.to_owned()],
                 sidecars: Vec::new(),
+                rejected: None,
                 stamp: Box::default(),
             });
         }
@@ -182,8 +193,42 @@ impl SourceDir {
             dirs: Vec::new(),
             images: Vec::new(),
             sidecars: Vec::new(),
+            rejected: None,
             stamp: Box::new(Stamp { own: mtime_of(source), other: mtime_of(source), image: None }),
         }))
+    }
+
+    /// [`SourceDir::scan_dir`] of each of `dirs` (name, path, whether a sidecar folder), in
+    /// order; on up to [`SCAN_THREADS`] scoped threads if `parallel`.
+    fn scan_subdirs(
+        dirs: &[(OsString, PathBuf, bool)],
+        depth: usize,
+        scan: &Scan<'_>,
+        parallel: bool,
+    ) -> Vec<io::Result<Option<SourceDir>>> {
+        let one =
+            |(_, path, folder): &(OsString, PathBuf, bool)| Self::scan_dir(path, depth, scan, *folder, None);
+        if !parallel || dirs.len() < 2 {
+            return dirs.iter().map(one).collect();
+        }
+        let next = AtomicUsize::new(0);
+        let slots: Vec<Mutex<Option<io::Result<Option<SourceDir>>>>> =
+            dirs.iter().map(|_| Mutex::new(None)).collect();
+        std::thread::scope(|s| {
+            for _ in 0..SCAN_THREADS.min(dirs.len()) {
+                s.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(d) = dirs.get(i) else { break };
+                        *slots[i].lock().unwrap_or_else(|p| p.into_inner()) = Some(one(d));
+                    }
+                });
+            }
+        });
+        slots
+            .into_iter()
+            .map(|m| m.into_inner().unwrap_or_else(|p| p.into_inner()).unwrap_or(Ok(None)))
+            .collect()
     }
 
     /// Scans `dir`; `everything` inside a sidecar folder, whose every file and folder is a
@@ -198,6 +243,8 @@ impl SourceDir {
         let mut dirs = Vec::new();
         let mut images = Vec::new();
         let mut sidecars = Vec::new();
+        let mut rejected: Vec<Watched> = Vec::new();
+        let mut todo = Vec::new();
         let own = mtime_of(dir);
         let mut stamp = Stamp { own, other: own, image: None };
         let note = !scan.sidecars.is_empty() && !scan.exclude.is_some_and(|m| dir.starts_with(m));
@@ -230,20 +277,15 @@ impl SourceDir {
                     }
                 }
                 let folder = note && !sidecar::hidden(&name) && (everything || scan.sidecars.folder(&name));
-                match Self::scan_dir(&path, depth + 1, scan, folder, None) {
-                    Ok(Some(sub)) if sub.holds_images() => {
-                        stamp.merge(&sub.stamp);
-                        dirs.push((name, sub));
-                    }
-                    Ok(Some(sub)) if folder => {
-                        stamp.other = stamp.other.max(sub.stamp.other);
-                        let kind = SidecarKind::Folder(sub.sidecars);
-                        sidecars.push(Sidecar { name, path, kind, mtime: sub.stamp.own });
-                    }
-                    Ok(_) => {}
-                    Err(err) => log::warn!("{}: {err}", path.display()),
-                }
+                todo.push((name, path, folder));
             } else if is_iso(&path) && (ft.is_file() || (ft.is_symlink() && path.is_file())) {
+                // An image that is not an SACD (a DVD-Video or Blu-ray image, say) is not
+                // a candidate: a folder with none is hidden (#175).
+                if !may_be_sacd(&path) {
+                    log::info!("{}: not an SACD image: not listed", path.display());
+                    rejected.push((path.clone(), mtime_of(&path)));
+                    continue;
+                }
                 stamp.image = stamp.image.max(mtime_of(&path));
                 images.push(path);
             } else if note
@@ -257,10 +299,43 @@ impl SourceDir {
                 sidecars.push(Sidecar { name, path, kind, mtime });
             }
         }
-        if dirs.is_empty() && images.is_empty() && sidecars.is_empty() {
+        // The subdirectories left to read: those of the source's top level in parallel, each
+        // image of them being a read of a network share that waits (#175). Scoped threads, not
+        // rayon: the mount scans before it forks into the background, which needs a process
+        // with one thread, and these are all joined before this returns.
+        let found = Self::scan_subdirs(&todo, depth + 1, scan, depth == 0);
+        for ((name, path, folder), result) in todo.into_iter().zip(found) {
+            match result {
+                Ok(Some(sub)) if sub.holds_images() => {
+                    stamp.merge(&sub.stamp);
+                    dirs.push((name, sub));
+                }
+                Ok(Some(sub)) if folder => {
+                    stamp.other = stamp.other.max(sub.stamp.other);
+                    rejected.extend(sub.rejected.iter().flat_map(|r| r.iter().cloned()));
+                    let kind = SidecarKind::Folder(sub.sidecars);
+                    sidecars.push(Sidecar { name, path, kind, mtime: sub.stamp.own });
+                }
+                // Left out, but its non-SACD images are watched (#175).
+                Ok(Some(sub)) => rejected.extend(sub.rejected.iter().flat_map(|r| r.iter().cloned())),
+                Ok(None) => {}
+                Err(err) => log::warn!("{}: {err}", path.display()),
+            }
+        }
+        // Added after the known ones and the files: sorted by name again.
+        sidecars.sort_by(|a, b| a.name.cmp(&b.name));
+        dirs.sort_by(|a, b| a.0.cmp(&b.0));
+        if dirs.is_empty() && images.is_empty() && sidecars.is_empty() && rejected.is_empty() {
             return Ok(None);
         }
-        Ok(Some(SourceDir { path: dir.to_owned(), dirs, images, sidecars, stamp: Box::new(stamp) }))
+        Ok(Some(SourceDir {
+            path: dir.to_owned(),
+            dirs,
+            images,
+            sidecars,
+            rejected: (!rejected.is_empty()).then(|| Arc::new(rejected)),
+            stamp: Box::new(stamp),
+        }))
     }
 
     /// This directory read again (#101): its images and sidecar files as they are now; the
@@ -273,6 +348,7 @@ impl SourceDir {
             dirs: Vec::new(),
             images: Vec::new(),
             sidecars: Vec::new(),
+            rejected: None,
             stamp: Box::new(Stamp { own: mtime_of(&self.path), other: mtime_of(&self.path), image: None }),
         });
         out.path.clone_from(&self.path);
@@ -284,6 +360,8 @@ impl SourceDir {
     /// gains one changes nothing in this directory).
     fn watch(&self, exclude: Option<&Path>) -> Vec<(PathBuf, Option<SystemTime>)> {
         let mut out = vec![(self.path.clone(), mtime_of(&self.path))];
+        // A non-SACD image written into place changes it, not its directory (#175).
+        out.extend(self.rejected.iter().flat_map(|r| r.iter().cloned()));
         let Ok(rd) = fs::read_dir(&self.path) else { return out };
         for e in rd.filter_map(Result::ok) {
             let path = e.path();
@@ -329,6 +407,15 @@ impl SourceDir {
         out
     }
 
+    /// The rejected images of a collapsed chain ([`SourceDir::chain_dirs`]).
+    fn chain_rejected(&self) -> Vec<Watched> {
+        let mut out: Vec<Watched> = self.rejected.iter().flat_map(|r| r.iter().cloned()).collect();
+        if let ([(_, sub)], []) = (self.dirs.as_slice(), self.images.as_slice()) {
+            out.extend(sub.chain_rejected());
+        }
+        out
+    }
+
     /// Whether it holds an image, directly or below.
     fn holds_images(&self) -> bool {
         !self.dirs.is_empty() || !self.images.is_empty()
@@ -365,6 +452,66 @@ impl SourceDir {
 /// The modification time of `path` (a link's target's), if it can be read.
 fn mtime_of(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// What a look at each image found (SACD or not), with its size and time then: a rescan of
+/// its folder reads nothing of it until one changes (#175). Without it every periodic rescan
+/// would read each image again and keep a sleeping disk awake. One small entry per image
+/// seen; a removed image's stays until the process ends.
+/// Size, time and answer of the look at each image path.
+type Looks = HashMap<PathBuf, (u64, Option<SystemTime>, bool)>;
+
+static LOOKED_AT: Mutex<Option<Looks>> = Mutex::new(None);
+
+#[cfg(test)]
+thread_local! {
+    /// Images read by [`may_be_sacd`] on this thread.
+    static PROBES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the image at `path` can be an SACD: it holds the master TOC signature where any
+/// sector format puts it (what opening the image checks first, with one small read per
+/// format tried). *Why here and not when the folder is listed:* the parents of a folder
+/// are listed before it, and must not show it if nothing below it is an SACD (#175). An image
+/// that cannot be read now counts as a candidate: opening it later reports why. An answer is kept
+/// while the image's size and time stay the same ([`LOOKED_AT`]).
+fn may_be_sacd(path: &Path) -> bool {
+    use std::os::unix::fs::FileExt;
+    let Ok(meta) = fs::metadata(path) else { return true };
+    let (len, mtime) = (meta.len(), meta.modified().ok());
+    let with_map = |f: &mut dyn FnMut(&mut Looks)| {
+        f(LOOKED_AT.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new));
+    };
+    let mut known = None;
+    with_map(&mut |m| known = m.get(path).copied());
+    if let Some((l, t, answer)) = known {
+        if (l, t) == (len, mtime) {
+            return answer;
+        }
+    }
+    #[cfg(test)]
+    PROBES.with(|c| c.set(c.get() + 1));
+    let Ok(file) = fs::File::open(path) else { return true };
+    let mut sig = [0u8; 8];
+    let mut answer = false;
+    for format in SectorFormat::DETECTION_ORDER {
+        let at = u64::from(MASTER_TOC_LSN) * format.stored_size() + format.data_offset();
+        if at + 8 > len {
+            continue;
+        }
+        match file.read_exact_at(&mut sig, at) {
+            Ok(()) if &sig == b"SACDMTOC" => {
+                answer = true;
+                break;
+            }
+            Ok(()) => {}
+            Err(_) => return true,
+        }
+    }
+    with_map(&mut |m| {
+        m.insert(path.to_owned(), (len, mtime, answer));
+    });
+    answer
 }
 
 fn is_iso(path: &Path) -> bool {
@@ -513,6 +660,29 @@ enum Snapshot {
     Dir(SourceDir),
     /// The content of a sidecar folder.
     Folder(Vec<Sidecar>),
+}
+
+/// The art file of `art` (listed, by `listed`) to show also as `cover.<ext>`, and that name,
+/// for the servers that look only for files so named (MPD, #148); `None` if the art has a
+/// `cover.*` already or no listed file. The choice is `folder.*`, then `front.*`, then the
+/// first by name; the extension is in lower case, `jpeg` as `jpg` (what MPD looks for).
+fn cover_alias(art: &[Sidecar], listed: impl Fn(&Sidecar) -> bool) -> Option<(&Sidecar, String)> {
+    let stem = |sc: &Sidecar| {
+        let n = sc.name.to_string_lossy().to_ascii_lowercase();
+        n.rsplit_once('.').map(|(s, e)| (s.to_owned(), e.to_owned()))
+    };
+    if art.iter().any(|sc| stem(sc).is_some_and(|(s, _)| s == "cover")) {
+        return None;
+    }
+    let rank = |sc: &Sidecar| match stem(sc).map(|(s, _)| s).as_deref() {
+        Some("folder") => 0,
+        Some("front") => 1,
+        _ => 2,
+    };
+    let pick = art.iter().filter(|sc| listed(sc)).min_by_key(|sc| rank(sc))?;
+    let (_, ext) = stem(pick)?;
+    let ext = if ext == "jpeg" { "jpg".to_owned() } else { ext };
+    Some((pick, format!("cover.{ext}")))
 }
 
 /// What a listing being made depends on.
@@ -1149,9 +1319,18 @@ impl Tree {
     /// The newest mtime shown below a directory whose content is `stamp` (#123): of its
     /// sidecars and source directories, and of its images' files, whose mtimes are their
     /// images' moved by the output version and PCM options ([`ident::newest_offset`]).
+    ///
+    /// With an image below, the sidecars' and source directories' times move one step too
+    /// ([`ident::FILLED_STEP`], #185). *Why:* a folder newer than its images' files would
+    /// otherwise keep its time when a file below it moves, and a scanner that prunes unchanged
+    /// folders would never reach that file.
     fn served(&self, stamp: &Stamp) -> SystemTime {
         let off = ident::newest_offset(self.output.dsf, self.output.wav, self.wav_mtime_offset);
-        stamp.other.max(stamp.image.map(|i| i + off)).unwrap_or(SystemTime::UNIX_EPOCH)
+        match stamp.image {
+            Some(i) => stamp.other.map(|o| o + ident::FILLED_STEP).max(Some(i + off)),
+            None => stamp.other,
+        }
+        .unwrap_or(SystemTime::UNIX_EPOCH)
     }
 
     /// Notes that `stamp` was found in source directory `path` (#123): it and each of its
@@ -1279,6 +1458,7 @@ impl Tree {
                 dirs: Vec::new(),
                 images: Vec::new(),
                 sidecars: Vec::new(),
+                rejected: None,
                 stamp: Box::default(),
             };
             for (p, (_, f)) in &st.dirs {
@@ -1291,6 +1471,7 @@ impl Tree {
                     dirs: Vec::new(),
                     images: Vec::new(),
                     sidecars: Vec::new(),
+                    rejected: None,
                     stamp: Box::default(),
                 };
                 if *f {
@@ -1520,6 +1701,7 @@ impl Tree {
                 };
                 if self.watching {
                     cx.watch = chain.chain_dirs().into_iter().map(|d| (d.clone(), mtime_of(&d))).collect();
+                    cx.watch.extend(chain.chain_rejected());
                 }
                 let sidecars = chain.chain_sidecars();
                 match prev {
@@ -1608,7 +1790,17 @@ impl Tree {
                 if let Some(art) = &dir.art {
                     let (items, version) = art.current(self);
                     cx.art_version = version;
+                    let first = out.len();
                     self.list_sidecars(&items, parent, &mut dedup, &mut out);
+                    // MPD looks only for `cover.*` (#148): when there is none, one of the
+                    // art files is also there under that name, as the same node.
+                    if let Some((sc, name)) = cover_alias(&items, |sc| {
+                        let ino = self.ids.sidecar(&sc.path);
+                        out[first..].iter().any(|e| e.ino == ino)
+                    }) {
+                        let ino = self.ids.sidecar(&sc.path);
+                        out.push(Entry { name: dedup.unique(OsStr::new(&name), true), ino, is_dir: false });
+                    }
                 }
             }
         }
@@ -1900,18 +2092,13 @@ mod tests {
 
     #[test]
     fn flattening_opens_no_image_until_looked_into() {
-        // Images that are not SACD images still count (decided from names); the collapsed
-        // folder shows up, empty, as a folder of such images does without the option.
-        let dir = tempfile::tempdir().unwrap();
-        for p in ["Artist/A/Rip/x.iso", "Artist/B/y.iso"] {
-            let path = dir.path().join(p);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, vec![0u8; 4096]).unwrap();
-        }
+        // The image is probed for the SACD signature (one small read) when the mount scans,
+        // but not opened (its TOCs parsed) until the folder is looked into.
+        let dir = source(&["Artist/A/Rip/x.iso", "Artist/B/y.iso"]);
         let t = tree(dir.path(), true);
         assert_eq!(names(&t, "Artist"), ["A", "B"]);
         assert_eq!(t.next_disc.load(Ordering::Relaxed), 1, "listing opened an image");
-        assert!(names(&t, "Artist/A").is_empty());
+        assert_eq!(names(&t, "Artist/A"), ["Stereo", "Multichannel"]);
         assert_eq!(t.next_disc.load(Ordering::Relaxed), 2);
     }
 
@@ -2124,6 +2311,114 @@ mod tests {
         "Artist/NoImages/cover.jpg",
     ];
 
+    /// Writes a file named `.iso` that is no SACD (a DVD-Video image, say), at `rel`.
+    fn other_iso(dir: &Path, rel: &str) {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Long enough for every sector format's signature position, holding no signature.
+        fs::write(&path, vec![0u8; 600 * 2064]).unwrap();
+    }
+
+    #[test]
+    fn folders_without_an_sacd_image_are_hidden_with_their_sidecars() {
+        // 175: a folder whose only image is not an SACD showed its art, and its parents showed.
+        let dir = source(&["Good/Album/x.iso", "Good/Album/cover.jpg", "Good/Album/Artwork/front.jpg"]);
+        other_iso(dir.path(), "Dvd/Album/movie.iso");
+        fs::write(dir.path().join("Dvd/Album/cover.jpg"), b"art").unwrap();
+        fs::create_dir_all(dir.path().join("Dvd/Album/Artwork")).unwrap();
+        fs::write(dir.path().join("Dvd/Album/Artwork/front.jpg"), b"art").unwrap();
+        for flatten in [false, true] {
+            let t = tree_sc(dir.path(), flatten);
+            assert_eq!(names(&t, ""), ["Good"], "flatten {flatten}");
+            assert!(t.resolve(Path::new("Dvd")).is_none());
+            assert!(names(&t, "Good/Album").contains(&"cover.jpg".to_owned()), "flatten {flatten}");
+        }
+    }
+
+    #[test]
+    fn a_box_set_drops_its_non_sacd_discs() {
+        let dir = source(&["Set/Disc 1/x.iso", "Set/cover.jpg"]);
+        other_iso(dir.path(), "Set/Disc 2/movie.iso");
+        other_iso(dir.path(), "Set/Disc 3/BDMV/disc.iso");
+        fs::write(dir.path().join("Set/Disc 2/cover.jpg"), b"art").unwrap();
+        let t = tree_sc(dir.path(), false);
+        let set = names(&t, "Set");
+        assert!(set.contains(&"Disc 1".to_owned()) && set.contains(&"cover.jpg".to_owned()), "{set:?}");
+        assert!(!set.iter().any(|n| n.starts_with("Disc 2") || n.starts_with("Disc 3")), "{set:?}");
+    }
+
+    #[test]
+    fn an_image_that_becomes_an_sacd_later_appears() {
+        use std::io::{Seek, SeekFrom, Write};
+        // 175: a folder hidden for its non-SACD image must come back when the image is
+        // written in place (a torrent filling a preallocated file, a copy in progress), which
+        // changes the file and not its directory. Both a file of full size with the TOC
+        // sector still zeros, and one still too short to hold it.
+        let dir = source(&["Artist/Other/y.iso"]);
+        other_iso(dir.path(), "Artist/Zeros/z.iso");
+        other_iso(dir.path(), "Artist/Deeper/Sub/w.iso");
+        fs::create_dir_all(dir.path().join("Artist/Short")).unwrap();
+        fs::write(dir.path().join("Artist/Short/s.iso"), b"partial").unwrap();
+        let t = watching(dir.path(), "default", false);
+        assert_eq!(names(&t, "Artist"), ["Other"]);
+        let later = std::time::SystemTime::now() + Duration::from_secs(10);
+        // The TOC sector arrives.
+        let mut f = fs::OpenOptions::new().write(true).open(dir.path().join("Artist/Zeros/z.iso")).unwrap();
+        f.seek(SeekFrom::Start(510 * 2048)).unwrap();
+        f.write_all(b"SACDMTOC").unwrap();
+        f.set_modified(later).unwrap();
+        // The short file grows to a whole image.
+        let full = fs::read(corpus_image()).unwrap();
+        let mut f = fs::OpenOptions::new().write(true).open(dir.path().join("Artist/Short/s.iso")).unwrap();
+        f.write_all(&full).unwrap();
+        f.set_modified(later).unwrap();
+        // One two levels below a hidden folder.
+        let mut f =
+            fs::OpenOptions::new().write(true).open(dir.path().join("Artist/Deeper/Sub/w.iso")).unwrap();
+        f.seek(SeekFrom::Start(510 * 2048)).unwrap();
+        f.write_all(b"SACDMTOC").unwrap();
+        f.set_modified(later).unwrap();
+        assert_eq!(names(&t, "Artist"), ["Deeper", "Other", "Short", "Zeros"]);
+        assert_eq!(names(&t, "Artist/Short/s"), ["Stereo", "Multichannel"]);
+        assert_eq!(names(&t, "Artist/Deeper"), ["Sub"]);
+    }
+
+    #[test]
+    fn a_rejected_image_is_probed_again_only_when_it_changes() {
+        // 175: a rescan reads nothing of an image it rejected, until its size or time moves.
+        let dir = source(&["Artist/Other/y.iso"]);
+        other_iso(dir.path(), "Artist/Zeros/z.iso");
+        let path = dir.path().join("Artist/Zeros/z.iso");
+        let before = PROBES.with(std::cell::Cell::get);
+        let t = watching(dir.path(), "default", false);
+        assert_eq!(names(&t, "Artist"), ["Other"]);
+        let scanned = PROBES.with(std::cell::Cell::get);
+        assert!(scanned > before);
+        // A change elsewhere in the folder makes the folder be read again.
+        let artist = dir.path().join("Artist");
+        fs::write(artist.join("Other/cover.jpg"), b"art").unwrap();
+        fs::File::open(artist.join("Other"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + Duration::from_secs(20))
+            .unwrap();
+        fs::File::open(&artist)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(names(&t, "Artist"), ["Other"]);
+        assert_eq!(names(&t, "Artist/Other"), ["y", "cover.jpg"]);
+        assert_eq!(PROBES.with(std::cell::Cell::get), scanned, "the rejected image was read again");
+        drop(path);
+    }
+
+    #[test]
+    fn a_non_sacd_image_beside_an_sacd_is_not_listed() {
+        let dir = source(&["Album/x.iso", "Album/cover.jpg"]);
+        other_iso(dir.path(), "Album/movie.iso");
+        let t = tree_sc(dir.path(), false);
+        assert_eq!(names(&t, "Album"), ["x", "cover.jpg"]);
+    }
+
     #[test]
     fn sidecars_are_listed_after_the_images() {
         let dir = source(ALBUM);
@@ -2208,12 +2503,11 @@ mod tests {
         // `..` of a sidecar folder in the collapsed directory is that directory.
         let scans = flat.resolve(Path::new("Artist/Album/Scans")).unwrap();
         assert_eq!(flat.parent_of(scans), flat.resolve(Path::new("Artist/Album")).unwrap());
-        // A collapsed image that is not an SACD image still shows its sidecars.
+        // A chain whose image is not an SACD image is hidden, sidecars included (#175).
         let bad = tempfile::tempdir().unwrap();
-        fs::create_dir_all(bad.path().join("Artist/Album/Rip")).unwrap();
-        fs::write(bad.path().join("Artist/Album/Rip/x.iso"), vec![0u8; 4096]).unwrap();
+        other_iso(bad.path(), "Artist/Album/Rip/x.iso");
         fs::write(bad.path().join("Artist/Album/folder.jpg"), b"art").unwrap();
-        assert_eq!(names(&tree_sc(bad.path(), true), "Artist/Album"), ["folder.jpg"]);
+        assert!(names(&tree_sc(bad.path(), true), "").is_empty());
     }
 
     #[test]
@@ -2302,7 +2596,7 @@ mod tests {
         assert_eq!(read_sidecar(&t, "Artist/Album/inside.jpg"), b"shared art");
         assert_eq!(read_sidecar(&t, "Artist/Album/absolute.jpg"), b"shared art");
         // Nothing in the mount point is a sidecar.
-        fs::write(root.join("mnt/x.iso"), b"").unwrap();
+        symlink(corpus_image(), root.join("mnt/x.iso")).unwrap();
         fs::write(root.join("mnt/folder.jpg"), b"").unwrap();
         let s = SourceDir::scan_with(&root, &Sidecars::standard(), Some(&root.join("mnt"))).unwrap();
         let mnt = &s.dirs.iter().find(|(n, _)| n == "mnt").unwrap().1;
@@ -2366,15 +2660,56 @@ mod tests {
         let dir = source(&["Artist/Album/Rip/x.iso", "Artist/Album/folder.jpg", "Artist/Album/Rip/back.png"]);
         let t = tree_sc(dir.path(), true);
         let stereo = names(&t, "Artist/Album/Stereo");
-        assert!(
-            stereo.ends_with(&["back.png".to_owned(), "folder.jpg".to_owned()])
-                || stereo.ends_with(&["folder.jpg".to_owned(), "back.png".to_owned()]),
-            "{stereo:?}"
-        );
+        let art = &stereo[stereo.len() - 3..stereo.len() - 1];
+        assert!(art == ["back.png", "folder.jpg"] || art == ["folder.jpg", "back.png"], "{stereo:?}");
         // Found again from the number alone, as after a restart.
         let ino = ino_of(&t, "Artist/Album/Stereo/folder.jpg");
         assert_eq!(ino, ino_of(&t, "Artist/Album/folder.jpg"));
         assert!(tree_sc(dir.path(), true).get(ino).is_some());
+        // With no `cover.*` among them, the first of the art is also `cover.jpg` (#148).
+        assert_eq!(stereo.last().map(String::as_str), Some("cover.jpg"), "{stereo:?}");
+        assert_eq!(ino_of(&t, "Artist/Album/Stereo/cover.jpg"), ino);
+    }
+
+    /// The names in `Stereo` that are not audio.
+    fn art_names(dir: &Path, sel: &str) -> Vec<String> {
+        let t = Tree::new(SourceDir::scan_with(dir, &Sidecars::parse(sel).unwrap(), None).unwrap());
+        names(&t, "Artist/Album/x/Stereo")
+            .into_iter()
+            .filter(|n| !n.ends_with(".dsf") && !n.ends_with(".wav"))
+            .collect()
+    }
+
+    #[test]
+    fn art_not_named_cover_is_also_cover_for_mpd() {
+        // 148: MPD finds folder art only in a file named `cover.*`.
+        let dir = source(&["Artist/Album/x.iso", "Artist/Album/front.png", "Artist/Album/folder.JPEG"]);
+        // `folder` is chosen before `front`; `jpeg` is shown as `jpg`; it is the same node.
+        assert_eq!(art_names(dir.path(), "default"), ["folder.JPEG", "front.png", "cover.jpg"]);
+        let t = tree_sc(dir.path(), false);
+        assert_eq!(ino_of(&t, "Artist/Album/x/Stereo/cover.jpg"), ino_of(&t, "Artist/Album/folder.JPEG"));
+        assert_eq!(read_sidecar(&t, "Artist/Album/x/Multichannel/cover.jpg"), b"Artist/Album/folder.JPEG");
+        // The folder itself is unchanged, and so are the audio files' numbers.
+        assert_eq!(names(&t, "Artist/Album"), ["x", "folder.JPEG", "front.png"]);
+        // Another name when only one kind is passed through, and no alias with no art.
+        assert_eq!(art_names(dir.path(), "default,-jpeg"), ["front.png", "cover.png"]);
+        assert!(art_names(dir.path(), "none").is_empty());
+        let plain = source(&["Artist/Album/x.iso", "Artist/Album/b.webp", "Artist/Album/a.jpg"]);
+        assert_eq!(art_names(plain.path(), "default"), ["a.jpg", "b.webp", "cover.jpg"]);
+    }
+
+    #[test]
+    fn art_already_named_cover_gets_no_alias() {
+        for existing in ["cover.jpg", "Cover.PNG", "cover.webp"] {
+            let dir = source(&[
+                "Artist/Album/x.iso",
+                "Artist/Album/folder.jpg",
+                &format!("Artist/Album/{existing}"),
+            ]);
+            let got = art_names(dir.path(), "default");
+            assert_eq!(got.len(), 2, "{existing}: {got:?}");
+            assert!(!got.iter().any(|n| n == "cover (2).jpg"), "{got:?}");
+        }
     }
 
     #[test]
@@ -2524,8 +2859,9 @@ mod tests {
 
     #[test]
     fn directory_mtimes_show_the_newest_below() {
-        // #123: every directory up to the root shows its newest track file's mtime (its
-        // image's moved by the output version), not its source directory's own.
+        // #123: every directory up to the root shows the newest mtime a track file of its
+        // images could have (its image's moved by the output version, and a step for a file
+        // with text its disc lacks, #185), not its source directory's own.
         let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
         for flatten in [false, true] {
             let dir = old_tree(old);
@@ -2543,12 +2879,28 @@ mod tests {
             }
             let file = t.children(ino(paths[paths.len() - 1])).unwrap();
             let newest_file = file.iter().map(|e| t.mtime(&t.get(e.ino).unwrap())).max().unwrap();
-            assert_eq!(newest_file, newest);
+            assert!(newest_file > old && newest_file <= newest);
             // DSF only: the DSF output version's offset.
             let dsf = Tree::with_tuning(SourceDir::scan(dir.path()).unwrap(), Tuning::default());
             assert_eq!(dsf.mtime(&dsf.get(ROOT).unwrap()), old + ident::newest_offset(true, false, 0));
             // Directories keep generation 0 and their numbers: only the time moves.
             assert_eq!(t.generation(&t.get(ROOT).unwrap()), 0);
+        }
+    }
+
+    /// #185: a folder newer than its images' files moves too, or a scanner that prunes unchanged
+    /// folders never reaches a file below it whose time moved.
+    #[test]
+    fn a_folder_newer_than_its_images_still_moves_one_step() {
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        let dir = old_tree(old);
+        let newer = old + Duration::from_secs(10_000_000);
+        let album = dir.path().join("Artist/Album");
+        fs::File::open(&album).unwrap().set_modified(newer).unwrap();
+        let t = watching(dir.path(), "default", false);
+        for p in ["", "Artist", "Artist/Album"] {
+            let shown = t.mtime(&t.get(t.resolve(Path::new(p)).unwrap()).unwrap());
+            assert_eq!(shown, newer + ident::FILLED_STEP, "{p:?}");
         }
     }
 
@@ -2569,7 +2921,9 @@ mod tests {
         let after = dir_mtimes(&t);
         // The source directories up to the root move; the image's own folders do not (the
         // playlist is not shown in them).
-        assert!(after[..3].iter().all(|m| *m == later), "{after:?}");
+        // One step on (#185), as for any folder with an image below.
+        let step = ident::FILLED_STEP;
+        assert!(after[..3].iter().all(|m| *m == later + step), "{after:?}");
         assert_eq!(after[3..], before[3..]);
         // A fresh mount shows the same times (#17: stable across remounts).
         let again = watching(dir.path(), "default", false);
@@ -2583,7 +2937,7 @@ mod tests {
         set_mtime(&album.join("back.png"), art);
         set_mtime(&album, later);
         t.children(t.resolve(Path::new("Artist/Album")).unwrap());
-        assert!(dir_mtimes(&t)[..3].iter().all(|m| *m == art));
+        assert!(dir_mtimes(&t)[..3].iter().all(|m| *m == art + step));
         // A new artist folder at the top with a new image.
         let second = dir.path().join("Second");
         fs::create_dir(&second).unwrap();

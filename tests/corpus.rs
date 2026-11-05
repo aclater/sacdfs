@@ -252,7 +252,10 @@ fn tags_carry_text() {
 /// path and bytes, in tree order, with the tags removed (their changes belong to the tag
 /// code; the audio and the headers are scarletbook's and ours). It catches a scarletbook
 /// update that changes DSF output without the real discs; a change needs a `DSF_VERSION`
-/// bump (src/ident.rs) and `GOLDEN_DSF_VERSION` with it.
+/// bump (src/ident.rs) and `GOLDEN_DSF_VERSION` with it. The one exception so far is #185: discs
+/// without text got new file names and a longer tag (so a new total size in the header), and
+/// only those files' versions moved (`ident::file_version`); their audio was checked identical
+/// to 0.4.0's in that pull request.
 #[test]
 fn golden_dsf_corpus() {
     use sha2::{Digest, Sha256};
@@ -282,4 +285,4 @@ fn golden_dsf_corpus() {
 
 /// The DSF output version (`sacdfs::ident::DSF_VERSION`) that [`GOLDEN_DSF`] was taken with.
 const GOLDEN_DSF_VERSION: u32 = 3;
-const GOLDEN_DSF: (usize, &str) = (457, "ad8dd50d1f81c966df7f472467311aba");
+const GOLDEN_DSF: (usize, &str) = (457, "38bd2d09ee31144ddc3abc2d81c1fee4");

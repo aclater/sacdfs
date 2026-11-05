@@ -74,7 +74,12 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   32 MiB of noise above their level at the end of the warm-up;
 - their least-squares trend over the second half is at most 4 MiB/h, or adds less than 4 MiB
   over that half (`--trend-floor-mb`), so that a short run's noise does not fail it;
-- threads and open files do not climb in the second half;
+- threads do not climb: the median and the end level (the last three samples) of the second
+  half are at most 4 above the first half's median, and no sample passes `--thread-spike`
+  (default 16) above it. The staller makes sacdfs spawn spare threads on purpose (#167, #168),
+  so one sample taken during a stall may be several threads high; that does not fail a run,
+  while threads that accumulate still do;
+- open files do not climb: the second half's maximum is at most 8 above the first half's;
 - the cache directory plateaus.
 
 The exit status is 0 on PASS and 1 on FAIL. `--help` lists the knobs.
@@ -123,6 +128,12 @@ code in the dependency graph. Rust's LeakSanitizer needs a nightly compiler
 (`-Zsanitizer=leak`). clang's runtime trick for C (`-shared-libasan` with `LD_PRELOAD`) does
 not instrument Rust code. memcheck needs neither and also follows the child `sacdfs`
 processes.
+
+## Fuzzing
+
+Not a leak tool, but it runs the same way: `fuzz/` holds cargo-fuzz targets for sacdfs's own
+parsers and paths (#161), for about 60 s each on every pull request and 20 minutes each every
+week. See [fuzz/README.md](../fuzz/README.md).
 
 ## Results
 

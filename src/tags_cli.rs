@@ -64,10 +64,14 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).try_init();
     let r = match cli.cmd {
         Cmd::Key { tags, images } => key(tags.as_deref(), &images),
-        Cmd::Import { tags, verify } => import(&tags, verify).map(|s| eprint!("{}", s.render())),
+        Cmd::Import { tags, verify } => import(&tags, verify).map(|s| {
+            eprint!("{}", s.render());
+            s.all_handled()
+        }),
     };
     match r {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::from(2),
         Err(e) => {
             eprintln!("sacdfs tags: {e}");
             ExitCode::FAILURE
@@ -75,7 +79,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     }
 }
 
-fn key(dir: Option<&Path>, images: &[PathBuf]) -> io::Result<()> {
+fn key(dir: Option<&Path>, images: &[PathBuf]) -> io::Result<bool> {
     for image in images {
         let disc = Disc::open(image, 0, Tuning::default())
             .map_err(|e| io::Error::other(format!("{}: {e}", image.display())))?;
@@ -89,7 +93,7 @@ fn key(dir: Option<&Path>, images: &[PathBuf]) -> io::Result<()> {
             None => println!("{key}\t{}", image.display()),
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// What an import did.
@@ -105,8 +109,14 @@ pub struct ImportSummary {
     pub keys: usize,
     /// Pictures written.
     pub pictures: usize,
-    /// Discs whose tags file could not be read or written, and why.
+    /// Discs whose tags file could not be read or written, and matched extracts whose tag could
+    /// not be read, and why.
     pub failed: Vec<String>,
+    /// Extracts verify did not match or could not check (any status that keeps verify from
+    /// exiting 0): nothing was read from them. Their reasons are in `report`.
+    pub not_imported: usize,
+    /// Where verify's report is.
+    pub report: Option<PathBuf>,
     /// Frame keys that were lost but cannot be kept (binary frames).
     pub skipped: BTreeSet<String>,
 }
@@ -125,7 +135,20 @@ impl ImportSummary {
         for f in &self.failed {
             s.push_str(&format!("failed: {f}\n"));
         }
+        if self.not_imported > 0 {
+            let report = self.report.as_deref().map_or(String::new(), |p| format!("; see {}", p.display()));
+            s.push_str(&format!(
+                "not imported: {} extracts that verify did not match or could not check{report}\n",
+                self.not_imported
+            ));
+        }
         s
+    }
+
+    /// Whether every extract was handled, which is exit status 0: the same rule as `sacdfs
+    /// verify`'s, plus what the import itself could not do (#198).
+    pub fn all_handled(&self) -> bool {
+        self.failed.is_empty() && self.not_imported == 0
     }
 }
 
@@ -148,7 +171,15 @@ pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
             by_image.entry(image.clone()).or_default().push(r);
         }
     }
-    let mut sum = ImportSummary::default();
+    let mut sum = ImportSummary {
+        not_imported: report
+            .rows
+            .iter()
+            .filter(|r| !r.status.is_match() && r.status != verify::Status::NotComparable)
+            .count(),
+        report: args.output.clone(),
+        ..ImportSummary::default()
+    };
     for (image, rows) in by_image {
         if let Err(e) = import_disc(&dir, &image, &rows, &mut sum) {
             sum.failed.push(format!("{}: {e}", image.display()));
@@ -168,9 +199,18 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         let Some(i) = disc.toc().areas.iter().position(|a| a.slot == slot) else { continue };
         let area = &disc.toc().areas[i];
         let Some(track) = area.tracks.iter().find(|t| t.number == number) else { continue };
-        // Compared with the file as sacdfs serves it without a tags file.
-        let served = TrackFile::new(disc.clone(), i, track).map(|f| id3::frames(f.tag())).unwrap_or_default();
-        let Some(tag) = extract_tag(&row.path) else { continue };
+        // Compared with the file as sacdfs serves it without a tags file, and without what
+        // comes from the image's path: that is no copy of the extract's tag (#185).
+        let served = TrackFile::new(disc.clone(), i, track).map(|f| f.stored_frames()).unwrap_or_default();
+        let tag = match extract_tag(&row.path) {
+            Ok(Some(tag)) => tag,
+            // No tag: nothing to keep.
+            Ok(None) => continue,
+            Err(e) => {
+                sum.failed.push(format!("{}: {e}", row.path.display()));
+                continue;
+            }
+        };
         sum.files += 1;
         let frames = id3::frames(&tag);
         let fields = areas[usize::from(slot == Slot::Multichannel)].entry(number).or_default();
@@ -324,10 +364,12 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// The ID3 tag of an extract, read only.
-fn extract_tag(path: &Path) -> Option<Vec<u8>> {
-    let mut src = container::FileSource::open(path).ok()?;
-    let audio = container::parse(&mut src).ok()?;
-    audio.read_id3(&mut src).ok().flatten()
+fn extract_tag(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    let mut src = container::FileSource::open(path).map_err(|e| format!("cannot open: {e}"))?;
+    let audio = container::parse(&mut src).map_err(|e| match e {
+        container::Problem::Unsupported(s) | container::Problem::Error(s) => s,
+    })?;
+    audio.read_id3(&mut src).map_err(|size| format!("a tag of {size} bytes is too large to read"))
 }
 
 /// The picture of an ID3v2.3 or v2.4 tag's `APIC` frame, the front cover (type 3) if there

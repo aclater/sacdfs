@@ -600,8 +600,37 @@ against its own "before", on the code of its day).
 | #128 | scarletbook and scarletbook-pcm 0.5.3 → 0.5.6 (run-time DST dispatch, faster plain-DSD demultiplexing and DSD-to-PCM; scarletbook-rs#216) | bytes unchanged; straight reads, 0.2.0 → this: plain-DSD WAV 2.63 → 2.14 s (0.1.1: 2.07 s; the 0.2.0 slowdown is gone), plain-DSD DSF 1.65 → 1.28 s, DST stereo WAV 3.83 → 3.80 s, DST stereo DSF 3.55 → 3.46 s, DST 6 ch. DSF 11.89 → 11.68 s (means of 3, alternating, under the benchmark lock, generic build, 2026-11-02) |
 | #88 | Seeking moved to scarletbook 0.5.2, the locator removed | cold seek 4.44 → 3.06 calls (DST 4.8–5.5 → 3.0–3.4), 137 → 132 KiB; warm 1.06 → 1.00 calls, 110 → 84 KiB; NFS first-touch DST cold seek median 41 → 30 ms; through the mount within ±12 % locally |
 | #155 | scarletbook and scarletbook-pcm 0.5.6 → 0.5.7, from crates.io (`=0.5.7`) | bytes unchanged; straight reads, 0.5.6 → 0.5.7: plain-DSD DSF 1.45 → 1.29 s, plain-DSD WAV 2.30 → 2.26 s, DST stereo DSF 4.93 → 4.65 s, DST 6 ch. DSF 13.33 → 13.13 s; import replay peak RSS 44 → 45 MiB (default 32 MiB cache). By version: 0.3.0 (256 MiB cache, [above](#cache-size-150)) 1.46 / 2.16 / 3.46 / 11.72 s and 134 MiB, 0.5.6 (main) and 0.5.7 as given; this run was on a busier machine than 0.3.0's (same-day main is 25-35 % slower on DST), so compare 0.5.6 with 0.5.7, not with 0.3.0 (means of 3, alternating, under the benchmark lock, generic build, 2026-11-02) |
+| #206 | scarletbook and scarletbook-pcm 0.5.7 → 0.5.8 (`=0.5.8`) | bytes unchanged (DSF and WAV hashes of the corpus and bench discs equal 0.4.0's); straight reads, 0.4.0 → this branch: DST stereo DSF 8.75 → 8.72 s, DST 6 ch. DSF 28.28 → 28.30 s, plain-DSD DSF 2.83 → 2.55 s (ranges overlap), DST stereo WAV 9.40 → 9.43 s; mount and first listing of the corpus 0.087 → 0.091 s (ranges overlap); no read more than 5 % slower. mars is slower than the machine of the rows above, so compare the two columns, not the seconds with older rows (medians of 11, alternating, under the benchmark lock, generic build, 2026-11-05) |
 | (#73) | One malloc arena; the frame cache reuses evicted frames' buffers within its cap | library-import replay, 60 images, peak memory at `--cache-mb` 256 / 16: 473 → 271 MiB, 125 → 58 MiB; after straight reads 965–1 066 → 327 MiB; 6-channel DST straight read DSF 11.11 → 11.55 s, WAV 13.52 → 13.98 s, plain DSD 1.69 → 1.59 s |
+| #192 | Names for discs without text (#185): a tag and name change only | whole library of 4,890 tracks, warm caches, 6 runs each against main: mount 1.36 → 0.68 s (within its noise), import-style scan 8.4 → 8.4 s, RSS 87 → 88 MiB (within noise) |
 | (#78) | No read-ahead within a file's first 1 MiB (a scanner's head read) | library-import pattern, 12 decoder threads, per 6-channel DST file: CPU 141–177 → 42–44 ms, wall 17.4–21.6 → 10.3–11.1 ms; stereo DST CPU 60–84 → 46–50 ms |
+
+## The CI benchmark
+
+A pull request that touches `src/`, `Cargo.toml` or `Cargo.lock` runs the `benchmark` job (#162).
+It is a coarse alarm, not a gate: shared runners are noisy, and the release timing table above,
+taken under the benchmark lock against the previous release, stays the real check. The job is not
+a required check, so it may be path-filtered, and it never fails over a slowdown.
+
+- **What it does:** it builds base (the pull request's target branch) and head in the same job. Each
+  workload reads the corpus's DSF files through a fresh mount, many times over, with only the reads
+  timed: `dst-stereo` and `dst-multichannel` (DST with every optional feature), and `plain-dsd`. Base and head
+  alternate, and the order swaps every round; 5 rounds give each build's median and their ratio.
+- **What you see:** a table in the job summary with the medians, their ranges and head / base. A
+  ratio over 1.10 is marked **SLOWER** and adds a warning to the pull request's checks. The
+  corpus discs are tiny, so reads are dominated by opening each track and the first frames.
+- **How to read it:** an unchanged build gave ratios of 0.92 to 1.03 over 5 runs. So treat a flag as a
+  reason to look, not as a measurement: re-run the job, then measure under the benchmark lock.
+
+To run it by hand, with two built binaries (needs `fusermount3`; under `benchlock` if others benchmark):
+
+```sh
+python3 -I scripts/bench_compare.py --base OLD_SACDFS --head NEW_SACDFS \
+    --measure "python3 -I scripts/bench_workload.py" dst-stereo dst-multichannel plain-dsd
+```
+
+`scripts/bench_compare.py` is the same file in pysacd, whose `benchmark` job has the same design
+with `pysacd-extract` on synthetic discs (pysacd's #123). Only `scripts/bench_workload.py` differs.
 
 ## Reproducing
 
