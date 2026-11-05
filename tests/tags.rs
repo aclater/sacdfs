@@ -347,6 +347,22 @@ fn import_exit_status() {
     assert_eq!(out.status.code(), Some(2), "{}", say(&out));
     assert!(say(&out).contains("failed: "), "{}", say(&out));
 
+    // A matched extract whose tag is too large to read: 2, with a `failed:` line naming it.
+    let n: u32 = 17 << 20;
+    let mut large = bytes[..audio_end].to_vec();
+    large.extend_from_slice(b"ID3\x04\0\0");
+    large.extend_from_slice(&[
+        (n >> 21) as u8 & 0x7F,
+        (n >> 14) as u8 & 0x7F,
+        (n >> 7) as u8 & 0x7F,
+        n as u8 & 0x7F,
+    ]);
+    large.resize(audio_end + 10 + n as usize, 0);
+    fs::write(lib.join("good.dsf"), &large).unwrap();
+    let out = import(&dir.path().join("t5"));
+    assert_eq!(out.status.code(), Some(2), "{}", say(&out));
+    assert!(say(&out).contains("failed: ") && say(&out).contains("too large"), "{}", say(&out));
+
     // It can't run: 1.
     let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
         .args(["tags", "import", "-q", "--tags"])
