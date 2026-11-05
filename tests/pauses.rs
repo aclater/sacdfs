@@ -43,7 +43,6 @@ fn files(lib: &Path, kept: bool, dsf: bool) -> Vec<(std::path::PathBuf, std::syn
 
 #[test]
 fn kept_tracks_are_the_toc_pause_plus_track_range() {
-    common::skip!("demo: a guard someone added");
     let dir = tempfile::tempdir().unwrap();
     let lib = library(dir.path());
     let plain = files(&lib, false, true);
