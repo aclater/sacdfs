@@ -580,6 +580,31 @@ container's own SMB and NFS servers.
   of a 6-channel DST file waited about 6 hours while sacdfs used no CPU. It was not reproduced
   in 6 more reads of the same area or in the player rounds.
 
+## 0.4.1-rc.1 against 0.4.0 (release test, 2026-11-05)
+
+The release binaries (generic build), each read through a fresh mount with `--no-index-cache` and
+the default cache (32 MiB), 11 alternating rounds (the order swaps every round), medians in
+seconds with the range in brackets; one warm-up pass of each read is not counted. The discs are
+three of the five test discs: plain DSD stereo (3.1 GiB of DSF), DST stereo (2.0 GiB) and DST
+6 channels (5.9 GiB). Under the benchmark lock. **The two machines are separate tables and are
+not comparable to each other.**
+
+**A Zen 5 desktop (32 threads, the reference machine), quiet** (no other job; no thermal-throttle
+counters exist on this CPU, so none are reported):
+
+| Read | 0.4.0 | 0.4.1-rc.1 | rc.1 / 0.4.0 |
+|---|---|---|---|
+| Plain DSD stereo, DSF | 1.10 s (0.85 to 1.20) | 1.13 s (0.85 to 1.22) | 1.027 |
+| Plain DSD stereo, WAV | 1.96 s (1.93 to 2.01) | 1.96 s (1.91 to 2.00) | 0.998 |
+| DST stereo, DSF | 4.07 s (4.04 to 4.12) | 4.04 s (4.02 to 4.06) | 0.994 |
+| DST stereo, WAV | 4.29 s (4.28 to 4.31) | 4.29 s (4.25 to 4.33) | 1.002 |
+| DST 6 ch., DSF | 11.43 s (11.37 to 11.48) | 11.43 s (11.37 to 11.53) | 1.000 |
+| DST 6 ch., WAV | 13.40 s (13.24 to 16.71) | 13.46 s (13.26 to 16.97) | 1.004 |
+
+CPU time per read is equal for both builds (for example DST 6 ch. DSF: 259 s each). No read is
+more than 3 % slower; the largest ratio, plain DSD DSF at 1.027, is inside the range of both
+builds.
+
 ## History
 
 What each improvement changed, one line each, with the pull request that measured it (each

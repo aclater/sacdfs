@@ -285,6 +285,28 @@ Tested. foobar2000 2.26.2 portable with foo_input_sacd 2.0.27, Windows 11 build 
 
 Partly tested. JRiver Media Center 36.0.38 trial (installs and runs without an account), Windows 11 build 26200, SMB 3.1.1, sacdfs 0.4.1-rc.1. Importing the share with default options found 186 audio files (7 albums, 5 artists) in 14 s (1,958 requests: 384 opens, 91 reads) with artist, album, title and track tags; artist art shows for 3 of 5 artists. A DSF starts playing (converted to PCM; the emulated sound card needed the output rate lowered from 352.8 kHz to 176.4 kHz). Not checked: seek, playing to the end, multichannel, and a quiet rescan.
 
+## FFmpeg, sox, mediainfo, ExifTool, mpv and VLC
+
+**Tested on 0.4.1-rc.1** (the release binary; Debian 13 packages in a container with the mount's
+parent bound `ro,rslave`): FFmpeg and ffprobe 7.1.5, sox 14.4.2, MediaInfo 25.04, ExifTool 13.25,
+mpv 0.40.0, VLC 3.x (`cvlc`, dummy interface). The test library was the 5 test images, with
+`--format dsf,wav --flatten`: 93 DSF and 93 WAV files; one track from each of the 7 areas was
+checked in both formats (14 files), against the duration in the DSF header.
+
+| Tool | DSF | WAV |
+|---|---|---|
+| ffprobe | Duration within 0.5 s of the header, title, artist, album and track tags, codec `dsd_lsbf_planar` | Same duration (within 0.6 s), tags present |
+| ffmpeg | Seek to 60 % and decode 5 s: no errors on all 7 | Same, 7 of 7 |
+| MediaInfo | Duration and tags, 7 of 7 | 7 of 7 |
+| mpv | Seek to 60 % and play 3 s: 7 of 7 | 7 of 7 |
+| sox | Not supported (`no handler for file extension dsf`) | `soxi` duration, tags and `trim` seek, 7 of 7 |
+| ExifTool | "Unknown file type": it has no DSF reader, and gives the same on a plain copy | Tags and duration, 7 of 7 |
+| VLC | This build cannot decode DSD (the same on a plain copy of a file) | Plays 3 s from 60 %: 7 of 7 |
+
+Nothing here is specific to sacdfs, except that every result is the same as for a plain copy of
+the file. Not checked: Windows and macOS builds of these tools, and 0.4.0 side by side (the
+results do not depend on the sacdfs version, since the bytes of the files are unchanged).
+
 ## Linux NFS and SMB mounts
 
 The container's share tests (SMB and NFS) pass on its published image, and sacdfs also runs

@@ -573,12 +573,28 @@ an NFS share of images on hard disks, these are the measured findings (#71,
 ## NFS and restarts
 
 NFS clients keep file handles across server restarts. sacdfs gives every file and
-directory the same inode number on every mount, and supports NFS export (#18). So after the
-container restarts (a NAS reboot, an update), NFS clients go on reading the files they had
-open, and their cached directories stay valid. SMB is path-based and reconnects by itself.
+directory the same inode number on every mount, and supports NFS export (#18). What a client
+sees after a restart depends on the NFS server:
 
-CI checks both: a client opens a file over SMB and over NFS (4.2), reads half of it, the
-container restarts, and the client reads the rest through the same open file.
+- **Docker, NFSv4.2: handles survive.** Tested on 0.4.0 and 0.4.1-rc.1 (the published images,
+  Docker 29 in a Fedora 44 VM, a Fedora 44 client, `docker restart`): the open file read on,
+  `stat` and `ls` of the same path worked, and the identity was unchanged. This is what the
+  container CI job checks too.
+- **Podman, NFSv4.2: a remount is needed.** Tested on 0.4.0 and 0.4.1-rc.1 (the published images,
+  rootful Podman in the same VM, two runs of each, `podman restart`): after the restart a file
+  held open reads on with `Stale file handle`, and so do `stat` of the same path and `ls` of its
+  directory. After the client unmounts and mounts again, the same path has the same inode,
+  modification time and size, so the identity is stable; only handles the client held from
+  before are refused. The cause was not investigated. After restarting a Podman container,
+  remount NFS on its clients (an automount for NFS was not tried).
+- **NFSv3:** the container's Ganesha serves NFSv4 only (`Protocols = 4` in its configuration),
+  so an NFSv3 client, which keeps nothing but handles, could not be tried against it.
+- **SMB** is path-based and reconnects by itself: after the restart the share answered again
+  and the automount mounted on first use (0.4.1-rc.1, Fedora 44 client).
+- **The kernel NFS server, NFSv3, on loopback (CI):** a client opens files, reads half of each,
+  sacdfs restarts (with the NFS server stopped around it), and the client reads the rest
+  through the same open file. This is CI's `nfs` workflow; it is the case the file-handle design
+  (stable inodes) is for, and it passes. It is not the container's Ganesha.
 
 An image whose file changed (size or modification time) gets new file handles, so a client
 holding an old one gets "stale file handle" instead of other data.
