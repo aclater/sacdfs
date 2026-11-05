@@ -15,8 +15,17 @@ All notable changes to sacdfs are recorded here. The format follows
   files that are not SACD images. On a real library (414 `.iso` files, 20 of them not SACDs)
   the share lost 649 entries, 4 top-level folders among them, and not one DSF file.
 
+### Changed
+
+- `scripts/soak.py` judges threads by the median and end level of each half, with a hard
+  ceiling (`--thread-spike`), instead of the maximum of each half. A single sample taken during
+  an induced stall no longer fails a run, and accumulating threads still do (#179).
+
 ### Documentation
 
+- The TrueNAS SCALE guide is re-validated with the published 0.4.0 image, and notes the harmless
+  `parse_dfs_path_strict ... is not ours` Samba lines, that `NFS_CLIENTS` takes one address, and
+  that TrueNAS's "SMB share" app storage has no port field (#176).
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
   `rust:1.99.1` container with no other packages, it installs a working `sacdfs` (#155).
 
