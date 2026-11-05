@@ -33,7 +33,8 @@ use crate::tags::{self, Fields, ITEMS, TagsFile};
 use crate::tags_cli::{self, AreaFields};
 
 pub use mb::{
-    Client, Error, Hit, Http, MbTrack, Medium, Release, Reply, Transport, parse_release, release_hits,
+    Client, Error, Hit, Http, MbTrack, Medium, Release, Reply, Transport, is_mbid, parse_release,
+    release_hits,
 };
 
 /// The key of a release's id.
