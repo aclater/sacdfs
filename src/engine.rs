@@ -870,12 +870,7 @@ impl Engine {
             if c.frame_bytes() != frame_bytes {
                 return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
             }
-            Ok(c.convert(
-                prev.map(|d| &d.data[..]),
-                &cur.data,
-                next.map(|d| &d.data[..]),
-                &mut data,
-            ))
+            Ok(c.convert(prev.map(|d| &d.data[..]), &cur.data, next.map(|d| &d.data[..]), &mut data))
         })?;
         Ok(Frame { data, fill: cur.fill, clips })
     }
