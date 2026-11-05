@@ -1774,11 +1774,25 @@ the owner's NAS already used.
   work stealing) check files at once, with an engine of N DST decoder threads and a small
   frame cache (64 MiB). Each reader holds a few MiB; a tag over 16 MiB is not read (reported
   as `unread`). The images of every folder needed are opened up front, on one thread.
-- **Resumable at no cost.** Rows are written and flushed as they are made, so an interrupted
-  run leaves what it finished; `--resume` keeps rows whose file has the same size and
-  modification time (except ERROR rows) and checks the rest. At the end the report is
-  rewritten sorted, replacing the file at once. *Trade-off:* a resumed row isn't re-checked
-  if only the image changed; deleting the report starts afresh.
+- **Resumable at no cost.** Rows are written and flushed as they are made, to `FILE.partial`,
+  so an interrupted run leaves what it finished; `--resume` keeps rows whose file has the same
+  size and modification time (except ERROR rows) and checks the rest. At the end the report is
+  written sorted to `FILE`, at once. *Trade-off:* a resumed row isn't re-checked if only the
+  image changed; deleting the report starts afresh.
+- **A partial result never looks whole (#196).** `verify` is what a user trusts before deleting
+  extracts, and a panic in a worker used to end that worker unnoticed: exit status 0, and the
+  file (with one thread, every later file) left out of the report. Now a panic is that file's
+  ERROR row, and a run with fewer rows than files fails. `FILE` exists only after a finished
+  run, since a report with rows missing looks like a report of fewer files. *Alternatives:* a
+  last line saying "complete" in `FILE` (every reader of the TSV would have to check it, and the
+  ones that don't are the problem); stopping the whole run at a panic (one bug would hide the
+  other files' results). An earlier report is not deleted when a run starts, since a run that fails
+  should not cost a report that can take half an hour, nor may it be
+  mistaken for the new one: it moves to `FILE.previous` once the run has its first rows, and goes
+  when the run finishes. *Alternative:* keeping `FILE` in place until the end, which was rejected
+  because a stopped run would leave an old report under the name of the new one. *Trade-off:* a
+  tool that watches `FILE` during a run finds nothing until the end, and a stopped run leaves
+  two more files beside it.
 - **Hostile input.** Extracts are untrusted like images: every size in a DSF or DFF header is
   checked against the file's length before use, chunk walks are bounded, and the readers are
   fuzzed in the unit tests by truncating and corrupting every header byte. The DSF and DFF
