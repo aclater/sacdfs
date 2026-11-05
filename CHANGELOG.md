@@ -6,6 +6,19 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Upgrade notes
+
+What a scanner may see after the move from 0.4.0 to 0.4.1, with counts from one library of 4,902
+tracks. These are what was seen, not a prediction for yours.
+
+- **Cover images are added inside the area folders**, so a scanner sees additions: 359 files on
+  that library.
+- **More folders may be hidden than you expect.** A folder tree with no audio is hidden: on that
+  library 11 folder trees (59 folders, about 590 images and text files) have no audio and no longer
+  show.
+- **A scanner's one-time cost can be large.** Plex re-read 18.25 GiB once, over 140 s, after the
+  upgrade; a no-change scan after that read nothing.
+
 ### Changed
 
 - **Reading DST through the mount is faster** (#210), measured with `cp -r` of an area on a fresh
