@@ -8,6 +8,7 @@ only stated where a test showed it, and a setting is only recommended where a te
 version named ran with it. "Untested", "partial" and "not validated" mean what they say. For
 the container, shares and mounting, see the [deployment guide](deployment.md); for the
 options, the [user guide](user-guide.md#options).
+What is run for each release, and what blocks one, is in the [test plan](test-plan.md).
 
 The test library was small except where noted: 5 images (plain DSD, DST, hybrid, DST
 stereo-only, raw), 93 tracks, so 186 files with `--format dsf,wav` (20 tracks of each format
