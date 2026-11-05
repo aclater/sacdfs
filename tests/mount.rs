@@ -985,6 +985,46 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
     m.stop("TERM");
 }
 
+/// A folder hidden for holding only a file that is not yet an SACD image (#175) shows up,
+/// through the kernel, once the image is written into place: the file changes, not its folder.
+/// Prints how long that took, for the user guide.
+#[test]
+fn an_image_written_into_place_appears_without_a_remount() {
+    if !fuse_available() {
+        return;
+    }
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let album = src.join("Artist/Incoming");
+    std::fs::create_dir_all(&album).unwrap();
+    let full = std::fs::read(corpus().join("images/dsd-stereo-mch-2048.iso")).unwrap();
+    // As a torrent client makes it: the whole size at once, nothing in it yet.
+    std::fs::write(album.join("disc.iso"), vec![0u8; full.len()]).unwrap();
+    std::fs::write(album.join("folder.jpg"), b"art").unwrap();
+    let ok = src.join("Artist/Ready");
+    std::fs::create_dir_all(&ok).unwrap();
+    std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), ok.join("d.iso")).unwrap();
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    let ls = |p: &str| -> Vec<String> {
+        std::fs::read_dir(mnt.join(p))
+            .map(|rd| rd.map(|e| e.unwrap().file_name().into_string().unwrap()).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(ls("Artist"), ["Ready"]);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(album.join("disc.iso"))
+        .unwrap()
+        .write_all_at(&full, 0)
+        .unwrap();
+    let start = Instant::now();
+    wait_for("the image to appear", || ls("Artist").iter().any(|n| n == "Incoming"));
+    eprintln!("image written into place appeared after {:?}", start.elapsed());
+    wait_for("its tracks", || ls("Artist/Incoming/disc/Stereo").iter().any(|n| n.ends_with(".dsf")));
+    m.stop("TERM");
+}
+
 #[test]
 fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
     // #123: a scanner that skips unchanged directories from the top (Roon) must see every
