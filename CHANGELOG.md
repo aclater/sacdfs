@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `scripts/soak.py` judges threads by the median and end level of each half, with a hard
+  ceiling (`--thread-spike`), instead of the maximum of each half. A single sample taken during
+  an induced stall no longer fails a run, and accumulating threads still do (#179).
+
 ### Documentation
 
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
