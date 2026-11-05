@@ -549,9 +549,10 @@ that stopped, there is no `FILE`:
   same size and modification time.
 
 A run that fails before it starts writing (a bad path, for example) leaves `FILE` as it was. A
-run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming something that
-isn't a regular file (`/dev/stdout`, a named pipe), the rows are written as they are made and
-only the exit status says whether the run finished; `--resume` has nothing to read there.
+run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming a descriptor
+(`/dev/stdout`, `/dev/stderr`, `/dev/fd/N`, even if it is redirected to a regular file) or a named
+pipe, the rows are written as they are made, after whatever is there, and only the exit status
+says whether the run finished; `--resume` has nothing to read there.
 
 Examples:
 
