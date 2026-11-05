@@ -506,6 +506,11 @@ impl FrameCache {
         self.lock().bytes
     }
 
+    /// The cache's cap in bytes.
+    pub fn cap(&self) -> usize {
+        self.cap
+    }
+
     /// Bytes the cache's pool has mapped for frames: at most the cap.
     pub fn mapped(&self) -> usize {
         self.pool.mapped()

@@ -23,8 +23,14 @@ pub const READ_AHEAD_PCM_BYTES: u64 = 8 << 20;
 /// Most frames converted ahead of a WAV reader: 8 s of audio.
 pub const READ_AHEAD_FRAMES_MAX: u32 = 600;
 
+/// Frames decoded ahead of a fast reader of a DSF file, per decoder thread (#210).
+pub const FAST_FRAMES_PER_THREAD: u32 = 32;
+
+/// Most frames decoded ahead of a fast reader of a DSF file.
+pub const FAST_FRAMES_MAX: u32 = 1200;
+
 /// A reader gets the long read-ahead window only after reading this much...
-const FAST_AFTER: u64 = 16 << 20;
+const FAST_AFTER: u64 = 4 << 20;
 
 /// ...at more than this many times the file's byte rate.
 const FAST_FACTOR: f64 = 4.0;
@@ -233,9 +239,23 @@ impl TrackFile {
     /// Frames read ahead of a fast sequential reader. For a WAV file, about 8 MiB of PCM: a
     /// longer window than DSF's keeps the pipeline of demultiplexing and conversion busy for
     /// a fast reader (`cp`) of a plain DSD area, where conversion is the only cost.
-    pub fn read_ahead_frames(&self) -> u32 {
+    ///
+    /// For a DSF file, [`FAST_FRAMES_PER_THREAD`] per decoder thread, at most
+    /// [`FAST_FRAMES_MAX`] and a quarter of the cache, at least [`READ_AHEAD_FRAMES`].
+    /// *Why (#210):* the decoder threads wait for the slowest frame at the end of every
+    /// batch, so that the wait's share of the time is about the threads over the window.
+    /// *Why a quarter of the cache:* frames evicted before they are read are decoded again,
+    /// and four readers at once are a documented scenario.
+    pub fn read_ahead_frames(&self, threads: usize, cache_bytes: usize) -> u32 {
         match self.audio {
-            Audio::Dsf(_) => READ_AHEAD_FRAMES,
+            Audio::Dsf(l) => {
+                let frame = (dsf::FRAME_BYTES * u64::from(l.channels)).max(1);
+                let by_threads = (threads as u64).saturating_mul(u64::from(FAST_FRAMES_PER_THREAD));
+                by_threads
+                    .min(u64::from(FAST_FRAMES_MAX))
+                    .min(cache_bytes as u64 / 4 / frame)
+                    .max(u64::from(READ_AHEAD_FRAMES)) as u32
+            }
             Audio::Wav(l) => (READ_AHEAD_PCM_BYTES / l.frame_bytes().max(1))
                 .clamp(u64::from(READ_AHEAD_FRAMES), u64::from(READ_AHEAD_FRAMES_MAX))
                 as u32,
@@ -495,7 +515,12 @@ impl Reader {
         let data = f.assemble(offset, len, k0, &frames);
         // Read ahead only after reads of audio: a tagger reading the header or the tags must
         // not make the file decode (and convert) its first seconds in the background.
-        let ahead = if k0 < k1 { self.plan_read_ahead(offset, end, k1) } else { None };
+        let ahead = if k0 < k1 {
+            let fast = f.read_ahead_frames(engine.threads(), engine.cache().cap());
+            self.plan_read_ahead(offset, end, k1, fast)
+        } else {
+            None
+        };
         Ok((data, ahead))
     }
 
@@ -543,7 +568,7 @@ impl Reader {
         read >= FAST_AFTER && read as f64 > FAST_FACTOR * self.file.byte_rate() * secs
     }
 
-    fn plan_read_ahead(&self, offset: u64, end: u64, k1: u32) -> Option<ReadAhead> {
+    fn plan_read_ahead(&self, offset: u64, end: u64, k1: u32, fast: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
         // The first read of audio never starts read-ahead: a tagger walking a WAV file's
         // chunks touches the audio once, at the data chunk's header, 256 KiB after the
@@ -571,7 +596,7 @@ impl Reader {
             return None;
         }
         let frames = self.file.layout.frames;
-        let window = if self.fast(&s) { self.file.read_ahead_frames() } else { READ_AHEAD_FRAMES };
+        let window = if self.fast(&s) { fast } else { READ_AHEAD_FRAMES };
         if k1 >= frames || s.ahead_until >= frames.min(k1 + window / 2) {
             return None;
         }
