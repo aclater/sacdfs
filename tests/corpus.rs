@@ -134,6 +134,32 @@ fn corpus_with_exhaustive_search_and_no_cache() {
     assert!(stats.provisional_readings > 100 && stats.seek_hints > 100, "{stats:?}");
 }
 
+/// A reused reply buffer (#210) shows nothing of an earlier read: reads of different sizes
+/// follow each other, each buffer given back as the mount does, and the bytes are a straight
+/// read's.
+#[test]
+fn reused_reply_buffers_equal_straight_reads() {
+    for case in cases().iter().filter(|c| c["expected"]["outcome"] != "reject").take(12) {
+        let tree = Tree::new(SourceDir::scan(&image(case)).unwrap());
+        for (_, f) in tree.all_files().into_iter().take(3) {
+            let engine = Engine::new(2, 64 << 20).unwrap();
+            let whole = read_all(&Engine::new(2, 0).unwrap(), &f, 1 << 20);
+            let reader = Reader::new(f.clone());
+            let mut at = 0u64;
+            for len in [128u64 << 10, 4096, 1 << 20, 7].into_iter().cycle() {
+                if at >= f.size {
+                    break;
+                }
+                let (data, _) = reader.read(&engine, at, len).unwrap();
+                let end = (at + len).min(f.size) as usize;
+                assert_eq!(data, &whole[at as usize..end], "at {at}, {len} bytes");
+                sacdfs::track::give_back(data);
+                at += len;
+            }
+        }
+    }
+}
+
 /// Random reads, each from a fresh reader (so every one locates its frames), equal the same
 /// bytes of a straight read.
 #[test]

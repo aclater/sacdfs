@@ -1276,6 +1276,17 @@ mod tests {
         Key { disc: 1, area: 0, frame: i, kind: Kind::Dsd }
     }
 
+    /// Long batches are decoded in groups; a short one, which ends with its slowest job, not.
+    #[test]
+    fn groups_only_in_long_batches() {
+        let best = scarletbook::dst::lanes(2);
+        assert_eq!(group_size(14, 1, 2), best);
+        assert_eq!(group_size(7, 1, 2), 1);
+        assert_eq!(group_size(75, 32, 2), 1);
+        assert_eq!(group_size(445, 32, 2), best);
+        assert_eq!(group_size(8, 0, 2), best);
+    }
+
     #[test]
     fn cache_is_bounded() {
         let c = FrameCache::new(10_000);
