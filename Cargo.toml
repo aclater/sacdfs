@@ -23,9 +23,9 @@ include = [
 [dependencies]
 # The engine: SACD parsing, demultiplexing and DST decoding, from crates.io, pinned exactly
 # (published from the release tag).
-scarletbook = "=0.5.7"
+scarletbook = "=0.5.8"
 # The DSD-to-PCM converter behind the WAV files (#84), from the same release as the engine.
-scarletbook-pcm = "=0.5.7"
+scarletbook-pcm = "=0.5.8"
 # Pure-Rust FUSE: no libfuse needed, mounts through fusermount3.
 fuser = { version = "0.18", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
