@@ -382,6 +382,15 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   list:* `Art` holds the image sidecars of the image's folder (with `--flatten`, of the chain,
   as the collapsed folder shows them); images in one folder share it. `nlink` stays 1 (the
   kernel does not need it, and a changing count would need an invalidation).
+  *MPD's name (#148):* MPD's `albumart` finds a cover only in a file named `cover.<ext>`, so
+  when the art holds no `cover.*` (any case), the area listing adds one more name for the first
+  of it (`folder.*`, then `front.*`, then by name) as `cover.<ext>`, with the extension in
+  lower case and `jpeg` as `jpg`: the same node again, not a copy, and only in the areas
+  (the album folder is the source's). *Why only when there is no `cover.*`:* the owner's own
+  cover wins, and a library that already names its covers sees no change. *Alternative:*
+  name the art `cover.*` in the source, which a library of thousands cannot be asked to do.
+  *Trade-off:* a `Cover.PNG` (other case) counts as a cover and gets no alias, so if MPD matches
+  names by case (not tested), it finds no art for it; the file can be renamed.
 - **Re-reading changed folders (#101).** A tree made `watching` (the mount, when SOURCE is a
   directory) re-reads a folder of SOURCE when it is listed or looked up and the folder's
   modification time differs from the one noted at its last reading (`Listing::watch`,

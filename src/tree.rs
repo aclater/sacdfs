@@ -515,6 +515,29 @@ enum Snapshot {
     Folder(Vec<Sidecar>),
 }
 
+/// The art file of `art` (listed, by `listed`) to show also as `cover.<ext>`, and that name,
+/// for the servers that look only for files so named (MPD, #148); `None` if the art has a
+/// `cover.*` already or no listed file. The choice is `folder.*`, then `front.*`, then the
+/// first by name; the extension is in lower case, `jpeg` as `jpg` (what MPD looks for).
+fn cover_alias(art: &[Sidecar], listed: impl Fn(&Sidecar) -> bool) -> Option<(&Sidecar, String)> {
+    let stem = |sc: &Sidecar| {
+        let n = sc.name.to_string_lossy().to_ascii_lowercase();
+        n.rsplit_once('.').map(|(s, e)| (s.to_owned(), e.to_owned()))
+    };
+    if art.iter().any(|sc| stem(sc).is_some_and(|(s, _)| s == "cover")) {
+        return None;
+    }
+    let rank = |sc: &Sidecar| match stem(sc).map(|(s, _)| s).as_deref() {
+        Some("folder") => 0,
+        Some("front") => 1,
+        _ => 2,
+    };
+    let pick = art.iter().filter(|sc| listed(sc)).min_by_key(|sc| rank(sc))?;
+    let (_, ext) = stem(pick)?;
+    let ext = if ext == "jpeg" { "jpg".to_owned() } else { ext };
+    Some((pick, format!("cover.{ext}")))
+}
+
 /// What a listing being made depends on.
 #[derive(Default)]
 struct Cx {
@@ -1608,7 +1631,17 @@ impl Tree {
                 if let Some(art) = &dir.art {
                     let (items, version) = art.current(self);
                     cx.art_version = version;
+                    let first = out.len();
                     self.list_sidecars(&items, parent, &mut dedup, &mut out);
+                    // MPD looks only for `cover.*` (#148): when there is none, one of the
+                    // art files is also there under that name, as the same node.
+                    if let Some((sc, name)) = cover_alias(&items, |sc| {
+                        let ino = self.ids.sidecar(&sc.path);
+                        out[first..].iter().any(|e| e.ino == ino)
+                    }) {
+                        let ino = self.ids.sidecar(&sc.path);
+                        out.push(Entry { name: dedup.unique(OsStr::new(&name), true), ino, is_dir: false });
+                    }
                 }
             }
         }
@@ -2366,15 +2399,52 @@ mod tests {
         let dir = source(&["Artist/Album/Rip/x.iso", "Artist/Album/folder.jpg", "Artist/Album/Rip/back.png"]);
         let t = tree_sc(dir.path(), true);
         let stereo = names(&t, "Artist/Album/Stereo");
-        assert!(
-            stereo.ends_with(&["back.png".to_owned(), "folder.jpg".to_owned()])
-                || stereo.ends_with(&["folder.jpg".to_owned(), "back.png".to_owned()]),
-            "{stereo:?}"
-        );
+        let art = &stereo[stereo.len() - 3..stereo.len() - 1];
+        assert!(art == ["back.png", "folder.jpg"] || art == ["folder.jpg", "back.png"], "{stereo:?}");
         // Found again from the number alone, as after a restart.
         let ino = ino_of(&t, "Artist/Album/Stereo/folder.jpg");
         assert_eq!(ino, ino_of(&t, "Artist/Album/folder.jpg"));
         assert!(tree_sc(dir.path(), true).get(ino).is_some());
+        // With no `cover.*` among them, the first of the art is also `cover.jpg` (#148).
+        assert_eq!(stereo.last().map(String::as_str), Some("cover.jpg"), "{stereo:?}");
+        assert_eq!(ino_of(&t, "Artist/Album/Stereo/cover.jpg"), ino);
+    }
+
+    /// The names in `Stereo` that are not audio.
+    fn art_names(dir: &Path, sel: &str) -> Vec<String> {
+        let t = Tree::new(SourceDir::scan_with(dir, &Sidecars::parse(sel).unwrap(), None).unwrap());
+        names(&t, "Artist/Album/x/Stereo").into_iter().filter(|n| !n.ends_with(".dsf") && !n.ends_with(".wav")).collect()
+    }
+
+    #[test]
+    fn art_not_named_cover_is_also_cover_for_mpd() {
+        // 148: MPD finds folder art only in a file named `cover.*`.
+        let dir = source(&["Artist/Album/x.iso", "Artist/Album/front.png", "Artist/Album/folder.JPEG"]);
+        // `folder` is chosen before `front`; `jpeg` is shown as `jpg`; it is the same node.
+        assert_eq!(art_names(dir.path(), "default"), ["folder.JPEG", "front.png", "cover.jpg"]);
+        let t = tree_sc(dir.path(), false);
+        assert_eq!(
+            ino_of(&t, "Artist/Album/x/Stereo/cover.jpg"),
+            ino_of(&t, "Artist/Album/folder.JPEG")
+        );
+        assert_eq!(read_sidecar(&t, "Artist/Album/x/Multichannel/cover.jpg"), b"Artist/Album/folder.JPEG");
+        // The folder itself is unchanged, and so are the audio files' numbers.
+        assert_eq!(names(&t, "Artist/Album"), ["x", "folder.JPEG", "front.png"]);
+        // Another name when only one kind is passed through, and no alias with no art.
+        assert_eq!(art_names(dir.path(), "default,-jpeg"), ["front.png", "cover.png"]);
+        assert!(art_names(dir.path(), "none").is_empty());
+        let plain = source(&["Artist/Album/x.iso", "Artist/Album/b.webp", "Artist/Album/a.jpg"]);
+        assert_eq!(art_names(plain.path(), "default"), ["a.jpg", "b.webp", "cover.jpg"]);
+    }
+
+    #[test]
+    fn art_already_named_cover_gets_no_alias() {
+        for existing in ["cover.jpg", "Cover.PNG", "cover.webp"] {
+            let dir = source(&["Artist/Album/x.iso", "Artist/Album/folder.jpg", &format!("Artist/Album/{existing}")]);
+            let got = art_names(dir.path(), "default");
+            assert_eq!(got.len(), 2, "{existing}: {got:?}");
+            assert!(!got.iter().any(|n| n == "cover (2).jpg"), "{got:?}");
+        }
     }
 
     #[test]
