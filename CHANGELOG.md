@@ -31,11 +31,14 @@ All notable changes to sacdfs are recorded here. The format follows
   generation; those with no title also get a new name. The output version moves for those files
   only, as with a tags file, so `DSF_VERSION` and `WAV_VERSION` stay. All other files keep their
   bytes, time and generation.
-- **What scanners see.** The time of every folder with a disc below it moves one step once, because knowing which discs lack
-  text takes reading each image's table of contents, which the mount doesn't do. A scanner that skips unchanged folders (Roon) walks all folders
-  once and re-reads only the changed files, and a scanner that compares files (Plex, Navidrome,
-  LMS, MPD) just re-reads those. A renamed track looks to a scanner like a removal and an addition,
-  so its play counts and edits in the player may not carry over.
+- **What scanners see.** The time of every folder with a disc below it moves one step once, because
+  knowing which discs lack text takes reading each image's table of contents, which the mount
+  doesn't do. So a scanner that skips unchanged folders (Roon) should walk those folders once, and
+  any scanner that compares sizes and times should re-read only the changed files. Checked by
+  comparing every file's and folder's size and time over the mount with 0.4.0's, on a library of
+  4,890 tracks: 259 files changed, each with every folder above it moved. Untested with Roon, Plex,
+  Navidrome, LMS or MPD themselves. A renamed track should look to a scanner like a removal and an
+  addition, so its play counts and edits in the player may not carry over (also untested).
 - **A tags file that sets a title** changes the tag and not the file name, as before: such a track
   is named `NN - Track NN`.
 - `sacdfs verify` and `sacdfs tags import` don't count text from the path as the disc's, so they
