@@ -337,7 +337,10 @@ player, once as the extract and once as sacdfs's file.
   (`jpg`, `jpeg`, `png`, `webp`; not playlists, scans folders or other files) also show in
   `Stereo/` and `Multichannel/` of every image in the folder, after the tracks, so that
   Lyrion Music Server, MPD, MinimServer and Plex, which look for folder art only in the
-  audio file's own folder, find it. It is the same file with a second name: the same inode
+  audio file's own folder, find it. When the art has no file named `cover.*`, one of the images
+  is also listed as `cover.jpg` (or `cover.png`, `cover.webp`; `folder.*` is preferred, then
+  `front.*`, then the first by name), because MPD looks only for that name (#148). It is the
+  same file with a second name: the same inode
   number, so a server that walks both sees one image. No audio file changes, only the art is
   added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
   is not shown in either place, and `none` shows no art at all. A name that a track file

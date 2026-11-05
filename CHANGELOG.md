@@ -6,6 +6,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **MPD finds folder art** (#148). When an image's art has no file named `cover.*`, one of the
+  images (`folder.*`, then `front.*`, then the first by name) is also listed as `cover.jpg`
+  (`cover.png`, `cover.webp`) inside each `Stereo` and `Multichannel` folder, as the same file
+  (the same inode), after the tracks. MPD 0.24.15 found art in 6 of 6 areas with a cover, against
+  1 of 6 with the 0.4.0 release on the same discs. It follows `--sidecars`; no audio file changes.
 ### Continuous integration
 
 - Pull requests that touch the code run an informational benchmark: base and head read DST stereo,

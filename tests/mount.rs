@@ -946,7 +946,12 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
         );
         assert_eq!(a.ino(), b.ino());
         assert_eq!(std::fs::read(mnt.join(&p).join("folder.jpg")).unwrap(), b"front");
+        // MPD looks only for `cover.*` (#148): with none, the art is also that, the same file.
+        assert!(has(&p, "cover.jpg"), "{area}");
+        assert_eq!(std::fs::metadata(mnt.join(&p).join("cover.jpg")).unwrap().ino(), b.ino());
+        assert_eq!(std::fs::read(mnt.join(&p).join("cover.jpg")).unwrap(), b"front");
     }
+    assert!(!has("Artist/Album", "cover.jpg"), "only the areas get the name");
     // A name looked up before it exists, an open file, and a listing already read.
     assert!(!mnt.join("Artist/Album/back.png").exists());
     assert!(!mnt.join("Artist/Album/disc/Stereo/back.png").exists());
@@ -963,6 +968,9 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
     wait_for("the new art", || mnt.join("Artist/Album/back.png").exists());
     wait_for("the new art in the area", || mnt.join("Artist/Album/disc/Stereo/back.png").exists());
     assert_eq!(std::fs::read(mnt.join("Artist/Album/disc/Stereo/back.png")).unwrap(), b"back");
+    wait_for("the new cover name", || has("Artist/Album/disc/Stereo", "cover.png"));
+    assert!(!has("Artist/Album/disc/Stereo", "cover.jpg"));
+    assert_eq!(std::fs::read(mnt.join("Artist/Album/disc/Stereo/cover.png")).unwrap(), b"back");
     wait_for("the removal", || !mnt.join("Artist/Album/folder.jpg").exists());
     assert!(!has("Artist/Album/disc/Stereo", "folder.jpg"));
     assert!(std::fs::File::open(mnt.join("Artist/Album/folder.jpg")).is_err());
