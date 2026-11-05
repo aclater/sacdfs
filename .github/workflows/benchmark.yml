@@ -1,25 +1,22 @@
 # A coarse, informational alarm for performance regressions (#162): base and head are built in
 # one job and read the corpus through the mount, alternating, medians of 5 (scripts/bench_compare.py).
-# Never a required check, so the path filter is fine, and a flagged slowdown only warns. Main
-# only builds, to write the cargo cache that pull requests read. See docs/development.md.
+# Never a required check, so the path filter is fine, and a flagged slowdown only warns. See
+# docs/performance.md, "The CI benchmark".
 name: benchmark
 
 on:
   pull_request:
-    paths: &paths
+    paths:
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "scripts/bench_compare.py"
       - "scripts/bench_workload.py"
       - ".github/workflows/benchmark.yml"
-  push:
-    branches: [main]
-    paths: *paths
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true  # a new push supersedes the old run
 
 permissions:
   contents: read
@@ -39,27 +36,20 @@ jobs:
           persist-credentials: false
           fetch-depth: 2  # a pull request's checkout is its merge commit: the first parent is the base
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
-      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c  # v2.9.3
-        with:
-          shared-key: benchmark
-          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - name: Build head
         run: |
           cargo build --locked --release
           cp target/release/sacdfs "$RUNNER_TEMP/sacdfs-head"
       - name: Build base
-        if: github.event_name == 'pull_request'
         run: |
           git worktree add -q "$RUNNER_TEMP/base" HEAD^1
           CARGO_TARGET_DIR="$PWD/target" cargo build --locked --release --manifest-path "$RUNNER_TEMP/base/Cargo.toml"
           cp target/release/sacdfs "$RUNNER_TEMP/sacdfs-base"
       - name: Install fusermount3
-        if: github.event_name == 'pull_request'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends fuse3
       - name: Compare
-        if: github.event_name == 'pull_request'
         run: |
           python3 -I scripts/bench_compare.py --base "$RUNNER_TEMP/sacdfs-base" --head "$RUNNER_TEMP/sacdfs-head" \
             --measure "python3 -I scripts/bench_workload.py" dst-stereo dst-multichannel plain-dsd
