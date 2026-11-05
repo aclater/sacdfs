@@ -603,8 +603,8 @@ an NFS share of images on hard disks, these are the measured findings (#71,
 An NFS client keeps its file handles across a restart of the container. So after a NAS reboot
 or an update, NFS clients go on reading the files they had open, and `stat` and `ls` of the
 same paths work, with the same inode, modification time and size, without a remount. SMB is
-path-based and reconnects by itself; a client may need more than that, see
-[docs/clients.md](clients.md).
+path-based: Linux and Windows clients reconnect by themselves, and macOS drops the mount and needs a
+remount ([#204](https://github.com/aclater/sacdfs/issues/204)).
 
 Run on the Linux kernel client with NFS 4.0, 4.1 and 4.2 under rootful Podman 6.1, and 4.2
 under Docker 29, for `restart`, for stop and start, and for removing and recreating the
@@ -623,10 +623,9 @@ Two things do give "stale file handle":
 
 *Why it depended on the runtime before (#218):* each handle from NFS-Ganesha holds its own id for
 the backing filesystem. A FUSE mount has none, so Ganesha took the mount's device number, which is
-the lowest number free when the mount is made. Podman's restart mounts in another order, so the number
-nearly always changed (157 to 159, say) and every handle went stale. Under Docker it stayed the same,
-as a matter of luck: when the number was taken away on purpose, Docker's clients went stale as
-well. `Filesystem_Id` doesn't help: it's only what clients see as the filesystem id.
+the lowest number free when the mount is made. Under Podman the number changed on most restarts here
+(157 to 159, say), and every handle went stale. Under Docker it stayed the same, which was luck:
+when the test took the number away on purpose, Docker's clients went stale as well. `Filesystem_Id` doesn't help: it's only what clients see as the filesystem id.
 
 The container speaks only NFSv4 (`Protocols = 4`); NFSv3 can't be tried against it.
 
