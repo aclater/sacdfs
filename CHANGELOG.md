@@ -17,7 +17,8 @@ All notable changes to sacdfs are recorded here. The format follows
   cache) from 4 MiB on instead of 16. Files keep their bytes. Peak memory of an all-thread DST
   read rises by up to 10 MiB at the default cache (45 → 55 MiB for DST stereo; WAV 66 → 73 MiB).
   Cold seeks of six-channel DST (mean 0.98 → 1.05 ms) and of plain DSD (0.149 → 0.156 ms), and four
-  readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads.
+  readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads, and a fast reader's
+  worst single read rises from 3 to 6 ms to about 12 ms. A player's reads are as before.
 
 ## [0.4.1-rc.1] - 2026-11-05
 

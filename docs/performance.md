@@ -369,6 +369,20 @@ compare with the table above):
 | Decoding in groups in long batches | 4.28 | 3.35 | 10.86 | 0.99 |
 | Reply buffers kept | 4.18 | 3.37 | 10.79 | 0.96 |
 
+**What a reader's read size changes:** the time of a straight read doesn't depend on it, since the
+kernel sends the mount 128 KiB at a time whatever the reader asks for. One 188 MB stereo DST file,
+all threads, local reads, medians of 3:
+
+| Read size | MB/s, 0.4.0 → now | Worst read (ms), 0.4.0 → now | p99 (ms), 0.4.0 → now |
+|---|---|---|---|
+| 64 KiB | 530 → 687 | 4.2 → **12.2** | 1.4 → **2.3** |
+| 128 KiB | 514 → 683 | 2.9 → **12.6** | 1.5 → **4.1** |
+| 1 MiB | 519 → 687 | 5.5 → **12.7** | 4.4 → **5.8** |
+
+That is the longer window's trade-off: a fast reader that catches the decoder waits for a longer
+batch. At real-time rate the window is the old one, and reads are as before (worst 1.1 ms at 128
+KiB, 4.6 ms at 1 MiB, in both). These are local reads, not measured through SMB or NFS.
+
 Where the time goes, for those who want to take it further:
 
 - **One thread, DST:** the decoder thread is 98 % of the wall time (5.3 of 5.4 s for 5 minutes of
