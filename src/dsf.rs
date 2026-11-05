@@ -8,10 +8,12 @@ use scarletbook::output::{
     AlbumArtistFrame, DateFrame, Format, Id3Options, Layout as LibLayout, OutputOptions, PositionSource,
     RegionKind, SourceTrack, TagItem, TagSet, Tags, TextSource,
 };
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::tags::Stamp;
 
+use scarletbook::toc::TrackTextItem;
 use scarletbook::{Area, Slot, Toc, Track};
 
 /// DSD bytes per channel in one SACD frame (1/75 s at 2.8224 MHz).
@@ -110,13 +112,70 @@ fn apply_mc_album_suffix(set: &mut TagSet, slot: Slot, on: bool) {
 ///   album title, so players group them as one album; a disc title ("Disc 2") would split it.
 /// - the album gets [`MC_ALBUM_SUFFIX`] in a multichannel area (#97), unless turned off.
 /// - no album set for a one-disc set. *Why:* "1/1" says nothing, and sacdfs 0.1 left it out.
-pub fn tag_set(toc: &Toc, area: &Area, track: &Track, options: &OutputOptions) -> TagSet {
-    let mut set = base_tag_set(toc, area, track, options);
+/// - with `image`, the text the disc lacks comes from [`fill_gaps`] (#185).
+///
+/// Also whether anything came from there.
+pub fn tag_set(
+    toc: &Toc,
+    area: &Area,
+    track: &Track,
+    options: &OutputOptions,
+    image: Option<&Path>,
+) -> (TagSet, bool) {
+    let (mut set, filled) = filled_tag_set(toc, area, track, options, image);
     apply_mc_album_suffix(&mut set, area.slot, MC_ALBUM_SUFFIX_ON.load(Ordering::Relaxed));
-    set
+    (set, filled)
 }
 
 /// [`tag_set`] without the multichannel suffix.
+fn filled_tag_set(
+    toc: &Toc,
+    area: &Area,
+    track: &Track,
+    options: &OutputOptions,
+    image: Option<&Path>,
+) -> (TagSet, bool) {
+    let mut set = base_tag_set(toc, area, track, options);
+    let filled = image.is_some_and(|image| fill_gaps(&mut set, toc, track, image));
+    (set, filled)
+}
+
+/// Fills in what the disc's text leaves out (#185, phase 1): the title `Track NN`, and the album
+/// and artist from the image's path ([`crate::fallback`]). Returns whether it set anything.
+///
+/// The artist goes in as album artist and performer, but only on a disc with no artist text at
+/// all. *Why:* a disc naming only some tracks' performers would otherwise get a guessed name on
+/// the rest, and a player would split it.
+fn fill_gaps(set: &mut TagSet, toc: &Toc, track: &Track, image: &Path) -> bool {
+    let blank = |set: &TagSet, item| set.get(item).iter().all(|v: &String| v.trim().is_empty());
+    let mut filled = false;
+    if blank(set, TagItem::TrackTitle) {
+        set.set(TagItem::TrackTitle, &crate::names::fallback_title(track.number));
+        filled = true;
+    }
+    let no_album = blank(set, TagItem::Album);
+    let no_artist = blank(set, TagItem::AlbumArtist)
+        && !toc
+            .areas
+            .iter()
+            .flat_map(|a| &a.tracks)
+            .any(|t| t.text.get(TrackTextItem::Performer).is_some_and(|p| !p.trim().is_empty()));
+    if no_album || no_artist {
+        let names = crate::fallback::guess(image);
+        if let Some(album) = names.album.as_deref().filter(|_| no_album) {
+            set.set(TagItem::Album, album);
+            filled = true;
+        }
+        if let Some(artist) = names.artist.as_deref().filter(|_| no_artist) {
+            set.set(TagItem::AlbumArtist, artist);
+            set.set(TagItem::Performer, artist);
+            filled = true;
+        }
+    }
+    filled
+}
+
+/// The tag items of a track from the TOC alone.
 fn base_tag_set(toc: &Toc, area: &Area, track: &Track, options: &OutputOptions) -> TagSet {
     let album = options.clone().with_text_source(TextSource::Album);
     let mut set = TagSet::from_toc(toc, area, Some(track), &album);
@@ -144,18 +203,21 @@ pub struct Tagged {
     pub set: TagSet,
     /// Set when a tags file changed the tag: then the file's mtime and generation change.
     pub stamp: Option<Stamp>,
+    /// Whether the tag has text the disc lacks ([`fill_gaps`]): then too (#185).
+    pub filled: bool,
 }
 
-/// The DSF layout of `track` of `area`, with its tag: [`tag_set`]'s items, changed by the
-/// disc's tags file if there is one ([`crate::tags`]). `None` if the library refuses the
-/// track (then no file is shown for it).
+/// The DSF layout of `track` of `area` of the image `image`, with its tag: [`tag_set`]'s items,
+/// changed by the disc's tags file if there is one ([`crate::tags`]). `None` if the library
+/// refuses the track (then no file is shown for it).
 ///
 /// A tags file's album name gets no multichannel suffix (#97): the user named the album.
+/// A tags file wins over text filled in from the path (#185), an empty value included.
 /// A file whose tag comes out the same as without the tags file has no stamp: its bytes,
 /// mtime and generation are those without the tag layer.
-pub fn tagged(toc: &Toc, area: &Area, track: &Track) -> Option<Tagged> {
+pub fn tagged(toc: &Toc, area: &Area, track: &Track, image: Option<&Path>) -> Option<Tagged> {
     let options = options(area, track);
-    let default = tag_set(toc, area, track, &options);
+    let (default, filled) = tag_set(toc, area, track, &options, image);
     let make = |tags: Tags| {
         LibLayout::new(
             toc,
@@ -169,7 +231,7 @@ pub fn tagged(toc: &Toc, area: &Area, track: &Track) -> Option<Tagged> {
     let of_set = |s: &TagSet| if s.is_empty() { Tags::None } else { Tags::Set(s.clone()) };
     let user = crate::tags::lookup(toc).and_then(|d| Some((d.mtime, d.overrides(area.slot, track.number)?)));
     if let Some((mtime, o)) = user {
-        let mut set = base_tag_set(toc, area, track, &options);
+        let (mut set, _) = filled_tag_set(toc, area, track, &options, image);
         o.apply(&mut set);
         if !o.names_album {
             apply_mc_album_suffix(&mut set, area.slot, MC_ALBUM_SUFFIX_ON.load(Ordering::Relaxed));
@@ -194,7 +256,7 @@ pub fn tagged(toc: &Toc, area: &Area, track: &Track) -> Option<Tagged> {
                             ),
                         }
                     }
-                    return Some(Tagged { layout: l, set, stamp: Some(Stamp::new(mtime, &tag)) });
+                    return Some(Tagged { layout: l, set, stamp: Some(Stamp::new(mtime, &tag)), filled });
                 }
                 Err(e) => {
                     log::warn!("{:?} area track {}: tags file not applied: {e}", area.slot, track.number)
@@ -205,13 +267,20 @@ pub fn tagged(toc: &Toc, area: &Area, track: &Track) -> Option<Tagged> {
     let layout = make(of_set(&default))
         .inspect_err(|e| log::debug!("{:?} area track {}: no DSF file: {e}", area.slot, track.number))
         .ok()?;
-    Some(Tagged { layout, set: default, stamp: None })
+    Some(Tagged { layout, set: default, stamp: None, filled })
 }
 
-/// The DSF layout of `track` of `area`, with its tag; `None` if the library refuses the
-/// track (then no file is shown for it).
+/// The tag of `track` of `area` with only what the disc itself holds, nothing from its path:
+/// what `verify` and `tags import` compare an extract with. *Why:* a value the path happens to
+/// give is not safe from deleting the extract, as renaming the folder would lose it.
+pub fn stored_tag(toc: &Toc, area: &Area, track: &Track) -> Vec<u8> {
+    tagged(toc, area, track, None).map_or_else(Vec::new, |t| region(&t.layout, RegionKind::Trailer))
+}
+
+/// The DSF layout of `track` of `area`, with its tag from the disc alone; `None` if the library
+/// refuses the track (then no file is shown for it).
 pub fn layout(toc: &Toc, area: &Area, track: &Track) -> Option<LibLayout> {
-    tagged(toc, area, track).map(|t| t.layout)
+    tagged(toc, area, track, None).map(|t| t.layout)
 }
 
 /// The bytes of the regions of `kind` of `layout` (its header or its tag), which hold no

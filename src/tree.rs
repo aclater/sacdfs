@@ -2524,8 +2524,9 @@ mod tests {
 
     #[test]
     fn directory_mtimes_show_the_newest_below() {
-        // #123: every directory up to the root shows its newest track file's mtime (its
-        // image's moved by the output version), not its source directory's own.
+        // #123: every directory up to the root shows the newest mtime a track file of its
+        // images could have (its image's moved by the output version, and a step for a file
+        // with text its disc lacks, #185), not its source directory's own.
         let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
         for flatten in [false, true] {
             let dir = old_tree(old);
@@ -2543,7 +2544,7 @@ mod tests {
             }
             let file = t.children(ino(paths[paths.len() - 1])).unwrap();
             let newest_file = file.iter().map(|e| t.mtime(&t.get(e.ino).unwrap())).max().unwrap();
-            assert_eq!(newest_file, newest);
+            assert!(newest_file > old && newest_file <= newest);
             // DSF only: the DSF output version's offset.
             let dsf = Tree::with_tuning(SourceDir::scan(dir.path()).unwrap(), Tuning::default());
             assert_eq!(dsf.mtime(&dsf.get(ROOT).unwrap()), old + ident::newest_offset(true, false, 0));

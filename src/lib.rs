@@ -12,6 +12,7 @@
 pub mod disc;
 pub mod dsf;
 pub mod engine;
+pub mod fallback;
 pub mod fs;
 pub mod handles;
 pub mod ident;

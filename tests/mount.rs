@@ -1009,7 +1009,7 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
         .map(|e| e.unwrap().metadata().unwrap().modified().unwrap())
         .max()
         .unwrap();
-    assert_eq!(newest_file, shown);
+    assert!(newest_file > old && newest_file <= shown, "a folder shows no time older than its files");
     let ino = |p: &str| {
         use std::os::unix::fs::MetadataExt;
         std::fs::metadata(mnt.join(p)).unwrap().ino()

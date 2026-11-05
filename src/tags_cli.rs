@@ -168,8 +168,9 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         let Some(i) = disc.toc().areas.iter().position(|a| a.slot == slot) else { continue };
         let area = &disc.toc().areas[i];
         let Some(track) = area.tracks.iter().find(|t| t.number == number) else { continue };
-        // Compared with the file as sacdfs serves it without a tags file.
-        let served = TrackFile::new(disc.clone(), i, track).map(|f| id3::frames(f.tag())).unwrap_or_default();
+        // Compared with the file as sacdfs serves it without a tags file, and without what
+        // comes from the image's path: that is no copy of the extract's tag (#185).
+        let served = TrackFile::new(disc.clone(), i, track).map(|f| f.stored_frames()).unwrap_or_default();
         let Some(tag) = extract_tag(&row.path) else { continue };
         sum.files += 1;
         let frames = id3::frames(&tag);

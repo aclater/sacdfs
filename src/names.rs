@@ -27,14 +27,16 @@ pub fn truncate_bytes(s: &str, max: usize) -> &str {
     &s[..end]
 }
 
-/// The name of a track's file: `NN - <title>.<ext>`, or `NN.<ext>` without a usable title.
-/// `ext` is a short extension (`dsf`, `wav`), so that the files of one track differ only in
-/// it.
+/// The title of a track whose disc gives none (#185): shown in its tag and its file's name.
+pub fn fallback_title(number: u8) -> String {
+    format!("Track {number:02}")
+}
+
+/// The name of a track's file: `NN - <title>.<ext>`, with [`fallback_title`] without a usable
+/// title. `ext` is a short extension (`dsf`, `wav`), so that the files of one track differ only
+/// in it.
 pub fn track_file_name(number: u8, title: Option<&str>, ext: &str) -> String {
-    let title = title.map(sanitize).unwrap_or_default();
-    if title.is_empty() {
-        return format!("{number:02}.{ext}");
-    }
+    let title = title.map(sanitize).filter(|t| !t.is_empty()).unwrap_or_else(|| fallback_title(number));
     let prefix = format!("{number:02} - ");
     // Room for " (NNN)" from de-duplication as well as the extension.
     let room = NAME_MAX.saturating_sub(prefix.len() + 1 + ext.len() + 6);
@@ -95,10 +97,12 @@ mod tests {
     fn track_names() {
         assert_eq!(track_file_name(1, Some("Intro"), "dsf"), "01 - Intro.dsf");
         assert_eq!(track_file_name(1, Some("Intro"), "wav"), "01 - Intro.wav");
-        assert_eq!(track_file_name(12, None, "dsf"), "12.dsf");
+        assert_eq!(track_file_name(12, None, "dsf"), "12 - Track 12.dsf");
+        assert_eq!(track_file_name(3, None, "wav"), "03 - Track 03.wav");
+        assert_eq!(track_file_name(200, None, "dsf"), "200 - Track 200.dsf");
         assert_eq!(track_file_name(3, Some(" / "), "dsf"), "03 - _.dsf");
         assert_eq!(track_file_name(3, Some("\u{1}"), "dsf"), "03 - _.dsf");
-        assert_eq!(track_file_name(3, Some("   "), "wav"), "03.wav");
+        assert_eq!(track_file_name(3, Some("   "), "wav"), "03 - Track 03.wav");
         assert_eq!(track_file_name(200, Some("x"), "dsf"), "200 - x.dsf");
         let long = "é".repeat(300);
         let name = track_file_name(1, Some(&long), "dsf");
