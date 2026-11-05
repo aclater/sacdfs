@@ -154,6 +154,40 @@ impl TagsFile {
         v
     }
 
+    /// The album-level fields of the area in `slot`, both levels merged.
+    pub fn album_fields_for(&self, slot: Slot) -> Fields {
+        let area = match slot {
+            Slot::TwoChannel => &self.stereo,
+            _ => &self.multichannel,
+        };
+        let mut out = Fields::new();
+        for level in [&self.album, &area.album] {
+            for (k, v) in level {
+                out.insert(canonical(k), v.clone());
+            }
+        }
+        out
+    }
+
+    /// Removes a title of track `number` of the area in `slot` that is only the text sacdfs makes
+    /// for a track without one (#185), at the track levels. *Why:* `tags import` before this
+    /// version stored it from an extract of a mount, as if edited by hand.
+    pub fn clear_generated_title(&mut self, slot: Slot, number: u8) {
+        let area = match slot {
+            Slot::TwoChannel => &mut self.stereo,
+            _ => &mut self.multichannel,
+        };
+        let n = number.to_string();
+        let generated = crate::names::fallback_title(number);
+        for fields in [self.track.get_mut(&n), area.track.get_mut(&n)].into_iter().flatten() {
+            for key in ["title", "TIT2"] {
+                if fields.get(key).is_some_and(|v| *v == generated) {
+                    fields.remove(key);
+                }
+            }
+        }
+    }
+
     /// The fields of track `number` of the area in `slot`, every level merged.
     pub fn fields_for(&self, slot: Slot, number: u8) -> Fields {
         let area = match slot {

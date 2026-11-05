@@ -1,0 +1,98 @@
+{
+ "releases": [
+  {
+   "media": [
+    {
+     "format": "Hybrid SACD",
+     "position": 1,
+     "title": "",
+     "id": "0000001c-0000-4000-8000-00000000001c",
+     "track-count": 12
+    }
+   ],
+   "title": "Title 17",
+   "status": "Official",
+   "barcode": "0000000012345",
+   "date": "2013-09",
+   "id": "0000001d-0000-4000-8000-00000000001d"
+  },
+  {
+   "id": "0000001f-0000-4000-8000-00000000001f",
+   "date": "2013-10-29",
+   "barcode": "0000000012345",
+   "status": "Official",
+   "title": "Title 17",
+   "media": [
+    {
+     "position": 1,
+     "format": "Digital Media",
+     "id": "0000002c-0000-4000-8000-00000000002c",
+     "track-count": 12,
+     "title": ""
+    }
+   ]
+  },
+  {
+   "title": "Title 18",
+   "media": [
+    {
+     "position": 1,
+     "format": "Digital Media",
+     "title": "",
+     "id": "00000062-0000-4000-8000-000000000062",
+     "track-count": 8
+    },
+    {
+     "position": 2,
+     "format": "Digital Media",
+     "title": "",
+     "track-count": 10,
+     "id": "00000063-0000-4000-8000-000000000063"
+    },
+    {
+     "position": 3,
+     "format": "Digital Media",
+     "track-count": 12,
+     "id": "00000064-0000-4000-8000-000000000064",
+     "title": ""
+    }
+   ],
+   "id": "00000065-0000-4000-8000-000000000065",
+   "barcode": "0000000067890",
+   "status": "Official",
+   "date": "2023-02-03"
+  },
+  {
+   "media": [
+    {
+     "format": "SACD",
+     "position": 1,
+     "id": "0000002e-0000-4000-8000-00000000002e",
+     "track-count": 8,
+     "title": ""
+    },
+    {
+     "format": "SACD",
+     "position": 2,
+     "track-count": 10,
+     "id": "00000053-0000-4000-8000-000000000053",
+     "title": ""
+    },
+    {
+     "position": 3,
+     "format": "SACD",
+     "title": "",
+     "track-count": 12,
+     "id": "00000054-0000-4000-8000-000000000054"
+    }
+   ],
+   "title": "Title 18",
+   "date": "2023",
+   "barcode": "0000000067890",
+   "status": "Official",
+   "id": "0000002d-0000-4000-8000-00000000002d"
+  }
+ ],
+ "release-offset": 0,
+ "release-count": 4
+}
