@@ -219,7 +219,13 @@ MOUNT/
   only when its folder is first listed. *Why at the walk:* the parents of a folder are listed
   before it, so they can only leave it out if the walk knows. *Alternative:* open each image
   when its parent is listed, which would read its TOCs in every parent listing; one small read
-  per image is far less. An image that cannot be read at the walk counts as an SACD, so that
+  per image is far less. *Rescans:* the folder's non-SACD images, and those of the subfolders
+  left out for holding no SACD, are on its watch list (`SourceDir::rejected`) with their
+  modification times, so a file written into place (which changes the file, not its folder)
+  brings the folder back at the next refresh. The answer for each image is kept while its size
+  and time are the same, so a rescan reads nothing of an image it has looked at: only a `stat`
+  of each rejected image. Nothing is stored across mounts: the persistent seek index holds
+  only discs that opened. An image that cannot be read at the walk counts as an SACD, so that
   opening it later reports why. An image that has the signature but fails to open is left out
   as before; its folder shows up with its sidecars only.
 - An image directory whose name collides with a source subdirectory gets ` (2)`. A track

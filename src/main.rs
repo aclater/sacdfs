@@ -1124,6 +1124,7 @@ mod tests {
             dirs: vec![],
             images: vec!["/s/m/x.iso".into()],
             sidecars: vec![],
+            rejected: None,
             stamp: Default::default(),
         };
         let root = SourceDir {
@@ -1131,6 +1132,7 @@ mod tests {
             dirs: vec![("m".into(), leaf)],
             images: vec!["/s/a.iso".into()],
             sidecars: vec![],
+            rejected: None,
             stamp: Default::default(),
         };
         assert!(refuse_images_under_mountpoint(&root, Path::new("/s/m")).is_err());

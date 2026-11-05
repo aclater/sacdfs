@@ -652,7 +652,9 @@ goes to the journal: `journalctl -u sacdfs`.
 - **A directory or disc is missing:** files that are not SACD images (a DVD-Video or
   Blu-ray `.iso`, say), and folders with no SACD image below them, sidecars included, are left
   out; a damaged image may be too. `-v` logs why. Images added after mounting appear without a
-  remount.
+  remount. A file that is not an SACD image yet (a download still filling a file made at full
+  size, or a copy in progress) appears within about 2 seconds of the write that makes it one
+  (the refresh interval; 2.0 s measured through a real mount, #175).
 - **A track is missing:** a track the disc cannot play (empty, or running past the end of the
   image) is left out; `-v` logs the reason.
 - **`--pcm-cutoff wide needs --pcm-rate 176400 or 352800`:** 88.2 kHz cannot hold the wide
