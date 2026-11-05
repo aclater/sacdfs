@@ -399,6 +399,15 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   list:* `Art` holds the image sidecars of the image's folder (with `--flatten`, of the chain,
   as the collapsed folder shows them); images in one folder share it. `nlink` stays 1 (the
   kernel does not need it, and a changing count would need an invalidation).
+  *MPD's name (#148):* MPD's `albumart` finds a cover only in a file named `cover.<ext>`, so
+  when the art holds no `cover.*` (any case), the area listing adds one more name for the first
+  of it (`folder.*`, then `front.*`, then by name) as `cover.<ext>`, with the extension in
+  lower case and `jpeg` as `jpg`: the same node again, not a copy, and only in the areas
+  (the album folder is the source's). *Why only when there is no `cover.*`:* the owner's own
+  cover wins, and a library that already names its covers sees no change. *Alternative:*
+  name the art `cover.*` in the source, which a library of thousands cannot be asked to do.
+  *Trade-off:* a `Cover.PNG` (other case) counts as a cover and gets no alias, so if MPD matches
+  names by case (not tested), it finds no art for it; the file can be renamed.
 - **Re-reading changed folders (#101).** A tree made `watching` (the mount, when SOURCE is a
   directory) re-reads a folder of SOURCE when it is listed or looked up and the folder's
   modification time differs from the one noted at its last reading (`Listing::watch`,
@@ -1858,7 +1867,8 @@ the owner's NAS already used.
   two more files beside it.
 - **Hostile input.** Extracts are untrusted like images: every size in a DSF or DFF header is
   checked against the file's length before use, chunk walks are bounded, and the readers are
-  fuzzed in the unit tests by truncating and corrupting every header byte. The DSF and DFF
+  fuzzed in the unit tests by truncating and corrupting every header byte, and by the fuzz
+  targets `verify_container` and `verify_id3` (#161). The DSF and DFF
   readers are container parsing written here from the published format descriptions; no SACD
   parsing or DST code is involved on the extract side.
 
@@ -1866,7 +1876,17 @@ the owner's NAS already used.
 
 - **Unit tests:** DSF header and tag layout, offset-to-frame mapping (including the padded
   last block and every channel count 1 to 6), name sanitising; proptest of the offset
-  mapping. Fuzzing the image layer is scarletbook's job.
+  mapping. Fuzzing the image layer's parsers is scarletbook's job.
+- **Fuzzing (#161).** `fuzz/` has cargo-fuzz targets for what sacdfs adds on top of the
+  library: tags files, sidecar paths, names, the tag and header writers, the tree, and the
+  `verify` readers; fuzz/README.md lists them. They check more than "no panic": a name the
+  kernel accepts, a tag with its true size, nothing read from outside SOURCE. *Why in CI as a
+  job of its own, not required:* a fuzzer's result depends on the run, and a new crash in old
+  code shouldn't block an unrelated pull request. *Why a crate of its own:* cargo-fuzz needs a
+  nightly toolchain, which stays away from sacdfs's build and locked dependencies.
+  *Alternative:* longer runs on every pull request, rejected by the CI speed rule.
+  *Trade-off:* 60 s per target finds only the easy bugs, so a weekly run goes on for 20 minutes
+  per target from the corpus the last one left.
 - **The corpus.** Integration tests run against the synthetic CC0 conformance corpus of
   [sacd-spec](https://github.com/aclater/sacd-spec) (copied into `tests/corpus/` with its
   licence). `tests/corpus.rs` reads every case through the tree and readers without

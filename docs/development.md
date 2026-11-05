@@ -129,6 +129,12 @@ code in the dependency graph. Rust's LeakSanitizer needs a nightly compiler
 not instrument Rust code. memcheck needs neither and also follows the child `sacdfs`
 processes.
 
+## Fuzzing
+
+Not a leak tool, but it runs the same way: `fuzz/` holds cargo-fuzz targets for sacdfs's own
+parsers and paths (#161), for about 60 s each on every pull request and 20 minutes each every
+week. See [fuzz/README.md](../fuzz/README.md).
+
 ## Results
 
 What these tools found, and what was fixed, is in docs/design.md under "Leaks", and in the
