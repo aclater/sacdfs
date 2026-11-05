@@ -491,6 +491,7 @@ impl Reader {
                 if let Some(frames) = engine.cached(&f.disc, f.area, t0, t1) {
                     return Ok(frames);
                 }
+                std::thread::sleep(std::time::Duration::from_micros(300)); // DEMO: an injected slowdown
                 let mut stream = self.stream.lock().unwrap_or_else(|p| p.into_inner());
                 engine.frames(&f.disc, f.area, &mut stream.cursor, t0, t1)
             }
