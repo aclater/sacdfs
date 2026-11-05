@@ -245,8 +245,8 @@ alone.
 If the host already serves SMB or NFS itself, ports 445 and 2049 are taken. Either give the
 container its own IP address (a `macvlan` network, or publish on an extra address of the
 host: `-p 192.0.2.20:445:445 -p 192.0.2.20:2049:2049`, with the host's own services bound to
-its main address), or publish other ports (`-p 10445:445 -p 12049:2049`). Linux and macOS
-clients can use other ports; Windows can only use 445.
+its main address), or publish other ports (`-p 10445:445 -p 12049:2049`). Linux, macOS and
+Windows clients can use other ports (Windows: `net use S: \\host\sacd /user:... /TCPPORT:10445`, one port per server name; tested on Windows 11 build 26200).
 
 ### Compose
 
@@ -278,7 +278,7 @@ The names of screens and fields may differ between releases.
    - **Other ports** (the simplest; changes nothing else on the NAS): publish, for example,
      `"10445:445"` and `"12049:2049"` in `ports`. Linux clients then mount with `port=12049`
      (NFS) or `port=10445` (SMB), and macOS with `port=` for NFS or `smb://nas:10445/sacd` for
-     SMB ([below](#on-other-ports)). Windows can only use 445, so for Windows clients use one of
+     SMB ([below](#on-other-ports)). Windows 11 build 26200 can use another port too, with `net use ... /TCPPORT:10445` (one port per server name; tested on 0.4.1-rc.1), but a port-free client such as Roon needs one of
      the other two ways.
    - **An address of its own:** add an alias IP address to the network interface (Network,
      Interfaces), and bind TrueNAS's SMB and NFS services to the main address only (in each

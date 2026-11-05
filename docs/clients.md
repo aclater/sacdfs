@@ -25,7 +25,7 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 | [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
 | [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
 | [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
-| [Windows Explorer, PowerShell, Robocopy](#windows-explorer-and-robocopy) | Windows 11 build 26200 | 0.2.0-rc.1 | SMB 3, same host | Works | Copies are byte-identical; a second Robocopy pass skips every file |
+| [Windows Explorer, PowerShell, Robocopy](#windows-explorer-and-robocopy) | Windows 11 build 26200 | 0.2.0-rc.1, 0.4.1-rc.1 | SMB 3.1.1, same host | Works | 0.4.1-rc.1: 186 of 186 audio copies byte-identical, a second Robocopy pass skips all 196 files; RF64 reads and seeks past 4 GiB; another SMB port works (`/TCPPORT`) |
 | [foobar2000](#foobar2000) | 2.26.2 (portable) | 0.2.0-rc.1 | SMB 3 | Partial | Opened a DSF without errors; tags, art and seek not verified |
 | [JRiver Media Center](#jriver-media-center) | 36 | none | SMB 3 | Untested | The trial was not run |
 | [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | kernel clients | see [deployment](deployment.md) and [performance](performance.md) | NFSv4, SMB | Works | The container's own share tests; see below |
@@ -259,18 +259,19 @@ from the copy in the area folder; 7 albums, 2 of them "… (Multichannel)". Item
 transcoding needs MinimStreamer, which was not tested. `dsf,wav` was not tried with
 MinimServer.
 
-## Windows Explorer and Robocopy
+## Windows Explorer, PowerShell and Robocopy
 
-**Tested.** Windows 11 build 26200, SMB 3 to the container on the same host with user
-authentication, sacdfs 0.2.0-rc.1, `dsf,wav`, `--flatten`, 93 DSF + 93 WAV (54.96 GB).
-- *Explorer and PowerShell:* a recursive listing of 198 entries in 0.1 s; 14 of 186 names have
-  SFM private-use characters, listed and opened normally (they show a placeholder glyph, as
-  documented). The details pane reads WAV tags (artist, album, year, track, title, length);
-  DSF shows size, date and type only, because Windows has no DSF property handler. Copies of one
-  DSF (120 MB/s) and one WAV (91 MB/s) had a SHA-256 identical to the served file (2 of 2).
-- *Robocopy `/MIR`:* run 1 copied 186 of 186 files with no failures in 899 s (65.6 MB/s, bound
-  by DST decoding); sacdfs used 2,212 CPU-s and peaked at 507 MB RSS at the default cache.
-  Run 2 copied 0 and skipped 186 in 0.1 s, because sizes and times are stable.
+Tested. Windows 11 build 26200, SMB 3.1.1 to the container on the same host with user authentication, sacdfs 0.4.1-rc.1, `dsf,wav`, `--flatten`, 93 DSF + 93 WAV (54.96 GiB) plus 13 art files.
+
+- Explorer and PowerShell: a recursive listing of 213 entries in 0.1 s (321 requests). 14 names have SFM private-use characters (12 colon, 2 question mark); all open and read. The shell reads WAV tags (artist, album, year, track, title, length) from 3 reads per file; DSF shows size, date and type only, because Windows has no DSF property handler. folder.jpg has a thumbnail; audio files have none. A thumbnail pass over all 196 files cost 809 requests (278 reads); no request storm.
+- Copies and hashes: 186 of 186 audio files copied by Robocopy hash identically to the served files (93 DSF, 93 WAV); 20 of 20 sampled files read by Get-FileHash also match.
+- Robocopy /MIR: run 1 copied 196 of 196 files in 896 s (65.8 MB/s) with no failures, 465,000 requests; the sacdfs process peaked at 110 MB RSS (default cache) and the container used about 2,500 CPU-s. Run 2 copied 0 and skipped 196 in 0.1 s (342 requests); sizes and times were equal to the source for all 196.
+- Read-only: create, write, rename, move, delete and attribute changes fail in under 50 ms; two (delete folder, set read-only) report "an unexpected network error" instead of access denied.
+- RF64: two WAV files of 8.49 GB and 6.15 GB at `--pcm-rate 352800` read, seek past 4 GiB and hash identically to the server's.
+- Restart: a handle open during a sacdfs restart fails; the mapping works again without remounting.
+- Windows can use another SMB port: `net use S: \\host\sacd /user:... /TCPPORT:18445` worked on this build (one port per server name).
+
+Not checked: Explorer's large-icon view in a real window, a real audio output, Japanese, Chinese or Korean names, library changes, an output-version change.
 
 **Recommended setup.** Set `SMB_USER` and `SMB_PASSWORD`: Windows 11 24H2 and later refuse
 guest access. See [Windows](deployment.md#windows) and
@@ -278,16 +279,11 @@ guest access. See [Windows](deployment.md#windows) and
 
 ## foobar2000
 
-**Tested (partial).** foobar2000 2.26.2 portable on Windows 11, SMB 3, sacdfs 0.2.0-rc.1.
-The SACD/DSD component could not be installed unattended, so only the stock decoder was
-tried. Adding one area folder and opening one DSF caused 25 opens and 65 reads and no errors in
-sacdfs's log. **Not verified:** tags, durations, art, seek and multichannel naming (no GUI
-evidence). This is neither a pass nor a fail.
+Tested. foobar2000 2.26.2 portable with foo_input_sacd 2.0.27, Windows 11 build 26200, SMB 3.1.1, sacdfs 0.4.1-rc.1, driven through foo_beefweb 0.10. Adding the whole share found 186 files in 4 s (1,494 requests, 186 opens, 345 reads) with title, artist, album and length on every file; DSF decode as DSD64 and WAV as PCM 176.4 kHz 24-bit; stereo, 5ch and 6ch are recognised. folder.jpg art is shown where the folder has it. Playback (emulated sound device with no output, so audio was not heard) starts in 0.33 to 0.38 s for stereo, 5ch and 6ch; seek to 60% works and playback continues; a track played to its end and the next began. Not checked: audio quality and DST multichannel output.
 
 ## JRiver Media Center
 
-**Untested.** The trial download failed in the test script (a bad URL) and no interactive trial
-was done. It needs a manual run (JRiver Media Center 36 was the planned version).
+Partly tested. JRiver Media Center 36.0.38 trial (installs and runs without an account), Windows 11 build 26200, SMB 3.1.1, sacdfs 0.4.1-rc.1. Importing the share with default options found 186 audio files (7 albums, 5 artists) in 14 s (1,958 requests: 384 opens, 91 reads) with artist, album, title and track tags; artist art shows for 3 of 5 artists. A DSF starts playing (converted to PCM; the emulated sound card needed the output rate lowered from 352.8 kHz to 176.4 kHz). Not checked: seek, playing to the end, multichannel, and a quiet rescan.
 
 ## Linux NFS and SMB mounts
 
