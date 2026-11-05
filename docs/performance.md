@@ -605,6 +605,57 @@ CPU time per read is equal for both builds (for example DST 6 ch. DSF: 259 s eac
 more than 3 % slower; the largest ratio, plain DSD DSF at 1.027, is inside the range of both
 builds.
 
+**A 14-core laptop-class CPU (i9-13900H) on a shared test host, repeated on a quiet host** (the same
+reads, 11 alternating rounds, one run per read; the host also runs a VM that cannot be stopped, so
+the load average was 16.7 in the median, mostly sacdfs's own decoder threads; 3 of the 132 runs,
+all rc.1 DST 6 ch. WAV, saw the CPU's thermal-throttle counter move). A first pass the same
+evening, disturbed by two other jobs, is not used:
+
+| Read | 0.4.0 | 0.4.1-rc.1 | rc.1 / 0.4.0 |
+|---|---|---|---|
+| Plain DSD stereo, DSF | 2.75 s (2.36 to 2.99) | 2.88 s (2.62 to 3.37) | 1.046 |
+| Plain DSD stereo, WAV | 7.36 s (6.78 to 8.58) | 8.00 s (6.76 to 8.85) | 1.086 |
+| DST stereo, DSF | 8.78 s (8.69 to 8.89) | 8.80 s (8.70 to 8.90) | 1.003 |
+| DST stereo, WAV | 9.52 s (9.42 to 9.57) | 9.48 s (9.43 to 9.56) | 0.996 |
+| DST 6 ch., DSF | 28.41 s (28.22 to 28.45) | 28.40 s (28.29 to 28.57) | 1.000 |
+| DST 6 ch., WAV | 32.83 s (32.55 to 33.13) | 32.96 s (32.60 to 33.11) | 1.004 |
+
+No ratio is over 1.10. The two plain-DSD reads, the shortest (under 8 s) and the noisiest,
+are 4.6 % and 8.6 % slower on rc.1 here with overlapping ranges; on the quiet desktop above the
+same reads differ by 2.7 % and 0.2 %, and the DST reads, where the work is, are equal on both
+machines. The quiet desktop is the reference.
+
+**Whole library, 0.4.0 against 0.4.1-rc.1** (the 14-core host above; 414 images, 4,902 DSF files
+with `--format dsf`, the default cache, a fresh index cache for each run, warm caches; 6
+alternating pairs, the first pair not counted in the ranges because it ran while the host was
+busy; 0.4.0's mount times vary because the host was shared):
+
+| Measure | 0.4.0 | 0.4.1-rc.1 |
+|---|---|---|
+| Mount (`sacdfs` returns) | 3.9 to 7.8 s (median 4.4 s) | 0.64 to 0.69 s |
+| First listing (`find`) | 1.5 to 1.6 s | 1.3 to 1.5 s |
+| Import-style scan (64 KiB at the start and 4 KiB at the end of every file) | 10.2 to 11.2 s | 10.2 to 10.7 s |
+| Peak resident memory after the scan | 73 to 76 MiB | 95 to 98 MiB (**+30 %**) |
+| Import replay (Roon's reads) peak, 4,902 files | 78 MiB (2 runs) | 100 and 101 MiB (**+28 %**) |
+
+The mount is faster on rc.1 and listing and scanning are equal. **Memory is over 10 % higher on
+rc.1:** about 22 MiB more for 414 images (roughly 55 KiB per image); the cause was not
+investigated. It does not contradict the table of [synthetic bench discs](deployment.md#memory)
+(the same builds differ by 2 MiB there), which is a different, much smaller library.
+
+**Other rc.1 measurements on the same host:**
+
+- *MPD first scan with `dsf,wav`*, 9 alternating pairs on a quiet host: 0.4.0 5.67 to 5.98 s,
+  rc.1 5.67 to 5.87 s (median 5.77 s on both).
+- *The 2-hour soak* (`scripts/soak.py`, 5 images, stalls every few minutes): **PASS**. 38 stalls
+  injected, 0 stall failures, 23 remounts, 0 remount failures, 263,201 reads (845 GB) of which
+  16,725 failed, as the churn and the stalls make them. Resident memory warm 181.5 MiB, peak
+  195.2 MiB, second-half trend +0.69 MiB/h (allowed 4.4); anonymous memory the same; threads 59
+  (peak 62, ceiling 75); open files 17 to 18; the cache directory 0.1 MiB. 0.4.0 was not soaked
+  for comparison.
+- *Jellyfin's LUFS task* (reads 40 GiB of the 22 GiB library): 478 s on 0.4.0 and 508 s on rc.1
+  (+6 %, one run each, quiet host); first scan 52.5 s on both.
+
 ## History
 
 What each improvement changed, one line each, with the pull request that measured it (each
