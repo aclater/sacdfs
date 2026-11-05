@@ -509,6 +509,7 @@ mod tests {
             dirs: dirs.into_iter().map(|(n, d)| (n.into(), d)).collect(),
             images: images.iter().map(|i| PathBuf::from(format!("{p}/{i}"))).collect(),
             sidecars: Vec::new(),
+            rejected: None,
             stamp: Box::default(),
         };
         let make = |order: bool| {
