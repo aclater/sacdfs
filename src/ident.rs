@@ -39,7 +39,8 @@
 //! file's size and modification time ([`sidecar_generation`]), so a handle to a replaced
 //! cover goes stale the same way.
 //! A track file whose tag a tags file changed (#81) mixes a hash of that tag into its
-//! generation, and its mtime is no older than the tags file.
+//! generation, and its mtime is no older than the tags file. A track file with text its disc
+//! lacks (#185) counts as one output version on (`file_version`).
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::ffi::OsStrExt;
@@ -154,11 +155,11 @@ pub fn pcm_mtime_offset(pcm: &PcmConfig) -> u64 {
 /// offset ([`pcm_mtime_offset`]). The same on every mount with the same options; anything
 /// that changes it also changes the file's [`generation`].
 pub fn mtime(file: &TrackFile, pcm_offset: u64) -> SystemTime {
-    let (version, offset) = match file.format() {
-        Format::Dsf => (DSF_VERSION, 0),
-        Format::Wav => (WAV_VERSION, pcm_offset),
+    let offset = match file.format() {
+        Format::Dsf => 0,
+        Format::Wav => pcm_offset,
     };
-    let shown = shown_mtime(file.disc.mtime, version, offset);
+    let shown = shown_mtime(file.disc.mtime, file_version(file), offset);
     // A file whose tag a tags file changed (#81): no older than the tags file.
     match file.tags {
         Some(t) => shown.max(t.mtime),
@@ -166,8 +167,20 @@ pub fn mtime(file: &TrackFile, pcm_offset: u64) -> SystemTime {
     }
 }
 
+/// The output version of a track file: its format's, and one more if it has text its disc lacks
+/// (#185). *Why not move `DSF_VERSION` and `WAV_VERSION`:* those move every file of every
+/// library, and only these files' bytes changed; a scanner re-reads these and no others, as
+/// with a tags file (#81).
+fn file_version(file: &TrackFile) -> u32 {
+    let version = match file.format() {
+        Format::Dsf => DSF_VERSION,
+        Format::Wav => WAV_VERSION,
+    };
+    version + u32::from(file.filled)
+}
+
 /// How far the output version of `format` moves its files' mtime past their image's, with
-/// the default PCM options.
+/// the default PCM options, for a file with only its disc's text.
 pub fn version_offset(format: Format) -> Duration {
     let version = match format {
         Format::Dsf => DSF_VERSION,
@@ -185,12 +198,18 @@ fn file_offset(version: u32, pcm_offset: u64) -> Duration {
     Duration::from_secs(step + pcm_offset.min(PCM_OFFSETS - 1))
 }
 
-/// How far the newest track file shown moves past its image's mtime (see [`mtime`]): the
-/// largest offset of the formats shown, DSF and/or WAV with the PCM options' `pcm_offset`.
-/// A directory's mtime counts its images' mtimes moved by this (#123).
+/// How far a track file's mtime moves for having text its disc lacks (#185): one output version.
+pub const FILLED_STEP: Duration = Duration::from_secs(VERSION_STEP);
+
+/// How far the newest track file an image could show moves past its mtime (see [`mtime`]): the
+/// largest offset of the formats shown, DSF and/or WAV with the PCM options' `pcm_offset`, for a
+/// file with text its disc lacks (#185). A directory's mtime counts its images' mtimes moved by
+/// this (#123). *Why every image, when few have such files:* whether one does takes its TOC, and
+/// the mount reads no TOC, only a small probe of each image (#175). So every folder moves once, a scanner that prunes unchanged
+/// folders walks them all, and it re-reads only the files whose own mtime moved.
 pub fn newest_offset(dsf: bool, wav: bool, pcm_offset: u64) -> Duration {
-    let d = if dsf { file_offset(DSF_VERSION, 0) } else { Duration::ZERO };
-    let w = if wav { file_offset(WAV_VERSION, pcm_offset) } else { Duration::ZERO };
+    let d = if dsf { file_offset(DSF_VERSION + 1, 0) } else { Duration::ZERO };
+    let w = if wav { file_offset(WAV_VERSION + 1, pcm_offset) } else { Duration::ZERO };
     d.max(w)
 }
 
@@ -415,9 +434,10 @@ pub fn file(image: u64, slot: Slot, number: u8, format: Format, flavour: u64) ->
 /// flavour (WAV only) mixed with the output's samples per frame.
 pub fn generation(file: &TrackFile, flavour: u64) -> u64 {
     let mtime = file.disc.mtime.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
-    let (version, flavour) = match file.format() {
-        Format::Dsf => (DSF_VERSION, 0),
-        Format::Wav => (WAV_VERSION, flavour),
+    let version = file_version(file);
+    let flavour = match file.format() {
+        Format::Dsf => 0,
+        Format::Wav => flavour,
     };
     let fmt: u8 = match file.format() {
         Format::Dsf => 1,

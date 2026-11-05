@@ -238,7 +238,8 @@ MOUNT/
   capacity) is left out. Names are cut to fit 255 bytes.
 - `Stereo` and `Multichannel` appear only for areas the disc has.
 - File names come from the track text (title), with `/`, NUL and control characters
-  replaced; a track without a title is `NN.dsf`. Duplicates get ` (2)`, ` (3)`.
+  replaced; a track without a title is `NN - Track NN.dsf` ([#185](#discs-without-text-185)).
+  Duplicates get ` (2)`, ` (3)`.
 - **DSF and WAV files side by side** in the same folder (owner decision, #11): `--format dsf`,
   `wav` or `dsf,wav` (the default) selects which appear. *Why:* one mount and one tree, no
   duplicate folders to browse or configure; players and taggers handle two files with the
@@ -508,7 +509,9 @@ toggling it does not move mtimes. A tags file's album name wins and gets no suff
 of its image's sector count and mtime, its format, size and an output version per format, and
 for WAV the full PCM flavour; never 0. A handle to a file whose bytes may have changed then
 fails with `ESTALE` instead of serving other audio. The output versions (`DSF_VERSION`,
-`WAV_VERSION`) are bumped by any change that makes the same track's bytes differ.
+`WAV_VERSION`) are bumped by any change that makes the same track's bytes differ, unless
+the change reaches only some tracks and tells which, as a tags file (#81) and text filled in
+for a disc without it ([#185](#discs-without-text-185)) do.
 Directories have generation 0: they are containers found by name, and a handle to one whose
 content changed should still work (a missing area or file is then not found).
 *Why not the image's file size:* the sector count is the image's size in sectors, already in
@@ -561,7 +564,9 @@ A directory shows the newest mtime of what is shown below it (#123), see
 A directory's mtime is the newest of its source directory's own mtime and the mtimes of
 everything shown below it, at any depth: source directories, sidecar files and folders, and
 each image's track files (its image's mtime moved by the largest offset of the formats shown,
-`ident::newest_offset`). An image's own folder and its area folders show their image's files
+`ident::newest_offset`, which counts the extra version of a file with filled-in text whether
+the image has such files or not, [#185](#discs-without-text-185)). With an image below, the
+other times count one step later too (`ident::FILLED_STEP`), for the same reason. An image's own folder and its area folders show their image's files
 and their folder art. Up to the mount root, then, every directory moves when anything below it
 moves: an output-version bump, new tags (which come with one), a new, removed or changed
 sidecar or image.
@@ -1693,6 +1698,62 @@ MusicBrainz IDs on 26.
   values. Existing tags files keep their values (hand edits win), and files are written
   through a rename. *Why reuse verify:* the owner asked for verify's matching, and it is the
   proof the extract may be deleted.
+
+### Discs without text (#185)
+
+Some real discs have little or no text in their TOC, so 0.4.0 served `01.wav` with an empty title
+and no album name, and players filed them under "Various Artists". Phase 1 of #185 fills the gaps
+with no network and no stored state; the lookups of its later phases write tags files instead.
+
+- **Titles.** A track without a title gets the title `Track NN` and the file name
+  `NN - Track NN.dsf`. Titles stay per area: a stereo area's title does not fill a multichannel
+  track, since nothing says the two areas hold the same tracks in the same order.
+- **Album and artist from the path.** `fallback.rs` holds the rule. *Owner decision (the phase
+  split was delegated):* this part is always on and never uses the network. *Why so narrow:* a
+  wrong artist is worse than a blank one, because a player then files the disc under someone else.
+  So only a shape that can't be read another way counts (`Artist - YYYY - Album [...]` in the
+  image's or the folder's name), or two names that agree (a `YYYY - Album [...]` folder, with an
+  image name that starts with the folder above it, or reads `Artist - Album` with the same album).
+  The folder above alone is not enough: it may be a genre or a format. Otherwise the album is the
+  image's file name and the artist stays blank.
+  *Why the second shape, beyond the issue's pattern:* the 21 areas with blank titles in the 0.4.0
+  library survey are all laid out `Artist/YYYY - Album [...]/`, and their folders don't match the
+  issue's pattern. *Alternatives:* any folder above as the artist (wrong on `SACD/2001 - Album/`);
+  splitting `Artist - Album` image names without other evidence (wrong on `Album - Disc 1`);
+  reading the year as a date tag (a folder's year may be a reissue's). *Trade-off:* a
+  disc in `Artist/YYYY - Album/disc.iso` gets an album and no artist; a folder with several
+  images gives them all one album name, as a set's discs share theirs.
+- **Who wins.** The disc's own text, then a tags file over all of it, an empty value included:
+  the fill-in is made before the overrides are applied (`dsf::tagged`). An album from the path
+  takes the multichannel suffix (#97) as the disc's own does. The artist is set, as both TPE1 and
+  TPE2, only if the disc has no artist text at all, so that a disc naming some performers isn't
+  split by a guess on the others.
+- **File names stay the disc's.** A tags file changes tags, not names, as before (#81): a track
+  given a title there keeps the name `NN - Track NN`. *Why:* a name that follows the tags file
+  would move a file when a tag is edited, and players would see a removal and an addition.
+- **Path safety.** What comes from the path goes only into tags, never into a path of the mount;
+  a name that isn't valid UTF-8 or holds control characters gives nothing to the patterns, and
+  the plain name goes through `names::sanitize`.
+- **Times, and why not the output-version rule as written.** *Choice:* a file with filled-in text
+  counts as one output version past its format's (`ident::file_version`), which moves its mtime
+  by one step and changes its generation; other files keep theirs, byte for byte. Folders move one
+  step if they have an image below (`ident::newest_offset`, `ident::FILLED_STEP`), and that includes
+a folder newer than its images, whose own time would otherwise hide the move; folders with only
+sidecars below stay. *Why:* as with tags files, only those files'
+  bytes change, and a bump of `DSF_VERSION`/`WAV_VERSION` would make every scanner re-read, and a
+  player like Plex or Roon possibly re-analyse, every file of a large library for a few tracks. *Why
+  all folders:* whether a disc has text takes its TOC, and the mount reads no TOC, only a small probe of each
+  image (#175); a
+  scanner that prunes unchanged folders (#123) would never reach the disc otherwise. *Measured:* before the folders newer than their images moved too, 24 of 259 changed files on the
+  0.4.0 survey library had a folder above them that kept its time. *Trade-off:* a
+  pruning scanner walks all its folders once after the upgrade, and a folder can show a time up to
+  one step (7 hours) newer than anything below it, or ahead of the clock just after a change. Files keep their inode numbers, so a rename
+  is only a new name for the same number. `golden_dsf_corpus` hashes paths and header sizes, so
+  its value moved without a version bump, this once; the audio was compared with 0.4.0's on the
+  pull request.
+- **`verify` and `tags import`** compare an extract with the tag without the fill-in
+  (`TrackFile::stored_frames`). *Why:* text that happens to match the folder's name is still lost
+  if the extract goes and the folder is later renamed, so `verify` reports it and `import` keeps it.
 
 ## Verifying extracts (`sacdfs verify`, #80)
 

@@ -141,9 +141,13 @@ impl Candidate {
             .clone()
     }
 
-    /// The frames of the served file's tag.
+    /// The frames of the served file's tag, without what comes from the image's path (#185):
+    /// deleting an extract with that text would lose it when the folder is renamed.
     fn tag(&self, engine: &Engine) -> &[id3::Frame] {
         self.tag.get_or_init(|| {
+            if self.file.filled {
+                return self.file.stored_frames();
+            }
             let mut src = TrackSource::new(self.file.clone(), engine);
             match container::parse(&mut src).map(|a| a.read_id3(&mut src)) {
                 Ok(Ok(Some(t))) => id3::frames(&t),
