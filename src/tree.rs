@@ -2413,7 +2413,10 @@ mod tests {
     /// The names in `Stereo` that are not audio.
     fn art_names(dir: &Path, sel: &str) -> Vec<String> {
         let t = Tree::new(SourceDir::scan_with(dir, &Sidecars::parse(sel).unwrap(), None).unwrap());
-        names(&t, "Artist/Album/x/Stereo").into_iter().filter(|n| !n.ends_with(".dsf") && !n.ends_with(".wav")).collect()
+        names(&t, "Artist/Album/x/Stereo")
+            .into_iter()
+            .filter(|n| !n.ends_with(".dsf") && !n.ends_with(".wav"))
+            .collect()
     }
 
     #[test]
@@ -2423,10 +2426,7 @@ mod tests {
         // `folder` is chosen before `front`; `jpeg` is shown as `jpg`; it is the same node.
         assert_eq!(art_names(dir.path(), "default"), ["folder.JPEG", "front.png", "cover.jpg"]);
         let t = tree_sc(dir.path(), false);
-        assert_eq!(
-            ino_of(&t, "Artist/Album/x/Stereo/cover.jpg"),
-            ino_of(&t, "Artist/Album/folder.JPEG")
-        );
+        assert_eq!(ino_of(&t, "Artist/Album/x/Stereo/cover.jpg"), ino_of(&t, "Artist/Album/folder.JPEG"));
         assert_eq!(read_sidecar(&t, "Artist/Album/x/Multichannel/cover.jpg"), b"Artist/Album/folder.JPEG");
         // The folder itself is unchanged, and so are the audio files' numbers.
         assert_eq!(names(&t, "Artist/Album"), ["x", "folder.JPEG", "front.png"]);
@@ -2440,7 +2440,11 @@ mod tests {
     #[test]
     fn art_already_named_cover_gets_no_alias() {
         for existing in ["cover.jpg", "Cover.PNG", "cover.webp"] {
-            let dir = source(&["Artist/Album/x.iso", "Artist/Album/folder.jpg", &format!("Artist/Album/{existing}")]);
+            let dir = source(&[
+                "Artist/Album/x.iso",
+                "Artist/Album/folder.jpg",
+                &format!("Artist/Album/{existing}"),
+            ]);
             let got = art_names(dir.path(), "default");
             assert_eq!(got.len(), 2, "{existing}: {got:?}");
             assert!(!got.iter().any(|n| n == "cover (2).jpg"), "{got:?}");
