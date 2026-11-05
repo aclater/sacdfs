@@ -6,6 +6,31 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`sacdfs tags fetch IMAGE...`: tags from MusicBrainz, on demand** (#185, phase 2). It finds the
+  disc's release by barcode or catalogue number, confirms it by track count, durations and ISRCs,
+  and writes titles, artists, album, date and MusicBrainz IDs to the disc's file in the tags
+  directory. `--lookup-name` also searches by album and artist, and `--lookup-durations` by the
+  tracks' start times. `--dry-run` shows what would be written. No match, or an ambiguous one,
+  writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
+  own text stays. Nothing goes on the network unless you run this command: a mount never does. It
+  sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
+  (docs/user-guide.md, "From MusicBrainz"). Not yet tested on real discs against their own
+  releases: its live test used stand-in images with the barcodes and durations of public releases.
+
+### Changed
+
+- **A tags file's title still doesn't rename a file** (#185, phase 2, now decided for lookups): a
+  track given a title by `sacdfs tags fetch` stays `NN - Track NN.dsf`, with the title in its tag.
+- **`sacdfs tags import` leaves out a generated `Track NN` title, and `sacdfs verify` doesn't report
+  it as lost** (#185). An extract copied from a 0.4.1 mount has that text, and an import stored it
+  as if edited by hand, which would have kept a lookup's title out. A title of any other form,
+  `Track 3` for instance, is still kept. `sacdfs tags fetch` replaces a `Track NN` that an earlier
+  import stored.
+- **The binary is about 3 MB larger** (7.2 to 10.2 MB in a release build on x86-64): it now holds an
+  HTTPS client with its own root certificates (ureq, rustls), used only by `sacdfs tags fetch`.
+
 ## [0.4.1-rc.1] - 2026-11-05
 
 ### Upgrade notes

@@ -221,6 +221,8 @@ with no network and nothing stored:
 - Your own [tags file](#your-own-tags---tags) wins over all of this, an empty value included.
   It changes the tags, not the file names: a track you give a title there stays
   `NN - Track NN.dsf`.
+- To look a disc's real names up, run [`sacdfs tags fetch`](#your-own-tags---tags), which writes
+  them to its tags file. That's on demand and the only part of sacdfs that uses the network.
 - These files show a new modification time once, and so does every folder with a disc below it ([Times, sizes and free
   space](#times-sizes-and-free-space)). Moving the image to another folder can change what it's
   called; to keep a name for good, put it in a tags file. The audio is unaffected.
@@ -335,6 +337,62 @@ couldn't be read or written: what could be done was done, the rows are in the re
 summary says how many were left out. 1 when the import couldn't run or didn't finish.
 
 **From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).
+
+**From MusicBrainz: `sacdfs tags fetch`.** For a disc with little or no text, this looks it up and
+writes what it finds to its tags file:
+
+```sh
+sacdfs tags fetch --tags ~/music/sacd-tags --dry-run ~/music/sacd-images/disc.iso   # look first
+sacdfs tags fetch --tags ~/music/sacd-tags ~/music/sacd-images/disc.iso
+sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations ~/music/sacd-images/*.iso
+```
+
+It's the only part of sacdfs that uses the network. A mount never looks anything up, and nothing is
+sent unless you run this command. Steps run in this order, and the first one that finds a match or
+an ambiguity ends the lookup:
+
+| Step | Needs | Sent to MusicBrainz | A track may be off by, and the mean over the disc |
+|---|---|---|---|
+| Barcode or catalogue number (always) | a number in the disc's album or disc catalogue field | the numbers | 6 s, 3 s |
+| `--lookup-name` | an album and an artist, from the disc's text or the [image's path](#tagging-behaviour) | those names | 4 s, 2 s |
+| `--lookup-durations` | 4 tracks or more | the tracks' start times | 2.5 s, 1 s |
+
+- **What makes a match:** a release that carries the number or the names searched for, with a
+  medium of the same track count on which every track fits, and no more ISRCs that disagree than
+  agree. A set's discs are told apart by the disc's own set number, if it has one.
+- **What it refuses:** when no release fits, or when several fit and differ in any album, artist
+  or track text, it writes nothing and says why, with the release IDs, so you can check them on
+  musicbrainz.org. A wrong match is worse than none, so expect refusals. Box sets holding the
+  same disc, or two discs with the same durations, are refused unless the disc's set number
+  settles it. To use such a match, copy what you want into the tags file by hand.
+- **What it writes:** `album`, `album_artist`, `title` and `artist`, and the MusicBrainz IDs
+  (`TXXX:MusicBrainz Release Group Id`, `UFID:http://musicbrainz.org`). With a number it also
+  writes `date` and `TXXX:MusicBrainz Album Id`. A name or durations find the album but not the
+  pressing, so those two are left out, and so is any ID that several matching releases don't share.
+- **What it leaves alone:** the disc's own text is kept, so a disc with text gets only the IDs. A
+  value already in the tags file wins, at any level, an empty one included. Comments in that file
+  aren't kept, as with `tags import`, since the file is written anew. `Track NN` stored by an
+  earlier `tags import` isn't taken for an edit and is replaced, so a title you set by hand to exactly
+  that text is too.
+- **File names don't change:** a track stays `NN - Track NN.dsf`, with the new title in its tag,
+  so that a player's history of the file isn't moved a second time. Files whose tags changed get a
+  new modification time, and folders move, as with any edit of a tags file.
+- **A multichannel album name** gets ` (Multichannel)` as the mount's does; with
+  `--no-multichannel-album-suffix` on your mount, pass the same option here.
+- **Once per disc:** a disc whose tags hold a release group ID isn't asked about again, even if one
+  of its areas didn't fit. Remove that line to ask again.
+- **Rate:** at most 1 request per second, with retries at longer waits when the service is busy, so a
+  disc takes a few seconds and a popular album's name search up to about half a minute. After
+  3 images in a row without an answer it stops. Run one at a time: two at once would exceed the rate.
+  The User-Agent names sacdfs and its project URL, with nothing about you; MusicBrainz also sees your
+  IP address, as any site does.
+
+**Exit status:** 0 when every image matched or was already looked up. 2 when any was refused or
+failed, or an area didn't fit the release its other area matched; what could be written was. A
+tags file that doesn't parse is left as it is, and nothing is asked for that disc.
+
+Tested live against MusicBrainz on stand-in images holding the barcodes and durations of public
+releases: untested on real discs against their own releases.
 
 As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
 to mount it.
