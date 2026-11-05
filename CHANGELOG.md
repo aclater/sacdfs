@@ -12,8 +12,17 @@ All notable changes to sacdfs are recorded here. The format follows
   DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
   summary and as a warning. Not a required check (#162).
 
+### Changed
+
+- `scripts/soak.py` judges threads by the median and end level of each half, with a hard
+  ceiling (`--thread-spike`), instead of the maximum of each half. A single sample taken during
+  an induced stall no longer fails a run, and accumulating threads still do (#179).
+
 ### Documentation
 
+- The TrueNAS SCALE guide is re-validated with the published 0.4.0 image, and notes the harmless
+  `parse_dfs_path_strict ... is not ours` Samba lines, that `NFS_CLIENTS` takes one address, and
+  that TrueNAS's "SMB share" app storage has no port field (#176).
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
   `rust:1.99.1` container with no other packages, it installs a working `sacdfs` (#155).
 

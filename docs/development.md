@@ -74,7 +74,12 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   32 MiB of noise above their level at the end of the warm-up;
 - their least-squares trend over the second half is at most 4 MiB/h, or adds less than 4 MiB
   over that half (`--trend-floor-mb`), so that a short run's noise does not fail it;
-- threads and open files do not climb in the second half;
+- threads do not climb: the median and the end level (the last three samples) of the second
+  half are at most 4 above the first half's median, and no sample passes `--thread-spike`
+  (default 16) above it. The staller makes sacdfs spawn spare threads on purpose (#167, #168),
+  so one sample taken during a stall may be several threads high; that does not fail a run,
+  while threads that accumulate still do;
+- open files do not climb: the second half's maximum is at most 8 above the first half's;
 - the cache directory plateaus.
 
 The exit status is 0 on PASS and 1 on FAIL. `--help` lists the knobs.
