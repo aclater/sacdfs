@@ -328,6 +328,12 @@ writes nothing but the tags directory (verify's report goes to `DIR/.last-import
 the picture (`PRIV`, `RVA2`, `GEOB` ...) cannot be kept; the summary lists them. DFF text
 chunks are not imported.
 
+**Exit status:** 0 when every extract was handled, as `sacdfs verify` means it: each DSF and DFF
+file matched and its tags were read (a FLAC or WAV file can't be compared, and doesn't count
+against this). 2 when any extract didn't match or couldn't be checked, or when a tag or tags file
+couldn't be read or written: what could be done was done, the rows are in the report, and the
+summary says how many were left out. 1 when the import couldn't run or didn't finish.
+
 **From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).
 
 As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
@@ -572,9 +578,10 @@ that stopped, there is no `FILE`:
   same size and modification time.
 
 A run that fails before it starts writing (a bad path, for example) leaves `FILE` as it was. A
-run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming something that
-isn't a regular file (`/dev/stdout`, a named pipe), the rows are written as they are made and
-only the exit status says whether the run finished; `--resume` has nothing to read there.
+run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming a descriptor
+(`/dev/stdout`, `/dev/stderr`, `/dev/fd/N`, even if it is redirected to a regular file) or a named
+pipe, the rows are written as they are made, after whatever is there, and only the exit status
+says whether the run finished; `--resume` has nothing to read there.
 
 Examples:
 

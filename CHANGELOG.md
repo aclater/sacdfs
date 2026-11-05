@@ -6,6 +6,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`sacdfs tags import` now exits 2 when some extracts weren't imported (#198).** It exited 0 even
+  with ERROR rows or `failed:` lines, so a script could not tell. It now follows `sacdfs verify`: 0
+  when every extract was handled, 2 when any didn't match or couldn't be read, with the rows
+  still written and the count in the summary, and 1 when it couldn't run. A script that ran it
+  over extracts that don't all match, and took any non-zero status as a failure, now sees one.
 ### Added
 
 - **Names for discs without text, with no network** (#185, phase 1; the lookups are later
@@ -88,8 +95,11 @@ All notable changes to sacdfs are recorded here. The format follows
   `FILE.partial`, and `FILE` appears only when every file has been checked. A report already at
   `FILE` moves to `FILE.previous` once a run starts writing, and is removed when it finishes.
   `--resume` reads all three. Anything that reads `FILE` during a run should read `FILE.partial`.
-  `-o` naming something that isn't a regular file (`/dev/stdout`, a named pipe) now works as a
-  stream, where only the exit status tells whether the run finished.
+  `-o` naming a descriptor (`/dev/stdout`, `/dev/stderr`, `/dev/fd/N`, even redirected to a
+  regular file) or a named pipe now works as a stream, where only the exit status tells whether
+  the run finished. On 0.4.0 `-o /dev/stdout` and the like wrote the rows, then always exited 1
+  when the report could not be rewritten beside them, and `>>` lost what the file held; the rows
+  are now added to it (#202).
 
 ### Changed
 

@@ -13,12 +13,13 @@
 //! path, and removes the other two. *Why:* `sacdfs verify` is what tells a user that extracts
 //! can be deleted (#196).
 //!
-//! A report to something that isn't a regular file (`/dev/stdout`, a named pipe) is a stream:
-//! nothing can be renamed there, and only the exit status tells whether it finished.
+//! A report to a descriptor (`/dev/stdout`, `/dev/fd/N`, whatever it is redirected to) or to
+//! something else that isn't a regular file (a named pipe) is a stream: nothing can be renamed
+//! there, and only the exit status tells whether it finished.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufWriter, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
@@ -285,9 +286,37 @@ pub fn previous_path(path: &Path) -> PathBuf {
     beside(path, ".previous")
 }
 
-/// Whether a report to `path` is written straight there: it exists and is no regular file.
+/// The open descriptor of this process that `path` names (`/dev/stdout`, `/dev/stderr`,
+/// `/dev/fd/N`, `/proc/self/fd/N`, or a link to one), whatever it is open on: the links are
+/// followed one at a time, as following them all ends at a redirected-to file.
+fn descriptor(path: &Path) -> Option<u32> {
+    let fds = Path::new("/proc").join(std::process::id().to_string()).join("fd");
+    let mut p = path.to_owned();
+    for _ in 0..8 {
+        let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_owned();
+        if fs::canonicalize(&parent).is_ok_and(|d| d == fds) {
+            return p.file_name()?.to_str()?.parse().ok();
+        }
+        p = parent.join(fs::read_link(&p).ok()?);
+    }
+    None
+}
+
+/// Whether a report to `path` is written straight there: it is a descriptor, or exists and is
+/// no regular file.
 fn is_stream(path: &Path) -> bool {
-    fs::metadata(path).is_ok_and(|m| !m.is_file())
+    descriptor(path).is_some() || fs::metadata(path).is_ok_and(|m| !m.is_file())
+}
+
+/// Opens a report that [`is_stream`]. Standard output and error are written through themselves,
+/// so that a file behind them keeps one position and what else goes there overwrites nothing.
+/// Anything else is opened anew, and adds to what it holds.
+fn open_stream(path: &Path) -> io::Result<Box<dyn Write + Send>> {
+    Ok(match descriptor(path) {
+        Some(1) => Box::new(io::stdout()),
+        Some(2) => Box::new(io::stderr()),
+        _ => Box::new(OpenOptions::new().append(true).open(path)?),
+    })
 }
 
 /// What `--resume` starts from, each over the one before: a finished report that a stopped run
@@ -333,7 +362,7 @@ impl Writer {
     /// that was at `path` moves to [`previous_path`] once those rows are safe.
     pub fn create(path: Option<&Path>, kept: &[Row]) -> io::Result<Writer> {
         let (out, finished): (Box<dyn Write + Send>, _) = match path {
-            Some(p) if is_stream(p) => (Box::new(File::create(p)?), None),
+            Some(p) if is_stream(p) => (open_stream(p)?, None),
             Some(p) => (Box::new(BufWriter::new(File::create(partial_path(p))?)), Some(p)),
             None => (Box::new(io::stdout()), None),
         };

@@ -508,6 +508,70 @@ fn report_to_a_pipe() {
     assert!(leftovers.is_empty());
 }
 
+/// #202: `-o` naming a descriptor is a stream whatever it is redirected to, a regular file too:
+/// finished, with every row, adding to what the file held, and with nothing left beside it.
+#[test]
+fn report_to_a_descriptor_redirected_to_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = copies(dir.path(), 1);
+    let dsf = walkdir(&lib).into_iter().filter(|p| p.extension().is_some_and(|e| e == "dsf")).count();
+    let bin = env!("CARGO_BIN_EXE_sacdfs");
+    let file = dir.path().join("out.tsv");
+    // As `>` opens it, and as `>>` does.
+    let open = |text: &str| {
+        fs::write(&file, text).unwrap();
+        fs::OpenOptions::new().write(true).append(!text.is_empty()).open(&file).unwrap()
+    };
+    let check = |out: std::process::Output, held: &str| {
+        assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+        let text = fs::read_to_string(&file).unwrap();
+        let rest = text.strip_prefix(held).unwrap_or_else(|| panic!("what it held is gone: {text}"));
+        assert!(rest.starts_with("status\t"), "{text}");
+        // The summary shares standard error with such a report, and overwrites none of it.
+        assert_eq!(rest.lines().filter(|l| l.starts_with("IDENTICAL\t")).count(), dsf, "{text}");
+    };
+    let verify = |o: &str| {
+        let mut c = Command::new(bin);
+        c.args(["verify", "-q", "-o", o]).arg(&lib);
+        c
+    };
+
+    // Standard output, also through a link of the user's, and with --resume.
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink("/dev/stdout", &link).unwrap();
+    for (o, resume) in [
+        ("/dev/stdout", false),
+        ("/dev/stdout", true),
+        ("/proc/self/fd/1", false),
+        (link.to_str().unwrap(), false),
+    ] {
+        let mut c = verify(o);
+        if resume {
+            c.arg("--resume");
+        }
+        check(c.stdout(open("")).output().unwrap(), "");
+    }
+    // `>>` keeps what the file holds.
+    check(verify("/dev/stdout").stdout(open("before\n")).output().unwrap(), "before\n");
+    // Standard error, `2>` and `2>>`.
+    check(verify("/dev/stderr").stderr(open("")).output().unwrap(), "");
+    check(verify("/dev/stderr").stderr(open("before\n")).output().unwrap(), "before\n");
+    // Another descriptor, set up by a shell.
+    fs::write(&file, "").unwrap();
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(r#""$0" verify -q -o /dev/fd/3 "$1" 3>"$2""#)
+        .args([bin.as_ref(), lib.as_os_str(), file.as_os_str()])
+        .output()
+        .unwrap();
+    check(out, "");
+    assert!(!dir.path().join("out.tsv.partial").exists());
+
+    // A descriptor that isn't open is an error, not a report beside it.
+    let out = Command::new(bin).args(["verify", "-q", "-o", "/dev/fd/9"]).arg(&lib).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
 #[test]
 fn command_line_exit_status_and_resume() {
     let dir = tempfile::tempdir().unwrap();
