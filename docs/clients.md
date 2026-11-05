@@ -335,7 +335,10 @@ documented but have no test report on #82.
   version change moves the times of the disc's folders and every folder above it, and new
   sidecars and images show up within a few seconds without a restart
   ([#101](https://github.com/aclater/sacdfs/issues/101),
-  [#123](https://github.com/aclater/sacdfs/issues/123); tested with Roon on 0.2.0). Server
+  [#123](https://github.com/aclater/sacdfs/issues/123); tested with Roon on 0.2.0). 0.4.1 moves
+  every folder's time once, and only the times of files of discs without text (the
+  [user guide](user-guide.md#tagging-behaviour); untested with Roon, Plex and the other servers on
+  0.4.1 at the time of writing, see the CHANGELOG). Server
   rescans with nothing changed read nothing: 0 opens for MPD, MinimServer and LMS on
   0.4.0-rc.2 and 0.3.0-rc.1, and 0 reads for Navidrome on 0.3.0-rc.1. From 0.4.0 a renamed
   or removed image is also freed in sacdfs ([#153](https://github.com/aclater/sacdfs/issues/153));

@@ -6,6 +6,34 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Names for discs without text, with no network** (#185, phase 1; the lookups are later
+  phases). A track without a title is now tagged `Track NN` and named `NN - Track NN.dsf`, where
+  0.4.0 served `NN.dsf` with an empty title. A disc without album or artist text takes them from
+  its image's path, by a narrow rule, since a wrong artist is worse than none: `Artist - YYYY -
+  Album [...]` in the image's or its folder's name, or a `YYYY - Album [...]` folder with an image
+  name that agrees; otherwise the album is the image's file name and there is no artist (the table
+  is in docs/user-guide.md, "Tagging behaviour"). A tags file wins over all of it. Audio is
+  unchanged.
+
+### Upgrade notes
+
+- **Discs without text change once; other discs don't.** Files of a disc that lacks a title, album
+  or artist get new tags, a new size, a modification time one step (7 hours) later and a new NFS
+  generation; those with no title also get a new name. The output version moves for those files
+  only, as with a tags file, so `DSF_VERSION` and `WAV_VERSION` stay. All other files keep their
+  bytes, time and generation.
+- **What scanners see.** Every folder's time moves one step once, because knowing which discs lack
+  text takes opening each image. A scanner that skips unchanged folders (Roon) walks all folders
+  once and re-reads only the changed files, and a scanner that compares files (Plex, Navidrome,
+  LMS, MPD) just re-reads those. A renamed track looks to a scanner like a removal and an addition,
+  so its play counts and edits in the player may not carry over.
+- **A tags file that sets a title** changes the tag and not the file name, as before: such a track
+  is named `NN - Track NN`.
+- `sacdfs verify` and `sacdfs tags import` don't count text from the path as the disc's, so they
+  still report and keep an extract's album or title that happens to match its folder's name.
+
 ### Documentation
 
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean

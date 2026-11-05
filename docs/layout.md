@@ -20,8 +20,8 @@ MOUNTPOINT/
 
 - Each track is there twice, as a DSF and a WAV file of the same name; `--format` shows one
   kind only. `Stereo` and `Multichannel` appear only for the areas a disc has.
-- File names come from the track titles (`NN.dsf` for a track without one); repeated names
-  get ` (2)`, ` (3)`.
+- File names come from the track titles (`NN - Track NN.dsf` for a track without one); repeated
+  names get ` (2)`, ` (3)`.
 - Files that are not SACD images, folders with no `*.iso` file below them, and tracks the
   disc cannot play are left out.
 - **Sidecar files** next to the images, `folder.jpg`, `cover.png`, an `Artwork/` or `Scans/`
