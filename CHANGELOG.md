@@ -6,6 +6,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **NFS clients keep their handles when the container restarts, under any runtime (#218).** Under
+  Podman, nearly every restart gave `Stale file handle` on open files, `stat` and `ls`, until a
+  remount; under Docker it could happen too. NFS-Ganesha's handles no longer hold the FUSE mount's
+  device number. Clients of an earlier release go stale once, when the first fixed container
+  starts: remount. CI now restarts the container under Docker and Podman, also with the device number
+  changed on purpose (`deploy/ci-restart-test.sh`).
+
 ### Upgrade notes
 
 What a scanner may see after the move from 0.4.0 to 0.4.1, with counts from one library of 4,902

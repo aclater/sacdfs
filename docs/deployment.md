@@ -64,8 +64,8 @@ shares. The clients tested so far, with the settings that worked for each, are i
     its mount point to go before mounting, and detaches a dead sacdfs mount there at once
     (#57).
   - The NFS export has the same fixed filesystem id (`Filesystem_Id = 101.1`) on every
-    start, because FUSE has no stable device number. A changing id would also invalidate
-    every client's handles.
+    start, and its file handles carry no device number (`fsid_type = Major64`), because FUSE
+    has no stable device number: see [NFS and restarts](#nfs-and-restarts).
 
 ## The published image
 
@@ -600,16 +600,35 @@ an NFS share of images on hard disks, these are the measured findings (#71,
 
 ## NFS and restarts
 
-NFS clients keep file handles across server restarts. sacdfs gives every file and
-directory the same inode number on every mount, and supports NFS export (#18). So after the
-container restarts (a NAS reboot, an update), NFS clients go on reading the files they had
-open, and their cached directories stay valid. SMB is path-based and reconnects by itself.
+An NFS client keeps its file handles across a restart of the container. So after a NAS reboot
+or an update, NFS clients go on reading the files they had open, and `stat` and `ls` of the
+same paths work, with the same inode, modification time and size, without a remount. SMB is
+path-based and reconnects by itself; a client may need more than that, see
+[docs/clients.md](clients.md).
 
-CI checks both: a client opens a file over SMB and over NFS (4.2), reads half of it, the
-container restarts, and the client reads the rest through the same open file.
+Run on the Linux kernel client with NFS 4.0, 4.1 and 4.2 under rootful Podman 6.1, and 4.2
+under Docker 29, for `restart`, for stop and start, and for removing and recreating the
+container (Podman) with the same image volume. The same in CI on every pull request, with the
+versions the runner has: see [Testing](#testing).
 
-An image whose file changed (size or modification time) gets new file handles, so a client
-holding an old one gets "stale file handle" instead of other data.
+Two things do give "stale file handle":
+
+- **An image whose file changed** (size or modification time) gets new file handles for its
+  files, so a client holding an old one gets that error instead of other data. Other images'
+  files aren't affected. The path itself works again at once.
+- **Moving to the first release with this fix, once.** 0.4.1 and earlier put the mount's device
+  number in each handle, so clients of those releases get "stale file handle" when the first
+  fixed container starts, even if their handles survived restarts before. Remount, or
+  reopen the file if the mount still answers. Later restarts and updates keep the handles.
+
+*Why it depended on the runtime before (#218):* each handle from NFS-Ganesha holds its own id for
+the backing filesystem. A FUSE mount has none, so Ganesha took the mount's device number, which is
+the lowest number free when the mount is made. Podman's restart mounts in another order, so the number
+nearly always changed (157 to 159, say) and every handle went stale. Under Docker it stayed the same,
+as a matter of luck: when the number was taken away on purpose, Docker's clients went stale as
+well. `Filesystem_Id` doesn't help: it's only what clients see as the filesystem id.
+
+The container speaks only NFSv4 (`Protocols = 4`); NFSv3 can't be tried against it.
 
 ## Troubleshooting
 
@@ -639,6 +658,8 @@ CI (`.github/workflows/container.yml`) builds the image, starts it on the test c
 mounts the shares with the kernel's SMB and NFS clients from a client container. It reads
 every track the corpus manifest expects and checks each DSF file's per-channel SHA-256 and
 each WAV file's header (`deploy/check-share.py`), over SMB and over NFS. A second run checks
-user access (guests refused), `SACDFS_FORMATS=dsf` and `SACDFS_FLATTEN=1`. In between, a
-client opens a file over SMB and over NFS, reads half of it, and reads the rest through the
-same open file after the container restarts.
+user access (guests refused), `SACDFS_FORMATS=dsf` and `SACDFS_FLATTEN=1`. In between, under
+Docker and then Podman (`deploy/ci-restart-test.sh`), a client opens a file over SMB and over
+NFS 4.2, reads half of it, and reads the rest through the same open file after the container
+restarts, and stats and lists the same paths. A second round per runtime takes the mount's device
+number away first, so the test doesn't depend on the number happening to stay the same.

@@ -142,7 +142,12 @@ EXPORT {
     Anonymous_Gid = 65534;
     # FUSE has no device number that stays the same: give the export a fixed one.
     Filesystem_Id = 101.1;
-    FSAL { Name = VFS; }
+    # What the clients see as the filesystem id is that one, but each file handle carries
+    # Ganesha's own id of the backing filesystem. FUSE reports none, so Ganesha uses the
+    # mount's device number, which changes when the kernel hands the next mount another one
+    # (Podman: nearly every restart), and every handle then goes stale (#218). Major64 keeps
+    # only the device's major number in the handle, always 0 for FUSE.
+    FSAL { Name = VFS; fsid_type = Major64; }
     CLIENT {
         Clients = $clients;
         Access_Type = RO;
