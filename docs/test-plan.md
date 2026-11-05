@@ -127,6 +127,7 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 | [#138](https://github.com/aclater/sacdfs/issues/138) | Plex with the documented setting keeps the album copies apart |
 | [#174](https://github.com/aclater/sacdfs/issues/174) | `ls -l` over NFS works, **and** Roon's Force Rescan sends no extended-attribute storm. These two pulled against each other once, so they are always checked together |
 | [#175](https://github.com/aclater/sacdfs/issues/175) | Folders with no SACD below them are hidden |
+| `verify` | A file it can't check gives an ERROR row and a non-zero exit, and an interrupted run leaves nothing that reads as a finished report. Users delete extracts on its word |
 
 ## Install channels
 
