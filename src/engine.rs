@@ -570,7 +570,7 @@ const PIPELINE_CHUNK: u32 = 16;
 /// One decoded DSD frame in scarletbook's interleaved layout, the converter's input.
 #[derive(Debug)]
 struct Dsd {
-    data: Vec<u8>,
+    data: FrameBuf,
     fill: Fill,
 }
 
@@ -833,13 +833,13 @@ impl Engine {
             return Ok(vec![self.convert_one(channels, frame_bytes, prev, one, next)?]);
         }
         let mut data = vec![0u8; frame_bytes * cur.len()];
-        let frames: Vec<&[u8]> = cur.iter().map(|d| d.data.as_slice()).collect();
+        let frames: Vec<&[u8]> = cur.iter().map(|d| &d.data[..]).collect();
         let mut clips = vec![0u32; cur.len()];
         self.with_converter(channels, |c| {
             if c.frame_bytes() != frame_bytes {
                 return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
             }
-            let (p, n) = (prev.map(|d| d.data.as_slice()), next.map(|d| d.data.as_slice()));
+            let (p, n) = (prev.map(|d| &d.data[..]), next.map(|d| &d.data[..]));
             c.convert_run(p, &frames, n, &mut data, &mut clips);
             Ok(())
         })?;
@@ -871,9 +871,9 @@ impl Engine {
                 return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
             }
             Ok(c.convert(
-                prev.map(|d| d.data.as_slice()),
+                prev.map(|d| &d.data[..]),
                 &cur.data,
-                next.map(|d| d.data.as_slice()),
+                next.map(|d| &d.data[..]),
                 &mut data,
             ))
         })?;
@@ -970,7 +970,16 @@ impl Engine {
                 }
                 let decoded: Vec<Result<(u32, Dsd), ReadError>> =
                     if jobs.iter().any(|j| matches!(j.content, FrameContent::Dst(_))) {
-                        jobs.into_par_iter().map(|j| decode_interleaved(j, channels)).collect()
+                        let size = group_size(jobs.len(), self.threads(), channels);
+                        let groups = in_groups(jobs.into_iter().map(|j| (j, None)).collect(), size);
+                        let mut decoded: Vec<Result<(u32, Frame), ReadError>> =
+                            groups.into_par_iter().flat_map_iter(|g| decode_group(g, channels)).collect();
+                        // A group gives its frames back with those not DST first.
+                        decoded.sort_by_key(|r| r.as_ref().map_or(0, |(n, _)| *n));
+                        decoded
+                            .into_iter()
+                            .map(|r| r.map(|(n, f)| (n, Dsd { data: f.data, fill: f.fill })))
+                            .collect()
                     } else {
                         jobs.into_iter().map(|j| decode_interleaved(j, channels)).collect()
                     };
@@ -1138,8 +1147,18 @@ fn group_size(n: usize, threads: usize, channels: u8) -> usize {
     if n / threads.max(1) >= GROUPS_FROM { scarletbook::dst::lanes(channels).max(1) } else { 1 }
 }
 
-/// Decodes a group of timeline positions, all DST frames, together on this thread: what
-/// [`decode`] gives for each, by `DstDecoder::decode_many`.
+/// Splits `items` into groups of `size`, in order.
+fn in_groups<T>(items: Vec<T>, size: usize) -> Vec<Vec<T>> {
+    let mut items = items.into_iter().peekable();
+    let mut groups = Vec::new();
+    while items.peek().is_some() {
+        groups.push(items.by_ref().take(size.max(1)).collect());
+    }
+    groups
+}
+
+/// Decodes a group of timeline positions together on this thread: what [`decode`] gives for
+/// each, the DST frames by `DstDecoder::decode_many`.
 fn decode_group(
     group: Vec<(TrackFrame, Option<FrameBuf>)>,
     channels: u8,
@@ -1186,7 +1205,7 @@ fn decode_interleaved(job: TrackFrame, channels: u8) -> Result<(u32, Dsd), ReadE
         FrameStatus::Invalid(_) => Fill::Invalid,
         _ => Fill::Audio,
     };
-    Ok((number, Dsd { data: audio.data, fill }))
+    Ok((number, Dsd { data: audio.data.into(), fill }))
 }
 
 /// Malloc arenas glibc may use, set by [`limit_malloc_arenas`].
