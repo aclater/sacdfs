@@ -1282,6 +1282,34 @@ mod tests {
         assert_eq!(group_size(8, 0, 2), best);
     }
 
+    /// A group gives each kind of position what `decode` gives it, whatever else is in it.
+    #[test]
+    fn a_group_decodes_every_kind_of_position() {
+        let len = 2 * FRAME_BYTES_PER_CHANNEL;
+        let job = |number, content| (TrackFrame { number, content }, None);
+        let mut got = decode_group(
+            vec![
+                job(1, FrameContent::Dst(vec![0xff; 16])),
+                job(2, FrameContent::Missing),
+                job(3, FrameContent::Dsd(vec![7; len])),
+                job(4, FrameContent::Dst(vec![0xff; 32])),
+            ],
+            2,
+        )
+        .into_iter()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+        got.sort_by_key(|(n, _)| *n);
+        let kinds: Vec<_> = got.iter().map(|(n, f)| (*n, f.fill, f.data.len())).collect();
+        assert_eq!(
+            kinds,
+            [(1, Fill::Invalid, len), (2, Fill::Missing, len), (3, Fill::Audio, len), (4, Fill::Invalid, len)]
+        );
+        assert!(got[0].1.data.iter().all(|&b| b == scarletbook::audio::INVALID_FILL));
+        assert!(got[1].1.data.iter().all(|&b| b == scarletbook::audio::MISSING_FILL));
+        assert!(got[2].1.data.iter().all(|&b| b == 7));
+    }
+
     #[test]
     fn cache_is_bounded() {
         let c = FrameCache::new(10_000);

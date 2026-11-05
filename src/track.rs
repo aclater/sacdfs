@@ -411,15 +411,12 @@ impl TrackFile {
             zeros: ZEROS.get(..channels * dsf::FRAME_BYTES as usize).unwrap_or(&[]),
             fill: None,
         };
-        match l.fill(offset, &mut out, &mut src) {
-            // Whatever the layout left out is zeros, not an earlier read's bytes.
-            Ok(n) => out.get_mut(n..).unwrap_or(&mut []).fill(0),
-            Err(e) => {
-                log::debug!("{} area {} track {}: {e}", self.disc.path.display(), self.area, self.number);
-                out.fill(0);
-                let _ = l.fill(offset, &mut out, &mut src);
-            }
-        }
+        // Whatever the layout leaves out is zeros, not an earlier read's bytes.
+        let filled = l.fill(offset, &mut out, &mut src).unwrap_or_else(|e| {
+            log::debug!("{} area {} track {}: {e}", self.disc.path.display(), self.area, self.number);
+            0
+        });
+        out.get_mut(filled..).unwrap_or(&mut []).fill(0);
         self.warn(src.fill, 0);
         out
     }
@@ -649,5 +646,23 @@ impl Reader {
         let stop = frames.min(k1 + window);
         s.ahead_until = stop;
         (start < stop).then_some(ReadAhead { first: start, end: stop })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only so many buffers are kept, none over the largest read, and an idle engine drops them.
+    #[test]
+    fn reply_buffers_are_bounded() {
+        drop_read_buffers();
+        for _ in 0..READ_BUFFERS_KEPT + 3 {
+            give_back(vec![1; 4096]);
+        }
+        give_back(Vec::with_capacity(READ_BUFFER_MAX + 1));
+        assert!(READ_BUFFERS.lock().unwrap_or_else(|p| p.into_inner()).len() <= READ_BUFFERS_KEPT);
+        assert!(read_buffer().capacity() <= READ_BUFFER_MAX);
+        drop_read_buffers();
     }
 }
