@@ -46,7 +46,7 @@ pub fn frames(tag: &[u8]) -> Vec<Frame> {
     let mut at = 0usize;
     if flags & 0x40 != 0 && major >= 3 {
         let ext = match major {
-            3 => be(&body, 0, 4).map(|n| n + 4),
+            3 => be(&body, 0, 4).and_then(|n| n.checked_add(4)),
             _ => body.get(0..4).map(syncsafe),
         };
         match ext {
@@ -347,8 +347,9 @@ impl Losses {
             parts.push("replaygain".to_owned());
         }
         if !self.other.is_empty() {
-            let keys: Vec<String> = self.other.iter().map(|k| k.replace([',', '|'], "_")).collect();
-            parts.push(format!("other={}", keys.join("|")));
+            // Sorted as written, so that a resumed report writes the same line (#161).
+            let keys: BTreeSet<String> = self.other.iter().map(|k| k.replace([',', '|'], "_")).collect();
+            parts.push(format!("other={}", keys.into_iter().collect::<Vec<_>>().join("|")));
         }
         if let Some(u) = &self.unread {
             parts.push(format!("unread={}", u.replace(',', ";")));

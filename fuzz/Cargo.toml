@@ -1,0 +1,87 @@
+# The fuzz targets of sacdfs's own parsers and paths (#161). A crate of its own, outside
+# sacdfs's package and build, since it needs a nightly toolchain; see fuzz/README.md.
+[package]
+name = "sacdfs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sacdfs = { path = ".." }
+# The version sacdfs pins: the same crate, so that its types are the same types.
+scarletbook = "0.5"
+
+# As sacdfs's release build, so that an overflow is the crash it would be there.
+[profile.release]
+overflow-checks = true
+debug = 1
+
+[workspace]
+
+[[bin]]
+name = "names"
+path = "fuzz_targets/names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sidecars"
+path = "fuzz_targets/sidecars.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tags_toml"
+path = "fuzz_targets/tags_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "disc_text"
+path = "fuzz_targets/disc_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tree"
+path = "fuzz_targets/tree.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "headers"
+path = "fuzz_targets/headers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_container"
+path = "fuzz_targets/verify_container.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_id3"
+path = "fuzz_targets/verify_id3.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_report"
+path = "fuzz_targets/verify_report.rs"
+test = false
+doc = false
+bench = false

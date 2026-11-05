@@ -1806,7 +1806,8 @@ the owner's NAS already used.
   two more files beside it.
 - **Hostile input.** Extracts are untrusted like images: every size in a DSF or DFF header is
   checked against the file's length before use, chunk walks are bounded, and the readers are
-  fuzzed in the unit tests by truncating and corrupting every header byte. The DSF and DFF
+  fuzzed in the unit tests by truncating and corrupting every header byte, and by the fuzz
+  targets `verify_container` and `verify_id3` (#161). The DSF and DFF
   readers are container parsing written here from the published format descriptions; no SACD
   parsing or DST code is involved on the extract side.
 
@@ -1814,7 +1815,17 @@ the owner's NAS already used.
 
 - **Unit tests:** DSF header and tag layout, offset-to-frame mapping (including the padded
   last block and every channel count 1 to 6), name sanitising; proptest of the offset
-  mapping. Fuzzing the image layer is scarletbook's job.
+  mapping. Fuzzing the image layer's parsers is scarletbook's job.
+- **Fuzzing (#161).** `fuzz/` has cargo-fuzz targets for what sacdfs adds on top of the
+  library: tags files, sidecar paths, names, the tag and header writers, the tree, and the
+  `verify` readers; fuzz/README.md lists them. They check more than "no panic": a name the
+  kernel accepts, a tag with its true size, nothing read from outside SOURCE. *Why in CI as a
+  job of its own, not required:* a fuzzer's result depends on the run, and a new crash in old
+  code shouldn't block an unrelated pull request. *Why a crate of its own:* cargo-fuzz needs a
+  nightly toolchain, which stays away from sacdfs's build and locked dependencies.
+  *Alternative:* longer runs on every pull request, rejected by the CI speed rule.
+  *Trade-off:* 60 s per target finds only the easy bugs, so a weekly run goes on for 20 minutes
+  per target from the corpus the last one left.
 - **The corpus.** Integration tests run against the synthetic CC0 conformance corpus of
   [sacd-spec](https://github.com/aclater/sacd-spec) (copied into `tests/corpus/` with its
   licence). `tests/corpus.rs` reads every case through the tree and readers without

@@ -397,7 +397,9 @@ fn parse_dff(src: &mut dyn Source) -> Result<Audio, Problem> {
     if size % u64::from(channels) != 0 {
         return err(format!("sound data of {size} bytes is not a whole number of {channels}-channel bytes"));
     }
-    let samples = size / u64::from(channels) * 8;
+    let Some(samples) = (size / u64::from(channels)).checked_mul(8) else {
+        return err("absurd sound data size");
+    };
     let audio =
         Audio { kind: Kind::Dff, channels: channels as u8, rate, samples, data: Data::Dff { start }, tags };
     let need = audio.data_end().ok_or_else(|| Problem::Error("absurd sound data size".to_owned()))?;
