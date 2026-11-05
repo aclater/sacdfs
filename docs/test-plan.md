@@ -63,7 +63,7 @@ otherwise stated as untested.
 | foobar2000 | 2 | SMB 3 | Windows VM | Partial, 0.2.0-rc.1 |
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | **Never** |
 | Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** |
-| macOS: Finder, `cp`, `rsync`, Spotlight, Audirvana, Swinsian | 3 | SMB 3 | No Mac in the test lab: untested, and the docs say so | **Never** |
+| macOS 15: `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | VM on Apple hardware, tests run over SSH | File tools on 0.4.0; Finder and players **never** |
 | Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** |
 | Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** |
 
@@ -105,6 +105,8 @@ rslave bind into a container.
 - Read-only: write, rename, delete and `touch` fail cleanly, with no hang.
 - Reads: sequential, random, concurrent readers on one file, four players plus a tagger.
 - Case and character handling in names: long names, non-ASCII, names illegal on Windows and macOS.
+- macOS-specific: `._` files, `.DS_Store`, Spotlight indexing and Quick Look must not fail or cause
+  a read storm.
 - Windows-specific: a second Robocopy pass skips everything; file times survive.
 - Stable identity: inodes and mtimes hold across a restart, and NFS handles stay valid.
 - **RF64:** a real file over 4 GiB reads, seeks and hashes correctly through every path, and
