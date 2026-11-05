@@ -1019,29 +1019,59 @@ impl Engine {
         };
         cur.reserve(disc, t1)?;
         let channels = cur.channels();
-        let mut jobs = Vec::with_capacity((t1 - t0) as usize);
-        for t in t0..t1 {
-            let content = match cur.content(disc, t) {
-                Ok(c) => c,
-                Err(e) => {
-                    *cursor = None;
-                    return Err(e);
+        let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
+        let mut left = out.iter().filter(|f| f.is_none()).count();
+        let size = group_size(left, self.threads(), channels);
+        let decoded: Mutex<Vec<Result<(u32, Frame), ReadError>>> = Mutex::new(Vec::with_capacity(left));
+        let add = |r: Vec<Result<(u32, Frame), ReadError>>| {
+            decoded.lock().unwrap_or_else(|p| p.into_inner()).extend(r);
+        };
+        let mut failed = None;
+        // This thread demultiplexes while the pool decodes what it has found so far; the pool
+        // has until the scope's end, so the open file's cursor stays held (see `Reader`) and
+        // a read of these frames waits instead of decoding them twice. *Why not demultiplex
+        // first (#210):* the decoder threads then stood idle for it, once per batch.
+        self.pool.in_place_scope(|s| {
+            let add = &add;
+            let mut spare: Vec<FrameBuf> = Vec::new();
+            let mut group = Vec::with_capacity(size);
+            for t in t0..t1 {
+                let content = match cur.content(disc, t) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        failed = Some(e);
+                        break;
+                    }
+                };
+                if out[(t - first) as usize].is_some() {
+                    continue;
                 }
-            };
-            if out[(t - first) as usize].is_none() {
-                jobs.push(TrackFrame { number: t, content });
+                // Buffers a few at a time: a lock of the pool per few frames, not per frame.
+                if spare.is_empty() {
+                    spare = self.cache.buffers(len, left.clamp(1, BUFFERS_AT_ONCE));
+                }
+                left -= 1;
+                let job = TrackFrame { number: t, content };
+                let buf = spare.pop();
+                if !matches!(job.content, FrameContent::Dst(_)) {
+                    add(vec![decode(job, channels, buf)]);
+                    continue;
+                }
+                group.push((job, buf));
+                if group.len() >= size {
+                    let g = std::mem::replace(&mut group, Vec::with_capacity(size));
+                    s.spawn(move |_| add(decode_group(g, channels)));
+                }
             }
+            if !group.is_empty() {
+                s.spawn(move |_| add(decode_group(group, channels)));
+            }
+        });
+        if let Some(e) = failed {
+            *cursor = None;
+            return Err(e);
         }
-        let bufs = self.cache.buffers(usize::from(channels) * FRAME_BYTES_PER_CHANNEL, jobs.len());
-        let jobs: Vec<(TrackFrame, Option<FrameBuf>)> =
-            jobs.into_iter().zip(bufs.into_iter().map(Some)).collect();
-        let decoded: Vec<Result<(u32, Frame), ReadError>> =
-            if jobs.iter().any(|(j, _)| matches!(j.content, FrameContent::Dst(_))) {
-                self.pool.install(|| jobs.into_par_iter().map(|(j, b)| decode(j, channels, b)).collect())
-            } else {
-                jobs.into_iter().map(|(j, b)| decode(j, channels, b)).collect()
-            };
-        for r in decoded {
+        for r in decoded.into_inner().unwrap_or_else(|p| p.into_inner()) {
             let (t, frame) = r?;
             let frame = Arc::new(frame);
             self.cache.insert(Self::key(disc, area, t), frame.clone());
@@ -1087,6 +1117,63 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
         },
     };
     Ok((job.number, Frame { data: buf, fill, clips: 0 }))
+}
+
+/// Frame buffers taken from the cache's pool at once while demultiplexing.
+const BUFFERS_AT_ONCE: usize = 16;
+
+/// Frames of a batch per decoder thread from which frames are decoded in groups: see
+/// [`group_size`].
+const GROUPS_FROM: usize = 8;
+
+/// How many frames of a batch of `n` to decode together on one of `threads` threads: the
+/// decoder's best (`dst::lanes`) in a batch long enough for each thread to take several
+/// groups, else one.
+///
+/// *Why (#210):* grouping is what makes one thread as fast as the library's: 5.69 against
+/// 4.32 s for 5 minutes of stereo. *Why not in a short batch:* the batch ends with its slowest
+/// job, and a group takes about twice as long as a frame.
+fn group_size(n: usize, threads: usize, channels: u8) -> usize {
+    if n / threads.max(1) >= GROUPS_FROM { scarletbook::dst::lanes(channels).max(1) } else { 1 }
+}
+
+/// Decodes a group of timeline positions, all DST frames, together on this thread: what
+/// [`decode`] gives for each, by `DstDecoder::decode_many`.
+fn decode_group(
+    group: Vec<(TrackFrame, Option<FrameBuf>)>,
+    channels: u8,
+) -> Vec<Result<(u32, Frame), ReadError>> {
+    if group.len() == 1 || !(1..=6).contains(&channels) {
+        return group.into_iter().map(|(j, b)| decode(j, channels, b)).collect();
+    }
+    let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
+    let mut numbers = Vec::with_capacity(group.len());
+    let mut stored = Vec::with_capacity(group.len());
+    let mut bufs = Vec::with_capacity(group.len());
+    let mut out = Vec::with_capacity(group.len());
+    for (job, buf) in group {
+        match job.content {
+            FrameContent::Dst(bytes) => {
+                numbers.push(job.number);
+                stored.push(bytes);
+                bufs.push(buf.filter(|b| b.len() == len).unwrap_or_else(|| FrameBuf::heap(len)));
+            }
+            content => out.push(decode(TrackFrame { number: job.number, content }, channels, buf)),
+        }
+    }
+    let frames: Vec<&[u8]> = stored.iter().map(Vec::as_slice).collect();
+    let mut outs: Vec<&mut [u8]> = bufs.iter_mut().map(|b| &mut **b).collect();
+    let results = with_decoder(|d| d.decode_many(&frames, channels, &mut outs));
+    for ((number, mut buf), r) in numbers.into_iter().zip(bufs).zip(results) {
+        let fill = if r.is_ok() {
+            Fill::Audio
+        } else {
+            buf.fill(scarletbook::audio::INVALID_FILL);
+            Fill::Invalid
+        };
+        out.push(Ok((number, Frame { data: buf, fill, clips: 0 })));
+    }
+    out
 }
 
 /// Decodes one timeline position, in scarletbook's interleaved layout.
