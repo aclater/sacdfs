@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Continuous integration
+
+- Skipped tests now show (#207). A guard that returned early reported as a pass; guards now print
+  a `SKIPPED` line, and the test jobs count skips in their summary and fail if they differ from
+  `tests/expected-skips.json` (`scripts/check_skips.py`, see docs/development.md).
+
 ## [0.4.1-rc.1] - 2026-11-05
 
 ### Upgrade notes
