@@ -26,7 +26,7 @@ the cache directory, and the work done. At the end:
 
 PASS if, after `--warmup`, the resident and anonymous memory stay within the cache cap plus
 `--noise-mb` of their level at the end of the warm-up, their trend over the second half is
-at most `--max-slope` MiB per hour (or adds under `--trend-floor-mb` over that half), threads and open files do not climb, and the cache
+at most `--max-slope` MiB per hour (or adds under `--trend-floor-mb` over that half), threads (by their median and end level, with a hard ceiling for a spike) and open files do not climb, and the cache
 directory plateaus. Exit status 0 on PASS, 1 on FAIL.
 
 `--wrap 'heaptrack -o OUT'` (or valgrind massif) runs the main sacdfs under a profiler.
@@ -336,12 +336,24 @@ def verdict(rows, args):
         lines.append(f"{key}: warm {base / 1024:.1f} MiB, peak {peak / 1024:.1f} MiB (+{(peak - base) / 1024:.1f}, "
                      f"allowed {allowed / 1024:.0f}), second-half trend {slope:+.2f} MiB/h "
                      f"(allowed {limit:.1f}) {'ok' if good else 'FAIL'}")
-    for key, extra in (("threads", 4), ("fds", 8)):
-        early = max(r[key] for r in after[: len(after) // 2])
-        top = max(r[key] for r in late)
-        good = top <= early + extra
-        ok &= good
-        lines.append(f"{key}: first-half max {early}, second-half max {top} {'ok' if good else 'FAIL'}")
+    # Threads are judged by level, not by the maximum of a half: the staller makes sacdfs spawn
+    # spare threads on purpose (#167/#168) and one sample can land in a stall. A run fails if the
+    # median or the end level of the second half is above the first half's median by more than
+    # 4 threads (threads that accumulate), or if any sample passes the hard ceiling of
+    # --thread-spike above that median (a spike that large is not a stall's spare threads).
+    base = statistics.median(r["threads"] for r in after[: len(after) // 2])
+    mid = statistics.median(r["threads"] for r in late)
+    end = statistics.median(r["threads"] for r in late[-3:])
+    top = max(r["threads"] for r in after)
+    good = mid <= base + 4 and end <= base + 4 and top <= base + args.thread_spike
+    ok &= good
+    lines.append(f"threads: first-half median {base:g}, second-half median {mid:g}, end {end:g}, "
+                 f"peak {top} (ceiling {base + args.thread_spike:g}) {'ok' if good else 'FAIL'}")
+    early = max(r["fds"] for r in after[: len(after) // 2])
+    top = max(r["fds"] for r in late)
+    good = top <= early + 8
+    ok &= good
+    lines.append(f"fds: first-half max {early}, second-half max {top} {'ok' if good else 'FAIL'}")
     slope = slope_per_hour(late, "cache_kb") / 1024
     good = slope <= args.max_slope
     ok &= good
@@ -377,6 +389,8 @@ def main():
     ap.add_argument("--max-slope", type=float, default=4, help="MiB per hour")
     ap.add_argument("--trend-floor-mb", type=float, default=4,
                     help="second-half growth (by the trend) that passes whatever the slope")
+    ap.add_argument("--thread-spike", type=int, default=16,
+                    help="hard ceiling for the thread count, above the first half's median")
     ap.add_argument("--wrap", default="", help="command line to run the main sacdfs under")
     args = ap.parse_args()
     args.sacdfs = str(Path(args.sacdfs).resolve())
