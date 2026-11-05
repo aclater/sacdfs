@@ -11,6 +11,23 @@ All notable changes to sacdfs are recorded here. The format follows
 - Pull requests that touch the code run an informational benchmark: base and head read DST stereo,
   DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
   summary and as a warning. Not a required check (#162).
+### Fixed
+
+- **`sacdfs verify` could exit 0 with files not checked (#196).** A panic while checking a file
+  ended that worker silently, so the report and summary left the file out, and with one thread
+  every file after it too. The exit status said that all was identical. A panic now gives that file
+  an ERROR row, which `--resume` checks again, and the exit status is 2. `sacdfs tags import` runs
+  the same check, so it no longer skips such a file without a row in its report.
+
+  **Upgrade note.** On 0.4.0 and earlier, don't delete extracts on the exit status alone (tested
+  on the 0.4.0 release). List them by their IDENTICAL rows, as the user guide does, and check that
+  the report has one row per file.
+- **A stopped `verify` no longer leaves a report that looks finished (#196).** Rows go to
+  `FILE.partial`, and `FILE` appears only when every file has been checked. A report already at
+  `FILE` moves to `FILE.previous` once a run starts writing, and is removed when it finishes.
+  `--resume` reads all three. Anything that reads `FILE` during a run should read `FILE.partial`.
+  `-o` naming something that isn't a regular file (`/dev/stdout`, a named pipe) now works as a
+  stream, where only the exit status tells whether the run finished.
 
 ### Changed
 
