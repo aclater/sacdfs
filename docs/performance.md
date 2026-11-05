@@ -603,6 +603,33 @@ against its own "before", on the code of its day).
 | (#73) | One malloc arena; the frame cache reuses evicted frames' buffers within its cap | library-import replay, 60 images, peak memory at `--cache-mb` 256 / 16: 473 → 271 MiB, 125 → 58 MiB; after straight reads 965–1 066 → 327 MiB; 6-channel DST straight read DSF 11.11 → 11.55 s, WAV 13.52 → 13.98 s, plain DSD 1.69 → 1.59 s |
 | (#78) | No read-ahead within a file's first 1 MiB (a scanner's head read) | library-import pattern, 12 decoder threads, per 6-channel DST file: CPU 141–177 → 42–44 ms, wall 17.4–21.6 → 10.3–11.1 ms; stereo DST CPU 60–84 → 46–50 ms |
 
+## The CI benchmark
+
+A pull request that touches `src/`, `Cargo.toml` or `Cargo.lock` runs the `benchmark` job (#162).
+It is a coarse alarm, not a gate: shared runners are noisy, and the release timing table above,
+taken under the benchmark lock against the previous release, stays the real check. The job is not
+a required check, so it may be path-filtered, and it never fails over a slowdown.
+
+- **What it does:** it builds base (the pull request's target branch) and head in the same job. Each
+  workload reads the corpus's DSF files through a fresh mount, many times over, with only the reads
+  timed: `dst-stereo` and `dst-multichannel` (DST with every optional feature), and `plain-dsd`. Base and head
+  alternate, and the order swaps every round; 5 rounds give each build's median and their ratio.
+- **What you see:** a table in the job summary with the medians, their ranges and head / base. A
+  ratio over 1.10 is marked **SLOWER** and adds a warning to the pull request's checks. The
+  corpus discs are tiny, so reads are dominated by opening each track and the first frames.
+- **How to read it:** an unchanged build gave ratios of 0.92 to 1.03 over 5 runs. So treat a flag as a
+  reason to look, not as a measurement: re-run the job, then measure under the benchmark lock.
+
+To run it by hand, with two built binaries (needs `fusermount3`; under `benchlock` if others benchmark):
+
+```sh
+python3 -I scripts/bench_compare.py --base OLD_SACDFS --head NEW_SACDFS \
+    --measure "python3 -I scripts/bench_workload.py" dst-stereo dst-multichannel plain-dsd
+```
+
+`scripts/bench_compare.py` is the same file in pysacd, whose `benchmark` job has the same design
+with `pysacd-extract` on synthetic discs (pysacd's #123). Only `scripts/bench_workload.py` differs.
+
 ## Reproducing
 
 ```sh

@@ -986,7 +986,12 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
         );
         assert_eq!(a.ino(), b.ino());
         assert_eq!(std::fs::read(mnt.join(&p).join("folder.jpg")).unwrap(), b"front");
+        // MPD looks only for `cover.*` (#148): with none, the art is also that, the same file.
+        assert!(has(&p, "cover.jpg"), "{area}");
+        assert_eq!(std::fs::metadata(mnt.join(&p).join("cover.jpg")).unwrap().ino(), b.ino());
+        assert_eq!(std::fs::read(mnt.join(&p).join("cover.jpg")).unwrap(), b"front");
     }
+    assert!(!has("Artist/Album", "cover.jpg"), "only the areas get the name");
     // A name looked up before it exists, an open file, and a listing already read.
     assert!(!mnt.join("Artist/Album/back.png").exists());
     assert!(!mnt.join("Artist/Album/disc/Stereo/back.png").exists());
@@ -1003,6 +1008,9 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
     wait_for("the new art", || mnt.join("Artist/Album/back.png").exists());
     wait_for("the new art in the area", || mnt.join("Artist/Album/disc/Stereo/back.png").exists());
     assert_eq!(std::fs::read(mnt.join("Artist/Album/disc/Stereo/back.png")).unwrap(), b"back");
+    wait_for("the new cover name", || has("Artist/Album/disc/Stereo", "cover.png"));
+    assert!(!has("Artist/Album/disc/Stereo", "cover.jpg"));
+    assert_eq!(std::fs::read(mnt.join("Artist/Album/disc/Stereo/cover.png")).unwrap(), b"back");
     wait_for("the removal", || !mnt.join("Artist/Album/folder.jpg").exists());
     assert!(!has("Artist/Album/disc/Stereo", "folder.jpg"));
     assert!(std::fs::File::open(mnt.join("Artist/Album/folder.jpg")).is_err());
@@ -1014,6 +1022,46 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
     // A new image shows, with its audio.
     wait_for("the new image", || has("Artist", "Second"));
     assert!(ls("Artist/Second/d/Stereo").iter().any(|n| n.ends_with(".dsf")));
+    m.stop("TERM");
+}
+
+/// A folder hidden for holding only a file that is not yet an SACD image (#175) shows up,
+/// through the kernel, once the image is written into place: the file changes, not its folder.
+/// Prints how long that took, for the user guide.
+#[test]
+fn an_image_written_into_place_appears_without_a_remount() {
+    if !fuse_available() {
+        return;
+    }
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let album = src.join("Artist/Incoming");
+    std::fs::create_dir_all(&album).unwrap();
+    let full = std::fs::read(corpus().join("images/dsd-stereo-mch-2048.iso")).unwrap();
+    // As a torrent client makes it: the whole size at once, nothing in it yet.
+    std::fs::write(album.join("disc.iso"), vec![0u8; full.len()]).unwrap();
+    std::fs::write(album.join("folder.jpg"), b"art").unwrap();
+    let ok = src.join("Artist/Ready");
+    std::fs::create_dir_all(&ok).unwrap();
+    std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), ok.join("d.iso")).unwrap();
+    let m = Mount::foreground(&src, &[]);
+    let mnt = m.path();
+    let ls = |p: &str| -> Vec<String> {
+        std::fs::read_dir(mnt.join(p))
+            .map(|rd| rd.map(|e| e.unwrap().file_name().into_string().unwrap()).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(ls("Artist"), ["Ready"]);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(album.join("disc.iso"))
+        .unwrap()
+        .write_all_at(&full, 0)
+        .unwrap();
+    let start = Instant::now();
+    wait_for("the image to appear", || ls("Artist").iter().any(|n| n == "Incoming"));
+    eprintln!("image written into place appeared after {:?}", start.elapsed());
+    wait_for("its tracks", || ls("Artist/Incoming/disc/Stereo").iter().any(|n| n.ends_with(".dsf")));
     m.stop("TERM");
 }
 

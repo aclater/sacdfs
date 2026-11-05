@@ -22,8 +22,9 @@ MOUNTPOINT/
   kind only. `Stereo` and `Multichannel` appear only for the areas a disc has.
 - File names come from the track titles (`NN.dsf` for a track without one); repeated names
   get ` (2)`, ` (3)`.
-- Files that are not SACD images, folders with no `*.iso` file below them, and tracks the
-  disc cannot play are left out.
+- Files that are not SACD images (a DVD-Video or Blu-ray `.iso`, say), folders with no SACD image
+  below them (their sidecars too), and tracks the disc cannot play are left out. A box set that
+  mixes an SACD with DVD discs shows only the SACD.
 - **Sidecar files** next to the images, `folder.jpg`, `cover.png`, an `Artwork/` or `Scans/`
   folder, `.m3u`/`.m3u8` playlists, are shown where they are in `SOURCE`, read-only and byte
   for byte, with their own size and times: players and file managers find the folder art,

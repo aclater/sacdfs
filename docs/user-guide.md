@@ -337,7 +337,10 @@ player, once as the extract and once as sacdfs's file.
   (`jpg`, `jpeg`, `png`, `webp`; not playlists, scans folders or other files) also show in
   `Stereo/` and `Multichannel/` of every image in the folder, after the tracks, so that
   Lyrion Music Server, MPD, MinimServer and Plex, which look for folder art only in the
-  audio file's own folder, find it. It is the same file with a second name: the same inode
+  audio file's own folder, find it. When the art has no file named `cover.*`, one of the images
+  is also listed as `cover.jpg` (or `cover.png`, `cover.webp`; `folder.*` is preferred, then
+  `front.*`, then the first by name), because MPD looks only for that name (#148). It is the
+  same file with a second name: the same inode
   number, so a server that walks both sees one image. No audio file changes, only the art is
   added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
   is not shown in either place, and `none` shows no art at all. A name that a track file
@@ -671,9 +674,12 @@ goes to the journal: `journalctl -u sacdfs`.
   empty directory to avoid it.
 - **`Illegal instruction` at start:** the x86-64-v3 build on a CPU without AVX2. Use the
   generic build; it converts with AVX2 where the CPU has it anyway.
-- **A directory or disc is missing:** files that are not SACD images, and folders with no
-  `*.iso` file below them, are left out; a damaged image may be too. `-v` logs why. Images
-  added after mounting appear without a remount.
+- **A directory or disc is missing:** files that are not SACD images (a DVD-Video or
+  Blu-ray `.iso`, say), and folders with no SACD image below them, sidecars included, are left
+  out; a damaged image may be too. `-v` logs why. Images added after mounting appear without a
+  remount. A file that is not an SACD image yet (a download still filling a file made at full
+  size, or a copy in progress) appears within about 2 seconds of the write that makes it one
+  (the refresh interval; 2.0 s measured through a real mount, #175).
 - **A track is missing:** a track the disc cannot play (empty, or running past the end of the
   image) is left out; `-v` logs the reason.
 - **`--pcm-cutoff wide needs --pcm-rate 176400 or 352800`:** 88.2 kHz cannot hold the wide

@@ -22,7 +22,7 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 | [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
 | [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
 | [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
-| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; art only from files named `cover.*` |
+| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
 | [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
 | [Windows Explorer, PowerShell, Robocopy](#windows-explorer-and-robocopy) | Windows 11 build 26200 | 0.2.0-rc.1 | SMB 3, same host | Works | Copies are byte-identical; a second Robocopy pass skips every file |
 | [foobar2000](#foobar2000) | 2.26.2 (portable) | 0.2.0-rc.1 | SMB 3 | Partial | Opened a DSF without errors; tags, art and seek not verified |
@@ -224,16 +224,23 @@ with `dsf` it used under 0.1 CPU-seconds and 12 MiB. (0.3.0-rc.1, on the test ho
 and 5.6 s.) 7 albums, 2 of them "… (Multichannel)". `mpc update` with nothing changed:
 0.07 s, 0 opens. DSF plays as DSD (`audio: dsd64:2`, `dsd64:6`; DoP or native DSD to a
 capable output, otherwise MPD converts); a seek to 100 s in a 5.1 DST DSF worked at once.
-Album art: `albumart` found the cover in **1 of 4** album areas with one: the disc whose
-cover is named `cover.jpg`. MPD looks only for files named `cover.*` in the track's folder,
-so `folder.jpg` is not used.
+Album art: on 0.4.0-rc.2, `albumart` found the cover in **1 of 4** album areas with one: the
+disc whose cover is named `cover.jpg`. MPD looks only for files named `cover.*` in the track's
+folder, so `folder.jpg` is not used. **After [#148](https://github.com/aclater/sacdfs/issues/148)**
+(tested on the branch that adds it, built from the 0.4.1 work; MPD 0.24.15 in the same
+container setup, 5 test discs, 93 tracks, 7 album areas of which 6 have a cover, one named
+`folder.jpg` on two discs, `front.png` on one and `cover.jpg` on one): the 0.4.0 release
+binary gave art for 1 of 6 areas, the branch for **6 of 6**, and the area of the disc with no
+cover still has none. When the art has no `cover.*`, sacdfs shows one of its images also as
+`cover.jpg` (or `cover.png`, `cover.webp`) inside each area folder, as the same file.
 
 **Recommended setup.**
 - `--format dsf`: the first scan was about 10 times as fast as with `dsf,wav`. The WAV cost is
   FFmpeg's 5,000,000-byte probe of each WAV file ([#96](https://github.com/aclater/sacdfs/issues/96)).
   If another client needs WAV, run a second container or mount with `dsf,wav` for it.
 - `--flatten`; bind the mount's parent with `rslave` if MPD is in a container.
-- For art, name the cover beside each image `cover.jpg` (or `cover.png`).
+- Art needs no renaming: sacdfs shows a folder's cover also as `cover.*` in the areas. (A file
+  named `Cover.PNG`, in other case, counts as a cover and is not aliased; untested with MPD.)
 
 ## MinimServer
 
@@ -320,7 +327,7 @@ documented but have no test report on #82.
   each area folder (`Stereo`, `Multichannel`; [#95](https://github.com/aclater/sacdfs/issues/95)).
   On 0.4.0-rc.2 (as on 0.3.0-rc.1), Jellyfin, Navidrome, LMS and MinimServer used it for all
   4 album areas with a cover. MPD uses only files named `cover.*`, so it found 1 of 4 (the one named
-  `cover.jpg`). Roon used the art on 0.2.0; for Plex (0.2.0-rc.4) see [its section](#plex).
+  `cover.jpg`) until sacdfs showed the cover under that name as well ([#148](https://github.com/aclater/sacdfs/issues/148), tested on the 0.4.1 branch: 6 of 6). Roon used the art on 0.2.0; for Plex (0.2.0-rc.4) see [its section](#plex).
 - **Multichannel copies:** sacdfs adds ` (Multichannel)` to the album tag by default
   ([#97](https://github.com/aclater/sacdfs/issues/97)). With it, Jellyfin, Navidrome, LMS, MPD
   and MinimServer showed the 2 multichannel areas as their own albums on 0.4.0-rc.2 and
