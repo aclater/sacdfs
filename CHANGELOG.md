@@ -6,6 +6,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`sacdfs tags import` now exits 2 when some extracts weren't imported (#198).** It exited 0 even
+  with ERROR rows or `failed:` lines, so a script could not tell. It now follows `sacdfs verify`: 0
+  when every extract was handled, 2 when any didn't match or couldn't be read, with the rows
+  still written and the count in the summary, and 1 when it couldn't run. A script that ran it
+  over extracts that don't all match, and took any non-zero status as a failure, now sees one.
 ### Added
 
 - Fuzz targets for sacdfs's own parsers and paths (#161): tags files, sidecar lists and paths,
