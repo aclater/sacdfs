@@ -57,14 +57,13 @@ otherwise stated as untested.
 | MPD (so moOde, Volumio) | 1 | rslave bind | Scripted container | 0.4.0-rc.2 |
 | MinimServer | 1 | rslave bind | Scripted container | 0.4.0-rc.2 |
 | Windows 11 Explorer, PowerShell, Robocopy | 1 | SMB 3 | Unattended VM | 0.2.0-rc.1 |
-| macOS Finder, `cp`, `rsync`, Spotlight | 1 | SMB 3 | Test script on a Mac | **Never** |
 | Linux NFS and SMB mounts (Fedora, RHEL, Debian, Ubuntu) | 1 | NFSv4, SMB 3 | VMs and containers | 0.4.0 on Fedora only |
 | beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change |
 | FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | Partly, through the servers above |
 | foobar2000 | 2 | SMB 3 | Windows VM | Partial, 0.2.0-rc.1 |
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | **Never** |
 | Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** |
-| macOS Audirvana, Swinsian | 3 | SMB 3 | Needs a licence or the owner | **Never** |
+| macOS: Finder, `cp`, `rsync`, Spotlight, Audirvana, Swinsian | 3 | SMB 3 | No Mac in the test lab: untested, and the docs say so | **Never** |
 | Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** |
 | Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** |
 
@@ -106,8 +105,6 @@ rslave bind into a container.
 - Read-only: write, rename, delete and `touch` fail cleanly, with no hang.
 - Reads: sequential, random, concurrent readers on one file, four players plus a tagger.
 - Case and character handling in names: long names, non-ASCII, names illegal on Windows and macOS.
-- macOS-specific: `._` files, `.DS_Store`, Spotlight indexing and Quick Look must not fail or cause
-  a read storm.
 - Windows-specific: a second Robocopy pass skips everything; file times survive.
 - Stable identity: inodes and mtimes hold across a restart, and NFS handles stay valid.
 - **RF64:** a real file over 4 GiB reads, seeks and hashes correctly through every path, and
