@@ -617,7 +617,7 @@ a required check, so it may be path-filtered, and it never fails over a slowdown
 - **What you see:** a table in the job summary with the medians, their ranges and head / base. A
   ratio over 1.10 is marked **SLOWER** and adds a warning to the pull request's checks. The
   corpus discs are tiny, so reads are dominated by opening each track and the first frames.
-- **How to read it:** an unchanged build gave ratios of RATIO_RANGE over RUNS runs. So treat a flag as a
+- **How to read it:** an unchanged build gave ratios of 0.92 to 1.03 over 5 runs. So treat a flag as a
   reason to look, not as a measurement: re-run the job, then measure under the benchmark lock.
 
 To run it by hand, with two built binaries (needs `fusermount3`; under `benchlock` if others benchmark):
