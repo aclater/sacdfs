@@ -1,0 +1,55 @@
+# A coarse, informational alarm for performance regressions (#162): base and head are built in
+# one job and read the corpus through the mount, alternating, medians of 5 (scripts/bench_compare.py).
+# Never a required check, so the path filter is fine, and a flagged slowdown only warns. See
+# docs/performance.md, "The CI benchmark".
+name: benchmark
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/bench_compare.py"
+      - "scripts/bench_workload.py"
+      - ".github/workflows/benchmark.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true  # a new push supersedes the old run
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+
+jobs:
+  benchmark:
+    name: benchmark (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2  # a pull request's checkout is its merge commit: the first parent is the base
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - name: Build head
+        run: |
+          cargo build --locked --release
+          cp target/release/sacdfs "$RUNNER_TEMP/sacdfs-head"
+      - name: Build base
+        run: |
+          git worktree add -q "$RUNNER_TEMP/base" HEAD^1
+          CARGO_TARGET_DIR="$PWD/target" cargo build --locked --release --manifest-path "$RUNNER_TEMP/base/Cargo.toml"
+          cp target/release/sacdfs "$RUNNER_TEMP/sacdfs-base"
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - name: Compare
+        run: |
+          python3 -I scripts/bench_compare.py --base "$RUNNER_TEMP/sacdfs-base" --head "$RUNNER_TEMP/sacdfs-head" \
+            --measure "python3 -I scripts/bench_workload.py" dst-stereo dst-multichannel plain-dsd

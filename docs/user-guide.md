@@ -301,6 +301,12 @@ writes nothing but the tags directory (verify's report goes to `DIR/.last-import
 the picture (`PRIV`, `RVA2`, `GEOB` ...) cannot be kept; the summary lists them. DFF text
 chunks are not imported.
 
+**Exit status:** 0 when every extract was handled, as `sacdfs verify` means it: each DSF and DFF
+file matched and its tags were read (a FLAC or WAV file can't be compared, and doesn't count
+against this). 2 when any extract didn't match or couldn't be checked, or when a tag or tags file
+couldn't be read or written: what could be done was done, the rows are in the report, and the
+summary says how many were left out. 1 when the import couldn't run or didn't finish.
+
 **From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).
 
 As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
@@ -337,7 +343,10 @@ player, once as the extract and once as sacdfs's file.
   (`jpg`, `jpeg`, `png`, `webp`; not playlists, scans folders or other files) also show in
   `Stereo/` and `Multichannel/` of every image in the folder, after the tracks, so that
   Lyrion Music Server, MPD, MinimServer and Plex, which look for folder art only in the
-  audio file's own folder, find it. It is the same file with a second name: the same inode
+  audio file's own folder, find it. When the art has no file named `cover.*`, one of the images
+  is also listed as `cover.jpg` (or `cover.png`, `cover.webp`; `folder.*` is preferred, then
+  `front.*`, then the first by name), because MPD looks only for that name (#148). It is the
+  same file with a second name: the same inode
   number, so a server that walks both sees one image. No audio file changes, only the art is
   added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
   is not shown in either place, and `none` shows no art at all. A name that a track file

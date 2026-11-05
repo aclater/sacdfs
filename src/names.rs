@@ -60,8 +60,11 @@ impl Deduper {
             return name.to_owned();
         }
         let lossy = name.to_string_lossy();
+        // An extension that leaves no room for the suffix (#161) is cut like any other text.
         let (stem, ext) = match lossy.rfind('.') {
-            Some(i) if keep_extension && i > 0 => (&lossy[..i], &lossy[i..]),
+            Some(i) if keep_extension && i > 0 && lossy.len() - i + 13 < NAME_MAX => {
+                (&lossy[..i], &lossy[i..])
+            }
             _ => (&lossy[..], ""),
         };
         let mut n = 2u32;
