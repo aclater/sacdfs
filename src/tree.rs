@@ -33,7 +33,7 @@ use std::fs;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -100,6 +100,9 @@ pub const MULTICHANNEL: &str = "Multichannel";
 /// How often a directory's source is looked at for changes, and so how long the kernel
 /// remembers the names of such a directory (#101).
 pub const REFRESH: Duration = Duration::from_secs(2);
+
+/// Threads that read the top-level directories of the source at mount (#175).
+const SCAN_THREADS: usize = 16;
 
 /// Most nested source directories followed.
 const MAX_DEPTH: usize = 64;
@@ -195,6 +198,39 @@ impl SourceDir {
         }))
     }
 
+    /// [`SourceDir::scan_dir`] of each of `dirs` (name, path, whether a sidecar folder), in
+    /// order; on up to [`SCAN_THREADS`] scoped threads if `parallel`.
+    fn scan_subdirs(
+        dirs: &[(OsString, PathBuf, bool)],
+        depth: usize,
+        scan: &Scan<'_>,
+        parallel: bool,
+    ) -> Vec<io::Result<Option<SourceDir>>> {
+        let one =
+            |(_, path, folder): &(OsString, PathBuf, bool)| Self::scan_dir(path, depth, scan, *folder, None);
+        if !parallel || dirs.len() < 2 {
+            return dirs.iter().map(one).collect();
+        }
+        let next = AtomicUsize::new(0);
+        let slots: Vec<Mutex<Option<io::Result<Option<SourceDir>>>>> =
+            dirs.iter().map(|_| Mutex::new(None)).collect();
+        std::thread::scope(|s| {
+            for _ in 0..SCAN_THREADS.min(dirs.len()) {
+                s.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(d) = dirs.get(i) else { break };
+                        *slots[i].lock().unwrap_or_else(|p| p.into_inner()) = Some(one(d));
+                    }
+                });
+            }
+        });
+        slots
+            .into_iter()
+            .map(|m| m.into_inner().unwrap_or_else(|p| p.into_inner()).unwrap_or(Ok(None)))
+            .collect()
+    }
+
     /// Scans `dir`; `everything` inside a sidecar folder, whose every file and folder is a
     /// sidecar. `None` if it holds neither image nor sidecar.
     fn scan_dir(
@@ -208,6 +244,7 @@ impl SourceDir {
         let mut images = Vec::new();
         let mut sidecars = Vec::new();
         let mut rejected: Vec<Watched> = Vec::new();
+        let mut todo = Vec::new();
         let own = mtime_of(dir);
         let mut stamp = Stamp { own, other: own, image: None };
         let note = !scan.sidecars.is_empty() && !scan.exclude.is_some_and(|m| dir.starts_with(m));
@@ -240,22 +277,7 @@ impl SourceDir {
                     }
                 }
                 let folder = note && !sidecar::hidden(&name) && (everything || scan.sidecars.folder(&name));
-                match Self::scan_dir(&path, depth + 1, scan, folder, None) {
-                    Ok(Some(sub)) if sub.holds_images() => {
-                        stamp.merge(&sub.stamp);
-                        dirs.push((name, sub));
-                    }
-                    Ok(Some(sub)) if folder => {
-                        stamp.other = stamp.other.max(sub.stamp.other);
-                        rejected.extend(sub.rejected.iter().flat_map(|r| r.iter().cloned()));
-                        let kind = SidecarKind::Folder(sub.sidecars);
-                        sidecars.push(Sidecar { name, path, kind, mtime: sub.stamp.own });
-                    }
-                    // Left out, but its non-SACD images are watched (#175).
-                    Ok(Some(sub)) => rejected.extend(sub.rejected.iter().flat_map(|r| r.iter().cloned())),
-                    Ok(None) => {}
-                    Err(err) => log::warn!("{}: {err}", path.display()),
-                }
+                todo.push((name, path, folder));
             } else if is_iso(&path) && (ft.is_file() || (ft.is_symlink() && path.is_file())) {
                 // An image that is not an SACD (a DVD-Video or Blu-ray image, say) is not
                 // a candidate: a folder with none is hidden (#175).
@@ -277,6 +299,32 @@ impl SourceDir {
                 sidecars.push(Sidecar { name, path, kind, mtime });
             }
         }
+        // The subdirectories left to read: those of the source's top level in parallel, each
+        // image of them being a read of a network share that waits (#175). Scoped threads, not
+        // rayon: the mount scans before it forks into the background, which needs a process
+        // with one thread, and these are all joined before this returns.
+        let found = Self::scan_subdirs(&todo, depth + 1, scan, depth == 0);
+        for ((name, path, folder), result) in todo.into_iter().zip(found) {
+            match result {
+                Ok(Some(sub)) if sub.holds_images() => {
+                    stamp.merge(&sub.stamp);
+                    dirs.push((name, sub));
+                }
+                Ok(Some(sub)) if folder => {
+                    stamp.other = stamp.other.max(sub.stamp.other);
+                    rejected.extend(sub.rejected.iter().flat_map(|r| r.iter().cloned()));
+                    let kind = SidecarKind::Folder(sub.sidecars);
+                    sidecars.push(Sidecar { name, path, kind, mtime: sub.stamp.own });
+                }
+                // Left out, but its non-SACD images are watched (#175).
+                Ok(Some(sub)) => rejected.extend(sub.rejected.iter().flat_map(|r| r.iter().cloned())),
+                Ok(None) => {}
+                Err(err) => log::warn!("{}: {err}", path.display()),
+            }
+        }
+        // Added after the known ones and the files: sorted by name again.
+        sidecars.sort_by(|a, b| a.name.cmp(&b.name));
+        dirs.sort_by(|a, b| a.0.cmp(&b.0));
         if dirs.is_empty() && images.is_empty() && sidecars.is_empty() && rejected.is_empty() {
             return Ok(None);
         }
