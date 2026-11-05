@@ -75,7 +75,7 @@ fuzz_target!(|data: &[u8]| {
     tags::install(Some(store));
     for area in &toc.areas {
         for track in &area.tracks {
-            if let Some(t) = dsf::tagged(toc, area, track) {
+            if let Some(t) = dsf::tagged(toc, area, track, None) {
                 check_tag(&dsf::region(&t.layout, RegionKind::Trailer));
                 assert!(!dsf::region(&t.layout, RegionKind::Header).is_empty());
             }

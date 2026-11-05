@@ -202,7 +202,7 @@ fn from_image(out: &mut Out, path: &Path, engine: &Engine) {
             }
         }
         if let Some(track) = area.tracks.first() {
-            let set = dsf::tag_set(toc, area, track, &dsf::options(area, track));
+            let (set, _) = dsf::tag_set(toc, area, track, &dsf::options(area, track), None);
             for (_, _, item) in sacdfs::tags::ITEMS {
                 values.extend_from_slice(set.get(item).first().map_or("", String::as_str).as_bytes());
                 values.push(SEP);

@@ -38,6 +38,12 @@ fuzz_target!(|data: &[u8]| {
         assert!(name.ends_with(&format!(".{ext}")), "{name:?}");
         assert!(name.len() <= NAME_MAX - 6, "no room for a de-duplication suffix: {name:?}");
 
+        // Names from a path go into tags (#185): any bytes give clean text or nothing.
+        let guess = sacdfs::fallback::guess(std::path::Path::new(OsStr::from_bytes(raw)));
+        for text in [&guess.album, &guess.artist].into_iter().flatten() {
+            assert!(!text.is_empty() && !text.chars().any(char::is_control), "{text:?}");
+        }
+
         // Names from SOURCE are any bytes, within what the kernel allows.
         for candidate in [name.as_bytes(), raw] {
             if candidate.len() > NAME_MAX {

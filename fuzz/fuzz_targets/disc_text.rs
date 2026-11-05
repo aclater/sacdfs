@@ -30,8 +30,10 @@ fuzz_target!(|data: &[u8]| {
                 let unique = dedup.unique(OsStr::new(&name), true);
                 check_name(unique.as_bytes());
             }
-            let set = dsf::tag_set(toc, area, track, &dsf::options(area, track));
-            let id3 = match dsf::tagged(toc, area, track) {
+            // A path that gives an album and artist, so that a disc lacking them gets them (#185).
+            let image = Some(std::path::Path::new("A/2001 - B [C]/A - B.iso"));
+            let (set, _) = dsf::tag_set(toc, area, track, &dsf::options(area, track), image);
+            let id3 = match dsf::tagged(toc, area, track, image) {
                 Some(t) => {
                     let tag = dsf::region(&t.layout, RegionKind::Trailer);
                     check_tag(&tag);
