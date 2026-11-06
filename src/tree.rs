@@ -447,6 +447,14 @@ impl SourceDir {
     pub fn image_count(&self) -> usize {
         self.images.len() + self.dirs.iter().map(|(_, d)| d.image_count()).sum::<usize>()
     }
+
+    /// Total size in bytes of the image files in this directory and below, as they are now
+    /// (one `stat` per image). An image that can't be read counts as nothing.
+    pub fn image_bytes(&self) -> u64 {
+        let here = self.images.iter().filter_map(|p| fs::metadata(p).ok()).map(|m| m.len());
+        let below = self.dirs.iter().map(|(_, d)| d.image_bytes());
+        here.chain(below).fold(0, u64::saturating_add)
+    }
 }
 
 /// The modification time of `path` (a link's target's), if it can be read.
@@ -1502,6 +1510,14 @@ impl Tree {
                 }
                 Err(e) => log::warn!("{}: {e}: not looked at", path.display()),
             }
+        }
+    }
+
+    /// Total size in bytes of the image files of the source: see [`SourceDir::image_bytes`].
+    pub fn image_bytes(&self) -> u64 {
+        match self.get(ROOT).as_deref() {
+            Some(Node::Dir(Dir { kind: DirKind::Source(root), .. })) => root.image_bytes(),
+            _ => 0,
         }
     }
 

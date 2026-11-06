@@ -571,6 +571,30 @@ Clients built on Samba's libsmbclient (`smbclient`, and many players and file ma
 map them back. With `sfm` they show the private-use character, as Windows does, and must ask
 for a name in that same form: a name typed with the real `:` is not found.
 
+### Read-only and free space
+
+The share can't be written. What clients are told about it (#217), measured on the Linux kernel
+client and gvfs 1.62 with `smbclient` and Samba 4.24:
+
+| What | Over SMB | Over NFS |
+|---|---|---|
+| A file or folder | the read-only attribute (`R`), from its mode: `-r-xr-xr-x` on the kernel client, `access::can-write` FALSE for files in gvfs | no write bits, `-r--r--r--` |
+| The volume | `FILE_READ_ONLY_VOLUME`, because the FUSE mount is read-only | read-only export |
+| Size, used, free | size and used are the total of the image files found at mount, rounded to a block size; 0 free | the same |
+
+Limits of the clients, which the server can't change:
+
+- gvfs's `filesystem::readonly` stays FALSE: libsmbclient never sets the flag it comes from. gvfs reports
+  `access::can-write` for regular files only, so a file manager may still offer to paste into a folder;
+  the write is refused.
+- `df -i` over SMB shows 0 inodes: the kernel client reports 0 for SMB, with any server.
+- `df` shows 100 % used, as for an ISO or any read-only medium: there is no space to write to.
+
+A file copied from the kernel client with plain `cp` keeps the missing write bit (`chmod u+w` it to
+edit the copy). **Untested** on Windows and macOS, including how each shows the attribute and whether
+copies keep it, and with Roon and Plex, whichever platform they run on. To go back to no
+attribute: `SMB_EXTRA_GLOBAL=map readonly = no`.
+
 ## Client-side: images on hard disks over NFS
 
 This guide is about running sacdfs on the NAS. If you run it on a Linux client instead, over
