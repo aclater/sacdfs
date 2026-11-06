@@ -55,8 +55,9 @@ const YIELD_MAX: std::time::Duration = std::time::Duration::from_millis(50);
 /// paused needs no share of the cache, and it gets one back at its next read.
 const FAST_READER_IDLE: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// The fast readers at the moment, which share what the cache can hold ahead of them.
-/// Asked once per read of a fast reader; the list is as long as the readers.
+/// A list of readers at the moment: those reading for throughput, which share what the cache can
+/// hold ahead of them, or the players ([`Traffic`]). Asked once per read; the list is as long as
+/// the readers.
 #[derive(Debug, Default)]
 pub struct FastReaders {
     seen: Mutex<Vec<(u64, std::time::Instant)>>,
@@ -92,9 +93,10 @@ fn faster_than_a_player(read: u64, secs: f64, byte_rate: f64) -> bool {
 
 /// Who is reading, so that a whole-file reader doesn't starve someone playing (#230).
 ///
-/// A reader averaging at most [`PLAYER_FACTOR`] times the file's byte rate is a *player*; one
-/// averaging more, past [`FAST_AFTER`] bytes, reads for *throughput*. Throughput readers do three
-/// things differently:
+/// A reader that, since it last jumped, has read [`FAST_AFTER`] bytes at more than
+/// [`PLAYER_FACTOR`] times the file's byte rate reads for *throughput*. Any other reader counts
+/// as a *player*: it may be one, in its first seconds, and a tagger or an import's few reads
+/// cost a scan little. Throughput readers do three things differently:
 ///
 /// 1. **They give up the frames they have passed** ([`Engine::give_up`]), always. *Why this
 ///    is the fix:* the cache is least recently used, a player's read-ahead waits there for
@@ -357,8 +359,8 @@ impl TrackFile {
     ///
     /// For a DSF file, [`FAST_FRAMES_PER_THREAD`] per decoder thread, at most
     /// [`FAST_FRAMES_MAX`] and a share of a quarter of the cache, at least
-    /// [`READ_AHEAD_FRAMES`]. `fast_readers` are the fast readers at the moment, this one
-    /// included.
+    /// [`READ_AHEAD_FRAMES`]. `fast_readers` are the readers for throughput at the moment
+    /// ([`Traffic`]), this one included.
     /// *Why (#210):* the decoder threads wait for the slowest frame at the end of every
     /// batch, so that the wait's share of the time is about the threads over the window.
     /// *Why a share of a quarter of the cache:* frames evicted before they are read are
