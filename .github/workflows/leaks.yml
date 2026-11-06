@@ -65,17 +65,17 @@ jobs:
           for i in dsd-stereo-mch-2048 dst-features-2ch-6ch dst-features-4ch album-set-disc-2-of-3; do
             ln -s "$PWD/tests/corpus/images/$i.iso" target/soak-images/
           done
+          # The work directory is where the soak mounts. Not the default under /var/tmp: the
+          # runner's fusermount3 (Ubuntu's AppArmor profile) is refused a mount there with
+          # "Permission denied"; under the runner's home it is allowed.
           python3 -I scripts/soak.py --sacdfs target/release/sacdfs --images target/soak-images \
-            --hours 0.33 --interval 30 --warmup 300 --cache-mb 16 --out target/soak.tsv
+            --work "$RUNNER_TEMP/soak-work" --hours 0.33 --interval 30 --warmup 300 --cache-mb 16 --out target/soak.tsv
       - name: Soak logs (sacdfs's stderr and log, from the work directory)
         if: always()
         run: |
           mkdir -p target/soak-logs
-          for d in /var/tmp/sacdfs-soak.*; do
-            [ -d "$d" ] || continue
-            cp "$d"/*.stderr "$d"/*.log target/soak-logs/ 2>/dev/null || true
-            tail -n 40 "$d"/*.stderr 2>/dev/null || true
-          done
+          cp "$RUNNER_TEMP"/soak-work/*.stderr "$RUNNER_TEMP"/soak-work/*.log target/soak-logs/ 2>/dev/null || true
+          tail -n 40 "$RUNNER_TEMP"/soak-work/*.stderr 2>/dev/null || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()
         with:
