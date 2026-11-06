@@ -69,7 +69,7 @@ jobs:
           # runner fusermount3 is refused a mount there ("Permission denied"; probably Ubuntu's
           # AppArmor profile for it, not checked); under the runner's home it mounts.
           python3 -I scripts/soak.py --sacdfs target/release/sacdfs --images target/soak-images \
-            --work "$RUNNER_TEMP/soak-work" --hours 0.33 --interval 30 --warmup 300 --cache-mb 16 --out target/soak.tsv
+            --work "$RUNNER_TEMP/soak-work" --sample-paths --hours 0.33 --interval 30 --warmup 300 --cache-mb 16 --out target/soak.tsv
       - name: Soak logs (sacdfs's stderr and log, from the work directory)
         if: always()
         run: |
@@ -82,5 +82,6 @@ jobs:
           name: soak
           path: |
             target/soak.tsv
+            target/soak.errors.tsv
             target/soak-logs/
           retention-days: 14

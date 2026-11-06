@@ -23,6 +23,10 @@ All notable changes to sacdfs are recorded here. The format follows
   under `/var/tmp` on the Ubuntu runner (probably its AppArmor profile; not checked). The
   soak now mounts under the runner's home, where it works (a 20-minute run passes), and `scripts/soak.py` prints
   sacdfs's stderr when the mount fails.
+- **The soak no longer ignores read errors.** `scripts/soak.py` counted every failed read as
+  "expected" and the verdict never looked at it (8% of the reads in one run). It now sorts
+  them by path and errno into the ones its churner and staller cause and everything else, and
+  fails on any other. See `docs/development.md`.
 
 ### Upgrade notes
 
