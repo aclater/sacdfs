@@ -6,6 +6,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- **Install guides for ASUSTOR and TerraMaster, and results for Synology, QNAP and UGREEN's kernel.**
+  Checked on ADM 5.1.4, TOS 7.0.1422, DSM 7.4.1 and QuTScloud 5.2.9 in VMs, not on the vendors'
+  hardware. The release binary mounts and serves correctly on all of them but QuTScloud, which has
+  glibc 2.21 ([#244](https://github.com/aclater/sacdfs/issues/244)). The container ran on ADM with
+  Docker CE. The user guide's NFS section now says `--allow-other` is needed even when sacdfs runs
+  as root.
+
 ## [0.4.1-rc.3] - 2026-11-06
 
 ### Fixed
