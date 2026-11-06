@@ -779,7 +779,8 @@ fn a_busy_service_costs_a_retry_not_the_batch() {
     let t = Busy { bad: vec![busy(), busy()], inner: answers(&image, &formats), asked: 0 };
     let mut c = Client::paced(t, Duration::ZERO, Duration::ZERO);
     let mut lines = Vec::new();
-    let s = lookup::fetch(d.path(), std::slice::from_ref(&image), Options::default(), &mut c, |l| lines.push(l));
+    let s =
+        lookup::fetch(d.path(), std::slice::from_ref(&image), Options::default(), &mut c, |l| lines.push(l));
     assert_eq!((s.matched, s.failed), (1, 0), "{lines:?}");
     assert!(c.transport().asked > 2);
 }
