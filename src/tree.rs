@@ -112,6 +112,9 @@ const IMAGE_HELD: usize = 14 << 10;
 /// can hold more images than the bound allows open.
 const OPEN_BATCH: usize = 64;
 
+/// Times a number is looked for along its path under a bound, before it counts as gone.
+const FIND_ATTEMPTS: usize = 16;
+
 /// Images kept listed whatever the bound: a client may be working through a few at a time.
 const MIN_HELD: usize = 8;
 
@@ -1274,6 +1277,28 @@ impl Tree {
     /// path goes through (matching inode numbers, not names, so that `--flatten` and
     /// de-duplicated names do not matter), then into the image's area and file.
     fn find(&self, ino: u64) -> Option<Arc<Node>> {
+        // Under a bound (#237), the image can be let go of again between making a node and
+        // taking it here. Told apart from a number that's really gone by asking again: a request
+        // must not get "no such file" for a file that's there.
+        let attempts = if self.bounded() { FIND_ATTEMPTS } else { 1 };
+        for _ in 1..attempts {
+            if let Some(node) = self.find_once(ino) {
+                return Some(node);
+            }
+            if !self.was_let_go(ino) {
+                return None;
+            }
+        }
+        self.find_once(ino)
+    }
+
+    /// Whether `ino` belongs to an image held or closed now, so that a miss may be a race.
+    fn was_let_go(&self, ino: u64) -> bool {
+        let key = ident::key_of(ino);
+        ident::entry_of(ino) != 0 && !self.refusing() && self.exists(key)
+    }
+
+    fn find_once(&self, ino: u64) -> Option<Arc<Node>> {
         let mut chain = self.ids.chain(ino)?;
         // A sidecar file is found in its directory's listing.
         let sidecar = self.ids.is_sidecar(ino);
