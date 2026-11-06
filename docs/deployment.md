@@ -178,7 +178,7 @@ All settings are environment variables.
 | `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there, read-only is enough); see the [user guide](user-guide.md#your-own-tags---tags) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | (32, or 16 under a limit below 512 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
-| `SACDFS_LISTING_MB` | (no bound, or a quarter of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
+| `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
 | `SACDFS_THREADS` | (one per CPU, at most one per 64 MiB of a limit) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
 | `SACDFS_REQUEST_TIMEOUT` | (30) | `--request-timeout` in seconds: a read, lookup or listing that waits longer for the images (a stalled disk or share) fails with an I/O error, and is logged, instead of hanging the SMB or NFS client; `0` waits for good. See [Troubleshooting](#troubleshooting) |
@@ -266,7 +266,7 @@ and nothing changes from earlier versions.
 |---|---|
 | Cache of frames (`--cache-mb`) | 16 MiB below 512 MiB, else 32 |
 | Decoder threads (`--threads`) | one per CPU, at most one per 64 MiB of the limit, and at least 2 |
-| Memory for what listed images hold (`--listing-mb`) | a quarter of the limit, at least 8 MiB |
+| Memory for what listed images hold (`--listing-mb`) | 3/8 of the limit, at least 8 MiB |
 | Memory watch | see below |
 
 An option you set yourself always wins.

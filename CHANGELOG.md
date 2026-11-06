@@ -9,7 +9,7 @@ All notable changes to sacdfs are recorded here. The format follows
 ### Changed
 
 - **A memory limit no longer gets sacdfs killed while listing (#237, #231).** Under a cgroup limit, what
-  listed images hold is kept to a budget (`--listing-mb`, `SACDFS_LISTING_MB`, default a quarter of the
+  listed images hold is kept to a budget (`--listing-mb`, `SACDFS_LISTING_MB`, default 3/8 of the
   limit): images not used lately are dropped and read again when next used, with the same names, inode
   numbers, sizes, times and bytes. CHANGELOG-NUMBERS
 - **Defaults follow the limit.** Under a limit below 512 MiB the cache defaults to 16 MiB, and decoder

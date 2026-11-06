@@ -33,7 +33,7 @@ services:
     environment:
       SACDFS_FORMATS: dsf,wav
       # SACDFS_CACHE_MB: "32"         # default: 32, or 16 under a memory limit below 512 MiB
-      # SACDFS_LISTING_MB: "64"       # default: no bound, or a quarter of the memory limit
+      # SACDFS_LISTING_MB: "64"       # default: no bound, or 3/8 of the memory limit
       SACDFS_FLATTEN: "0"
       # SACDFS_TAGS: /tags              # user tags (#81); add a volume, e.g. ./tags:/tags:ro
       # SACDFS_MC_ALBUM_SUFFIX: "0"   # no " (Multichannel)" on the multichannel files' album tag

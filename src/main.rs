@@ -57,8 +57,8 @@ struct Args {
     #[arg(long, value_name = "N")]
     cache_mb: Option<usize>,
     /// Memory kept for what listed images hold (their TOCs and files), in MiB; past it, those
-    /// not used lately are read again when next used. 0: no bound (default: no bound, or a
-    /// quarter of the memory limit under one).
+    /// not used lately are read again when next used. 0: no bound (default: no bound, or 3/8
+    /// of the memory limit under one).
     #[arg(long, value_name = "N")]
     listing_mb: Option<usize>,
     /// Which files to show: dsf, wav, or both (dsf,wav).

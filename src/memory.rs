@@ -28,10 +28,12 @@ pub const SMALL_LIMIT: u64 = 512 * MIB;
 /// on 6-channel WAV.
 const LIMIT_PER_THREAD: u64 = 64 * MIB;
 
-/// The share of the limit kept for what listed images hold, as a divisor. *Why a quarter:* at
-/// 256 MiB, 64 MiB keeps about 1,200 images listed, and leaves room for the rest of the process
-/// and for Samba and NFS when they share the limit.
-const LISTING_SHARE: u64 = 4;
+/// The share of the limit kept for what listed images hold, in eighths. *Why three:* at 256 MiB,
+/// 96 MiB keeps about 2,100 images listed, the size that already fitted there, whose second pass
+/// over the library would otherwise read every TOC again (4.5 times slower with a quarter, at 1,600
+/// images). What it leaves is for the rest of the process and for Samba and NFS when they share the
+/// limit; if they take more, the memory watch shrinks listings.
+const LISTING_EIGHTHS: u64 = 3;
 
 /// The least budget for listings, however small the limit.
 const LISTING_MIN: u64 = 8 * MIB;
@@ -167,7 +169,7 @@ pub fn default_threads(cpus: usize, limit: Option<u64>) -> usize {
 
 /// The default budget for what listed images hold, in bytes; `None` for no bound.
 pub fn listing_budget(limit: Option<u64>) -> Option<usize> {
-    limit.map(|l| (l / LISTING_SHARE).max(LISTING_MIN) as usize)
+    limit.map(|l| (l / 8 * LISTING_EIGHTHS).max(LISTING_MIN) as usize)
 }
 
 /// What this configuration asks of the limit (#237, item 1).
@@ -327,7 +329,7 @@ mod tests {
         assert_eq!(default_threads(2, Some(256 * MIB)), 2);
         assert_eq!(default_threads(24, Some(64 * MIB)), 2);
         assert_eq!(default_threads(8, Some(8192 * MIB)), 8);
-        assert_eq!(listing_budget(Some(256 * MIB)), Some(64 << 20));
+        assert_eq!(listing_budget(Some(256 * MIB)), Some(96 << 20));
         assert_eq!(listing_budget(Some(16 * MIB)), Some(8 << 20));
     }
 
@@ -337,13 +339,13 @@ mod tests {
 
     #[test]
     fn a_library_that_fits_gets_no_warning() {
-        assert!(plan(256, 1000, Some(64 << 20)).warning().is_none());
+        assert!(plan(256, 1000, Some(96 << 20)).warning().is_none());
         assert!(plan(8192, 20_000, Some(2048 << 20)).warning().is_none());
     }
 
     #[test]
     fn over_the_budget_the_warning_says_what_changes() {
-        let w = plan(256, 5000, Some(64 << 20)).warning().unwrap();
+        let w = plan(256, 5000, Some(96 << 20)).warning().unwrap();
         assert!(w.contains("256 MiB") && w.contains("5000 images") && w.contains("raise the limit"), "{w}");
         assert!(w.contains("slower"), "{w}");
     }
@@ -356,7 +358,7 @@ mod tests {
 
     #[test]
     fn a_library_too_big_for_the_limit_can_be_killed() {
-        let w = plan(256, 200_000, Some(64 << 20)).warning().unwrap();
+        let w = plan(256, 200_000, Some(96 << 20)).warning().unwrap();
         assert!(w.contains("killed") && w.contains("raise the limit"), "{w}");
     }
 }
