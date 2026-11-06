@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A stalled source (#63, #72): an image that stops answering must neither hang its
-//! requests for good nor hold up the requests of other images.
+//! requests for good nor hold up the requests of other images. (Clients that keep retrying
+//! through a long hang can still fill the read threads, which these tests do not do: #241.)
 //!
 //! The stall is real: an image is reached through a symbolic link outside SOURCE, which is
 //! pointed at a FIFO once sacdfs is running. Opening a FIFO for reading blocks until a
@@ -261,10 +262,11 @@ fn stalled_wav_reads_hold_no_decoder_thread() {
         })
         .collect();
     std::thread::sleep(Duration::from_millis(500));
+    assert!(wedged.iter().all(|t| !t.is_finished()), "the stalled image's reads did not stall");
 
     // The other image reads on, in both formats, DST decoding included.
     let start = Instant::now();
-    for f in other_wav.iter().chain(&other_dsf).take(4) {
+    for f in other_wav.iter().take(2).chain(other_dsf.iter().take(2)) {
         let f = f.clone();
         let shown = f.display().to_string();
         let (r, took) = timed(TIMEOUT + SLACK, move || std::fs::read(f)).expect("a healthy read hangs");

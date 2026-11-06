@@ -1308,11 +1308,14 @@ everything:
   one, and then every request, of any image, queued behind them. *Why 64:* the kernel sends
   at most 64 background requests at once (`max_background`), plus the few synchronous ones
   of its callers; the bound keeps a hung share from making threads without end. A thread is
-  a stack of address space, mostly untouched, and costs nothing while parked.
+  a stack of address space, mostly untouched, and costs nothing while parked. *The limit:*
+  this delays the starvation of healthy images in a long hang, and doesn't prevent it. See
+  the last point of this list.
 - **No decoder thread reads the source.** The decoder pool is fixed and shared by every image, so
   a thread lost to a stalled source is lost to all of them. DST decoding and PCM conversion run
-  there; everything that reads the image (the demultiplexing of both formats) runs on the
-  request thread, which the pool above can spare. *Why this matters more than the thread:* a
+  there; audio reads of the image (the demultiplexing of both formats) run on the request
+  thread, which the pool above can spare until it reaches its limit, and TOC loads run on
+  `sacdfs-meta` and `sacdfs-toc`. *Why this matters more than the thread:* a
   pool thread waiting for its own decoding runs other queued jobs meanwhile (work stealing), so
   while WAV reads demultiplexed on the pool (until 0.4.1-rc.2), one could take up a read of the
   stalled image on top of a healthy read, which then could not return until the source
@@ -1343,6 +1346,17 @@ everything:
 - The root's `getattr` starts a sweep of the source for changes (#123). It does not wait for
   a sweep already running (held up by a stalled source, say): it answers with the times
   known, and the running sweep moves them when it is done.
+- **What a long hang can still do ([#241](https://github.com/aclater/sacdfs/issues/241)).** A
+  stalled image does not hold up other images for good only while the read pool has threads
+  left. The watchdog replies `EIO` but can't free the thread, which stays blocked until the
+  source answers, so each retry by a client takes one more. They needn't be simultaneous. At 64
+  threads, a read of any image waits for a thread and the watchdog fails it. Measured on 2
+  decoder threads, with clients looping `read()` on the stalled image: 8 WAV clients at the
+  default 30 s timeout reached 64 threads in 362 s, and a healthy DSF read then got no answer
+  in 10 s (2 of 2); 8 clients at a 2 s timeout took 26 s, in either format; 1 WAV client at 2 s
+  took 142 s. Healthy reads recovered at once when the source came back, and spare threads
+  ended at about one per 10 s. DSF reads have always had this limit; demultiplexing on the
+  request thread (#239) did not add it.
 
 **Not done, and why.** *A timeout on the source I/O itself:* a thread blocked in the kernel
 cannot be stopped from user space; only the request can be answered. *Moving the TOC loads
