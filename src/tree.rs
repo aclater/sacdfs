@@ -27,14 +27,14 @@
 //! first. Their names are found by the walk at mount time; they are looked at (`fstatat`)
 //! when their directory is first listed, and opened when they are.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, TryLockError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use rayon::prelude::*;
@@ -103,6 +103,17 @@ pub const REFRESH: Duration = Duration::from_secs(2);
 
 /// Threads that read the top-level directories of the source at mount (#175).
 const SCAN_THREADS: usize = 16;
+
+/// What an image holds with its TOC open and none of its files made, in bytes (#237): the TOC
+/// and text, the disc, the nodes of its areas.
+const IMAGE_HELD: usize = 14 << 10;
+
+/// Images opened at once when listing a source directory, under a bound (#237): one directory
+/// can hold more images than the bound allows open.
+const OPEN_BATCH: usize = 64;
+
+/// Images kept listed whatever the bound: a client may be working through a few at a time.
+const MIN_HELD: usize = 8;
 
 /// Most nested source directories followed.
 const MAX_DEPTH: usize = 64;
@@ -531,7 +542,7 @@ fn changed_since_read(d: &Dir) -> bool {
         DirKind::Source(s) => mtime_of(&s.path) != s.stamp.own,
         DirKind::Flat(_, top) => top.chain_changed(),
         DirKind::Folder(p, _) => mtime_of(p) != d.stamp.own,
-        DirKind::Image(_) | DirKind::Area(..) => false,
+        DirKind::Image(_) | DirKind::Closed(_) | DirKind::Area(..) => false,
     }
 }
 
@@ -543,7 +554,7 @@ fn live(d: &Dir) -> bool {
         DirKind::Area(..) => d.art.is_some() || crate::tags::installed(),
         // Never re-read, but its mtime moves with the tags file: kept by the kernel no
         // longer than a re-read directory's.
-        DirKind::Image(_) => crate::tags::installed(),
+        DirKind::Image(_) | DirKind::Closed(_) => crate::tags::installed(),
     }
 }
 
@@ -554,6 +565,10 @@ pub enum DirKind {
     Source(SourceDir),
     /// The directory of one image: one subdirectory per area.
     Image(Arc<Disc>),
+    /// The directory of an image whose disc was let go of to keep within the bound on listed
+    /// images (#237): it is opened again when the directory is next looked into, and then held
+    /// by its areas, as [`DirKind::Flat`]'s is.
+    Closed(PathBuf),
     /// A chain of source directories collapsed onto its one image (`--flatten`): shows the
     /// image's areas, like [`DirKind::Image`], once the image is opened on first use, and the
     /// sidecars of the chain's directories.
@@ -594,6 +609,9 @@ pub struct Dir {
     /// Set when the directory is no longer listed anywhere and its nodes are being freed
     /// (#153): it lists nothing from then on.
     gone: AtomicBool,
+    /// Set when the image is let go of (#237): this node is out of the tree, and a request
+    /// holding it asks the tree again, which makes the directory anew.
+    closed: AtomicBool,
     children: Mutex<Option<Box<Listing>>>,
 }
 
@@ -608,6 +626,7 @@ impl Dir {
             stamp,
             shown: AtomicU64::new(0),
             gone: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
             children: Mutex::new(None),
         }
     }
@@ -621,7 +640,7 @@ impl Dir {
     fn key(&self) -> Option<&Path> {
         match &self.kind {
             DirKind::Source(d) | DirKind::Flat(_, d) => Some(&d.path),
-            DirKind::Folder(p, _) => Some(p),
+            DirKind::Folder(p, _) | DirKind::Closed(p) => Some(p),
             // An image's own directories move with its tags file (#81), noted under the
             // image's path (`Tree::bump`).
             DirKind::Image(disc) | DirKind::Area(disc, _) => Some(&disc.path),
@@ -693,6 +712,8 @@ struct Cx {
     art_version: u64,
     head: usize,
     tags: Option<(String, crate::tags::FileState)>,
+    /// A closed image could not be opened again: the listing is not kept (#237).
+    unreadable: bool,
 }
 
 /// The folder art of the directory (or chain of directories) of an image: the image files
@@ -784,8 +805,8 @@ impl Art {
 /// A node of the tree.
 #[derive(Debug)]
 pub enum Node {
-    /// A directory.
-    Dir(Dir),
+    /// A directory. Boxed: most nodes are files, and each would be as big as a directory (#237).
+    Dir(Box<Dir>),
     /// A track file.
     File(Arc<TrackFile>),
     /// A sidecar file passed through from SOURCE.
@@ -834,6 +855,42 @@ pub struct Tree {
     /// Each opened image with its tags file key and what that file was like when last
     /// looked at (#81), for the sweep.
     tagged: Mutex<crate::tags::Watch>,
+    /// The bound on what listed images hold, in bytes (#237); `usize::MAX` for none.
+    budget: usize,
+    /// The bound in force now: less under memory pressure.
+    budget_now: AtomicUsize,
+    /// Short of memory: nothing new is listed or opened (#237).
+    refusing: AtomicBool,
+    /// The images held, with no bound: nothing.
+    held: Mutex<Held>,
+    /// Images let go of since the persistent seek index last let go of its own.
+    released: AtomicUsize,
+}
+
+/// The images that hold their discs and files in memory, under a bound (#237), each looked at in
+/// turn when memory is needed and let go of unless used since the last look (the clock
+/// algorithm). *Why not strict least-recently-used:* a request that is answered from memory, on a
+/// fuser thread, then only sets a flag.
+#[derive(Debug, Default)]
+struct Held {
+    images: HashMap<u64, HeldImage>,
+    queue: VecDeque<u64>,
+    bytes: usize,
+}
+
+#[derive(Debug)]
+struct HeldImage {
+    disc: Weak<Disc>,
+    bytes: usize,
+}
+
+/// `m`'s content, if it is free now (poisoned or not).
+fn try_lock<T>(m: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
+    match m.try_lock() {
+        Ok(g) => Some(g),
+        Err(TryLockError::Poisoned(p)) => Some(p.into_inner()),
+        Err(TryLockError::WouldBlock) => None,
+    }
 }
 
 /// The directories [`Tree::sweep`] looks at: each with its modification time when last read
@@ -882,7 +939,7 @@ impl Tree {
         // Hashes every name walked once (no file is opened), so that numbers made later can
         // be found again from their key.
         let ids = Ids::new(&root);
-        let node = Node::Dir(Dir::new(DirKind::Source(root), mtime, ROOT).with_stamp(stamp));
+        let node = Node::Dir(Box::new(Dir::new(DirKind::Source(root), mtime, ROOT).with_stamp(stamp)));
         let wav_flavour =
             ident::wav_flavour(ident::pcm_flavour(&PcmConfig::default()), output.samples_per_frame);
         Tree {
@@ -902,7 +959,208 @@ impl Tree {
             bumps: RwLock::new(HashMap::new()),
             sweep: Mutex::new(None),
             tagged: Mutex::new(crate::tags::Watch::default()),
+            budget: usize::MAX,
+            budget_now: AtomicUsize::new(usize::MAX),
+            refusing: AtomicBool::new(false),
+            held: Mutex::new(Held::default()),
+            released: AtomicUsize::new(0),
         }
+    }
+
+    /// The same tree, keeping what listed images hold to about `budget` bytes (#237; `None`: no
+    /// bound). Past it, the images not used lately are let go of: their discs, areas and files.
+    /// Numbers come from paths, so what was shown is made again as it was the next time
+    /// anything of them is asked for, at the cost of reading the image's TOC again. An image
+    /// with a file open is kept.
+    #[must_use]
+    pub fn with_listing_budget(mut self, budget: Option<usize>) -> Tree {
+        self.budget = budget.unwrap_or(usize::MAX);
+        self.budget_now.store(self.budget, Ordering::Relaxed);
+        self
+    }
+
+    /// Acts on memory pressure ([`crate::memory::Pressure`]) as far as the tree goes: under any,
+    /// listings are kept to a quarter of their budget, now and until it ends, and at the last
+    /// level nothing new is listed.
+    pub fn set_pressure(&self, pressure: crate::memory::Pressure) {
+        use crate::memory::Pressure;
+        self.refusing.store(pressure == Pressure::Refuse, Ordering::Relaxed);
+        let budget = if pressure == Pressure::None { self.budget } else { self.budget / 4 };
+        self.budget_now.store(budget, Ordering::Relaxed);
+        self.keep_to_budget();
+    }
+
+    /// Whether requests for anything not in memory are being refused for lack of it.
+    pub fn refusing(&self) -> bool {
+        self.refusing.load(Ordering::Relaxed)
+    }
+
+    fn bounded(&self) -> bool {
+        self.budget != usize::MAX
+    }
+
+    /// Notes that `node` was asked for, under a bound.
+    fn touch(&self, node: &Node) {
+        if !self.bounded() {
+            return;
+        }
+        let disc = match node {
+            Node::File(f) => &f.disc,
+            Node::Dir(d) => match &d.kind {
+                DirKind::Image(disc) | DirKind::Area(disc, _) => disc,
+                _ => return,
+            },
+            Node::Sidecar(_) => return,
+        };
+        disc.referenced.store(true, Ordering::Relaxed);
+    }
+
+    /// Notes under a bound that `disc`, the image `ino`'s, is now held in memory.
+    fn hold(&self, ino: u64, disc: &Arc<Disc>) {
+        if !self.bounded() {
+            return;
+        }
+        let mut h = self.held.lock().unwrap_or_else(|p| p.into_inner());
+        h.images.insert(ino, HeldImage { disc: Arc::downgrade(disc), bytes: IMAGE_HELD });
+        h.queue.push_back(ino);
+        h.bytes += IMAGE_HELD;
+    }
+
+    /// Notes that the image `ino` holds `bytes` more.
+    fn charge(&self, ino: u64, bytes: usize) {
+        if !self.bounded() {
+            return;
+        }
+        let mut h = self.held.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(i) = h.images.get_mut(&ino) {
+            i.bytes += bytes;
+            h.bytes += bytes;
+        }
+    }
+
+    /// Bytes counted as held by listed images (for tests and diagnostics).
+    pub fn held_bytes(&self) -> usize {
+        self.held.lock().unwrap_or_else(|p| p.into_inner()).bytes
+    }
+
+    /// Images held in memory, under a bound (for tests and diagnostics).
+    pub fn held_images(&self) -> usize {
+        self.held.lock().unwrap_or_else(|p| p.into_inner()).images.len()
+    }
+
+    /// Lets go of images until what they hold is within the bound.
+    fn keep_to_budget(&self) {
+        if !self.bounded() {
+            return;
+        }
+        // Another thread at it is enough.
+        let Some(mut h) = try_lock(&self.held) else { return };
+        // Twice round at most: the first look only clears the flags.
+        let mut looks = h.queue.len() * 2;
+        let mut released = 0;
+        let budget = self.budget_now.load(Ordering::Relaxed);
+        while h.bytes > budget && h.images.len() > MIN_HELD && looks > 0 {
+            looks -= 1;
+            let Some(ino) = h.queue.pop_front() else { break };
+            let Some(image) = h.images.get(&ino) else { continue };
+            let disc = image.disc.upgrade();
+            if disc.as_ref().is_some_and(|d| d.referenced.swap(false, Ordering::Relaxed)) {
+                h.queue.push_back(ino);
+                continue;
+            }
+            drop(disc);
+            if self.let_go(ino) {
+                if let Some(i) = h.images.remove(&ino) {
+                    h.bytes -= i.bytes;
+                }
+                released += 1;
+            } else {
+                h.queue.push_back(ino);
+            }
+        }
+        drop(h);
+        if released > 0 && self.released.fetch_add(released, Ordering::Relaxed) + released >= OPEN_BATCH {
+            self.released.store(0, Ordering::Relaxed);
+            if let Some(cache) = crate::index_cache::global() {
+                cache.release_retired();
+            }
+        }
+    }
+
+    /// Lets go of what image `ino` holds: its disc, its areas and files. `false` if a file of
+    /// it is open, or one of its directories is being listed, which keep it for now.
+    ///
+    /// *Why this is safe for the kernel:* as for a freed node ([`Tree::forget`]), numbers come
+    /// from paths, a number no longer in the tree is looked for along its path, and that makes
+    /// the directories and files again with the same names, numbers and generations while the
+    /// image is unchanged. Open files hold their own nodes. Nothing waits for a lock here
+    /// but the tree's own, so that a stalled listing holds nothing up.
+    fn let_go(&self, ino: u64) -> bool {
+        let Some(node) = self.loaded(ino) else { return true };
+        let Node::Dir(top) = &*node else { return true };
+        let path = match &top.kind {
+            DirKind::Image(disc) => Some(disc.path.clone()),
+            DirKind::Closed(_) | DirKind::Flat(..) => None,
+            _ => return true,
+        };
+        let Some(mut top_guard) = try_lock(&top.children) else { return false };
+        let areas: Vec<(u64, Arc<Node>)> = top_guard
+            .iter()
+            .flat_map(|l| l.entries.iter())
+            .filter(|e| e.is_dir)
+            .filter_map(|e| Some((e.ino, self.loaded(e.ino)?)))
+            .filter(|(_, n)| matches!(&**n, Node::Dir(d) if matches!(d.kind, DirKind::Area(..))))
+            .collect();
+        let mut guards = Vec::with_capacity(areas.len());
+        for (_, area) in &areas {
+            let Node::Dir(d) = &**area else { continue };
+            let Some(g) = try_lock(&d.children) else { return false };
+            guards.push((d, g));
+        }
+        let mut files = Vec::new();
+        for (_, g) in &guards {
+            for e in g.iter().flat_map(|l| l.entries.iter()) {
+                let Some(file) = self.loaded(e.ino) else { continue };
+                if let Node::File(f) = &*file {
+                    // A reader holds it (the node's is the first).
+                    if Arc::strong_count(f) > 1 {
+                        return false;
+                    }
+                    files.push(e.ino);
+                }
+            }
+        }
+        let closed = path.map(|p| {
+            let mut d = Dir::new(DirKind::Closed(p), top.mtime, top.parent)
+                .with_art(top.art.clone())
+                .with_stamp(*top.stamp);
+            d.shown = AtomicU64::new(top.shown.load(Ordering::Relaxed));
+            Arc::new(Node::Dir(Box::new(d)))
+        });
+        let mut freed = Vec::with_capacity(files.len() + areas.len());
+        {
+            let mut nodes = self.nodes.write().unwrap_or_else(|p| p.into_inner());
+            for f in &files {
+                freed.extend(nodes.remove(f));
+            }
+            for (i, _) in &areas {
+                freed.extend(nodes.remove(i));
+            }
+            if let Some(c) = closed {
+                top.closed.store(true, Ordering::Release);
+                freed.extend(nodes.insert(ino, c));
+            }
+        }
+        for (d, g) in &mut guards {
+            d.closed.store(true, Ordering::Release);
+            drop(g.take());
+        }
+        let listing = top_guard.take();
+        drop(guards);
+        drop(top_guard);
+        drop(listing);
+        drop(freed);
+        true
     }
 
     /// The same tree, re-reading a directory when its source directory changed since it
@@ -997,6 +1255,7 @@ impl Tree {
     /// directories on the way as looking up that path would.
     pub fn get(&self, ino: u64) -> Option<Arc<Node>> {
         if let Some(n) = self.nodes.read().unwrap_or_else(|p| p.into_inner()).get(&ino) {
+            self.touch(n);
             return Some(n.clone());
         }
         self.find(ino)
@@ -1005,7 +1264,10 @@ impl Tree {
     /// The node with inode number `ino`, if it is made already: never reads the source
     /// (unlike [`Tree::get`]), so it can answer on fuser's own threads (#63).
     pub fn loaded(&self, ino: u64) -> Option<Arc<Node>> {
-        self.nodes.read().unwrap_or_else(|p| p.into_inner()).get(&ino).cloned()
+        let nodes = self.nodes.read().unwrap_or_else(|p| p.into_inner());
+        let node = nodes.get(&ino)?;
+        self.touch(node);
+        Some(node.clone())
     }
 
     /// Finds `ino` from the index: walks from the root through the directories its key's
@@ -1095,6 +1357,11 @@ impl Tree {
         if dir.gone.load(Ordering::Acquire) {
             return None;
         }
+        if dir.closed.load(Ordering::Acquire) {
+            // Its image was let go of while this waited (#237): this node is out of the tree.
+            drop(guard);
+            return self.children(ino);
+        }
         let mut prev = guard.take();
         if let Some(l) = prev.as_mut() {
             if !self.stale(dir, l) {
@@ -1103,6 +1370,12 @@ impl Tree {
                 return Some(entries);
             }
         }
+        if self.refusing() {
+            // No memory for a new listing: what was listed is still good enough.
+            let old = prev.as_ref().map(|l| l.entries.clone());
+            *guard = prev;
+            return old;
+        }
         let mut cx = Cx::default();
         let entries = Arc::new(self.load(dir, ino, prev.as_deref(), &mut cx));
         if dir.gone.load(Ordering::Acquire) {
@@ -1110,6 +1383,9 @@ impl Tree {
             // the removal could not take it (#153).
             let old = prev.iter().flat_map(|p| p.entries.iter());
             self.forget(dir, entries.iter().chain(old).map(|e| e.ino));
+            return None;
+        }
+        if cx.unreadable {
             return None;
         }
         if let Some(p) = &prev {
@@ -1135,6 +1411,8 @@ impl Tree {
             served: self.dir_mtime(dir),
             tags: cx.tags,
         }));
+        drop(guard);
+        self.keep_to_budget();
         Some(entries)
     }
 
@@ -1190,6 +1468,14 @@ impl Tree {
                 }
             }
         }
+        if self.bounded() {
+            let mut h = self.held.lock().unwrap_or_else(|p| p.into_inner());
+            for (ino, _) in &freed {
+                if let Some(i) = h.images.remove(ino) {
+                    h.bytes -= i.bytes;
+                }
+            }
+        }
         // What the tree notes by source path for them goes too, for the paths that are gone:
         // the mtimes passed up (#123) and the tags files watched (#81).
         let mut paths: Vec<&Path> = Vec::new();
@@ -1199,6 +1485,10 @@ impl Tree {
             match &d.kind {
                 DirKind::Source(s) => paths.push(&s.path),
                 DirKind::Folder(p, _) => paths.push(p),
+                DirKind::Closed(image) => {
+                    paths.push(image);
+                    images.push(image);
+                }
                 DirKind::Image(disc) => {
                     paths.push(&disc.path);
                     images.push(&disc.path);
@@ -1354,7 +1644,11 @@ impl Tree {
             return self;
         }
         let mut images = Vec::new();
-        if let Some(Node::Dir(Dir { kind: DirKind::Source(top), .. })) = self.get(ROOT).as_deref() {
+        let root = self.get(ROOT);
+        if let Some(DirKind::Source(top)) = root.as_deref().and_then(|n| match n {
+            Node::Dir(d) => Some(&d.kind),
+            _ => None,
+        }) {
             let mut stack = vec![top];
             while let Some(d) = stack.pop() {
                 images.extend(d.images.iter().cloned());
@@ -1416,7 +1710,8 @@ impl Tree {
             return;
         }
         let Some(root) = self.get(ROOT) else { return };
-        let Node::Dir(Dir { kind: DirKind::Source(top), .. }) = &*root else { return };
+        let Node::Dir(top) = &*root else { return };
+        let DirKind::Source(top) = &top.kind else { return };
         // A sweep running already (maybe held up by a stalled source) is not waited for: the
         // root's attributes are answered as they are, and the sweep moves them when done
         // (#63).
@@ -1580,7 +1875,8 @@ impl Tree {
                             Some(image) => DirKind::Flat(image.to_owned(), sub.clone()),
                             None => DirKind::Source(sub.clone()),
                         };
-                        if !self.add(ino, Node::Dir(Dir::new(kind, mtime, parent).with_stamp(*sub.stamp))) {
+                        let sub_dir = Dir::new(kind, mtime, parent).with_stamp(*sub.stamp);
+                        if !self.add(ino, Node::Dir(Box::new(sub_dir))) {
                             continue;
                         }
                     }
@@ -1590,32 +1886,42 @@ impl Tree {
                 // worth doing in parallel on a slow (network) source.
                 let new: Vec<&PathBuf> =
                     src.images.iter().filter(|p| !self.exists(self.ids.image(p))).collect();
-                let mut opened: HashMap<&PathBuf, Disc> = new
-                    .par_iter()
-                    .filter_map(|&p| {
-                        let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
-                        match Disc::open(p, id, self.tuning) {
-                            Ok(d) => Some((p, d)),
-                            Err(e) => {
-                                log::info!("{}: not shown: {e}", p.display());
-                                None
+                // Under a bound, a few at a time: one directory can hold more images than the
+                // bound allows open (#237).
+                let batch = if self.bounded() { OPEN_BATCH } else { new.len().max(1) };
+                for images in new.chunks(batch) {
+                    let opened: Vec<(&PathBuf, Disc)> = images
+                        .par_iter()
+                        .filter_map(|&p| {
+                            let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
+                            match Disc::open(p, id, self.tuning) {
+                                Ok(d) => Some((p, d)),
+                                Err(e) => {
+                                    log::info!("{}: not shown: {e}", p.display());
+                                    None
+                                }
                             }
-                        }
-                    })
-                    .collect();
-                for path in &src.images {
-                    let ino = self.ids.image(path);
-                    if !self.exists(ino) {
-                        let Some(disc) = opened.remove(path) else { continue };
+                        })
+                        .collect();
+                    for (path, disc) in opened {
+                        let ino = self.ids.image(path);
                         self.opened(&disc);
                         let mtime = disc.mtime;
                         let stamp = image_stamp(mtime, art.as_deref());
-                        let image = Dir::new(DirKind::Image(Arc::new(disc)), mtime, parent)
+                        let disc = Arc::new(disc);
+                        let image = Dir::new(DirKind::Image(disc.clone()), mtime, parent)
                             .with_art(art.clone())
                             .with_stamp(stamp);
-                        if !self.add(ino, Node::Dir(image)) {
-                            continue;
+                        if self.add(ino, Node::Dir(Box::new(image))) {
+                            self.hold(ino, &disc);
                         }
+                    }
+                    self.keep_to_budget();
+                }
+                for path in &src.images {
+                    let ino = self.ids.image(path);
+                    if !self.exists(ino) {
+                        continue;
                     }
                     let stem = path.file_stem().map_or_else(|| OsString::from("disc"), OsStr::to_owned);
                     out.push(Entry { name: dedup.unique(&stem, false), ino, is_dir: true });
@@ -1654,6 +1960,25 @@ impl Tree {
                 }
                 self.list_sidecars(list, parent, &mut dedup, &mut out);
             }
+            DirKind::Closed(image) => {
+                let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
+                match Disc::open(image, id, self.tuning) {
+                    // Listed as when it was first opened; its areas hold the disc from here on.
+                    Ok(disc) => {
+                        self.opened(&disc);
+                        let disc = Arc::new(disc);
+                        let img = Dir::new(DirKind::Image(disc.clone()), dir.mtime, dir.parent)
+                            .with_art(dir.art.clone())
+                            .with_stamp(*dir.stamp);
+                        self.hold(parent, &disc);
+                        out = self.load(&img, parent, None, &mut Cx::default());
+                    }
+                    Err(e) => {
+                        log::warn!("{}: not opened again: {e}", image.display());
+                        cx.unreadable = true;
+                    }
+                }
+            }
             DirKind::Image(disc) => {
                 for (i, area) in disc.toc().areas.iter().enumerate() {
                     let name = match area.slot {
@@ -1664,7 +1989,7 @@ impl Tree {
                     let area_dir = Dir::new(DirKind::Area(disc.clone(), i), disc.mtime, parent)
                         .with_art(dir.art.clone())
                         .with_stamp(*dir.stamp);
-                    if !self.add(ino, Node::Dir(area_dir)) {
+                    if !self.add(ino, Node::Dir(Box::new(area_dir))) {
                         log::info!("{}: second {} area: not shown", disc.path.display(), area.slot);
                         continue;
                     }
@@ -1723,9 +2048,11 @@ impl Tree {
                                 let mtime = dir.mtime;
                                 let art = self.art_of(chain.chain_dirs(), &sidecars);
                                 let stamp = image_stamp(disc.mtime, Some(&art));
-                                let img = Dir::new(DirKind::Image(Arc::new(disc)), mtime, dir.parent)
+                                let disc = Arc::new(disc);
+                                let img = Dir::new(DirKind::Image(disc.clone()), mtime, dir.parent)
                                     .with_art(Some(art))
                                     .with_stamp(stamp);
+                                self.hold(parent, &disc);
                                 out = self.load(&img, parent, None, &mut Cx::default());
                                 for e in &out {
                                     dedup.unique(&e.name, false);
@@ -1745,6 +2072,7 @@ impl Tree {
                     (k, state)
                 });
                 let mut seen = std::collections::HashSet::new();
+                let mut held = 0;
                 for track in &area.tracks {
                     if let Err(e) = check_track(area, track, disc.toc().sectors) {
                         log::info!(
@@ -1773,6 +2101,7 @@ impl Tree {
                         let name =
                             track_file_name(track.number, track.text.title.as_deref(), format.extension());
                         let ino = ident::file(parent, area.slot, track.number, format, self.wav_flavour);
+                        held += file.held_bytes();
                         // Listed again (art or tags file changed): a file whose tags changed
                         // gets a new node under the same number, with a new generation (#81).
                         let added = if prev.is_some() {
@@ -1785,6 +2114,9 @@ impl Tree {
                         }
                         out.push(Entry { name: dedup.unique(OsStr::new(&name), true), ino, is_dir: false });
                     }
+                }
+                if prev.is_none() {
+                    self.charge(dir.parent, held);
                 }
                 // The folder's art, as the same files as in the folder (#95), after the tracks.
                 if let Some(art) = &dir.art {
@@ -1833,10 +2165,10 @@ impl Tree {
                         // whether its first listing must read it again.
                         let stamp =
                             Stamp { own: sc.mtime, other: sc.newest().max(Some(m.mtime)), image: None };
-                        Node::Dir(
+                        Node::Dir(Box::new(
                             Dir::new(DirKind::Folder(sc.path.clone(), inner.clone()), m.mtime, parent)
                                 .with_stamp(stamp),
-                        )
+                        ))
                     }),
                     SidecarKind::File | SidecarKind::Link => {
                         let link = matches!(sc.kind, SidecarKind::Link);
@@ -1989,6 +2321,249 @@ mod tests {
         }
         out.sort();
         out
+    }
+
+    /// What a client sees of the tree: each path with its number, kind, size, mtime and
+    /// generation, and each track file's header length and tag.
+    fn seen(tree: &Tree) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stack = vec![(PathBuf::new(), ROOT)];
+        while let Some((path, ino)) = stack.pop() {
+            for e in tree.children(ino).unwrap().iter() {
+                let p = path.join(&e.name);
+                let node = tree.get(e.ino).unwrap();
+                let (size, extra) = match &*node {
+                    Node::File(f) => (f.size, format!("{} {:?}", f.header_len(), f.tag())),
+                    Node::Sidecar(s) => (s.meta.size, String::new()),
+                    Node::Dir(_) => (0, String::new()),
+                };
+                let mtime = tree.mtime(&node);
+                let generation = tree.generation(&node);
+                out.push(format!(
+                    "{} {} {} {size} {mtime:?} {generation} {extra}",
+                    p.display(),
+                    e.ino,
+                    e.is_dir
+                ));
+                if e.is_dir {
+                    stack.push((p, e.ino));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// A library of `n` images, two to a folder, with a cover in each folder.
+    fn library(n: usize) -> tempfile::TempDir {
+        let mut paths = Vec::new();
+        for i in 0..n {
+            paths.push(format!("A{:02}/D{i:03}.iso", i / 2));
+            paths.push(format!("A{:02}/cover.jpg", i / 2));
+        }
+        source(&paths.iter().map(String::as_str).collect::<Vec<_>>())
+    }
+
+    /// The bound that keeps only [`MIN_HELD`] images.
+    const TINY: Option<usize> = Some(1);
+
+    fn bounded(dir: &Path, budget: Option<usize>, flatten: bool) -> Tree {
+        Tree::with_options(
+            SourceDir::scan_with(dir, &Sidecars::default(), None).unwrap(),
+            Tuning::default(),
+            Output::default(),
+        )
+        .with_flatten(flatten)
+        .with_listing_budget(budget)
+    }
+
+    #[test]
+    fn a_bound_changes_nothing_a_client_sees() {
+        for flatten in [false, true] {
+            let dir = library(24);
+            let free = seen(&bounded(dir.path(), None, flatten));
+            assert!(free.len() > 24 * 5, "{}", free.len());
+            let tree = bounded(dir.path(), TINY, flatten);
+            assert_eq!(seen(&tree), free, "flatten {flatten}");
+            // Images were let go of, and everything comes back the same, more than once.
+            assert!(tree.held_images() <= MIN_HELD + 1, "{}", tree.held_images());
+            assert_eq!(seen(&tree), free, "flatten {flatten}, again");
+            assert_eq!(seen(&tree), free, "flatten {flatten}, a third time");
+            assert!(tree.held_images() <= MIN_HELD + 1, "{}", tree.held_images());
+        }
+    }
+
+    #[test]
+    fn with_a_flattened_chain_each_image_comes_back() {
+        let paths: Vec<String> = (0..24).map(|i| format!("A/B{i:02}/C/x.iso")).collect();
+        let dir = source(&paths.iter().map(String::as_str).collect::<Vec<_>>());
+        let free = seen(&bounded(dir.path(), None, true));
+        let tree = bounded(dir.path(), TINY, true);
+        assert_eq!(seen(&tree), free);
+        assert!(tree.held_images() <= MIN_HELD + 1, "{}", tree.held_images());
+        assert_eq!(seen(&tree), free);
+    }
+
+    #[test]
+    fn under_pressure_listings_shrink_and_then_new_ones_fail() {
+        use crate::memory::Pressure;
+        let dir = library(24);
+        let free = seen(&bounded(dir.path(), None, false));
+        let tree = bounded(dir.path(), Some(1 << 30), false);
+        assert_eq!(seen(&tree), free);
+        assert_eq!(tree.held_images(), 24);
+        let one = tree.held_bytes() / 24;
+        // A budget of 8 images' worth, at a quarter: 2, and at least the few always kept.
+        let tree = bounded(dir.path(), Some(one * 8), false);
+        assert_eq!(seen(&tree), free);
+        tree.set_pressure(Pressure::Listings);
+        assert_eq!(tree.held_images(), MIN_HELD);
+        tree.set_pressure(Pressure::Refuse);
+        assert!(tree.refusing());
+        // What is listed stays listed; a new listing fails.
+        let held =
+            (0..24).map(|i| format!("A{:02}/D{i:03}", i / 2)).map(|p| tree.resolve(Path::new(&p)).unwrap());
+        let (closed, open): (Vec<_>, Vec<_>) = held.partition(|i| {
+            matches!(tree.loaded(*i).as_deref(), Some(Node::Dir(d)) if matches!(d.kind, DirKind::Closed(_)))
+        });
+        assert!(!open.is_empty() && !closed.is_empty());
+        assert!(tree.children(closed[0]).is_none());
+        // Over: back as they were, nothing lost.
+        tree.set_pressure(Pressure::None);
+        assert!(!tree.refusing());
+        assert_eq!(seen(&tree), free);
+    }
+
+    #[test]
+    fn no_bound_holds_no_account() {
+        let dir = library(12);
+        let tree = bounded(dir.path(), None, false);
+        seen(&tree);
+        assert_eq!((tree.held_images(), tree.held_bytes()), (0, 0));
+    }
+
+    #[test]
+    fn a_big_budget_lets_nothing_go() {
+        let dir = library(12);
+        let tree = bounded(dir.path(), Some(1 << 30), false);
+        seen(&tree);
+        assert_eq!(tree.held_images(), 12);
+        assert!(tree.held_bytes() > 12 * IMAGE_HELD);
+    }
+
+    #[test]
+    fn numbers_not_in_the_tree_are_found_again() {
+        let dir = library(24);
+        let tree = bounded(dir.path(), TINY, false);
+        let files: Vec<u64> = {
+            let free = bounded(dir.path(), None, false);
+            let mut stack = vec![ROOT];
+            let mut out = Vec::new();
+            while let Some(i) = stack.pop() {
+                for e in free.children(i).unwrap().iter() {
+                    if e.is_dir {
+                        stack.push(e.ino);
+                    } else if matches!(free.get(e.ino).as_deref(), Some(Node::File(_))) {
+                        out.push(e.ino);
+                    }
+                }
+            }
+            out
+        };
+        seen(&tree);
+        assert!(files.iter().any(|i| tree.loaded(*i).is_none()), "something must have been let go of");
+        for ino in files {
+            assert!(matches!(tree.get(ino).as_deref(), Some(Node::File(_))), "{ino}");
+            assert_eq!(tree.parent_of(ident::area_of(ino).unwrap()) & ident::key_of(ino), ident::key_of(ino));
+        }
+    }
+
+    #[test]
+    fn an_open_file_keeps_its_image() {
+        let dir = library(24);
+        let tree = bounded(dir.path(), TINY, false);
+        let image = tree.resolve(Path::new("A00/D000")).unwrap();
+        let area = tree.children(image).unwrap()[0].ino;
+        let entries = tree.children(area).unwrap();
+        let first = entries.iter().find(|e| !e.name.to_string_lossy().contains("cover")).unwrap();
+        let Some(Node::File(file)) = tree.get(first.ino).as_deref().map(|n| match n {
+            Node::File(f) => Node::File(f.clone()),
+            _ => panic!("a file"),
+        }) else {
+            panic!("a file")
+        };
+        for _ in 0..3 {
+            seen(&tree);
+        }
+        // Same node, so the same disc: it was never let go of.
+        assert!(matches!(tree.loaded(first.ino).as_deref(), Some(Node::File(f)) if Arc::ptr_eq(f, &file)));
+        assert!(
+            matches!(tree.loaded(image).as_deref(), Some(Node::Dir(d)) if matches!(d.kind, DirKind::Image(_)))
+        );
+        drop(file);
+        seen(&tree);
+        seen(&tree);
+        assert!(
+            tree.loaded(first.ino).is_none_or(|n| matches!(&*n, Node::File(f) if Arc::strong_count(f) == 1))
+        );
+    }
+
+    #[test]
+    fn a_directory_of_many_images_stays_within_the_bound() {
+        let paths: Vec<String> = (0..300).map(|i| format!("A/D{i:03}.iso")).collect();
+        let dir = source(&paths.iter().map(String::as_str).collect::<Vec<_>>());
+        let tree = bounded(dir.path(), TINY, false);
+        let a = tree.resolve(Path::new("A")).unwrap();
+        assert_eq!(tree.children(a).unwrap().len(), 300);
+        assert!(tree.held_images() <= MIN_HELD + 1, "{}", tree.held_images());
+    }
+
+    #[test]
+    fn an_image_gone_while_closed_is_gone() {
+        let dir = library(24);
+        let tree =
+            bounded(dir.path(), TINY, false).watching(&Sidecars::default()).with_refresh(Duration::ZERO);
+        seen(&tree);
+        let closed = (0..24)
+            .find_map(|i| {
+                let p = format!("A{:02}/D{i:03}", i / 2);
+                let ino = tree.resolve(Path::new(&p))?;
+                matches!(tree.loaded(ino).as_deref(), Some(Node::Dir(d)) if matches!(d.kind, DirKind::Closed(_)))
+                    .then_some((p, ino))
+            })
+            .expect("a closed image");
+        let (rel, ino) = closed;
+        let iso = dir.path().join(format!("{rel}.iso"));
+        let target = fs::read_link(&iso).unwrap();
+        fs::remove_file(&iso).unwrap();
+        // Its folder not yet read again: the image can't be opened, and that is not kept.
+        assert!(tree.children(ino).is_none());
+        // Written back: the same directory, listed.
+        std::os::unix::fs::symlink(&target, &iso).unwrap();
+        assert!(!tree.children(ino).unwrap().is_empty());
+        // Removed for good: its folder, read again, no longer shows it.
+        fs::remove_file(&iso).unwrap();
+        let parent = rel.split('/').next().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        let names = names(&tree, parent);
+        assert!(!names.contains(&rel.split('/').nth(1).unwrap().to_owned()), "{names:?}");
+        assert!(tree.get(ino).is_none());
+    }
+
+    #[test]
+    fn readers_racing_a_tiny_bound_all_see_the_same() {
+        let dir = library(32);
+        let free = seen(&bounded(dir.path(), None, false));
+        let tree = Arc::new(bounded(dir.path(), TINY, false));
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..4 {
+                        assert_eq!(seen(&tree), free);
+                    }
+                });
+            }
+        });
     }
 
     #[test]

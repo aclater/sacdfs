@@ -457,6 +457,12 @@ impl Shared {
         by_fh.or_else(|| handles.values().find(|(i, _)| *i == ino)).map(|(_, o)| Arc::new(o.node()))
     }
 
+    /// The error for a number the tree doesn't find: `ENOMEM` if it isn't looking, for lack of
+    /// memory (#237).
+    fn not_found(&self) -> Errno {
+        if self.tree.refusing() { Errno::ENOMEM } else { Errno::ENOENT }
+    }
+
     fn lookup(&self, parent: u64, name: &OsStr) -> Result<(Duration, FileAttr, Generation), Errno> {
         let mut negative = false;
         let ino = match name.as_encoded_bytes() {
@@ -476,7 +482,12 @@ impl Shared {
                 None => None,
             },
         };
-        match ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n))) {
+        let found = ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n)));
+        // Not "missing", which the kernel would remember, but short of memory (#237).
+        if found.is_none() && self.tree.refusing() {
+            return Err(Errno::ENOMEM);
+        }
+        match found {
             // A directory that is re-read when its source changes (#101), and what is in
             // it, is remembered for a short time only.
             Some((ino, node)) => {
@@ -494,13 +505,17 @@ impl Shared {
     fn getattr(&self, ino: u64, node: Option<Arc<Node>>) -> Result<(Duration, FileAttr), Errno> {
         match node {
             Some(node) => Ok((self.ttl(ino, ino), self.attr(ino, &node))),
-            None => Err(Errno::ENOENT),
+            None => Err(self.not_found()),
         }
     }
 
     /// Opens `node`: a new file handle.
     fn open(&self, ino: u64, node: Option<Arc<Node>>) -> Result<u64, Errno> {
-        let Some(node) = node else { return Err(Errno::ENOENT) };
+        let Some(node) = node else { return Err(self.not_found()) };
+        // New readers wait out a shortage, so that the ones reading now go on (#237).
+        if self.tree.refusing() && matches!(&*node, Node::File(_)) {
+            return Err(Errno::ENOMEM);
+        }
         let open = match &*node {
             Node::File(file) => Open::Track(Arc::new(Reader::new(file.clone()))),
             Node::Sidecar(s) => match self.tree.open_sidecar(s) {
@@ -801,6 +816,8 @@ impl Filesystem for SacdFs {
 
     fn readdir(&self, _req: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, reply: ReplyDirectory) {
         // Listing a directory the first time opens its images (reads their TOCs).
+        let tree = self.shared.tree.clone();
+        let refusing = move || tree.refusing();
         self.serve(
             What::new("readdir", Ino(ino.0)),
             reply,
@@ -808,7 +825,7 @@ impl Filesystem for SacdFs {
             move |reply: Option<ReplyDirectory>, found: Option<(Arc<Vec<Entry>>, u64)>| {
                 let Some(mut reply) = reply else { return };
                 let Some((children, parent)) = found else {
-                    reply.error(Errno::ENOTDIR);
+                    reply.error(if refusing() { Errno::ENOMEM } else { Errno::ENOTDIR });
                     return;
                 };
                 let dots = [
