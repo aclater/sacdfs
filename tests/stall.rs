@@ -116,6 +116,24 @@ fn stall(link: &Path, fifo: &Path) {
     std::fs::rename(&tmp, link).unwrap();
 }
 
+/// The files with extension `ext` below `dir`, sorted.
+fn files_below(dir: &Path, ext: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_owned()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == ext) {
+                found.push(p);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
 /// Lets whatever is blocked opening `fifo` go on (and then read its end).
 fn release(fifo: &Path) {
     // O_RDWR on a FIFO never blocks on Linux; the blocked reader's open then returns.
@@ -198,5 +216,65 @@ fn a_stalled_image_fails_its_requests_and_holds_up_no_other() {
 
     release(&fifo_unlisted);
     release(&fifo_listed);
+    drop(m);
+}
+
+/// WAV reads demultiplex in a pipeline with their conversion. That reading of the image must not
+/// happen on a decoder thread: a read stalled there held the thread for as long as the source
+/// hung, so a stalled image's WAV reads could take every decoder thread, and then no read of any
+/// other image could decode. (With more threads than stalled reads, a healthy read failed only
+/// sometimes: a decoder thread waiting for its own decoding can take up a stalled read.)
+#[test]
+fn stalled_wav_reads_hold_no_decoder_thread() {
+    common::skip_without_fuse!();
+    let corpus = common::corpus().join("images");
+    let base = tempfile::tempdir().unwrap();
+    let (src, links) = (base.path().join("src"), base.path().join("links"));
+    std::fs::create_dir_all(&links).unwrap();
+    for (dir, id) in [("Stalled", "dsd-stereo-mch-2048"), ("Other", "dst-features-2ch-6ch")] {
+        std::fs::create_dir_all(src.join(dir)).unwrap();
+        let outer = links.join(format!("{dir}.iso"));
+        std::os::unix::fs::symlink(corpus.join(format!("{id}.iso")), &outer).unwrap();
+        std::os::unix::fs::symlink(&outer, src.join(dir).join(format!("{id}.iso"))).unwrap();
+    }
+    // Two decoder threads, as a small NAS has: two stalled reads were enough to take them.
+    let secs = TIMEOUT.as_secs().to_string();
+    let m = Mount::new(&src, &["--threads", "2", "--request-timeout", &secs, "--no-index-cache"]);
+    let stalled = files_below(&m.path.join("Stalled"), "wav");
+    let other_dsf = files_below(&m.path.join("Other"), "dsf");
+    let other_wav = files_below(&m.path.join("Other"), "wav");
+    assert!(stalled.len() >= 2 && !other_dsf.is_empty() && !other_wav.is_empty());
+
+    let fifo = base.path().join("stalled.fifo");
+    stall(&links.join("Stalled.iso"), &fifo);
+    // The image's open handle is checked against its path at most once a second.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // Reads of the stalled image, each on a thread of its own, wait or fail.
+    let wedged: Vec<_> = stalled
+        .into_iter()
+        .take(2)
+        .map(|f| {
+            std::thread::spawn(move || {
+                let _ = std::fs::read(&f);
+            })
+        })
+        .collect();
+    std::thread::sleep(Duration::from_millis(500));
+
+    // The other image reads on, in both formats, DST decoding included.
+    let start = Instant::now();
+    for f in other_wav.iter().chain(&other_dsf).take(4) {
+        let f = f.clone();
+        let shown = f.display().to_string();
+        let (r, took) = timed(TIMEOUT + SLACK, move || std::fs::read(f)).expect("a healthy read hangs");
+        assert!(r.is_ok_and(|d| d.len() > 92), "{shown}: a healthy read failed, after {took:?}");
+    }
+    assert!(start.elapsed() < TIMEOUT, "the other image waited: {:?}", start.elapsed());
+
+    release(&fifo);
+    for t in wedged {
+        t.join().unwrap();
+    }
     drop(m);
 }
