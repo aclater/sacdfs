@@ -27,7 +27,7 @@ with Docker 29 on Debian 13: healthy in 8 s, both shares mounted. Reference:
      -v /srv/music:/images:ro \
      -v sacdfs-cache:/cache \
      --health-cmd /usr/local/bin/healthcheck.sh --health-interval 30s \
-     --health-timeout 10s --health-start-period 60s --health-retries 3 \
+     --health-timeout 10s --health-start-period 300s --health-retries 3 \
      ghcr.io/aclater/sacdfs:0.4.0
    ```
 

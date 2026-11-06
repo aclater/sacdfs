@@ -1,4 +1,4 @@
-# Development: leak hunting and memory profiling
+# Development: leak hunting, memory profiling and skipped tests
 
 sacdfs runs for days on a NAS, so memory it keeps alive by mistake adds up. A map that only
 grows, nodes kept after a re-read, or the buffers of abandoned requests all count. In Rust,
@@ -47,8 +47,10 @@ python3 scripts/soak.py --sacdfs target/release/sacdfs --images DIR --hours 2 --
 ```
 
 `DIR` holds `.iso` images, at least two; real discs give realistic reads. The script builds
-a library of links to them in a work directory (under `/var/tmp` by default) and mounts it
-with `--tags`. Then:
+a library of links to them in a work directory (under `/var/tmp` by default; `--work DIR`
+to choose; on the GitHub Ubuntu runner a mount under `/var/tmp` was refused with "Permission
+denied" and one under the runner's home worked, so the weekly run uses `--work`) and mounts it with
+`--tags`. If the mount fails, the soak prints sacdfs's stderr and log. Then:
 
 - **Readers** (`--readers 4`) read the mounted files, in three patterns: long stretches from
   random offsets, bursts of small reads at random seeks, and a library scan's
@@ -80,7 +82,21 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   so one sample taken during a stall may be several threads high; that does not fail a run,
   while threads that accumulate still do;
 - open files do not climb: the second half's maximum is at most 8 above the first half's;
-- the cache directory plateaus.
+- the cache directory plateaus;
+- no read error is unexpected. Reads fail on purpose in some places, and the soak sorts every
+  failure by path and errno: `churn` (a path in a churn album the churner has removed: ENOENT
+  or ENOTDIR, or EIO within 30 s of the removal), `stall` (EIO, ETIMEDOUT, ENOENT or EINTR
+  under the `stall` folder while a stall is on, and for three request timeouts after), `tags`
+  (ENOENT on a `.dsf` after a tags edit since the file list was taken, or within 60 s of it),
+  `sidecar` (ENOENT on a `cover-*.jpg` the churner has removed, or under `Artwork/` within
+  60 s of the churner toggling it; sacdfs lists a removed file until it has re-read the
+  folder, which takes seconds on real discs) and `cover` (ENOENT on `cover.jpg` within 5 s of
+  a cover replacement: 0.4.1 re-reads the cover and the name is gone for about a second).
+  Any other error, such as EIO on a stable disc, fails the run, with no tolerance. The counts
+  per class are columns of the TSV, and `<out>.errors.tsv` has class, errno and area. The summary lists up to ten unexpected paths only with `--sample-paths`: leave it off
+  on a real library, whose names must not be published. A failed read returns at once and is
+  retried after `--read-pause`, so the counts are attempts; the summary also gives how many
+  different files failed.
 
 The exit status is 0 on PASS and 1 on FAIL. `--help` lists the knobs.
 
@@ -118,16 +134,68 @@ podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD":/src:z -w /src 
 ```
 
 This runs every test binary under valgrind memcheck, one test at a time. It follows the
-`sacdfs` processes that the mount tests start; `fusermount3` is setuid and is skipped. Any
-definite or indirect leak, or any memory error, fails the run. The logs go to
+`sacdfs` processes that the mount tests start; `fusermount3` is setuid and is skipped, and so
+are the system tools the tests run (`/usr/bin/*`: `mkfifo`, `ls`, `df`, `awk`). On the
+GitHub runner those are uutils coreutils, which leaks at exit (`mkfifo` alone shows 43 KiB
+definitely plus indirectly lost), and they are not sacdfs. Any definite or indirect leak, or
+any memory error, in sacdfs or a test fails the run. The logs go to
 `target/leak-check/`, one per process, and suppressions to `scripts/leak-check.supp`, each
-with its reason.
+with its reason. `ONLY=REGEX` runs only the test binaries whose path matches, for example
+`ONLY='/(mount|stall)-' scripts/leak-check.sh memcheck`.
+
+The suppressions match demangled names (`fun:*fuser*mnt*Mount*new`), not `_ZN...` symbols, so
+they hold under both symbol manglings: the container's Rust 1.92 uses the legacy scheme, the
+1.99 toolchain of the weekly CI run uses v0. A suppression written against the mangled name
+stops matching after a toolchain change and fails the run on a block that was never a leak.
+There are two: the mount that `serve` keeps on purpose (55 bytes in three blocks, once per
+process), and a read of uninitialised memory inside the `nix` crate's `recvmsg` when fuser
+reads fusermount's reply (once per mount, the value is discarded).
 
 *Why memcheck rather than LeakSanitizer:* sacdfs and scarletbook are pure Rust, with no C
 code in the dependency graph. Rust's LeakSanitizer needs a nightly compiler
 (`-Zsanitizer=leak`). clang's runtime trick for C (`-shared-libasan` with `LD_PRELOAD`) does
 not instrument Rust code. memcheck needs neither and also follows the child `sacdfs`
 processes.
+
+## Skipped tests
+
+A Rust test can't skip itself at run time. A guard that returns early reports as `ok`, and no
+count shows it. In pysacd, that hid a comparison job that had stopped comparing for six releases
+(aclater/pysacd#131). So a guard here goes through `common::skip!` (`tests/common/mod.rs`), and
+never a bare `return`:
+
+```rust
+common::skip_without_fuse!(); // fails instead under SACDFS_FUSE_TESTS=1
+if !handles_available(&m.at, &files[0]) {
+    common::skip!(NO_HANDLES);
+}
+```
+
+It prints `SKIPPED binary::test: reason` directly to stderr, past libtest's capture, so every
+`cargo test` shows it without `--nocapture`. `#[ignore]` tests print their reason themselves.
+
+The `tests`, `tests (arm64)`, `coverage` and `nfs export` jobs save cargo's output and then run
+`scripts/check_skips.py`, as a step of the same job. It writes the job summary: how many tests ran
+(libtest's `passed` less the guards' tests), how many were skipped by a guard, how many were
+ignored, and each one with its reason. The step fails on a skip that isn't listed for that job in
+`tests/expected-skips.json`, on a listed skip that has stopped, on a changed reason, and on output
+with no test results. To add a skip, add it to the list and say in `why` what it's legitimate for,
+and where the test does run.
+
+To run the same check locally:
+
+```sh
+SACDFS_FUSE_TESTS=1 cargo test --locked 2>&1 | tee target/test-output.txt
+python3 -I scripts/check_skips.py --job tests target/test-output.txt
+```
+
+As a normal user with FUSE, this gives the `tests` job's result. On a machine without FUSE, leave
+out `SACDFS_FUSE_TESTS=1` to see which tests skip; the check then reports each as unexpected.
+`python3 -I scripts/test_check_skips.py` tests the script itself.
+
+*Why it reads cargo's output rather than a report file, as pysacd does:* the reasons of `#[ignore]`
+tests are only there, and the output needs nothing passed through `sudo` (the `nfs export` job) or
+into a container. The release workflow's tests in its UBI 8 container don't run this check yet.
 
 ## Fuzzing
 

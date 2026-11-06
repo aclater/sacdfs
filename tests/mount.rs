@@ -2,9 +2,9 @@
 
 //! Mounts the corpus with the sacdfs binary and reads it through the kernel.
 //!
-//! These tests need `/dev/fuse` and `fusermount3`. Without them they pass without doing
-//! anything, unless `SACDFS_FUSE_TESTS=1` is set (as CI does), which makes a missing FUSE
-//! a failure.
+//! These tests need `/dev/fuse` and `fusermount3`. Without them they skip (`common::skip!`
+//! prints each one), unless `SACDFS_FUSE_TESTS=1` is set (as CI does), which makes a missing
+//! FUSE a failure.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -47,18 +47,6 @@ impl Library {
         let (data, _) = Reader::new(f.clone()).read(&self.engine, 0, f.size).unwrap();
         data
     }
-}
-
-fn fuse_available() -> bool {
-    let ok = Path::new("/dev/fuse").exists()
-        && Command::new("fusermount3").arg("-V").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok();
-    if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
-        panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
-    }
-    if !ok {
-        eprintln!("skipping: no /dev/fuse or fusermount3");
-    }
-    ok
 }
 
 fn is_mounted(mountpoint: &Path) -> bool {
@@ -134,9 +122,7 @@ impl Drop for Mount {
 
 #[test]
 fn corpus_through_the_kernel() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let mount = Mount::foreground(&corpus().join("images"), &["--threads", "2"]);
     let root = mount.path();
     let mut checked = 0;
@@ -248,9 +234,7 @@ fn files_under(dir: &Path) -> Vec<PathBuf> {
 /// the top level, everything else is kept, and the files are the same files.
 #[test]
 fn flatten_through_the_kernel() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let src = tempfile::tempdir().unwrap();
     let link = |path: &str, id: &str| {
         let p = src.path().join(path);
@@ -326,9 +310,7 @@ fn flatten_through_the_kernel() {
 /// it can use, and the rest of the listing.
 #[test]
 fn colliding_name_with_a_long_extension_through_the_kernel() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let source = tempfile::tempdir().unwrap();
     for ext_len in [241, 242, 243, 249] {
         let ext = "b".repeat(ext_len);
@@ -363,9 +345,7 @@ fn colliding_name_with_a_long_extension_through_the_kernel() {
 
 #[test]
 fn sidecars_through_the_kernel() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let top = tempfile::tempdir().unwrap();
     let src = top.path().canonicalize().unwrap();
     let album = src.join("Artist/Album");
@@ -448,9 +428,7 @@ fn sidecars_through_the_kernel() {
 
 #[test]
 fn background_mount_and_unmount() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let dir = tempfile::tempdir().unwrap();
     let mp = dir.path().canonicalize().unwrap();
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
@@ -478,9 +456,7 @@ fn background_mount_and_unmount() {
 /// `--format` shows one format only; `--pcm-rate` sets the WAV files' rate.
 #[test]
 fn format_and_rate_options() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let images = corpus().join("images");
     let mount = Mount::foreground(&images, &["--format", "wav", "--pcm-rate", "88200", "--pcm-cutoff", "30"]);
     let root = mount.path();
@@ -604,9 +580,7 @@ fn wait_exit(child: &mut Child, what: &str) -> bool {
 // Both children are waited for, the old one on one path or the other.
 #[allow(clippy::zombie_processes)]
 fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     for busy in [false, true] {
         let mut old = Mount::foreground(&image, &[]);
@@ -663,9 +637,7 @@ fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
 /// order certain: unmounted, new mount, then the old one exits.
 #[test]
 fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     let mut old = Mount::foreground(&image, &[]);
     let at = old.path();
@@ -702,9 +674,7 @@ fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
 /// service manager sends on stop. Several rounds: the number is reused in most, not all.
 #[test]
 fn a_late_signal_leaves_the_next_mount_alone() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     for round in 0..6 {
         let mut old = Mount::foreground(&image, &[]);
@@ -760,9 +730,7 @@ fn first_track_hashes(id: &str) -> Vec<String> {
 /// `x,allow_other` would have applied the option. The mount is named `sacdfs` instead.
 #[test]
 fn a_source_path_with_commas_and_backslashes_mounts() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let id = "dsd-stereo-mch-2048";
     let want = first_track_hashes(id);
     let top = tempfile::tempdir().unwrap();
@@ -874,9 +842,7 @@ fn a_source_or_cache_under_the_mount_point_is_refused() {
 /// with "already a FUSE mount".
 #[test]
 fn a_restart_after_sigkill_clears_the_dead_mount() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     let mut old = Mount::foreground(&image, &[]);
     let at = old.path();
@@ -910,9 +876,7 @@ fn a_restart_after_sigkill_clears_the_dead_mount() {
 /// after mounting, and a SIGTERM in between killed it with the mount in place.
 #[test]
 fn a_sigterm_right_after_start_leaves_no_mount() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     let dir = tempfile::tempdir().unwrap();
     let at = dir.path().canonicalize().unwrap();
@@ -953,9 +917,7 @@ fn a_sigterm_right_after_start_leaves_no_mount() {
 #[test]
 fn folder_art_in_the_areas_and_changes_without_a_remount() {
     use std::os::unix::fs::MetadataExt;
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let top = tempfile::tempdir().unwrap();
     let src = top.path().canonicalize().unwrap();
     let album = src.join("Artist/Album");
@@ -1030,9 +992,7 @@ fn folder_art_in_the_areas_and_changes_without_a_remount() {
 /// Prints how long that took, for the user guide.
 #[test]
 fn an_image_written_into_place_appears_without_a_remount() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let top = tempfile::tempdir().unwrap();
     let src = top.path().canonicalize().unwrap();
     let album = src.join("Artist/Incoming");
@@ -1071,9 +1031,7 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
     // directory above a change move: the output version (files later than their image),
     // and a new sidecar deep in the tree, without a remount.
     use std::time::SystemTime;
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
     let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
     let top = tempfile::tempdir().unwrap();
@@ -1135,9 +1093,7 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
 fn a_file_open_through_the_kernel_reads_on_after_its_image_is_removed() {
     // #153: the removed image's nodes are freed, but the open file keeps its own.
     use std::io::Read;
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let top = tempfile::tempdir().unwrap();
     let src = top.path().canonicalize().unwrap();
     std::fs::create_dir_all(src.join("Artist/Album")).unwrap();
@@ -1190,9 +1146,7 @@ fn a_new_sidecar_is_listed_and_moves_its_ancestors() {
     // within a few seconds, with and without --flatten, and every folder above it must move.
     // The root's attributes are looked at first, as a scanner does (that runs the sweep).
     use std::time::SystemTime;
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
     let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
     for flatten in [false, true] {
@@ -1264,9 +1218,7 @@ fn new_sidecars_are_listed_in_folders_listed_before_and_not() {
     // rc.3 on a NAS: of four album folders, two listed since the mount and two not, a new
     // playlist in each showed only in the two listed before (1, 1, 0, 0). A folder's first
     // listing must read its source again if it changed since the mount (#101, #123).
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let top = tempfile::tempdir().unwrap();
     let src = top.path().canonicalize().unwrap();
     let albums = ["A1", "A2", "A3", "A4"];
@@ -1316,9 +1268,7 @@ fn a_tags_file_edit_moves_the_files_and_their_ancestors() {
     // above them, as a new sidecar does, so that a scanner that skips unchanged folders
     // (Roon) finds the edit. The root's attributes are looked at first, as a scanner does.
     use std::time::SystemTime;
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let set = |p: &Path, t: SystemTime| std::fs::File::open(p).unwrap().set_modified(t).unwrap();
     let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
     let top = tempfile::tempdir().unwrap();

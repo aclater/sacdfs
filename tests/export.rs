@@ -27,18 +27,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use common::corpus;
 
-fn fuse_available() -> bool {
-    let ok = Path::new("/dev/fuse").exists()
-        && Command::new("fusermount3").arg("-V").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok();
-    if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
-        panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
-    }
-    if !ok {
-        eprintln!("skipping: no /dev/fuse or fusermount3");
-    }
-    ok
-}
-
 fn is_mounted(mountpoint: &Path) -> bool {
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
     let mp = mountpoint.to_str().unwrap();
@@ -156,9 +144,7 @@ fn source() -> tempfile::TempDir {
 
 #[test]
 fn inode_numbers_are_the_same_on_every_mount() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let cache = tempfile::tempdir().unwrap();
     let at = tempfile::tempdir().unwrap();
     // The whole corpus, hostile images included: every number distinct.
@@ -242,6 +228,10 @@ fn open_by_handle_with(mount: &Path, h: &Handle, flags: libc::c_int) -> io::Resu
     Ok(unsafe { File::from_raw_fd(fd as libc::c_int) })
 }
 
+/// The reason of the tests that need `open_by_handle_at`.
+const NO_HANDLES: &str =
+    "open_by_handle_at needs CAP_DAC_READ_SEARCH: run as root with SACDFS_EXPORT_TESTS=1";
+
 /// Whether handles like the one of `probe` can be opened here; panics if they must be
 /// (`SACDFS_EXPORT_TESTS=1`). Directory handles need `CAP_DAC_READ_SEARCH` in the mount's
 /// user namespace, file handles in the initial one (root, as the NFS server is).
@@ -251,19 +241,14 @@ fn handles_available(mount: &Path, probe: &Path) -> bool {
     let opened = if probe.is_dir() { open_dir_by_handle(mount, &h) } else { open_by_handle(mount, &h) };
     match opened {
         Ok(_) => true,
-        Err(e) if !must && e.raw_os_error() == Some(libc::EPERM) => {
-            eprintln!("skipping: open_by_handle_at: {e} (needs CAP_DAC_READ_SEARCH)");
-            false
-        }
+        Err(e) if !must && e.raw_os_error() == Some(libc::EPERM) => false,
         Err(e) => panic!("open_by_handle_at: {e}"),
     }
 }
 
 #[test]
 fn file_handles_survive_a_restart() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let src = source();
     let cache = tempfile::tempdir().unwrap();
     let at = tempfile::tempdir().unwrap();
@@ -279,7 +264,7 @@ fn file_handles_survive_a_restart() {
         files.sort();
         files.push(m.at.join(other).read_dir().unwrap().next().unwrap().unwrap().path());
         if !handles_available(&m.at, &files[0]) {
-            return;
+            common::skip!(NO_HANDLES);
         }
         // Read half of each file through an open handle, keep the file handles.
         let mut kept = Vec::new();
@@ -325,9 +310,7 @@ fn file_handles_survive_a_restart() {
 /// handle works across a restart, and goes stale when the file changes.
 #[test]
 fn sidecar_handles_survive_a_restart() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let src = source();
     std::fs::write(src.path().join("Artist/Album/folder.jpg"), b"front").unwrap();
     std::fs::create_dir_all(src.path().join("Artist/Album/Rip/Scans")).unwrap();
@@ -353,7 +336,7 @@ fn sidecar_handles_survive_a_restart() {
     let files =
         ["Artist/Album/folder.jpg", "Artist/Album/Scans/back.jpg", "Artist/list.m3u"].map(|p| m.at.join(p));
     if !handles_available(&m.at, &files[0]) {
-        return;
+        common::skip!(NO_HANDLES);
     }
     let handles: Vec<Handle> = files.iter().map(|f| name_to_handle(f).unwrap()).collect();
     let scans = name_to_handle(&m.at.join("Artist/Album/Scans")).unwrap();
@@ -377,9 +360,7 @@ fn sidecar_handles_survive_a_restart() {
 
 #[test]
 fn directory_handles_survive_a_restart() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let src = source();
     let cache = tempfile::tempdir().unwrap();
     let at = tempfile::tempdir().unwrap();
@@ -401,7 +382,7 @@ fn directory_handles_survive_a_restart() {
     ] {
         let m = Mount::new(src.path(), at.path(), cache.path(), extra);
         if !handles_available(&m.at, &m.at.join(dirs[0])) {
-            return;
+            common::skip!(NO_HANDLES);
         }
         let mut kept = Vec::new();
         for d in dirs {
@@ -428,9 +409,7 @@ fn directory_handles_survive_a_restart() {
 
 #[test]
 fn a_busy_mount_is_detached_on_sigterm() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let src = source();
     let cache = tempfile::tempdir().unwrap();
     let at = tempfile::tempdir().unwrap();
