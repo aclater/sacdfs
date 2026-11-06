@@ -2,8 +2,8 @@
 
 //! A track shown as a DSF or WAV file, and reading byte ranges of it.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use scarletbook::Track;
 
@@ -34,6 +34,36 @@ const FAST_AFTER: u64 = 4 << 20;
 
 /// ...at more than this many times the file's byte rate.
 const FAST_FACTOR: f64 = 4.0;
+
+/// A fast reader not heard from for this long no longer counts ([`FastReaders`]): one that
+/// paused needs no share of the cache, and it gets one back at its next read.
+const FAST_READER_IDLE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The fast readers at the moment, which share what the cache can hold ahead of them.
+/// Asked once per read of a fast reader; the list is as long as the readers.
+#[derive(Debug, Default)]
+pub struct FastReaders {
+    seen: Mutex<Vec<(u64, std::time::Instant)>>,
+}
+
+impl FastReaders {
+    /// Notes that reader `id` is fast now, and says how many are.
+    fn note(&self, id: u64, now: std::time::Instant) -> usize {
+        let mut seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
+        seen.retain(|(i, t)| *i != id && now.saturating_duration_since(*t) < FAST_READER_IDLE);
+        seen.push((id, now));
+        seen.len()
+    }
+
+    /// Reader `id` closed. *Why not left to expire:* a `cp` opens the next file at once, and
+    /// would count as several readers, with a short window, for its whole run.
+    fn forget(&self, id: u64) {
+        self.seen.lock().unwrap_or_else(|p| p.into_inner()).retain(|(i, _)| *i != id);
+    }
+}
+
+/// The next [`Reader`]'s number, for [`FastReaders`].
+static NEXT_READER: AtomicU64 = AtomicU64::new(0);
 
 /// A read starting this close after the furthest byte read so far still counts as
 /// sequential.
@@ -241,19 +271,22 @@ impl TrackFile {
     /// a fast reader (`cp`) of a plain DSD area, where conversion is the only cost.
     ///
     /// For a DSF file, [`FAST_FRAMES_PER_THREAD`] per decoder thread, at most
-    /// [`FAST_FRAMES_MAX`] and a quarter of the cache, at least [`READ_AHEAD_FRAMES`].
+    /// [`FAST_FRAMES_MAX`] and a share of a quarter of the cache, at least
+    /// [`READ_AHEAD_FRAMES`]. `fast_readers` are the fast readers at the moment, this one
+    /// included.
     /// *Why (#210):* the decoder threads wait for the slowest frame at the end of every
     /// batch, so that the wait's share of the time is about the threads over the window.
-    /// *Why a quarter of the cache:* frames evicted before they are read are decoded again,
-    /// and four readers at once are a documented scenario.
-    pub fn read_ahead_frames(&self, threads: usize, cache_bytes: usize) -> u32 {
+    /// *Why a share of a quarter of the cache:* frames evicted before they are read are
+    /// decoded again. A quarter for each reader let four readers fill the cache between them:
+    /// on 32 threads they read 62 to 70 % slower than with the 2 s window.
+    pub fn read_ahead_frames(&self, threads: usize, cache_bytes: usize, fast_readers: usize) -> u32 {
         match self.audio {
             Audio::Dsf(l) => {
                 let frame = (dsf::FRAME_BYTES * u64::from(l.channels)).max(1);
                 let by_threads = (threads as u64).saturating_mul(u64::from(FAST_FRAMES_PER_THREAD));
                 by_threads
                     .min(u64::from(FAST_FRAMES_MAX))
-                    .min(cache_bytes as u64 / 4 / frame)
+                    .min(cache_bytes as u64 / 4 / fast_readers.max(1) as u64 / frame)
                     .max(u64::from(READ_AHEAD_FRAMES)) as u32
             }
             Audio::Wav(l) => (READ_AHEAD_PCM_BYTES / l.frame_bytes().max(1))
@@ -534,12 +567,29 @@ pub struct Reader {
     pub file: Arc<TrackFile>,
     stream: Mutex<Stream>,
     seq: Mutex<Seq>,
+    id: u64,
+    /// Where it counted as fast, if it did.
+    counted: OnceLock<Arc<FastReaders>>,
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        if let Some(readers) = self.counted.get() {
+            readers.forget(self.id);
+        }
+    }
 }
 
 impl Reader {
     /// A reader of `file`.
     pub fn new(file: Arc<TrackFile>) -> Self {
-        Reader { file, stream: Mutex::new(Stream::default()), seq: Mutex::new(Seq::default()) }
+        Reader {
+            file,
+            stream: Mutex::new(Stream::default()),
+            seq: Mutex::new(Seq::default()),
+            id: NEXT_READER.fetch_add(1, Ordering::Relaxed),
+            counted: OnceLock::new(),
+        }
     }
 
     /// Bytes `[offset, offset + len)` of the file (fewer at its end), and the frames (file
@@ -557,12 +607,7 @@ impl Reader {
         let data = f.assemble(offset, len, k0, &frames);
         // Read ahead only after reads of audio: a tagger reading the header or the tags must
         // not make the file decode (and convert) its first seconds in the background.
-        let ahead = if k0 < k1 {
-            let fast = f.read_ahead_frames(engine.threads(), engine.cache().cap());
-            self.plan_read_ahead(offset, end, k1, fast)
-        } else {
-            None
-        };
+        let ahead = if k0 < k1 { self.plan_read_ahead(engine, offset, end, k1) } else { None };
         Ok((data, ahead))
     }
 
@@ -610,7 +655,7 @@ impl Reader {
         read >= FAST_AFTER && read as f64 > FAST_FACTOR * self.file.byte_rate() * secs
     }
 
-    fn plan_read_ahead(&self, offset: u64, end: u64, k1: u32, fast: u32) -> Option<ReadAhead> {
+    fn plan_read_ahead(&self, engine: &Engine, offset: u64, end: u64, k1: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
         // The first read of audio never starts read-ahead: a tagger walking a WAV file's
         // chunks touches the audio once, at the data chunk's header, 256 KiB after the
@@ -638,7 +683,14 @@ impl Reader {
             return None;
         }
         let frames = self.file.layout.frames;
-        let window = if self.fast(&s) { fast } else { READ_AHEAD_FRAMES };
+        let window = if self.fast(&s) {
+            let readers = engine.fast_readers();
+            self.counted.get_or_init(|| readers.clone());
+            let n = readers.note(self.id, std::time::Instant::now());
+            self.file.read_ahead_frames(engine.threads(), engine.cache().cap(), n)
+        } else {
+            READ_AHEAD_FRAMES
+        };
         if k1 >= frames || s.ahead_until >= frames.min(k1 + window / 2) {
             return None;
         }
@@ -652,6 +704,21 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Readers count while they read and until they close or pause.
+    #[test]
+    fn fast_readers_are_those_reading_now() {
+        let r = FastReaders::default();
+        let t0 = std::time::Instant::now();
+        assert_eq!(r.note(1, t0), 1);
+        assert_eq!(r.note(1, t0), 1, "the same reader again");
+        assert_eq!(r.note(2, t0), 2);
+        r.forget(1);
+        assert_eq!(r.note(2, t0), 1, "closed");
+        assert_eq!(r.note(3, t0), 2);
+        let later = t0 + FAST_READER_IDLE + std::time::Duration::from_millis(1);
+        assert_eq!(r.note(3, later), 1, "the other paused");
+    }
 
     /// Only so many buffers are kept, none over the largest read, and an idle engine drops them.
     #[test]

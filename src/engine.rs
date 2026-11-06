@@ -586,6 +586,7 @@ pub struct Stream {
 /// The decoder: a frame cache and a thread pool for DST decoding and PCM conversion.
 pub struct Engine {
     cache: FrameCache,
+    fast_readers: Arc<crate::track::FastReaders>,
     pool: rayon::ThreadPool,
     pcm: PcmConfig,
     id: u64,
@@ -640,7 +641,7 @@ impl Engine {
             .build()
             .map_err(io::Error::other)?;
         let id = NEXT_ENGINE.fetch_add(1, Ordering::Relaxed);
-        Ok(Engine { cache: FrameCache::new(cache_bytes), pool, pcm, id })
+        Ok(Engine { cache: FrameCache::new(cache_bytes), fast_readers: Arc::default(), pool, pcm, id })
     }
 
     /// Gives back what an idle engine holds (#150), if its cache has not been used for
@@ -689,6 +690,11 @@ impl Engine {
     /// Number of decoder threads.
     pub fn threads(&self) -> usize {
         self.pool.current_num_threads()
+    }
+
+    /// The fast readers at the moment.
+    pub fn fast_readers(&self) -> &Arc<crate::track::FastReaders> {
+        &self.fast_readers
     }
 
     /// The frame cache.

@@ -1158,12 +1158,21 @@ the open file's demultiplexer, so a read that needs those frames waits for them 
 decoding them twice.
 
 - **Window of a fast DSF reader (#210):** for a DSF reader that has read at least 4 MiB at more
-  than 4 times the file's byte rate, 32 frames per decoder thread, at most 1200 and a quarter
-  of the cache, at least 150. *Why:* the decoder threads wait for each batch's slowest frame,
+  than 4 times the file's byte rate, 32 frames per decoder thread, at most 1200 and its share of
+  a quarter of the cache, at least 150. Fast readers share that quarter equally: those that read in
+  the last second and haven't closed. *Why:* the decoder threads wait for each batch's slowest frame,
   and that wait's share of the time is about the threads over the window. On 32 threads, 50
   minutes of stereo took 4.14 s at 150 frames and 3.54 s at 890. *Why a quarter of the cache:*
   frames evicted before they are read are decoded again. A window of 1024 six-channel frames
-  (29 MiB, in a cache that holds 28) made the read take 32 s against 12. *Trade-off:* a fast
+  (29 MiB, in a cache that holds 28) made the read take 32 s against 12. *Why shared:* a quarter for each reader let four readers on
+  32 threads fill the cache between them. Counted on a build with counters, over gvfs: of 225,000
+  frames decoded by 0.4.0, none was decoded twice; with a quarter each, 128,000 were decoded again,
+  and four readers took 6.5 s against 3.8 s. Shared, 178 were (3.7 s), and one reader keeps its
+  whole quarter. *Alternatives:* an eighth of the cache for everyone cured that too, but lost
+  most of a single reader's gain (DST stereo 3.2 → 4.1 s, six channels 11.4 → 13.8 s); a larger
+  cache also cures it, at the memory cost. *Trade-off:* a reader's window shrinks at once when
+  another fast reader starts, and it takes up to a second to grow back after one pauses. A WAV reader's
+  window is measured in PCM bytes and isn't shared. *Trade-off of the window itself:* a fast
   reader that stops early has decoded up to that window for nothing; a player and a scanner's
   head (the rules below) are not fast readers. *Why 4 MiB, not 16:* over a whole area the first
   16 MiB of each file went at the short window, and 4 MiB is still four times the head a

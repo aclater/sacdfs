@@ -425,7 +425,7 @@ fn settings_keep_layout() {
     // WAV files read about 8 MiB of PCM ahead, within 2 to 8 s of audio.
     for (_, f) in &files {
         let fb = f.layout.channels as u32 * 2352 * 3;
-        assert_eq!(f.read_ahead_frames(8, 32 << 20), ((8u32 << 20) / fb).clamp(150, 600));
+        assert_eq!(f.read_ahead_frames(8, 32 << 20, 1), ((8u32 << 20) / fb).clamp(150, 600));
     }
     // A file made for one rate refuses an engine with another, instead of serving wrong
     // bytes.

@@ -381,7 +381,44 @@ all threads, local reads, medians of 3:
 
 That is the longer window's trade-off: a fast reader that catches the decoder waits for a longer
 batch. At real-time rate the window is the old one, and reads are as before (worst 1.1 ms at 128
-KiB, 4.6 ms at 1 MiB, in both). These are local reads, not measured through SMB or NFS.
+KiB, 4.6 ms at 1 MiB, in both). These are local reads.
+
+**Through shares** (the published 0.4.0 image against one built from this code, alternating, on the
+same machine, images in the page cache, default 32 MiB cache, reads to `/dev/null`; 4 rounds; wall
+seconds, median):
+
+| Client, workload | 0.4.0 | This code |
+|---|---|---|
+| `smbclient`, DST stereo DSF | 5.71 | **3.18** |
+| `smbclient`, DST six channels DSF | 14.54 | **11.59** |
+| `smbclient`, plain DSD DSF | 2.07 | **1.14** |
+| `smbclient`, DST stereo WAV | 4.72 | 4.74 |
+| `smbclient`, four readers, one image | 3.82 | **3.19** |
+| `smbclient`, four readers, four areas | 16.30 | **13.75** |
+| gvfs, DST stereo DSF | 4.37 | 4.03 |
+| gvfs, four readers, one image | 3.84 | 3.74 |
+| gvfs, four readers, four areas | 16.89 | 16.63 |
+| gvfs, four readers, WAV | 10.41 | 10.85 (+4 %) |
+
+A window of a quarter of the cache for each reader took gvfs's four readers to 6.47 and 27.37 s, which
+is why they now share it ([design](design.md)). A player at real-time rate has the same worst read as
+before over libsmbclient (3.1 ms on DST stereo), or 3.9 → 5.4 ms while another client copies six
+channels. Measured on loopback, so without a network's latency. Kernel CIFS and NFS mounts were
+measured before readers shared the window, on the same loopback, and gained 15 to 52 % on DSF; not
+over a real network, and not repeated with this change.
+
+**With little CPU and memory** (a container with a CPU quota and a hard memory limit, decoder threads
+to match, `smbclient`, 2 rounds; seconds, peak RSS in MiB; no process was killed for memory):
+
+| | 2 CPUs, 256 MiB: 0.4.0 | This code | 4 CPUs, 512 MiB: 0.4.0 | This code |
+|---|---|---|---|---|
+| DST stereo DSF | 28.88, 41 | **24.23**, 42 | 15.64, 41 | **13.33**, 42 |
+| DST six channels DSF | 77.72, 45 | 77.38, 46 | 40.81, 46 | 40.75, 48 |
+| DST stereo WAV | 33.06, 49 | **26.95**, 51 | 17.15, 51 | **14.25**, 53 |
+| Plain DSD DSF | 2.15, 42 | 1.92, 42 | 2.54, 43 | 2.07, 42 |
+| Four readers, one image | 29.95, 46 | **23.79**, 46 | 15.32, 46 | **12.54**, 48 |
+
+A quota isn't a small CPU: its caches and memory stay those of a large machine.
 
 Where the time goes, for those who want to take it further:
 
@@ -678,7 +715,7 @@ against its own "before", on the code of its day).
 | #206 | scarletbook and scarletbook-pcm 0.5.7 → 0.5.8 (`=0.5.8`) | bytes unchanged (DSF and WAV hashes of the corpus and bench discs equal 0.4.0's); straight reads, 0.4.0 → this branch: DST stereo DSF 8.75 → 8.72 s, DST 6 ch. DSF 28.28 → 28.30 s, plain-DSD DSF 2.83 → 2.55 s (ranges overlap), DST stereo WAV 9.40 → 9.43 s; mount and first listing of the corpus 0.087 → 0.091 s (ranges overlap); no read more than 5 % slower. mars is slower than the machine of the rows above, so compare the two columns, not the seconds with older rows (medians of 11, alternating, under the benchmark lock, generic build, 2026-11-05) |
 | (#73) | One malloc arena; the frame cache reuses evicted frames' buffers within its cap | library-import replay, 60 images, peak memory at `--cache-mb` 256 / 16: 473 → 271 MiB, 125 → 58 MiB; after straight reads 965–1 066 → 327 MiB; 6-channel DST straight read DSF 11.11 → 11.55 s, WAV 13.52 → 13.98 s, plain DSD 1.69 → 1.59 s |
 | #192 | Names for discs without text (#185): a tag and name change only | whole library of 4,890 tracks, warm caches, 6 runs each against main: mount 1.36 → 0.68 s (within its noise), import-style scan 8.4 → 8.4 s, RSS 87 → 88 MiB (within noise) |
-| #212 | DST decoded in groups in long batches, demultiplexing overlaps decoding, longer window for fast readers (#210) | one thread, 41 min stereo 44.78 → 33.09 s; all threads, 50 min stereo 3.98 → 3.18 s |
+| #212 | DST decoded in groups in long batches, demultiplexing overlaps decoding, longer window for fast readers, shared between them (#210) | one thread, 41 min stereo 44.78 → 33.09 s; all threads, 50 min stereo 3.98 → 3.18 s |
 | (#78) | No read-ahead within a file's first 1 MiB (a scanner's head read) | library-import pattern, 12 decoder threads, per 6-channel DST file: CPU 141–177 → 42–44 ms, wall 17.4–21.6 → 10.3–11.1 ms; stereo DST CPU 60–84 → 46–50 ms |
 
 ## The CI benchmark
