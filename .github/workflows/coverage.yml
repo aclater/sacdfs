@@ -46,7 +46,8 @@ jobs:
         env:
           SACDFS_FUSE_TESTS: "1"
         run: |
-          cargo llvm-cov --locked --no-report
+          # A subshell: pipefail would also apply to the `find | head` below (SIGPIPE).
+          (set -o pipefail; cargo llvm-cov --locked --no-report 2>&1 | tee "$RUNNER_TEMP/test-output.txt")
           # #127: a process killed while writing its profile leaves a truncated .profraw, and
           # one bad file fails the whole merge. Drop unreadable profiles, with a warning.
           llvm_profdata=$(find "$(rustc --print sysroot)" -name llvm-profdata -type f | head -n1)
@@ -63,6 +64,8 @@ jobs:
             cargo llvm-cov report --summary-only
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Only the expected tests skipped
+        run: python3 -I scripts/check_skips.py --job coverage "$RUNNER_TEMP/test-output.txt"
       - name: Upload coverage to Codecov
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1

@@ -1,4 +1,4 @@
-# Development: leak hunting and memory profiling
+# Development: leak hunting, memory profiling and skipped tests
 
 sacdfs runs for days on a NAS, so memory it keeps alive by mistake adds up. A map that only
 grows, nodes kept after a re-read, or the buffers of abandoned requests all count. In Rust,
@@ -156,6 +156,46 @@ code in the dependency graph. Rust's LeakSanitizer needs a nightly compiler
 (`-Zsanitizer=leak`). clang's runtime trick for C (`-shared-libasan` with `LD_PRELOAD`) does
 not instrument Rust code. memcheck needs neither and also follows the child `sacdfs`
 processes.
+
+## Skipped tests
+
+A Rust test can't skip itself at run time. A guard that returns early reports as `ok`, and no
+count shows it. In pysacd, that hid a comparison job that had stopped comparing for six releases
+(aclater/pysacd#131). So a guard here goes through `common::skip!` (`tests/common/mod.rs`), and
+never a bare `return`:
+
+```rust
+common::skip_without_fuse!(); // fails instead under SACDFS_FUSE_TESTS=1
+if !handles_available(&m.at, &files[0]) {
+    common::skip!(NO_HANDLES);
+}
+```
+
+It prints `SKIPPED binary::test: reason` directly to stderr, past libtest's capture, so every
+`cargo test` shows it without `--nocapture`. `#[ignore]` tests print their reason themselves.
+
+The `tests`, `tests (arm64)`, `coverage` and `nfs export` jobs save cargo's output and then run
+`scripts/check_skips.py`, as a step of the same job. It writes the job summary: how many tests ran
+(libtest's `passed` less the guards' tests), how many were skipped by a guard, how many were
+ignored, and each one with its reason. The step fails on a skip that isn't listed for that job in
+`tests/expected-skips.json`, on a listed skip that has stopped, on a changed reason, and on output
+with no test results. To add a skip, add it to the list and say in `why` what it's legitimate for,
+and where the test does run.
+
+To run the same check locally:
+
+```sh
+SACDFS_FUSE_TESTS=1 cargo test --locked 2>&1 | tee target/test-output.txt
+python3 -I scripts/check_skips.py --job tests target/test-output.txt
+```
+
+As a normal user with FUSE, this gives the `tests` job's result. On a machine without FUSE, leave
+out `SACDFS_FUSE_TESTS=1` to see which tests skip; the check then reports each as unexpected.
+`python3 -I scripts/test_check_skips.py` tests the script itself.
+
+*Why it reads cargo's output rather than a report file, as pysacd does:* the reasons of `#[ignore]`
+tests are only there, and the output needs nothing passed through `sudo` (the `nfs export` job) or
+into a container. The release workflow's tests in its UBI 8 container don't run this check yet.
 
 ## Fuzzing
 

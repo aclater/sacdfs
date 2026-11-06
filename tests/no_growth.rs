@@ -22,7 +22,6 @@ mod common;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -50,18 +49,6 @@ const WATCHDOG: Duration = Duration::from_secs(2);
 
 const IMAGE: &str = "dsd-stereo-mch-2048";
 const CHURN: &str = "dst-features-2ch-6ch";
-
-fn fuse_available() -> bool {
-    let ok = Path::new("/dev/fuse").exists()
-        && Command::new("fusermount3").arg("-V").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok();
-    if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
-        panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
-    }
-    if !ok {
-        eprintln!("skipping: no /dev/fuse or fusermount3");
-    }
-    ok
-}
 
 fn link(image: &str, to: &Path) {
     std::os::unix::fs::symlink(common::corpus().join("images").join(format!("{image}.iso")), to).unwrap();
@@ -152,9 +139,7 @@ fn settled_bytes() -> u64 {
 
 #[test]
 fn no_heap_growth_across_mount_cycles() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let _profiler = dhat::Profiler::builder().testing().build();
     let dir = tempfile::tempdir().unwrap();
     let lib = dir.path().join("lib");

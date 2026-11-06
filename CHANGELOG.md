@@ -59,6 +59,12 @@ tracks. These are what was seen, not a prediction for yours.
 - **A scanner's one-time cost can be large.** Plex re-read 18.25 GiB once, over 140 s, after the
   upgrade; a no-change scan after that read nothing.
 
+### Continuous integration
+
+- Skipped tests now show (#207). A guard that returned early reported as a pass; guards now print
+  a `SKIPPED` line, and the test jobs count skips in their summary and fail if they differ from
+  `tests/expected-skips.json` (`scripts/check_skips.py`, see docs/development.md).
+
 ## [0.4.1-rc.1] - 2026-11-05
 
 ### Upgrade notes
