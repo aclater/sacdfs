@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
+  needs a remount; the durable-handle message in Samba's log is expected, and no setting tried
+  makes those handles survive a restart (#204).
+
 ### Upgrade notes
 
 What a scanner may see after the move from 0.4.0 to 0.4.1, with counts from one library of 4,902

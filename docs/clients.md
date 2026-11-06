@@ -294,7 +294,8 @@ The container's share tests (SMB and NFS) pass on its published image, and sacdf
 directly on a Linux client. Cold-seek and read-latency figures for NFS and SMB, server-side and
 client-side, are in [performance](performance.md#client-side). The mount commands are in the
 [deployment guide](deployment.md#linux). No further per-client report exists; macOS mounts are
-documented but have no test report on #82.
+documented but have no test report on #82. What each client does when the container restarts,
+including macOS, which needs a remount: [SMB and restarts](deployment.md#smb-and-restarts).
 
 ## General recommendations
 
