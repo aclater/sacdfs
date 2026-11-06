@@ -1782,11 +1782,19 @@ fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or sched
   | Several fit | the best | SACD media first, then the most ISRC hits, then the path's year; if text still differs, nothing |
   | A later, weaker method | n/a | can't overrule a stronger one's ambiguity |
 
-  *Why each limit:* a number identifies the release, so durations guard against a wrong number, and
-  pysacd's 3 s mean stays, with 6 s per track. A name says less (2 s, 4 s). Durations alone say
-  least, and the fuzzy lookup returns near misses on purpose, so only the same master should fit
-  (1 s, 2.5 s, 4 tracks at least). These are judged from the recorded lengths of MusicBrainz, not
-  measured on real discs. *Trade-off:* more refusals, which a person can settle by hand.
+  *Why each limit:* a number identifies the release, so durations guard against a wrong number
+  (5 s mean, 15 s per track). A name says less (3 s, 6 s). Durations alone say least, and the fuzzy
+  lookup returns near misses on purpose, so only the same master should fit (1 s, 2.5 s, 4 tracks at
+  least). *Measured:* on 60 real discs with their text hidden, of 100 media whose titles agreed with
+  the disc, 72 were within the first limits chosen (6 s, 3 s) and 90 within these; the worst track
+  was 10 to 20 s off on 15 and over 30 s on 4, and many were off by a similar 2 to 5 s on every track,
+  which is what a different split of pauses between tracks would give (the cause wasn't checked). Releases with other tracks were over 60 s off. Going from 6 s and 3 s to
+  15 s and 5 s took discs with at least one matched area from 35 to 44 of 60, every one right by hand; by
+  name, on 30 discs, 4 s and 2 s to 6 s and 3 s took them from 11 to 15, and wider gained none. *Not
+  measured:* the limits for durations alone, since the run ended before that step, on the service's
+  503s. *Trade-off:* a wrong release with the same number, the same track count and tracks within
+  15 s would pass; none was seen. Real discs still refused: 16 of 60, 8 with no release found, 5 on ISRCs
+  that disagree and 3 on durations.
 - **Recorded case: why text must agree.** A live query by durations for one hybrid disc returned the
   disc, a digital release of it, and a box set holding it under another album title. Each has
   fitting durations and the same track titles. Taking "the best" would make the album name a coin

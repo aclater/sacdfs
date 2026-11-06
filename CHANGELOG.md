@@ -43,6 +43,9 @@ tracks. These are what was seen, not a prediction for yours.
   import stored.
 - **The binary is about 3 MB larger** (7.2 to 10.2 MB in a release build on x86-64): it now holds an
   HTTPS client with its own root certificates (ureq, rustls), used only by `sacdfs tags fetch`.
+- **`sacdfs tags fetch`'s duration limits come from real discs:** by number, 15 s on a track and 5 s on
+  average; by name, 6 s and 3 s. The limits for `--lookup-durations` stay as judged. It also no longer
+  takes a SACD layer for a CD layer.
 - **`sacdfs tags fetch` on a busy service.** It obeys `Retry-After` in full, up to an hour, waits
   longer between discs that get no answer, tries those again at the end of the run, and ends at once
   on a 403 or a request to wait longer than an hour.

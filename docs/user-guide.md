@@ -353,8 +353,8 @@ an ambiguity ends the lookup:
 
 | Step | Needs | Sent to MusicBrainz | A track may be off by, and the mean over the disc |
 |---|---|---|---|
-| Barcode or catalogue number (always) | a number in the disc's album or disc catalogue field | the numbers | 6 s, 3 s |
-| `--lookup-name` | an album and an artist, from the disc's text or the [image's path](#tagging-behaviour) | those names | 4 s, 2 s |
+| Barcode or catalogue number (always) | a number in the disc's album or disc catalogue field | the numbers | 15 s, 5 s |
+| `--lookup-name` | an album and an artist, from the disc's text or the [image's path](#tagging-behaviour) | those names | 6 s, 3 s |
 | `--lookup-durations` | 4 tracks or more | the tracks' start times | 2.5 s, 1 s |
 
 - **What makes a match:** a release that carries the number or the names searched for, with a
@@ -397,8 +397,10 @@ an ambiguity ends the lookup:
 failed, or an area didn't fit the release its other area matched; what could be written was. A
 tags file that doesn't parse is left as it is, and nothing is asked for that disc.
 
-Tested live against MusicBrainz on stand-in images holding the barcodes and durations of public
-releases: untested on real discs against their own releases.
+Tested on real discs with their text hidden, which showed no wrong match: by number on 60 discs, of
+which 44 got tags for at least one area, and by name on 30, of which 15 did. 19 of 21 discs without
+text matched, and their folder names agreed. `--lookup-durations` alone is untested on real discs
+that have text, so its limits are judged, and only 2 discs without text have tried it.
 
 As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
 to mount it.

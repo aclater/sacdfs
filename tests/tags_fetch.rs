@@ -224,6 +224,32 @@ fn area(seconds: &[u32], isrcs: &[Option<&str>]) -> AreaFacts {
     }
 }
 
+/// The limits come from real discs: the right release up to 15 s off on a track and 5 s on average
+/// by number, and 6 s and 3 s by name, while releases with other tracks were over 60 s off.
+#[test]
+fn the_limits_measured_on_real_discs() {
+    let a = area(&[100; 10], &[]);
+    let one_off = |secs: i64| {
+        let mut lengths = vec![Some(100_000); 10];
+        lengths[3] = Some((100 + secs) as u64 * 1000);
+        medium(&lengths, &[])
+    };
+    let all_off = |ms: u64| medium(&vec![Some(100_000 + ms); 10], &[]);
+    let number = Step::Number.limits();
+    assert!(confirm(&a, &one_off(14), number).is_ok(), "a pause counted differently");
+    assert!(confirm(&a, &one_off(16), number).is_err());
+    assert!(confirm(&a, &all_off(4_500), number).is_ok(), "the same on every track");
+    assert!(confirm(&a, &all_off(5_500), number).is_err());
+    let name = Step::Name.limits();
+    assert!(confirm(&a, &one_off(5), name).is_ok());
+    assert!(confirm(&a, &one_off(7), name).is_err());
+    assert!(confirm(&a, &all_off(2_500), name).is_ok());
+    assert!(confirm(&a, &all_off(3_500), name).is_err());
+    let durations = Step::Durations.limits();
+    assert!(confirm(&a, &one_off(2), durations).is_ok());
+    assert!(confirm(&a, &one_off(3), durations).is_err());
+}
+
 #[test]
 fn every_track_must_fit() {
     let limits = Step::Number.limits();

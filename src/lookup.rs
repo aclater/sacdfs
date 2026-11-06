@@ -68,15 +68,16 @@ pub enum Step {
 }
 
 impl Step {
-    /// The limits a candidate found this way must meet. *Why these:* a number identifies the
-    /// release, so the durations only guard against a wrong number, and pysacd's 3 s mean is
-    /// kept, with a limit per track so that one wrong track can't hide in the mean. A name says
-    /// less. Durations alone say the least, and a fuzzy disc lookup returns near misses on
-    /// purpose, so there only the same master fits: within CD-track rounding and a pregap.
+    /// The limits a candidate found this way must meet. *Why these:* measured on real discs with
+    /// text (docs/design.md, "Looking tags up"): the right release was often 3 to 5 s off on average
+    /// and up to 15 s on one track, while releases with other tracks were over 60 s off. A number identifies the
+    /// release, so the durations only guard against a wrong number. A name says less. Durations
+    /// alone say the least, and a fuzzy disc lookup returns near misses on purpose, so there only
+    /// the same master fits; that limit is judged, as no real disc tested it.
     pub fn limits(self) -> Limits {
         match self {
-            Step::Number => Limits { mean: 3.0, worst: 6.0 },
-            Step::Name => Limits { mean: 2.0, worst: 4.0 },
+            Step::Number => Limits { mean: 5.0, worst: 15.0 },
+            Step::Name => Limits { mean: 3.0, worst: 6.0 },
             Step::Durations => Limits { mean: 1.0, worst: 2.5 },
         }
     }
