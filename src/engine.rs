@@ -501,6 +501,15 @@ impl FrameCache {
         drop(evicted);
     }
 
+    /// Makes these frames the first to be evicted, if cached. Their order among themselves
+    /// doesn't matter: no one is expected to read them.
+    fn demote(&self, keys: impl Iterator<Item = Key>) {
+        let mut g = self.lock();
+        for k in keys {
+            g.lru.demote(&k);
+        }
+    }
+
     /// Bytes of cached frames.
     pub fn bytes(&self) -> usize {
         self.lock().bytes
@@ -586,7 +595,7 @@ pub struct Stream {
 /// The decoder: a frame cache and a thread pool for DST decoding and PCM conversion.
 pub struct Engine {
     cache: FrameCache,
-    fast_readers: Arc<crate::track::FastReaders>,
+    traffic: Arc<crate::track::Traffic>,
     pool: rayon::ThreadPool,
     pcm: PcmConfig,
     id: u64,
@@ -641,7 +650,7 @@ impl Engine {
             .build()
             .map_err(io::Error::other)?;
         let id = NEXT_ENGINE.fetch_add(1, Ordering::Relaxed);
-        Ok(Engine { cache: FrameCache::new(cache_bytes), fast_readers: Arc::default(), pool, pcm, id })
+        Ok(Engine { cache: FrameCache::new(cache_bytes), traffic: Arc::default(), pool, pcm, id })
     }
 
     /// Gives back what an idle engine holds (#150), if its cache has not been used for
@@ -692,9 +701,9 @@ impl Engine {
         self.pool.current_num_threads()
     }
 
-    /// The fast readers at the moment.
-    pub fn fast_readers(&self) -> &Arc<crate::track::FastReaders> {
-        &self.fast_readers
+    /// Who is reading at the moment: players and fast readers.
+    pub fn traffic(&self) -> &Arc<crate::track::Traffic> {
+        &self.traffic
     }
 
     /// The frame cache.
@@ -726,6 +735,16 @@ impl Engine {
     /// Bytes of PCM per frame of `channels` channels with the engine's settings.
     pub fn pcm_frame_bytes(&self, channels: u8) -> usize {
         self.pcm.rate.samples_per_frame() * usize::from(channels) * 3
+    }
+
+    /// Makes the cached frames of timeline positions `[first, end)` the first to be evicted:
+    /// a fast reader has passed them, and no one is waiting for them. See
+    /// [`crate::track::Traffic`] for why.
+    pub fn give_up(&self, disc: &Disc, area: usize, format: crate::track::Format, first: u32, end: u32) {
+        let pcm = format == crate::track::Format::Wav;
+        self.cache.demote(
+            (first..end).map(|t| if pcm { Self::pcm_key(disc, area, t) } else { Self::key(disc, area, t) }),
+        );
     }
 
     /// PCM frames of timeline positions `[first, end)` of an area whose timeline ends at
@@ -1329,6 +1348,25 @@ mod tests {
         assert!(got[0].1.data.iter().all(|&b| b == scarletbook::audio::INVALID_FILL));
         assert!(got[1].1.data.iter().all(|&b| b == scarletbook::audio::MISSING_FILL));
         assert!(got[2].1.data.iter().all(|&b| b == 7));
+    }
+
+    /// Frames given up go before frames still waiting for their reader, however new.
+    #[test]
+    fn frames_given_up_go_first() {
+        let len = 1 << 20;
+        let cache = FrameCache::new(8 * len);
+        cache.insert(key(0), frame(len));
+        for i in 1..7 {
+            cache.insert(key(i), frame(len));
+            cache.demote(std::iter::once(key(i)));
+        }
+        // Past 7/8 of the cap: the oldest frame would go first, but for the others given up.
+        for i in 7..30 {
+            cache.insert(key(i), frame(len));
+            cache.demote(std::iter::once(key(i)));
+        }
+        assert!(cache.get(&key(0)).is_some(), "the frame nobody gave up is still there");
+        assert!(cache.bytes() <= 7 * len);
     }
 
     #[test]
