@@ -12,7 +12,7 @@ and seeks worked. moOde and Volumio are built on MPD but were not run themselves
 | `SACDFS_FORMATS` (`--format`) | `dsf` | MPD's FFmpeg probes about 5 MB of each WAV file, which sacdfs must convert: the first scan took 10 times as long with `dsf,wav` |
 | `SACDFS_FLATTEN` (`--flatten`) | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
 
-Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32; the 0.4.0-rc.2 tests ran with it, the 0.3.0-rc.1 tests with 16). If another
+Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32 MiB, or 16 under a memory limit below 512 MiB; the 0.4.0-rc.2 tests ran with 32, the 0.3.0-rc.1 tests with 16). If another
 client needs WAV, give it a second sacdfs container or mount with `dsf,wav`.
 
 ## Add the share

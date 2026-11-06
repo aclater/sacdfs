@@ -13,7 +13,7 @@ upgrade by itself, and kept playing through a sacdfs restart. Details:
 | `SACDFS_FLATTEN` | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
 | `SMB_USER`, `SMB_PASSWORD` | yours | Roon asks for a user name and password |
 
-Leave `SACDFS_CACHE_MB` at its default (32).
+Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit below 512 MiB).
 
 ## Add the share
 

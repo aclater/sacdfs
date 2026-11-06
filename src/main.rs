@@ -467,7 +467,7 @@ fn run(args: Args) -> io::Result<()> {
         let (tree, engine) = (tags_tree.clone(), shedding);
         std::thread::Builder::new()
             .name("sacdfs-memory".to_owned())
-            .spawn(move || watch_memory(&cgroup, &tree, &engine))?;
+            .spawn(move || memory::watch(&cgroup, &tree, &engine))?;
     }
     if let Some(cache) = index_cache::global() {
         let cache = cache.clone();
@@ -513,48 +513,6 @@ fn run(args: Args) -> io::Result<()> {
             Ok(())
         }
         r => r,
-    }
-}
-
-/// Gives up memory as the cgroup nears its limit (#237, item 3): the kernel's out-of-memory killer
-/// acts before an allocation can fail, so sacdfs has to see it coming. Looks four times a second
-/// above half the limit and once a second below it, since a listing takes tens of MiB a second:
-/// a read of a file in memory that wakes no disk.
-fn watch_memory(cgroup: &memory::Cgroup, tree: &Tree, engine: &Engine) {
-    use memory::Pressure;
-    let limit = cgroup.limit();
-    const WARN_AGAIN: Duration = Duration::from_secs(60);
-    let mut was = Pressure::None;
-    let mut warned = None;
-    let mut noted = None;
-    loop {
-        let Some(used) = cgroup.used() else {
-            log::debug!("memory use can't be read: not watching it");
-            return;
-        };
-        let now = Pressure::of(used, limit);
-        if now != was {
-            let line = format!("memory: {} of {} MiB in use: {now:?} pressure", used >> 20, limit >> 20);
-            if now == Pressure::Refuse && warned.is_none_or(|t: Instant| t.elapsed() > WARN_AGAIN) {
-                log::warn!("{line}: new listings and opens fail with ENOMEM until it passes");
-                warned = Some(Instant::now());
-            } else if now > was && noted.is_none_or(|t: Instant| t.elapsed() > WARN_AGAIN) {
-                // Use can hover at a level's edge: once a minute is enough to say so.
-                log::info!("{line}");
-                noted = Some(Instant::now());
-            } else {
-                log::debug!("{line}");
-            }
-            tree.set_pressure(now);
-        } else if now != Pressure::None {
-            tree.set_pressure(now);
-        }
-        if now >= Pressure::Caches {
-            engine.release_if_idle(Duration::ZERO);
-        }
-        was = now;
-        let wait = if used > limit / 2 { Duration::from_millis(250) } else { Duration::from_secs(1) };
-        std::thread::sleep(wait);
     }
 }
 

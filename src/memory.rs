@@ -10,6 +10,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use crate::engine::Engine;
+use crate::tree::Tree;
 
 const MIB: u64 = 1 << 20;
 
@@ -66,6 +70,12 @@ impl Cgroup {
         limit_in(Path::new("/sys/fs/cgroup"), &own)
     }
 
+    /// A cgroup with `limit` bytes, whose `memory.stat` is in `dir`. For a limit [`Cgroup::find`]
+    /// doesn't see, and for tests.
+    pub fn at(dir: PathBuf, limit: u64) -> Cgroup {
+        Cgroup { limit, dir }
+    }
+
     /// The limit, in bytes.
     pub fn limit(&self) -> u64 {
         self.limit
@@ -114,6 +124,49 @@ impl Pressure {
             75.. => Pressure::Listings,
             _ => Pressure::None,
         }
+    }
+}
+
+/// Gives up memory as the cgroup nears its limit (#237, item 3): the kernel's out-of-memory killer
+/// acts before an allocation can fail, so sacdfs has to see it coming. Looks four times a second
+/// above half the limit and once a second below it, since a listing takes tens of MiB a second:
+/// a read of a file in memory that wakes no disk. Returns if the cgroup can't be read any more,
+/// with nothing left refused.
+pub fn watch(cgroup: &Cgroup, tree: &Tree, engine: &Engine) {
+    const WARN_AGAIN: Duration = Duration::from_secs(60);
+    let limit = cgroup.limit();
+    let mut was = Pressure::None;
+    let mut warned = None;
+    let mut noted = None;
+    loop {
+        let Some(used) = cgroup.used() else {
+            log::debug!("memory use can't be read: not watching it");
+            tree.set_pressure(Pressure::None);
+            return;
+        };
+        let now = Pressure::of(used, limit);
+        if now != was {
+            let line = format!("memory: {} of {} MiB in use: {now:?} pressure", used >> 20, limit >> 20);
+            if now == Pressure::Refuse && warned.is_none_or(|t: Instant| t.elapsed() > WARN_AGAIN) {
+                log::warn!("{line}: new listings and opens fail with ENOMEM until it passes");
+                warned = Some(Instant::now());
+            } else if now > was && noted.is_none_or(|t: Instant| t.elapsed() > WARN_AGAIN) {
+                // Use can hover at a level's edge: once a minute is enough to say so.
+                log::info!("{line}");
+                noted = Some(Instant::now());
+            } else {
+                log::debug!("{line}");
+            }
+            tree.set_pressure(now);
+        } else if now != Pressure::None {
+            tree.set_pressure(now);
+        }
+        if now >= Pressure::Caches {
+            engine.release_if_idle(Duration::ZERO);
+        }
+        was = now;
+        let wait = if used > limit / 2 { Duration::from_millis(250) } else { Duration::from_secs(1) };
+        std::thread::sleep(wait);
     }
 }
 

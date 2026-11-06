@@ -483,7 +483,6 @@ The names of screens and fields may differ between releases.
        environment:
          SACDFS_FORMATS: dsf,wav
          SACDFS_FLATTEN: "1"
-         SACDFS_CACHE_MB: "16"
          SMB_USER: music
          SMB_PASSWORD: change-me
          NFS_CLIENTS: 192.0.2.0/24
@@ -497,7 +496,7 @@ The names of screens and fields may differ between releases.
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
-   - `SACDFS_CACHE_MB: "32"`, the default, keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
+   - `SACDFS_CACHE_MB` is left out: the default, 32 MiB (16 under a memory limit below 512 MiB, [Under a memory limit](#under-a-memory-limit)), keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and

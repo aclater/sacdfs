@@ -16,7 +16,16 @@ use std::fs;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use fuser::{Config, MountOption, Session};
+use sacdfs::disc::Tuning;
+use sacdfs::engine::Engine;
+use sacdfs::fs::SacdFs;
+use sacdfs::memory::{self, Cgroup};
+use sacdfs::sidecar::Sidecars;
+use sacdfs::tree::{Output, SourceDir, Tree};
 
 const IMAGES: [&str; 3] = ["dsd-stereo-mch-2048", "dst-features-2ch-6ch", "album-set-disc-2-of-3"];
 
@@ -140,4 +149,92 @@ fn a_file_stays_open_and_reads_the_same_while_images_are_dropped() {
         assert!(n > 0);
         assert_eq!(&chunk[..n], &whole[at as usize..at as usize + n], "pass {i}");
     }
+}
+
+/// A shortage of memory reaches a client as `ENOMEM` (#237), never as a missing file, and passes:
+/// the memory watch on a cgroup whose `memory.stat` this test writes, with the file system mounted
+/// in this process.
+#[test]
+fn a_shortage_fails_new_requests_with_enomem_and_passes() {
+    if !common::fuse_available() {
+        common::report_skip("a_shortage_fails_new_requests_with_enomem_and_passes", "no FUSE");
+        return;
+    }
+    const LIMIT: u64 = 100 << 20;
+    let lib = library(30);
+    let cgroup = tempfile::tempdir().unwrap();
+    let stat = cgroup.path().join("memory.stat");
+    let use_percent = |pc: u64| {
+        let new = cgroup.path().join("new");
+        fs::write(&new, format!("anon {}\nfile 0\nshmem 0\n", LIMIT * pc / 100)).unwrap();
+        fs::rename(&new, &stat).unwrap();
+    };
+    use_percent(10);
+    let scan = SourceDir::scan_with(lib.path(), &Sidecars::default(), None).unwrap();
+    let tree = Arc::new(
+        Tree::with_options(scan, Tuning::default(), Output::default()).with_listing_budget(Some(1 << 20)),
+    );
+    let engine = Arc::new(Engine::new(2, 8 << 20).unwrap());
+    let watcher = {
+        let (cg, tree, engine) = (Cgroup::at(cgroup.path().to_owned(), LIMIT), tree.clone(), engine.clone());
+        std::thread::spawn(move || memory::watch(&cg, &tree, &engine))
+    };
+    let at = tempfile::tempdir().unwrap();
+    let (uid, gid) = (fs::metadata(lib.path()).unwrap().uid(), fs::metadata(lib.path()).unwrap().gid());
+    let sfs = SacdFs::new(tree.clone(), engine, 4, uid, gid).unwrap();
+    let mut config = Config::default();
+    config.mount_options = vec![MountOption::RO, MountOption::FSName("sacdfs-test".to_owned())];
+    let session = Session::new(sfs, at.path(), &config).unwrap().spawn().unwrap();
+
+    let wait_until = |refusing: bool| {
+        let start = Instant::now();
+        while tree.refusing() != refusing {
+            assert!(start.elapsed() < Duration::from_secs(10), "the watch didn't act");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let enomem = |e: std::io::Error| assert_eq!(e.raw_os_error(), Some(libc::ENOMEM), "{e}");
+
+    // A file open before the shortage, and one known but not open.
+    let dsf = |image: &str| -> PathBuf {
+        let area = fs::read_dir(at.path().join(image)).unwrap().next().unwrap().unwrap().path();
+        let files = fs::read_dir(&area).unwrap();
+        files.map(|e| e.unwrap().path()).find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap()
+    };
+    let (open, known) = (dsf("A00/D000"), dsf("A01/D002"));
+    let whole = fs::read(&open).unwrap();
+    let held = fs::File::open(&open).unwrap();
+    let not_listed = at.path().join("A10/D020");
+
+    // Short of memory, but below the point of refusing, all is served.
+    use_percent(90);
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(!tree.refusing());
+    assert_eq!(fs::read(&known).unwrap().len() as u64, fs::metadata(&known).unwrap().len());
+
+    use_percent(95);
+    wait_until(true);
+    // New listings and opens fail with ENOMEM, as a client's retry can tell from "missing".
+    enomem(fs::File::open(&known).unwrap_err());
+    let listed = fs::read_dir(&not_listed).and_then(|mut d| d.next().transpose());
+    enomem(listed.unwrap_err());
+    // The file already open reads on.
+    let mut chunk = vec![0; whole.len().min(1 << 16)];
+    let n = held.read_at(&mut chunk, 0).unwrap();
+    assert_eq!(&chunk[..n], &whole[..n]);
+
+    // Once memory is back, the same requests work: nothing was remembered as missing.
+    use_percent(10);
+    wait_until(false);
+    assert_eq!(fs::read(&known).unwrap().len() as u64, fs::metadata(&known).unwrap().len());
+    assert!(fs::read_dir(&not_listed).unwrap().next().is_some());
+
+    drop(held);
+    session.umount_and_join().unwrap();
+    // A cgroup that can't be read ends the watch, with nothing left refused.
+    use_percent(95);
+    wait_until(true);
+    fs::remove_file(&stat).unwrap();
+    watcher.join().unwrap();
+    assert!(!tree.refusing());
 }

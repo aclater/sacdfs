@@ -62,7 +62,7 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   default) is one per CPU. On a machine that has other work to do, fewer threads keep sacdfs
   from crowding it out while a file is read quickly (`cp`); a player reading in real time
   needs a small part of one core.
-- `--cache-mb N` (default 32) bounds the cache of decoded DSD frames and converted PCM
+- `--cache-mb N` (default 32, or 16 under a memory limit below 512 MiB) bounds the cache of decoded DSD frames and converted PCM
   frames, which DSF and WAV reads share. It is sacdfs's main use of memory, whatever the
   number of open files: about 45 to 70 MiB in all with the default during scans and straight
   reads of a small library, and about 11 MiB once a small library has been idle for 60 s, when
