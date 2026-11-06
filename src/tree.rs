@@ -2142,6 +2142,10 @@ impl Tree {
                 }
                 if prev.is_none() {
                     self.charge(dir.parent, held);
+                    // Not only as images are opened: with a tags file's art, one image can hold
+                    // tens of MiB, and a folder's images were all opened before the first is
+                    // listed. This directory is locked, so its own image stays.
+                    self.keep_to_budget();
                 }
                 // The folder's art, as the same files as in the folder (#95), after the tracks.
                 if let Some(art) = &dir.art {

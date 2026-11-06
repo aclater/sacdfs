@@ -320,6 +320,9 @@ fn run(args: Args) -> io::Result<()> {
     // that whoever started it sees it without a log file.
     let cgroup = memory::Cgroup::find();
     let limit = cgroup.as_ref().map(memory::Cgroup::limit);
+    if limit.is_some() && args.tags.is_some() {
+        sacdfs::engine::map_large_allocations();
+    }
     let threads =
         if args.threads == 0 { memory::default_threads(default_threads(), limit) } else { args.threads };
     let cache_mb = args.cache_mb.unwrap_or_else(|| memory::default_cache_mb(limit));

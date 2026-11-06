@@ -134,10 +134,12 @@ impl Pressure {
 /// with nothing left refused.
 pub fn watch(cgroup: &Cgroup, tree: &Tree, engine: &Engine) {
     const WARN_AGAIN: Duration = Duration::from_secs(60);
+    const TRIM_AGAIN: Duration = Duration::from_secs(2);
     let limit = cgroup.limit();
     let mut was = Pressure::None;
     let mut warned = None;
     let mut noted = None;
+    let mut trimmed = None;
     loop {
         let Some(used) = cgroup.used() else {
             log::debug!("memory use can't be read: not watching it");
@@ -163,6 +165,12 @@ pub fn watch(cgroup: &Cgroup, tree: &Tree, engine: &Engine) {
         }
         if now >= Pressure::Caches {
             engine.release_if_idle(Duration::ZERO);
+            // What listings let go of stays in the heap until it is trimmed, with no frames to
+            // give back too. Not at every look: a trim holds up every thread that allocates.
+            if trimmed.is_none_or(|t: Instant| t.elapsed() > TRIM_AGAIN) {
+                crate::engine::trim_heap();
+                trimmed = Some(Instant::now());
+            }
         }
         was = now;
         let wait = if used > limit / 2 { Duration::from_millis(250) } else { Duration::from_secs(1) };

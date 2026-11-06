@@ -113,6 +113,22 @@ CONF
 }
 
 # --- NFS settings -----------------------------------------------------------------------
+# Under a memory limit, NFS-Ganesha's cache of entries is kept to what an eighth of the limit holds,
+# at about 2 KiB each. Its default of 100,000 entries takes about 200 MiB of the limit when a client
+# goes through a large library, and sacdfs can't free any of that. No limit: its defaults.
+ganesha_cache_conf() {
+    local limit
+    limit=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo max)
+    { [[ $limit =~ ^[0-9]+$ ]] && [ "${#limit}" -lt 16 ]; } || return 0
+    local entries=$((limit / 8 / 2048))
+    [ "$entries" -lt 100000 ] || return 0
+    [ "$entries" -ge 1000 ] || entries=1000
+    log "NFS: at most $entries entries cached, for the memory limit" >&2
+    local chunks=$((entries / 128 + 1))
+    printf 'MDCACHE {\n    Entries_HWMark = %d;\n    Chunks_HWMark = %d;\n    Chunks_LWMark = %d;\n}\n' \
+        "$entries" "$chunks" $((chunks / 2))
+}
+
 write_ganesha_conf() {
     local clients=${NFS_CLIENTS:-*}
     [[ $clients =~ ^[][A-Za-z0-9.:/*,_-]+$ ]] || die "NFS_CLIENTS: a comma-separated list of hosts, networks (a.b.c.d/n) or *"
@@ -136,6 +152,7 @@ NFSV4 {
     Minor_Versions = 0, 1, 2;
 }
 NFS_KRB5 { Active_krb5 = false; }
+$(ganesha_cache_conf)
 EXPORT_DEFAULTS {
     Access_Type = None;
 }
