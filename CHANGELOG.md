@@ -12,7 +12,25 @@ Tested as two release candidates. On rc.1 the scripted servers (Jellyfin, Navidr
 MinimServer) were run against 0.4.0 side by side, and Roon, Plex, Windows (Explorer, PowerShell,
 Robocopy), foobar2000, JRiver Media Center, Linux NFS and SMB mounts and the FFmpeg family of tools
 were run on it; the results are in docs/clients.md. rc.2 adds the memory fix (#224) and
-`SACDFS_MOUNT_TIMEOUT` (#232). The rc.2 gate: TBD-GATE.
+`SACDFS_MOUNT_TIMEOUT` (#232). The rc.2 gate, on 2026-11-06:
+
+- **Memory,** a real library of 4,902 DSF files on a 32-core machine, listed / after a head-and-tail
+  read of every file / after 10 minutes idle: 0.4.0 29.0 / 79.5 / 35.2 MiB, rc.1 33.2 / 95.1 / 54.0,
+  rc.2 27.2 / 72.7 / 33.0.
+- **Mount time,** whole library, warm NFS, fresh index cache, medians of 5 alternating rounds: 0.4.0
+  5.00 s, rc.1 0.76 s, rc.2 1.02 s. First listing 1.55 / 1.36 / 1.42 s. rc.2 mounts about 0.26 s
+  slower than rc.1 (accepted); the arena limit is the suspected cause, not confirmed. A cold-cache
+  mount was not measured on rc.2.
+- **Soak:** the 60-minute run passed (224,491 reads, 686 GB, 0 unexpected errors, 19 stalls, 11
+  remounts, memory +1.4 MiB/h). The 2-hour soak: TBD-GATE.
+- **Share paths:** SMB 3.1.1 and NFS 4.2 listings were correct; 10 files were byte-identical over
+  both; writes were refused; SMB reconnected after a restart.
+- **Container:** `SACDFS_MOUNT_TIMEOUT` and the health check passed on the rc.2 image under Docker and
+  rootful Podman. `docker compose` was not run. The timeout expiring was shown on a local build of
+  the same code, not on the published image.
+- **Upgrade from rc.1 to rc.2** on the NAS apps: identical names and counts, and no re-read seen for
+  12 minutes after the move. FUSE request counts per kind were not obtained.
+- **Not verified:** the arm64 image at run time; a cold-cache mount.
 
 ### Upgrade notes
 
@@ -49,6 +67,11 @@ tracks. These are what was seen, not a prediction for yours.
   when every extract was handled, 2 when any didn't match or couldn't be read, with the rows
   still written and the count in the summary, and 1 when it couldn't run. A script that ran it
   over extracts that don't all match, and took any non-zero status as a failure, now sees one.
+- **Known limit: NFS under rootful Podman needs a remount after a container restart (#218).** An
+  existing NFSv4.2 mount gets "Stale file handle" on files it had open, and on `stat` and `ls` of
+  them, after `podman restart`, on 0.4.0, rc.1 and rc.2. A fresh mount works and shows the same
+  inodes, times and sizes. Under Docker 29 the handles survive, and SMB reconnects by itself under
+  both. The fix is planned for 0.5.0 (#221). See "NFS and restarts" in docs/deployment.md.
 
 ### Added
 
@@ -123,9 +146,13 @@ tracks. These are what was seen, not a prediction for yours.
   an import replay): the walk that hides folders with no SACD (#175) runs on 16 threads before the
   malloc arena limit (#73) was set, and each thread kept an arena. The limit now comes first. A build
   from source with the change held 73.8 to 77.1 MiB on the whole library (4,902 DSF files; 0.4.0:
-  76.0 to 83.4 MiB, rc.1: 93.3 to 98.6 MiB), and the mount, which the walk made several times faster
-  than 0.4.0's on a library on a share, is about twice as fast as 0.4.0's there (1.6 s against 3.1 s,
-  medians) and 0.2 s against 0.15 s on a warm local one. On the rc.2 binary: TBD-GATE.
+  76.0 to 83.4 MiB, rc.1: 93.3 to 98.6 MiB). On the rc.2 binary, on the same library, the figure
+  after a head-and-tail read of every file was 72.7 MiB (0.4.0: 79.5, rc.1: 95.1). The whole-library
+  mount, warm NFS, medians of 5 alternating rounds, took 1.02 s on rc.2 against 0.76 s on rc.1 and
+  5.00 s on 0.4.0, so the change costs about 0.26 s of rc.1's speed (suspected cause: the arena
+  limit; not confirmed). In the build-from-source runs, a library on a share mounted in 1.6 s against
+  0.4.0's 3.1 s (medians), and a warm local one in 0.2 s against 0.15 s. These come from different
+  libraries and machines, so they are not combined.
 
 ### Changed
 
