@@ -40,6 +40,16 @@ const FAST_FACTOR: f64 = 4.0;
 /// with others often gets little more than this.
 const PLAYER_FACTOR: f64 = 1.5;
 
+/// A reader counts as a player only after this long. *Why:* a scanner opening its next file, a
+/// tagger or an import's few reads look like a player for their first 4 MiB; had they counted,
+/// scanners alone made each other wait, up to 16 % slower on 32 threads.
+const PLAYER_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Frames this close behind a reader are not given up ([`Traffic`]). *Why:* the kernel sends a
+/// reader's requests concurrently, so one may arrive after a later one, and a frame gone by then
+/// means decoding it again and locating the stream anew.
+const GIVE_UP_MARGIN: u64 = 1 << 20;
+
 /// While someone plays, a reader that is not playing reads ahead at least this many frames...
 const SHARED_WINDOW_MIN: u32 = 16;
 
@@ -94,23 +104,22 @@ fn faster_than_a_player(read: u64, secs: f64, byte_rate: f64) -> bool {
 /// Who is reading, so that a whole-file reader doesn't starve someone playing (#230).
 ///
 /// A reader that, since it last jumped, has read [`FAST_AFTER`] bytes at more than
-/// [`PLAYER_FACTOR`] times the file's byte rate reads for *throughput*. Any other reader counts
-/// as a *player*: it may be one, in its first seconds, and a tagger or an import's few reads
-/// cost a scan little. Throughput readers do three things differently:
+/// [`PLAYER_FACTOR`] times the file's byte rate reads for *throughput*. Any other that has been
+/// reading for [`PLAYER_AFTER`] is a *player*. While a player is active, readers for throughput do
+/// three things differently:
 ///
-/// 1. **They give up the frames they have passed** ([`Engine::give_up`]), always. *Why this
-///    is the fix:* the cache is least recently used, a player's read-ahead waits there for
-///    1 to 2 s, and a whole-file reader at 30 MB/s replaces 32 MiB in 1 s. The player's frames were
-///    evicted before it got to them; it converted them twice and then read 4 frames at a
-///    time, each behind the scanner's whole window on the decoder threads: 10 s behind in 30 s.
-///    That is why a cache of 8 MiB helped, oddly: no read-ahead survived for anyone, so
-///    every reader's work came in small pieces and they took turns.
-/// 2. **They share a quarter of the cache**, while someone plays, however few frames that is.
-///    Alone, they keep their full window.
-/// 3. **They read ahead in slices and wait for players between them**, while someone plays,
-///    so that a player's work waits for a slice, not for a window of frames.
+/// 1. **They give up the frames they have passed** ([`Engine::give_up`]). *Why this is the fix:*
+///    the cache is least recently used, a player's read-ahead waits there for 1 to 2 s, and a
+///    whole-file reader at 30 MB/s replaces 32 MiB in 1 s. The player's frames were evicted before
+///    it got to them; it converted them twice and then read 4 frames at a time, each behind
+///    the scanner's whole window on the decoder threads. That is why a cache of 8 MiB helped,
+///    oddly: no read-ahead survived for anyone, so every reader's work came in small pieces
+///    and they took turns.
+/// 2. **They share a quarter of the cache**, however few frames that is.
+/// 3. **They read ahead in slices and wait for players between them**, so that a player's work
+///    waits for a slice, not for a window of frames.
 ///
-/// A scanner alone does only the first, which costs it nothing: frames behind it are of no use.
+/// With no player active they do none of this, so a scan alone costs what it did.
 #[derive(Debug, Default)]
 pub struct Traffic {
     /// Readers for throughput. Their read-ahead windows share a quarter of the cache.
@@ -669,8 +678,10 @@ pub struct Reader {
     id: u64,
     /// Where it was counted, if it was.
     counted: OnceLock<Arc<Traffic>>,
-    /// Whether it reads for throughput, not as a player ([`Traffic`]).
+    /// Whether it reads for throughput ([`Traffic`]).
     throughput: AtomicBool,
+    /// Whether it is a player ([`Traffic`]).
+    player: AtomicBool,
 }
 
 impl Drop for Reader {
@@ -692,6 +703,7 @@ impl Reader {
             id: NEXT_READER.fetch_add(1, Ordering::Relaxed),
             counted: OnceLock::new(),
             throughput: AtomicBool::new(false),
+            player: AtomicBool::new(false),
         }
     }
 
@@ -739,8 +751,10 @@ impl Reader {
         if self.throughput.load(Ordering::Relaxed) {
             engine.traffic().yield_to_players();
             None
-        } else {
+        } else if self.player.load(Ordering::Relaxed) {
             Some(engine.traffic().decoding())
+        } else {
+            None
         }
     }
 
@@ -816,10 +830,17 @@ impl Reader {
         let traffic = engine.traffic();
         self.counted.get_or_init(|| traffic.clone());
         self.throughput.store(throughput, Ordering::Relaxed);
-        let (mine, other) =
-            if throughput { (&traffic.fast, &traffic.players) } else { (&traffic.players, &traffic.fast) };
-        other.forget(self.id);
-        let n = mine.note(self.id, now);
+        let player =
+            !throughput && s.started.is_some_and(|(t, _)| now.saturating_duration_since(t) >= PLAYER_AFTER);
+        self.player.store(player, Ordering::Relaxed);
+        if !throughput {
+            traffic.fast.forget(self.id);
+        }
+        if player {
+            traffic.players.note(self.id, now);
+        } else {
+            traffic.players.forget(self.id);
+        }
         if !sequential {
             return None;
         }
@@ -834,21 +855,29 @@ impl Reader {
         }
         let frames = self.file.layout.frames;
         let window = if throughput {
-            if s.given_up < k0 {
-                let f = &self.file;
-                engine.give_up(&f.disc, f.area, f.format(), f.start_frame + s.given_up, f.start_frame + k0);
-                s.given_up = k0;
+            let n = traffic.fast.note(self.id, now);
+            let someone_plays = traffic.players.any(now);
+            let f = &self.file;
+            let margin = (GIVE_UP_MARGIN / (f.byte_rate() as u64 / 75).max(1)) as u32;
+            let behind = k0.saturating_sub(margin);
+            if s.given_up < behind {
+                if someone_plays {
+                    engine.give_up(
+                        &f.disc,
+                        f.area,
+                        f.format(),
+                        f.start_frame + s.given_up,
+                        f.start_frame + behind,
+                    );
+                }
+                s.given_up = behind;
             }
             let own = if self.fast(&s) {
                 self.file.read_ahead_frames(engine.threads(), engine.cache().cap(), n)
             } else {
                 READ_AHEAD_FRAMES
             };
-            if traffic.players.any(now) {
-                own.min(self.file.shared_frames(engine.cache().cap(), n))
-            } else {
-                own
-            }
+            if someone_plays { own.min(self.file.shared_frames(engine.cache().cap(), n)) } else { own }
         } else {
             READ_AHEAD_FRAMES
         };

@@ -501,8 +501,7 @@ impl FrameCache {
         drop(evicted);
     }
 
-    /// Makes these frames the first to be evicted, if cached. Their order among themselves
-    /// doesn't matter: no one is expected to read them.
+    /// Makes these frames the first to be evicted, if cached, the last of `keys` first.
     fn demote(&self, keys: impl Iterator<Item = Key>) {
         let mut g = self.lock();
         for k in keys {
@@ -743,7 +742,9 @@ impl Engine {
     pub fn give_up(&self, disc: &Disc, area: usize, format: crate::track::Format, first: u32, end: u32) {
         let pcm = format == crate::track::Format::Wav;
         self.cache.demote(
-            (first..end).map(|t| if pcm { Self::pcm_key(disc, area, t) } else { Self::key(disc, area, t) }),
+            (first..end)
+                .rev()
+                .map(|t| if pcm { Self::pcm_key(disc, area, t) } else { Self::key(disc, area, t) }),
         );
     }
 
