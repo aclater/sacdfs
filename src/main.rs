@@ -293,6 +293,10 @@ fn run(args: Args) -> io::Result<()> {
     refuse_source_under_mountpoint(&source, &mountpoint)?;
     let cache_dir = index_cache_dir(&args, &mountpoint)?;
     warn_if_not_empty(&mountpoint);
+    // Before any thread allocates (#73), and so before the walk below, which reads the top-level
+    // folders on several threads (#175): glibc gives each thread that allocates an arena of its
+    // own, and what the walk allocates and frees stays in them.
+    sacdfs::engine::limit_malloc_arenas();
     // Only names are read here; images are opened when their directory is first listed.
     let mut root = SourceDir::scan_with(&source, &args.sidecars, Some(&mountpoint))
         .map_err(|e| with_path(e, &source))?;
@@ -316,9 +320,6 @@ fn run(args: Args) -> io::Result<()> {
     } else {
         Some(daemonize(keeps_stderr(args.log_file.is_some(), std::env::var_os("JOURNAL_STREAM").is_some()))?)
     };
-    // Before any thread allocates (#73).
-    sacdfs::engine::limit_malloc_arenas();
-
     sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
 
     let threads = if args.threads == 0 { default_threads() } else { args.threads };
