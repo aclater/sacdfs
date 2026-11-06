@@ -234,7 +234,7 @@ fn the_limits_measured_on_real_discs() {
         lengths[3] = Some((100 + secs) as u64 * 1000);
         medium(&lengths, &[])
     };
-    let all_off = |ms: u64| medium(&vec![Some(100_000 + ms); 10], &[]);
+    let all_off = |ms: u64| medium(&[Some(100_000 + ms); 10], &[]);
     let number = Step::Number.limits();
     assert!(confirm(&a, &one_off(14), number).is_ok(), "a pause counted differently");
     assert!(confirm(&a, &one_off(16), number).is_err());
