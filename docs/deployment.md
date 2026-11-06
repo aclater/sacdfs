@@ -181,6 +181,7 @@ All settings are environment variables.
 | `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
 | `SACDFS_REQUEST_TIMEOUT` | (30) | `--request-timeout` in seconds: a read, lookup or listing that waits longer for the images (a stalled disk or share) fails with an I/O error, and is logged, instead of hanging the SMB or NFS client; `0` waits for good. See [Troubleshooting](#troubleshooting) |
+| `SACDFS_MOUNT_TIMEOUT` | `300` | seconds the container waits for sacdfs to mount (it lists every image first, so a large library on a slow disk takes longer) before it exits with an error; a whole number from 1 to 86400. Keep the health check's start period (300 s in the image, the compose file and the commands in this guide) at least as long if you raise it. See [Troubleshooting](#troubleshooting) |
 | `SACDFS_INDEX_CACHE` | `/cache` | `--index-cache` directory (keep it on a volume so it survives updates); `off` for `--no-index-cache` |
 | `SACDFS_VERBOSE` | `1` | `0` warnings only, `1` (`-v`), `2` (`-vv`) |
 | `SMB` | `1` | `0` to turn the SMB server off |
@@ -218,12 +219,96 @@ build of #150:
 | `256` | 108 MiB | 66 MiB |
 | `256` with 0.3.0 | 134 MiB | 103 MiB |
 
+Peak resident memory by workload on the six synthetic bench discs (103 files per format, default
+cache, a fresh mount, one run each, a 32-thread host), 0.4.0 against 0.4.1-rc.1 (#211):
+
+| Workload | 0.4.0 | 0.4.1-rc.1 |
+|---|---|---|
+| Plex-like scan, WAV (first and last 128 KiB of each file) | 30 MiB | 32 MiB |
+| Import replay, DSF | 47 MiB | 49 MiB |
+| Import replay, WAV | 49 MiB | 49 MiB |
+| Full read of the 14 stereo files of one DST disc as WAV (2.97 GiB), one reader | 64 MiB | 66 MiB |
+| the same, 4 readers | 76 MiB | 85 MiB |
+| Full read of the same files as DSF (1.98 GiB), 4 readers | 50 MiB | 54 MiB |
+
+So on this small library a scan that only reads the ends of files stays under 50 MiB, but a scan that reads whole files,
+which a media server does when it re-analyses or upgrades its library, does not: more readers at
+once hold more frames, and WAV holds more than DSF. Real servers on a NAS showed more: 160 MB for
+a Plex upgrade scan that read 18.25 GiB over 801 opened files, 85 MB for a Roon import after an
+upgrade and 72 MB after 2.4 days of Roon running. These are for a small library: with the
+default cache, one scanning server peaks near 100 MiB on a library of about 400 images, four
+scanners at once add about 30 MiB (so about 130 MiB), and every image beyond about 400 adds about
+53 KiB (see [Small NAS: sizing](#small-nas-sizing)). The rise from 0.4.0 here is 0 to 9 MiB
+(single runs, within their noise), so it is not new in 0.4.1. On the 32-thread host of these
+runs the process keeps 70 threads after a listing in both versions (the extra walker threads of
+#175 are not among them); the count depends on the host: 23 to 27 on 2 to 4 CPUs
+(0.4.1-rc.1, container limits). After 60 s without reads the cache and the decoders are given
+back, and on these small libraries memory falls to 9 to 20 MiB.
+
 The cache's memory is its limit (its frames live in their own memory mappings, which never pass
 `SACDFS_CACHE_MB`), and the rest of sacdfs takes about 13 MiB here, a little more for each
 image listed (its TOC, text and track lists) and for each frame decoded at once. After 60 s
-without reads sacdfs gives the cache and its decoders back: about 11 MiB idle (see
-[design](design.md#memory-the-default-cache-and-the-fixed-overhead-150)). Limiting open images
+without reads sacdfs gives the cache and its decoders back: about 11 MiB idle on a small
+library like the bench discs (see
+[design](design.md#memory-the-default-cache-and-the-fixed-overhead-150)). What the listing
+holds is not given back, so the idle size grows with the library: 39 MiB at 10 minutes idle on a
+395-image library (0.4.1-rc.1). Limiting open images
 (`SACDFS_MAX_OPEN_IMAGES`) makes no measurable difference: an open image costs about 30 KB.
+
+### Small NAS: sizing
+
+What a small NAS needs for the container, measured on 0.4.1-rc.1 (single runs). The container
+was limited to 2 or 4 CPUs of an Intel N100-class chip (Gracemont E-cores at about 2.6 GHz) and
+to the memory below; SMB was over loopback, and the library was on network-attached disks. The
+figures are container limits, not whole-box RAM: a NAS's own services need their share, and
+whole-box sizes were not tested. The current `main` has #224, which matched or beat these
+memory figures in what was re-measured (a real library listed in 33.8 MiB against 38.5; 5,000
+images at 274 MiB against 275), but the limits below were not re-run on it.
+
+| | CPUs | Limit for sacdfs plus Samba | Library |
+|---|---|---|---|
+| Minimum | 2 N100-class cores | 256 MiB | up to about 2,000 images at the default settings |
+| Recommended | 4 cores | 512 MiB | up to about 5,000 images (about 312 MiB used) |
+
+Add about 40 MiB if NFS is on (`NFS=1`, the default). To set such a limit,
+for example `podman run --cpus 2 --memory 256m ...` (or `docker run`, with the same options).
+
+**Sizing rule.** 100 MiB (the peak while scanning, up to about 400 images, with the default
+cache of 32), plus 53 KiB for every image beyond those, plus 30 MiB if four scanners run at once.
+The rule is an upper estimate: it came out 10 to 35 MiB above the measured sizes at 2,000, 3,500
+and 5,000 images. `SACDFS_FORMATS=dsf` cuts the memory of the listing by about a third (89 to 61
+MiB at 1,600 images).
+
+**Where a limit breaks.**
+- At 256 MiB with the default cache: 2,000 images worked (151 MiB), 3,500 worked near the limit
+  (231 MiB), and 5,000 were killed for lack of memory during the listing. An out-of-memory kill
+  takes down the whole service (sacdfs, Samba and NFS), and the runtime restarts the container.
+- Floors, with 395 images on 2 E-cores: 128 MiB survived every scan (118 MiB at cache 32, 90 at
+  cache 8). 96 MiB played, but a whole-file scan killed it. 64 MiB was killed during playback.
+  Do not size a container to these floors.
+
+**Playback** on 2 E-cores and 256 MiB: stereo and 6-channel DST, DSF and WAV, with one or two
+players, had no late reads with a 0.25 s buffer. The headroom for 6-channel at cache 32 was 11.8
+times real time for DSF and 9.7 times for WAV.
+
+**Known limit.** A whole-file WAV scan starves a 6-channel WAV player on 2 cores: the player
+fell about 13 s behind
+([#230](https://github.com/aclater/sacdfs/issues/230)). A smaller cache helps, at a cost. On 4
+cores, `SACDFS_CACHE_MB=8` left the player 0.10 s behind, against 11.2 s with four scanners at the
+default cache; but a whole-file WAV scan dropped from about 61 to 22 MB/s, and the 6-channel WAV
+headroom from 18 times to 7 times real time. Memory at the floors is
+[#231](https://github.com/aclater/sacdfs/issues/231).
+
+**Idle.** sacdfs used 0.007 % of a CPU and woke 1.5 times a second, and 5 minutes of `strace`
+showed no image reads and no metadata calls, so sacdfs itself does not keep a disk awake. Not
+tested: a connected client that polls listings, and `--tags`. The cache and decoder memory is
+given back after 60 to 75 s of idle; the memory of the listing is not (39 MiB idle at 10
+minutes on a 395-image library).
+
+**Mount time.** On an emulated single disk (one request at a time, 15 ms per seek, 120 MB/s)
+with nothing cached, mounting a library of 122,676 files took 194 s. That is a model, not a real
+disk, but it is longer than the 60 s the container used to wait. The container now waits for
+`SACDFS_MOUNT_TIMEOUT` seconds (default 300; [#232](https://github.com/aclater/sacdfs/issues/232)).
 
 ## Running it
 
@@ -245,14 +330,14 @@ services or a network share use. Use `--security-opt label=disable` instead to l
 alone.
 
 For a health check under Podman, add `--health-cmd /usr/local/bin/healthcheck.sh
---health-interval 30s --health-timeout 10s --health-start-period 60s --health-retries 3`
+--health-interval 30s --health-timeout 10s --health-start-period 300s --health-retries 3`
 (Docker reads it from the image); see the [Docker and Podman guide](install/docker-podman.md).
 
 If the host already serves SMB or NFS itself, ports 445 and 2049 are taken. Either give the
 container its own IP address (a `macvlan` network, or publish on an extra address of the
 host: `-p 192.0.2.20:445:445 -p 192.0.2.20:2049:2049`, with the host's own services bound to
 its main address), or publish other ports (`-p 10445:445 -p 12049:2049`). Linux and macOS
-clients can use other ports; Windows can only use 445.
+clients can use other ports. Windows 11 build 26200 also mounted a share on another port with `net use` and `/TCPPORT:` (see the [client notes](clients.md#windows-explorer-and-robocopy); other Windows builds were not tried).
 
 ### Compose
 
@@ -284,8 +369,9 @@ The names of screens and fields may differ between releases.
    - **Other ports** (the simplest; changes nothing else on the NAS): publish, for example,
      `"10445:445"` and `"12049:2049"` in `ports`. Linux clients then mount with `port=12049`
      (NFS) or `port=10445` (SMB), and macOS with `port=` for NFS or `smb://nas:10445/sacd` for
-     SMB ([below](#on-other-ports)). Windows can only use 445, so for Windows clients use one of
-     the other two ways.
+     SMB ([below](#on-other-ports)). Windows 11 build 26200 mounted one on another port with
+     `net use ... /TCPPORT:` (tested on 0.4.1-rc.1, [client notes](clients.md#windows-explorer-and-robocopy));
+     if your Windows build refuses, use one of the other two ways.
    - **An address of its own:** add an alias IP address to the network interface (Network,
      Interfaces), and bind TrueNAS's SMB and NFS services to the main address only (in each
      service's settings, "Bind IP Addresses"). Then publish sacdfs's ports on the alias, as in
@@ -330,13 +416,13 @@ The names of screens and fields may differ between releases.
          test: ["CMD", "/usr/local/bin/healthcheck.sh"]
          interval: 30s
          timeout: 10s
-         start_period: 60s
+         start_period: 300s
    ```
 
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
-   - `SACDFS_CACHE_MB: "32"`, the default, keeps a library scan under 50 MiB of memory ([Memory](#memory)).
+   - `SACDFS_CACHE_MB: "32"`, the default, keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and
@@ -609,6 +695,11 @@ holding an old one gets "stale file handle" instead of other data.
   before its error, because the kernel asks again for the same data. Raise
   `SACDFS_REQUEST_TIMEOUT` if the images are on disks that spin down and take longer than
   30 s to wake.
+- **`sacdfs did not mount within 300 s`**: sacdfs lists every image before it mounts, and a
+  large library on a slow disk can take longer than the container waits. Raise
+  `SACDFS_MOUNT_TIMEOUT` (seconds, 1 to 86400, default 300) and the health check's start
+  period with it, so that the runtime does not mark the container unhealthy while it waits.
+  A value that is not a whole number of seconds stops the container at once with a message.
 - More detail: `SACDFS_VERBOSE=2`, `SMB_LOG_LEVEL=3`, `NFS_LOG_LEVEL=DEBUG`.
 
 ## Testing

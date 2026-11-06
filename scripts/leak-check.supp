@@ -1,15 +1,38 @@
 # valgrind suppressions for scripts/leak-check.sh (#151). Each entry says why it is not a leak.
 
-# The mount of the binary's FUSE session (55 bytes, once per process): `serve` in
-# src/main.rs keeps it in a ManuallyDrop on purpose, because its drop would unmount by path,
-# and the path may hold a newer sacdfs's mount by then (#51). Once per process, no growth.
+# Patterns use the demangled names, so that they match whichever symbol mangling the toolchain
+# uses: the legacy scheme (`fuser::mnt::Mount::new`) and v0 (`<fuser::mnt::Mount>::new`, the
+# default since the 1.9x toolchains). The earlier entry matched the legacy `_ZN...` names
+# only, and stopped matching with a newer toolchain: the weekly run failed on a 55-byte,
+# once-per-process block that was never a leak (#151).
+
+# The mount of the binary's FUSE session (55 bytes in three blocks, once per process): the
+# mountpoint path (fuser Mount), the mountpoint as a C string and the /dev/fuse handle
+# (MountImpl). `serve` in src/main.rs keeps the mount in a ManuallyDrop on purpose, because
+# its drop would unmount by path, and the path may hold a newer sacdfs's mount by then (#51).
+# All three blocks are allocated inside Mount::new, called from Session::new in sacdfs::run:
+# once per process, no growth.
 {
    sacdfs-session-mount-kept-on-purpose
    Memcheck:Leak
    match-leak-kinds: definite
    fun:malloc
    ...
-   fun:_ZN5fuser3mnt5Mount3new*
+   fun:*fuser*mnt*Mount*new
    ...
-   fun:_ZN6sacdfs3run*
+   fun:*sacdfs*run
+}
+
+# fuser 0.18.0 (fuse_pure.rs, receive_fusermount_message) reads fusermount's reply with nix
+# 0.31's recvmsg::<SockaddrStorage>. The reply comes over a connected socketpair, so the
+# kernel fills in no sender address (msg_namelen is 0), and nix still reads the family out of
+# the uninitialised SockaddrStorage in set_length (addr.rs), whose result nix then discards
+# (`let _ = address.set_length(..)`). A read in nix of a value nobody uses: not sacdfs's,
+# once per mount, not a leak.
+{
+   nix-recvmsg-sockaddr-storage-set-length-unused
+   Memcheck:Cond
+   fun:*SockaddrStorage*set_length
+   ...
+   fun:*receive_fusermount_message
 }
