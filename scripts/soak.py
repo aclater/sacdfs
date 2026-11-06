@@ -67,23 +67,29 @@ FAILED_PATHS = collections.defaultdict(set)  # class -> the distinct paths that 
 SAMPLES = []
 # When the reader's file list was taken, and when the churner last edited a tags file or sidecar
 # or toggled the art folder, and the stall window (monotonic seconds; 0: none yet).
-TIMES = {"listed": 0.0, "tags_edit": 0.0, "side_edit": 0.0, "cover_edit": 0.0, "stall_from": 0.0, "stall_until": 0.0}
+# What the churner removed, with the time: cover files and churn albums by name.
+REMOVED = {}
+TIMES = {"listed": 0.0, "tags_edit": 0.0, "cover_edit": 0.0, "art_edit": 0.0, "stall_from": 0.0, "stall_until": 0.0}
 
 
 def classify(path, err, mnt):
     """Expected or not, for a failed read of `path` (under the mount `mnt`) with `err`.
 
     Expected, and only these:
-    - churn: a path under the churn folders, ENOENT or ENOTDIR (the churner removed the album
-      after the reader listed it, or while it was open);
+    - churn: a path under the churn folders, in an album the churner has removed: ENOENT or
+      ENOTDIR (at any time: the album is gone), or EIO within 30 s of the removal (a request
+      that was in flight when the image's link went away);
     - stall: a path under the stall folder, from the staller's link change until the stuck
       requests are released and a few watchdog timeouts have passed, with EIO, ETIMEDOUT,
       ENOENT or EINTR (the watchdog fails the request, #141);
     - tags: ENOENT on a .dsf when the churner edited a tags file after the reader's list was
-      taken (a tags edit can rename a track's file, so the listed name is gone);
-    - sidecar: ENOENT on a cover-*.jpg or a file under Artwork/ when the churner replaced a
-      cover or removed the art folder after the list was taken.
-    - cover: ENOENT on a `cover.jpg` within 5 s of a sidecar change. sacdfs 0.4.1 shows the
+      taken, or less than 60 s ago (a tags edit can rename a track's file, so the listed name
+      is gone);
+    - sidecar: ENOENT on a cover-*.jpg the churner has removed (by name, at any time: sacdfs
+      lists the file until it has re-read the folder, which takes seconds on real discs, and
+      the file is gone), or on a file under Artwork/ less than 60 s after the churner toggled
+      that folder;
+    - cover: ENOENT on a `cover.jpg` within 5 s of a cover replacement. sacdfs 0.4.1 shows the
       cover of an album's folder as `cover.jpg` and, after a cover file is replaced, the name is
       gone for about a second while it re-reads (measured: 8 gaps of 1.0 s or less in 12
       replacements; 0.4.0 has no such name). The soak counts it apart and reports it, because it
@@ -96,17 +102,22 @@ def classify(path, err, mnt):
         rel = ()
     now = time.monotonic()
     e = err.errno
-    if rel[:1] == ("churn",) and e in (errno.ENOENT, errno.ENOTDIR):
-        return "churn"
+    with LOCK:
+        removed = dict(REMOVED)
+    if rel[:2] and rel[0] == "churn":
+        gone = removed.get("album:" + rel[1] if len(rel) > 1 else "")
+        if gone is not None and (e in (errno.ENOENT, errno.ENOTDIR) or (e == errno.EIO and now - gone <= 30)):
+            return "churn"
     if (rel[:1] == ("stall",) and TIMES["stall_from"] <= now <= TIMES["stall_until"]
             and e in (errno.EIO, errno.ETIMEDOUT, errno.ENOENT, errno.EINTR)):
         return "stall"
-    if e == errno.ENOENT and rel and rel[-1].endswith(".dsf") and TIMES["tags_edit"] > TIMES["listed"]:
+    if (e == errno.ENOENT and rel and rel[-1].endswith(".dsf")
+            and (TIMES["tags_edit"] > TIMES["listed"] or now - TIMES["tags_edit"] <= 60)):
         return "tags"
     if e == errno.ENOENT and rel and rel[-1] == "cover.jpg" and now - TIMES["cover_edit"] <= 5:
         return "cover"
-    if (e == errno.ENOENT and rel and (rel[-1].startswith("cover-") or "Artwork" in rel[:-1])
-            and TIMES["side_edit"] > TIMES["listed"]):
+    if e == errno.ENOENT and rel and (("file:" + rel[-1]) in removed
+                                      or ("Artwork" in rel[:-1] and now - TIMES["art_edit"] <= 60)):
         return "sidecar"
     return "unexpected"
 
@@ -284,15 +295,17 @@ def churner(args, images, keys):
                 d.mkdir(parents=True)
                 (d / "disc.iso").symlink_to(img)
             elif act == 1:  # sidecars come and go
-                TIMES["side_edit"] = TIMES["cover_edit"] = time.monotonic()
+                TIMES["cover_edit"] = time.monotonic()
                 (lib / "a0" / f"cover-{n}.jpg").write_bytes(b"\xff\xd8\xff\xe0 soak" * rnd.randrange(1, 64))
                 for old in sorted((lib / "a0").glob("cover-*.jpg"))[:-2]:
+                    with LOCK:  # noted first: a reader may fail the moment the file is gone
+                        REMOVED["file:" + old.name] = time.monotonic()
                     old.unlink()
             elif act == 2:  # a tags file is edited
                 TIMES["tags_edit"] = time.monotonic()
                 write_tags(args, rnd.choice(keys), n)
             elif act == 3:  # an art folder comes and goes
-                TIMES["side_edit"] = time.monotonic()
+                TIMES["art_edit"] = time.monotonic()
                 art = lib / "a1" / "Artwork"
                 if art.exists():
                     for f in art.iterdir():
@@ -304,6 +317,8 @@ def churner(args, images, keys):
             else:  # the oldest added albums go
                 keep = 1 if args.churn_slots else 3
                 for d in sorted(churn.glob("album-*"), key=lambda p: p.stat().st_mtime)[:-keep]:
+                    with LOCK:
+                        REMOVED["album:" + d.name] = time.monotonic()
                     (d / "disc.iso").unlink()
                     d.rmdir()
             count("churn")

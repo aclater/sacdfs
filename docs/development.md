@@ -84,15 +84,16 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
 - open files do not climb: the second half's maximum is at most 8 above the first half's;
 - the cache directory plateaus;
 - no read error is unexpected. Reads fail on purpose in some places, and the soak sorts every
-  failure by path and errno: `churn` (ENOENT or ENOTDIR under the `churn` folders, whose albums
-  the churner removes), `stall` (EIO, ETIMEDOUT, ENOENT or EINTR under the `stall` folder
-  while a stall is on, and for three request timeouts after), `tags` (ENOENT on a `.dsf` after
-  a tags edit since the file list was taken), `sidecar` (ENOENT on a `cover-*.jpg` or under
-  `Artwork/` after a sidecar change since the list), and `cover` (ENOENT on `cover.jpg`
-  within 5 s of a cover replacement: 0.4.1 re-reads the cover and the name is gone for about
-  a second). Any other error, such as EIO on a stable disc, fails the run, with no tolerance.
-  The counts per class are columns of the TSV, and `<out>.errors.tsv` has class, errno and
-  area. The summary lists up to ten unexpected paths only with `--sample-paths`: leave it off
+  failure by path and errno: `churn` (a path in a churn album the churner has removed: ENOENT
+  or ENOTDIR, or EIO within 30 s of the removal), `stall` (EIO, ETIMEDOUT, ENOENT or EINTR
+  under the `stall` folder while a stall is on, and for three request timeouts after), `tags`
+  (ENOENT on a `.dsf` after a tags edit since the file list was taken, or within 60 s of it),
+  `sidecar` (ENOENT on a `cover-*.jpg` the churner has removed, or under `Artwork/` within
+  60 s of the churner toggling it; sacdfs lists a removed file until it has re-read the
+  folder, which takes seconds on real discs) and `cover` (ENOENT on `cover.jpg` within 5 s of
+  a cover replacement: 0.4.1 re-reads the cover and the name is gone for about a second).
+  Any other error, such as EIO on a stable disc, fails the run, with no tolerance. The counts
+  per class are columns of the TSV, and `<out>.errors.tsv` has class, errno and area. The summary lists up to ten unexpected paths only with `--sample-paths`: leave it off
   on a real library, whose names must not be published. A failed read returns at once and is
   retried after `--read-pause`, so the counts are attempts; the summary also gives how many
   different files failed.
