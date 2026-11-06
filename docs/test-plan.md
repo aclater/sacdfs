@@ -20,8 +20,17 @@ issue, as counts and characteristics, never disc or album names.
 | **Release candidate** | Each `-rc` tag's published binary and image | Everything below: [clients](#clients), [behaviour](#behaviour-every-client), [protocols](#protocols-and-file-systems), [regressions](#regressions-that-must-stay-fixed), [upgrade](#upgrade-and-rollback), [performance](#performance-and-endurance) | The final tag |
 | **After the tag** | The published artifacts | [Install channels](#install-channels) | Nothing; a failure means a new patch release |
 
-A new candidate after a fix repeats what the fix could affect, and always the Tier 1 scan and
-playback checks. The final tag must carry only the version change on top of the last candidate.
+**The rule for later candidates.** The full client matrix runs on the first release candidate. A
+later candidate re-runs what its shipped-code changes could affect, plus the artifacts, memory, share
+paths and the soak, and lists what changed and what carried over; a carried-over result is quoted
+with the candidate that produced it. If a candidate changes decoding, naming, the file tree or
+dependencies, the affected clients run again. The final tag must carry only the version change on
+top of the last candidate.
+
+**Goals, not results.** The tables and lists on this page that say what is tested, on what, and how
+(libraries, tiers, behaviours, protocols, install channels) are goals. Only the cells headed "Result"
+or "Last result", and the [results section](#results-041-rc2-gate-2026-11-06), say what was run. A
+row with no result is untested.
 
 ## Test libraries
 
@@ -51,21 +60,21 @@ otherwise stated as untested.
 |---|---|---|---|---|---|
 | Roon | 1 | SMB, same NAS | Long-running NAS install | 0.4.1-rc.1: Roon 2.74, whole library, Force Rescan sent no extended-attribute requests | Upgraded from rc.1 on the NAS app: names and counts identical, no re-read seen for 12 minutes. FUSE request counts per kind not obtained |
 | Plex | 1 | SMB, same NAS; and rslave bind | Long-running NAS install, API checks. The scripted-server harness does not cover Plex | 0.4.1-rc.1: upgrade and rollback fine, 3 albums still blank | Upgraded from rc.1 on the NAS app: names and counts identical, no re-read seen for 12 minutes. Request counts not obtained |
-| Jellyfin | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Not run on rc.2 |
-| Navidrome | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Not run on rc.2 |
-| Lyrion (LMS) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Not run on rc.2 |
-| MPD (so moOde, Volumio) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Not run on rc.2 |
-| MinimServer | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Not run on rc.2 |
-| Windows 11 Explorer, PowerShell, Robocopy | 1 | SMB 3 | Unattended VM, not a physical client | 0.4.1-rc.1 | Not run on rc.2 |
+| Jellyfin | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
+| Navidrome | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
+| Lyrion (LMS) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
+| MPD (so moOde, Volumio) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
+| MinimServer | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
+| Windows 11 Explorer, PowerShell, Robocopy | 1 | SMB 3 | Unattended VM, not a physical client | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
 | Linux NFS and SMB mounts (Fedora, RHEL, Debian, Ubuntu) | 1 | NFSv4, SMB 3 | VMs and containers | 0.4.1-rc.1 on seven distributions | SMB 3.1.1 and NFS 4.2 listings correct, 10 files byte-identical over both, writes refused, SMB reconnects after a restart. Which distributions: not recorded |
-| beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | Not run on rc.2 |
-| FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | 0.4.1-rc.1 | Not run on rc.2 |
-| foobar2000 | 2 | SMB 3 | Windows VM | 0.4.1-rc.1 | Not run on rc.2 |
-| JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Not run on rc.2 |
-| Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** | Not run |
-| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; no macOS results are in clients.md; Finder and players **never** | Not run |
-| Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Not run |
-| Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Not run |
+| beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | No candidate result; not run on rc.1 or rc.2 |
+| FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
+| foobar2000 | 2 | SMB 3 | Windows VM | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
+| JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
+| Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** | Never run |
+| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; no macOS results are in clients.md; Finder and players **never** | Never run |
+| Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Never run |
+| Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Never run |
 
 Client versions are recorded each run. Tier 1 images are refreshed to current at each candidate;
 a result that changes after a client update is reported as such.
@@ -118,17 +127,17 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 
 | Issue | Check | Result on 0.4.1 |
 |---|---|---|
-| [#62](https://github.com/aclater/sacdfs/issues/62) | `df` and SMB free space report a real size | rc.1: `df` non-zero over NFS and SMB on seven Linux clients. Not run on rc.2 |
-| [#64](https://github.com/aclater/sacdfs/issues/64), [#123](https://github.com/aclater/sacdfs/issues/123) | mtimes move when bytes change; Roon sees an upgrade and a new sidecar by itself | rc.1: Roon's scan after the move from 0.4.0 matched a tree comparison (changed names, retagged files, 359 added `cover` images). A new sidecar added while Roon ran: untested. Not run on rc.2 |
+| [#62](https://github.com/aclater/sacdfs/issues/62) | `df` and SMB free space report a real size | rc.1: `df` non-zero over NFS and SMB on seven Linux clients. Carried over from rc.1 |
+| [#64](https://github.com/aclater/sacdfs/issues/64), [#123](https://github.com/aclater/sacdfs/issues/123) | mtimes move when bytes change; Roon sees an upgrade and a new sidecar by itself | rc.1: Roon's scan after the move from 0.4.0 matched a tree comparison (changed names, retagged files, 359 added `cover` images). A new sidecar added while Roon ran: untested. Carried over from rc.1 |
 | [#71](https://github.com/aclater/sacdfs/issues/71) | Worst read under four players and a tagger is within the documented target | rc.1: four readers plus a tagger all finished, slowest 0.2 to 1.0 s for 60 MiB over a virtual network, cold. Not compared with the documented target. Untested on rc.2 |
 | [#72](https://github.com/aclater/sacdfs/issues/72) | No long stall reading 6-channel DST over SMB on the NAS; the soak's stall injection recovers | rc.2 60-minute soak: 19 stalls and 11 remounts, no unexpected errors. The 2-hour soak is still to report. The 6-channel DST read over SMB on the NAS: untested on 0.4.1 |
 | [#73](https://github.com/aclater/sacdfs/issues/73), [#150](https://github.com/aclater/sacdfs/issues/150) | Memory after an import replay and an hour of reads is within the documented figure | rc.2, real library of 4,902 DSF files: 27.2 MiB listed, 72.7 after a head-and-tail read of every file, 33.0 after 10 minutes idle (0.4.0: 29.0, 79.5, 35.2; rc.1: 33.2, 95.1, 54.0). Import replay and the soak's memory trend (+1.4 MiB/h over 60 minutes): see [performance](performance.md) |
-| [#95](https://github.com/aclater/sacdfs/issues/95) | Folder art found by LMS, MPD and MinimServer | rc.1: yes on all three. Not run on rc.2 |
+| [#95](https://github.com/aclater/sacdfs/issues/95) | Folder art found by LMS, MPD and MinimServer | rc.1: yes on all three. Carried over from rc.1 |
 | [#96](https://github.com/aclater/sacdfs/issues/96) | MPD's first scan cost, `dsf` against `dsf,wav` | rc.1: first scan with `dsf` 0.47 s (0.4.0: 0.46 s). `dsf,wav` against `dsf` was not recorded on 0.4.1 |
-| [#101](https://github.com/aclater/sacdfs/issues/101) | Sidecars added after the mount appear | rc.1: checked on the file system only; no server was shown a new sidecar. Not run on rc.2 |
-| [#138](https://github.com/aclater/sacdfs/issues/138) | Plex with the documented setting keeps the album copies apart | rc.1: multichannel copies stayed separate. Not run on rc.2 |
-| [#174](https://github.com/aclater/sacdfs/issues/174) | `ls -l` over NFS works, **and** Roon's Force Rescan sends no extended-attribute storm. These two pulled against each other once, so they are always checked together | rc.1, both halves. NFS half: `ls -lR` exited 0 with no error on seven Linux clients over NFS and SMB; against 0.4.0 in the FUSE request log the counts were the same: 1 `GETXATTR` and 238 `LISTXATTR` for 206 files over NFS, none over SMB. `find` with `getfattr` on a whole tree and `ls -lRZ` were not run; `getfattr -d` on one file returned at once with no attributes. Roon half: a Force Rescan on Roon 2.74 took 3.2 s with 19,324 FUSE requests, none for extended attributes. Not run on rc.2 |
-| [#175](https://github.com/aclater/sacdfs/issues/175) | Folders with no SACD below them are hidden | rc.1: on a real library 649 entries disappeared (4 top-level folders among them) and no DSF file. Not run on rc.2 |
+| [#101](https://github.com/aclater/sacdfs/issues/101) | Sidecars added after the mount appear | rc.1: checked on the file system only; no server was shown a new sidecar. Carried over from rc.1 |
+| [#138](https://github.com/aclater/sacdfs/issues/138) | Plex with the documented setting keeps the album copies apart | rc.1: multichannel copies stayed separate. Carried over from rc.1 |
+| [#174](https://github.com/aclater/sacdfs/issues/174) | `ls -l` over NFS works, **and** Roon's Force Rescan sends no extended-attribute storm. These two pulled against each other once, so they are always checked together | rc.1, both halves. NFS half: `ls -lR` exited 0 with no error on seven Linux clients over NFS and SMB; against 0.4.0 in the FUSE request log the counts were the same: 1 `GETXATTR` and 238 `LISTXATTR` for 206 files over NFS, none over SMB. `find` with `getfattr` on a whole tree and `ls -lRZ` were not run; `getfattr -d` on one file returned at once with no attributes. Roon half: a Force Rescan on Roon 2.74 took 3.2 s with 19,324 FUSE requests, none for extended attributes. Carried over from rc.1 |
+| [#175](https://github.com/aclater/sacdfs/issues/175) | Folders with no SACD below them are hidden | rc.1: on a real library 649 entries disappeared (4 top-level folders among them) and no DSF file. Carried over from rc.1 |
 | `verify` | A file it can't check gives an ERROR row and a non-zero exit, and an interrupted run leaves nothing that reads as a finished report. Users delete extracts on its word | Tested against the fix on its pull request branch and in CI; not run on a published 0.4.1 candidate |
 
 ## Install channels
@@ -197,6 +206,19 @@ comparable. Every timed run is under the benchmark lock. Other jobs on the same 
 
 What was run on rc.2, and what was not. Anything missing here is untested on rc.2.
 
+**What changed since rc.1, and so what carries over.** The shipped code differs between
+`v0.4.1-rc.1` and `v0.4.1-rc.2` in `src/main.rs` (the malloc arena limit is set before the start-up
+walk, [#224](https://github.com/aclater/sacdfs/pull/224)), `deploy/entrypoint.sh`,
+`deploy/compose.yaml`, `Containerfile` (the container's mount limit `SACDFS_MOUNT_TIMEOUT` and the
+health check's 300 s start period, [#232](https://github.com/aclater/sacdfs/issues/232)), the version
+numbers, and a CI test script (`deploy/ci-share-test.sh`). `git diff v0.4.1-rc.1 v0.4.1-rc.2 -- src
+deploy Containerfile Cargo.lock Cargo.toml` shows nothing else: no change to decoding, naming, the
+file tree or dependencies. So, per the rule above, the client results in [clients.md](clients.md)
+are rc.1 results and carry over, each stating rc.1; the re-run on rc.2 covers what the two changes
+could affect: memory, mount time, the container, the share paths, the upgrade on the NAS apps and
+the soak. The carry-over rests on that diff, not on a re-run; a client whose behaviour depends on
+memory or start-up timing was not checked again.
+
 - **Memory** (real library, 4,902 DSF files, 32-core machine), listed / after a head-and-tail read of
   every file / 10 minutes idle, MiB: 0.4.0 29.0 / 79.5 / 35.2; rc.1 33.2 / 95.1 / 54.0; rc.2
   27.2 / 72.7 / 33.0.
@@ -213,8 +235,8 @@ What was run on rc.2, and what was not. Anything missing here is untested on rc.
   the same code, not on the published image.
 - **Upgrade, rc.1 to rc.2, on the NAS apps:** identical names and counts; no re-read seen for 12
   minutes; FUSE request counts per kind not obtained.
-- **Not verified:** the arm64 image at run time; a cold-cache mount; the clients marked "Not run on
-  rc.2" above; the install channels other than the container (binary archive on the older
+- **Not verified:** the arm64 image at run time; a cold-cache mount; the clients marked "Carried over
+  from rc.1" above (rc.1 results, not re-run); the install channels other than the container (binary archive on the older
   distributions, crates.io, the NAS guides) on rc.2.
 
 ## Exit criteria
