@@ -6,6 +6,22 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`SACDFS_MOUNT_TIMEOUT` (container, #232).** How long the container waits for sacdfs to mount, in
+  seconds (default 300, a whole number from 1 to 86400; anything else stops the container at once
+  with a message). It was a fixed 60 s, which a large library on a slow disk exceeds: on an emulated
+  single disk with nothing cached, 122,676 files took 194 s to mount on 0.4.1-rc.1. The health
+  check's start period is now 300 s to match, in the `Containerfile`, `deploy/compose.yaml` and the
+  commands in the guides.
+- **Docs: "Small NAS: sizing"** in the deployment guide: the container limits that worked (2 N100-class
+  cores and 256 MiB for about 2,000 images; 4 cores and 512 MiB for about 5,000), a sizing rule, where
+  the limits break, idle behaviour and one known limit (#230, #231). Measured on 0.4.1-rc.1. Memory and
+  idle-size claims elsewhere now say they hold for a small library.
+- **Docs: client notes for 0.4.1-rc.1** on Roon, Plex, Windows (Explorer, PowerShell, Robocopy, with
+  Robocopy speed), foobar2000 and JRiver Media Center. Windows can use another SMB port with `/TCPPORT:`;
+  the deployment guide said it could not.
+
 ### Fixed
 
 - **Memory after the start-up walk.** 0.4.1-rc.1 held 22 to 25 MiB more than 0.4.0 on a library of

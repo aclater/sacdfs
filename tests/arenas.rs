@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The mount's start-up walk leaves no malloc arenas behind (#217): the walk reads the top-level
+//! The mount's start-up walk leaves no malloc arenas behind (#175): the walk reads the top-level
 //! folders of SOURCE on several threads, and glibc gives each thread that allocates an arena of
 //! its own (a 64 MiB reservation), which keeps what it freed for itself. On a library of 414
 //! images those arenas held about 22 MiB of resident memory more than a single arena. The
