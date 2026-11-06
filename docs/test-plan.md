@@ -27,6 +27,40 @@ with the candidate that produced it. If a candidate changes decoding, naming, th
 dependencies, the affected clients run again. The final tag must carry only the version change on
 top of the last candidate.
 
+## When a soak is needed
+
+The soak ([performance and endurance](#performance-and-endurance)) takes two hours of a test host
+and fails a release if it fails, so it runs when the shipped code it exercises has changed, not
+by habit.
+
+**A soak is needed when shipped code changed since the last soak that passed.** Check it, don't
+judge it: compare `src/` and `Cargo.lock` between the last soaked tag and the candidate, ignoring
+the version line (`git diff <soaked-tag> <candidate> -- src Cargo.lock`). An empty diff means no
+soak. These don't need one:
+
+- documentation, CHANGELOG, CI and test-only changes;
+- a version bump;
+- a final on the same code as a release candidate that passed;
+- a container base image change, which the container CI checks cover.
+
+**What the diff touches decides the rest.** Self-contained code outside the mount's read path, such
+as `verify` exit codes or the `tags` commands, may rely on its own tests; the release PR records
+that and the reason. Anything on the read path needs a soak: the read path itself, threads, the
+cache, memory, the watchdog, the mount lifecycle, and the dependencies under them (scarletbook,
+rayon, the FUSE library).
+
+**How often.** Once per candidate, not once per PR. A comparison soak (two builds against each
+other) must give each build the same load. A PR that is risky for the read path may also run a
+shorter, stall-heavy soak before it merges; that run does not replace the candidate's soak.
+
+**What the soak does not cover.** It does not exercise a long hang of one image's source with
+clients that keep retrying: the retries can use every read thread of the mount
+([#241](https://github.com/aclater/sacdfs/issues/241), open, a documented limit of 0.4.1). A pass
+does not say this case is safe.
+
+**Status of this rule.** It is new in this revision and has not been applied to a release yet:
+its first use is the decision on the 0.4.1 final, where it is untested as a process.
+
 **Goals, not results.** The tables and lists on this page that say what is tested, on what, and how
 (libraries, tiers, behaviours, protocols, install channels) are goals. Only the cells headed "Result"
 or "Last result", and the [results section](#results-041-rc2-gate-2026-11-06), say what was run. A
@@ -182,7 +216,8 @@ comparable. Every timed run is under the benchmark lock. Other jobs on the same 
 - NAS: SMB and NFS throughput on the NAS itself.
 - Memory: import replay and the default cache's peak.
 - **Soak:** two hours with induced stalls (`scripts/soak.py`), passing its memory, thread, file and
-  cache checks.
+  cache checks. Whether a candidate needs one is decided by [When a soak is needed](#when-a-soak-is-needed).
+  It does not cover a long hang with retrying clients ([#241](https://github.com/aclater/sacdfs/issues/241)).
 - Weekly leak checks and fuzzing are green on the release commit. For 0.4.1 the fuzz workflow was
   green on the rc.1 tag commit. The `leaks` workflow's first run was on this release and it failed
   because its own checks were broken (a fix is [#226](https://github.com/aclater/sacdfs/pull/226));
@@ -259,6 +294,15 @@ memory or start-up timing was not checked again.
   from rc.1" above (rc.1 results, not re-run); the install channels other than the container (binary archive on the older
   distributions, crates.io, the NAS guides) on rc.2.
 
+## Results: 0.4.1-rc.3 gate
+
+**Not yet recorded.** rc.3 adds the fix for [#238](https://github.com/aclater/sacdfs/issues/238)
+(a hung image's WAV reads held decoder threads) after the rc.2 2-hour soak failed on it. Its
+2-hour soak was still running when this page was written; no rc.3 result is stated here. Until
+this section is filled in, everything on rc.3 is untested, and the rc.2 results above are not rc.3
+results. The code diff since rc.2 is in `src/engine.rs` and `src/fs.rs` plus tests and `scripts/`; a
+client result is carried over only with the diff check in the soak rule.
+
 ## Exit criteria
 
 A final tag needs all of:
@@ -268,7 +312,8 @@ A final tag needs all of:
 - no regression in the [table above](#regressions-that-must-stay-fixed);
 - audio identical, or the change declared;
 - no unexplained performance regression over 10 %;
-- the soak passes;
+- the soak passes on the last candidate, or the [soak rule](#when-a-soak-is-needed) shows none is
+  needed (the final carries only the version change on top of a candidate that passed);
 - [clients.md](clients.md) states the versions and results of this release, and anything not run is
   stated as untested.
 
