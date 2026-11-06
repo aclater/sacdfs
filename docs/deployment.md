@@ -713,6 +713,11 @@ The container speaks only NFSv4 (`Protocols = 4`); NFSv3 can't be tried against 
   before its error, because the kernel asks again for the same data. Raise
   `SACDFS_REQUEST_TIMEOUT` if the images are on disks that spin down and take longer than
   30 s to wake.
+  **The other images are safe only for a while:** if clients keep retrying through a long hang,
+  each retry holds one more thread, and once 64 are held, reads of every image fail too until
+  the source answers. With 8 clients at the default timeout on 2 decoder threads, that took about
+  6 minutes ([#241](https://github.com/aclater/sacdfs/issues/241)). Lowering the timeout makes it
+  come sooner.
 - **`sacdfs did not mount within 300 s`**: sacdfs lists every image before it mounts, and a
   large library on a slow disk can take longer than the container waits. Raise
   `SACDFS_MOUNT_TIMEOUT` (seconds, 1 to 86400, default 300) and the health check's start
