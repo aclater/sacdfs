@@ -6,9 +6,9 @@
 //! attributes of a node made already) is answered there; everything that may read the
 //! source (lookups and listings, which open images, opens, reads) is moved with its reply to
 //! a pool of request threads, reads to one and metadata to another, so that a slow or
-//! stalled source never holds up the requests of the others (#63). Each moved request is
-//! watched: one that waits longer than the request timeout is failed with `EIO`
-//! ([`crate::watchdog`], #72).
+//! stalled source does not hold up the requests of the others (#63), until it has blocked
+//! every thread of a pool (#241). Each moved request is watched: one that waits longer than
+//! the request timeout is failed with `EIO` ([`crate::watchdog`], #72).
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -47,6 +47,11 @@ type Job = Box<dyn FnOnce() + Send>;
 /// few synchronous ones of its callers; past that, a request waits for a thread, and the
 /// watchdog fails it if it waits too long. Each thread costs a stack of address space,
 /// mostly untouched, and nothing while it is parked.
+///
+/// *The limit this sets (#241):* the watchdog replies `EIO` but can't free a thread blocked
+/// on the source, so a client retrying through a long hang takes one more thread each time,
+/// and the blocked reads needn't be simultaneous. At 64, reads of every image wait and fail
+/// until the source answers.
 pub const MAX_POOL_THREADS: usize = 64;
 
 /// A thread above a pool's core count that has had no job for this long ends.
@@ -73,7 +78,8 @@ fn update(n: &AtomicUsize, f: impl Fn(usize) -> Option<usize>) -> bool {
 /// share) is lost until the source answers, maybe for hours. A fixed pool would lose its
 /// threads one by one, and then every request, of any source, would queue behind them. A
 /// spare thread is started instead, so other requests keep being served; the bound keeps a
-/// hung source from making threads without end, and the watchdog fails what then waits.
+/// hung source from making threads without end, and the watchdog fails what then waits,
+/// healthy images' requests included (#241).
 ///
 /// Not a rayon pool: a rayon worker waiting for another pool (here, the DST decoders)
 /// runs other jobs of its own pool meanwhile, and a second read of the same file would

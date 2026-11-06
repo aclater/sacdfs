@@ -1102,9 +1102,10 @@ TOC is read through the handle kept for the audio reads (6 to 8 calls, as before
    cached (the PCM frame is what is served again).
 5. **Random reads.** A read of k frames that are not cached decodes k + 2 DSD frames (or
    fewer at the area's edges) and converts the k frames in parallel on the decoder pool.
-6. **Pipeline.** On a plain DSD area, one pool thread demultiplexes frames 16 at a time, and
-   each PCM frame is handed to the other pool threads as soon as its next neighbour is
-   demultiplexed. *Why:* there is no DST decoding there, so demultiplexing (serial) and
+6. **Pipeline.** On a plain DSD area, the request thread demultiplexes frames 16 at a time, and
+   each PCM frame is handed to the pool as soon as its next neighbour is
+   demultiplexed. (The request thread, not a pool thread, because demultiplexing reads the image:
+   see [A stalled source](#a-stalled-source-63-72).) *Why:* there is no DST decoding there, so demultiplexing (serial) and
    conversion (parallel) would otherwise take turns; overlapping them took a straight read of
    a plain DSD stereo area from 3.28 s to 2.90 s. Once the pipeline meets a DST frame, the rest
    of the range is demultiplexed and decoded in one parallel batch first. *Why:* decoding 16
@@ -1321,7 +1322,20 @@ everything:
   one, and then every request, of any image, queued behind them. *Why 64:* the kernel sends
   at most 64 background requests at once (`max_background`), plus the few synchronous ones
   of its callers; the bound keeps a hung share from making threads without end. A thread is
-  a stack of address space, mostly untouched, and costs nothing while parked.
+  a stack of address space, mostly untouched, and costs nothing while parked. *The limit:*
+  this delays the starvation of healthy images in a long hang, and doesn't prevent it. See
+  the last point of this list.
+- **No decoder thread reads the source.** The decoder pool is fixed and shared by every image, so
+  a thread lost to a stalled source is lost to all of them. DST decoding and PCM conversion run
+  there; audio reads of the image (the demultiplexing of both formats) run on the request
+  thread, which the pool above can spare until it reaches its limit, and TOC loads run on
+  `sacdfs-meta` and `sacdfs-toc`. *Why this matters more than the thread:* a
+  pool thread waiting for its own decoding runs other queued jobs meanwhile (work stealing), so
+  while WAV reads demultiplexed on the pool (until 0.4.1-rc.2), one could take up a read of the
+  stalled image on top of a healthy read, which then could not return until the source
+  answered, whatever the number of threads. A soak found it: 1 read of 320,656 on a healthy disc
+  failed with `EIO`, in the same second as a stall. *Trade-off:* a frame to convert reaches
+  the pool through its shared queue, not a worker's own (see [performance](performance.md#history)).
 - **The watchdog fails what waits too long** (`--request-timeout`, 30 s by default, 0 for
   none; `src/watchdog.rs`). Each request handed over has its reply in a slot that the
   request thread takes when done, and that one watchdog thread, checking a few times per
@@ -1346,6 +1360,17 @@ everything:
 - The root's `getattr` starts a sweep of the source for changes (#123). It does not wait for
   a sweep already running (held up by a stalled source, say): it answers with the times
   known, and the running sweep moves them when it is done.
+- **What a long hang can still do ([#241](https://github.com/aclater/sacdfs/issues/241)).** A
+  stalled image does not hold up other images for good only while the read pool has threads
+  left. The watchdog replies `EIO` but can't free the thread, which stays blocked until the
+  source answers, so each retry by a client takes one more. They needn't be simultaneous. At 64
+  threads, a read of any image waits for a thread and the watchdog fails it. Measured on 2
+  decoder threads, with clients looping `read()` on the stalled image: 8 WAV clients at the
+  default 30 s timeout reached 64 threads in 362 s, and a healthy DSF read then got no answer
+  in 10 s (2 of 2); 8 clients at a 2 s timeout took 26 s, in either format; 1 WAV client at 2 s
+  took 142 s. Healthy reads recovered at once when the source came back, and spare threads
+  ended at about one per 10 s. DSF reads have always had this limit; demultiplexing on the
+  request thread (#239) did not add it.
 
 **Not done, and why.** *A timeout on the source I/O itself:* a thread blocked in the kernel
 cannot be stopped from user space; only the request can be answered. *Moving the TOC loads
@@ -1361,7 +1386,7 @@ lost reply could make endless:
 |---|---|---|
 | A request job queued for a request thread (`mpsc` receive) | a free thread | the pool was fixed: threads blocked on the source starved every later request. Now it grows, and the watchdog bounds the wait |
 | A read waiting for its file's demultiplexer (`Reader::stream`), held by an earlier read or the file's read-ahead | that holder's decode, or its source I/O | bounded unless the holder blocks on the source; the waiter is now failed by the watchdog |
-| A read waiting for the DST pool (`ThreadPool::install` / `scope`) | the decode jobs, which always complete (a panic is carried back to the caller) | no lost wakeup: rayon sets the latch when the jobs end. The PCM path demultiplexes inside the pool, so a stalled source there holds a decoder thread too |
+| A read waiting for the DST pool (`ThreadPool::install` / `scope`) | the decode jobs, which always complete (a panic is carried back to the caller) | no lost wakeup: rayon sets the latch when the jobs end. This audit noted that the PCM path demultiplexed inside the pool, holding a decoder thread on a stalled source, and missed that a thread waiting in the pool can take up such a job on top of another read; the PCM path now demultiplexes on the request thread, so these jobs never wait for the source |
 | The frame cache, its slab pool, the open-image cache (`handles`) | short critical sections | none of them is held across source I/O or another wait (the image `stat` and `open` run outside the lock) |
 | Read-ahead | nothing waits for it, except through `Reader::stream` above | |
 | The kernel's own read of a page that a failed or abandoned read-ahead held | the request for it, which the watchdog bounds | |
