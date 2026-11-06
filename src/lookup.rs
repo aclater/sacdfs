@@ -336,7 +336,7 @@ fn physical_discs(media: &[Medium]) -> Vec<u16> {
 /// How well a medium's format suits an area: its SACD layer for these channels, then an SACD,
 /// then a layer of the other channels, then anything else (a CD, a CD layer, a download).
 fn format_rank(format: &str, multichannel: bool) -> u8 {
-    if !format.contains("SACD") || format.contains("CD layer") {
+    if !format.contains("SACD") || format.contains("(CD layer") {
         return 0;
     }
     if !format.contains("channel") {
@@ -1081,4 +1081,30 @@ pub fn plan(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_rank;
+
+    /// As MusicBrainz names them. "SACD layer" holds the words "CD layer": on real discs this made
+    /// every SACD layer rank as a CD, with a note saying so.
+    #[test]
+    fn a_format_ranks_by_its_layer() {
+        for (format, stereo, multichannel) in [
+            ("Hybrid SACD (SACD layer, 2 channels)", 3, 1),
+            ("Hybrid SACD (SACD layer, multichannel)", 1, 3),
+            ("SHM-SACD (2 channels)", 3, 1),
+            ("Hybrid SACD (SACD layer)", 2, 2),
+            ("Hybrid SACD", 2, 2),
+            ("SHM-SACD", 2, 2),
+            ("SACD", 2, 2),
+            ("Hybrid SACD (CD layer)", 0, 0),
+            ("CD", 0, 0),
+            ("Digital Media", 0, 0),
+        ] {
+            assert_eq!(format_rank(format, false), stereo, "{format}, stereo");
+            assert_eq!(format_rank(format, true), multichannel, "{format}, multichannel");
+        }
+    }
 }
