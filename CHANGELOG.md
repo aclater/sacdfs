@@ -21,6 +21,25 @@ All notable changes to sacdfs are recorded here. The format follows
   decoders go, past 93% new listings and opens fail with `ENOMEM`, while files already open go on.
 - File nodes are smaller, by about 4.4 KiB per image at about 25 files per image, for every library.
 
+## [0.4.1-rc.3] - 2026-11-06
+
+### Fixed
+
+- **A hung image's WAV reads no longer take decoder threads from other images (#238).** Reading a
+  track as WAV read the image on a thread of the decoder pool, which all images share. While one
+  image's source hung (a disk in error recovery, a hung share), its WAV reads held decoder threads
+  for the length of the hang. A read of a healthy disc could then wait until the request timeout and
+  fail with `EIO`; once the hung image's reads held every decoder thread, all DST and WAV reads on the
+  mount did. WAV reads now read the image on their request thread, as DSF reads do, and only decoding
+  and conversion use the pool. Present since 0.4.0 at least. A mount with `--format dsf` was not
+  affected by this. Audio bytes are unchanged.
+
+  **A long hang can still stop the whole mount (#241).** A read that has failed with `EIO` keeps its
+  request thread until the source answers, so clients that keep retrying on the hung image take one
+  more thread each time. Once 64 are blocked, reads of healthy images wait and fail too, in both
+  formats, until the source answers. With 8 clients retrying at the default 30 s timeout, that took
+  about 6 minutes on 2 decoder threads. Healthy reads recover at once when the source comes back.
+
 ## [0.4.1-rc.2] - 2026-11-06
 
 ### Added
@@ -657,7 +676,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.2...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.3...HEAD
+[0.4.1-rc.3]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.2...v0.4.1-rc.3
 [0.4.1-rc.2]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.1...v0.4.1-rc.2
 [0.4.1-rc.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1-rc.1
 [0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
