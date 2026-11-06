@@ -651,6 +651,15 @@ two arenas still held 79 to 85 MiB. Setting the limit before the walk brings mem
 [synthetic bench discs](deployment.md#memory) (the same builds differ by 2 MiB there): that
 library is much smaller and has few folders to walk.
 
+**Four players and a tagger** (the scenario of [concurrency](#concurrency-and-memory), 30 s, one
+DST stereo area, a fresh mount, 3 rounds on the quiet desktop; worst read and 99th percentile over
+the players' reads, medians of the rounds): DSF, worst 13.7 ms (0.4.0) against 10.4 ms (rc.1), p99
+0.1 ms on both, tagger's worst file 4.0 against 7.5 ms; WAV, worst 58.1 against 52.5 ms, p99 0.2
+against 0.1 ms, tagger 5.4 against 4.5 ms; peak memory 48 and 72 MiB against 48 and 71 MiB. The
+WAV worst reads are just over the 50 ms target on both builds (one 0.4.0 round reached 214 ms).
+On the shared host (5 rounds) the DSF worst read was 23.3 ms and 27.9 ms and the WAV worst read
+116.8 and 97.6 ms, with the same p99 on both builds.
+
 **Other rc.1 measurements on the same host:**
 
 - *MPD first scan with `dsf,wav`*, 9 alternating pairs on a quiet host: 0.4.0 5.67 to 5.98 s,
