@@ -16,8 +16,8 @@ All notable changes to sacdfs are recorded here. The format follows
   writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
   own text stays. Nothing goes on the network unless you run this command: a mount never does. It
   sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
-  (docs/user-guide.md, "From MusicBrainz"). Not yet tested on real discs against their own
-  releases: its live test used stand-in images with the barcodes and durations of public releases.
+  (docs/user-guide.md, "From MusicBrainz"). Run on 9 real discs by barcode or catalogue number: 7
+  matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
 
 ### Changed
 
