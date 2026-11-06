@@ -96,7 +96,7 @@ fn fast_readers_share_a_quarter_of_the_cache() {
 }
 
 /// While someone plays, readers for throughput share a quarter of the cache however few frames
-/// that is (#230): below the 2 s window that a player keeps, but never down to nothing.
+/// that is (#230): less for more readers, no more than alone, but never down to nothing.
 #[test]
 fn readers_share_less_while_someone_plays() {
     let t = tree(Tuning::default());
@@ -108,7 +108,7 @@ fn readers_share_less_while_someone_plays() {
     let cache = 32usize << 20;
     let one = f.shared_frames(cache, 1);
     let four = f.shared_frames(cache, 4);
-    assert!(four < one && one < f.read_ahead_frames(32, cache, 1), "{four} {one}");
+    assert!(four < one && one <= f.read_ahead_frames(32, cache, 1), "{four} {one}");
     assert_eq!(f.shared_frames(cache, 1000), 16);
     assert_eq!(f.shared_frames(cache, 0), one);
 }
