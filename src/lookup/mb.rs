@@ -25,8 +25,14 @@ const RELEASE_INC: &str = "artist-credits+labels+recordings+release-groups+isrcs
 const ATTEMPTS: u32 = 5;
 /// Wait before the second try; it doubles after that.
 const BACKOFF: Duration = Duration::from_secs(2);
-/// Longest wait a server's `Retry-After` is obeyed for.
-const MAX_RETRY_AFTER: u64 = 60;
+/// Longest `Retry-After` waited out. Asked to wait longer, a run ends instead of asking early.
+const MAX_RETRY_AFTER: u64 = 3600;
+/// Least wait after a 429, which says this client went over the rate: a short retry would too.
+const RATE_LIMITED_WAIT: Duration = Duration::from_secs(60);
+/// A wait this long is said on standard error, so that a run doesn't look hung.
+const SAY_WAIT: Duration = Duration::from_secs(30);
+/// The wait before the next disc after the first without an answer. It doubles for each after that.
+const COOL_OFF: Duration = Duration::from_secs(60);
 /// Most candidates read per search.
 const SEARCH_LIMIT: usize = 25;
 
@@ -110,6 +116,23 @@ pub enum Error {
     NotFound,
     /// No usable answer, after the retries.
     Failed(String),
+    /// The service said to stay away: no further request belongs in this run.
+    Stop(String),
+}
+
+/// What to do after an answer of 429 or 5xx on try number `attempt`, from 0: the wait before the
+/// next try, or `None` if the service asks for more than a run should wait, so that it ends rather
+/// than asks early. *Why a floor for a 429:* the service counts every request, and the growing waits
+/// start at seconds.
+pub fn wait_after(status: u16, retry_after: Option<u64>, attempt: u32, backoff: Duration) -> Option<Duration> {
+    if retry_after.is_some_and(|s| s > MAX_RETRY_AFTER) {
+        return None;
+    }
+    let mut wait = backoff.saturating_mul(1 << attempt);
+    if status == 429 && !backoff.is_zero() {
+        wait = wait.max(RATE_LIMITED_WAIT);
+    }
+    Some(wait.max(Duration::from_secs(retry_after.unwrap_or(0))))
 }
 
 /// A client of the service, paced.
@@ -118,6 +141,7 @@ pub struct Client<T> {
     transport: T,
     interval: Duration,
     backoff: Duration,
+    cool_off: Duration,
     last: Option<Instant>,
     requests: usize,
     cache: HashMap<String, Value>,
@@ -131,7 +155,8 @@ impl<T: Transport> Client<T> {
 
     /// A client with other waits, for tests.
     pub fn paced(transport: T, interval: Duration, backoff: Duration) -> Client<T> {
-        Client { transport, interval, backoff, last: None, requests: 0, cache: HashMap::new() }
+        let cool_off = if backoff.is_zero() { Duration::ZERO } else { COOL_OFF };
+        Client { transport, interval, backoff, cool_off, last: None, requests: 0, cache: HashMap::new() }
     }
 
     /// The requests made so far, retries included.
@@ -142,6 +167,11 @@ impl<T: Transport> Client<T> {
     /// Forgets the answers kept for the current disc: they are only for its two areas.
     pub fn next_disc(&mut self) {
         self.cache.clear();
+    }
+
+    /// The wait before the next disc after `failed` discs in a row without an answer.
+    pub fn cool_off(&self, failed: usize) -> Duration {
+        self.cool_off.saturating_mul(1 << failed.saturating_sub(1).min(16))
     }
 
     /// The transport, for tests.
@@ -166,6 +196,9 @@ impl<T: Transport> Client<T> {
             self.pace();
             let mut wait = self.backoff.saturating_mul(1 << attempt);
             match self.transport.get(url) {
+                Ok(r) if r.status == 403 => {
+                    return Err(Error::Stop("HTTP 403: the service refuses this client".to_owned()));
+                }
                 Ok(r) if r.status == 404 => return Err(Error::NotFound),
                 Ok(r) if r.status == 200 => {
                     let v: Value = serde_json::from_slice(&r.body)
@@ -179,14 +212,20 @@ impl<T: Transport> Client<T> {
                 // Busy, or over the rate: as the service asks, back off.
                 Ok(r) if r.status == 429 || r.status >= 500 => {
                     problem = format!("HTTP {}", r.status);
-                    if let Some(s) = r.retry_after {
-                        wait = wait.max(Duration::from_secs(s.min(MAX_RETRY_AFTER)));
-                    }
+                    wait = wait_after(r.status, r.retry_after, attempt, self.backoff).ok_or_else(|| {
+                        Error::Stop(format!(
+                            "{problem}: the service asks to wait {} s; run this again after that",
+                            r.retry_after.unwrap_or(0)
+                        ))
+                    })?;
                 }
                 Ok(r) => return Err(Error::Failed(format!("HTTP {}", r.status))),
                 Err(e) => problem = e,
             }
             if attempt + 1 < ATTEMPTS {
+                if wait >= SAY_WAIT {
+                    eprintln!("MusicBrainz: {problem}: waiting {} s", wait.as_secs());
+                }
                 thread::sleep(wait);
             }
         }
@@ -484,6 +523,44 @@ mod tests {
         for w in at.windows(2) {
             assert!(w[1] - w[0] >= Duration::from_millis(40), "{:?}", w[1] - w[0]);
         }
+    }
+
+    #[test]
+    fn the_wait_after_a_busy_answer_honours_the_service() {
+        let b = Duration::from_secs(2);
+        let w = |status, after, attempt| wait_after(status, after, attempt, b);
+        // Busy, with nothing asked or a Retry-After of 0, as the service answers: growing waits.
+        assert_eq!(w(503, None, 0), Some(Duration::from_secs(2)));
+        assert_eq!(w(503, Some(0), 3), Some(Duration::from_secs(16)));
+        // What it asks for, in full: never cut short, and never less than the growing wait.
+        assert_eq!(w(503, Some(300), 0), Some(Duration::from_secs(300)));
+        assert_eq!(w(503, Some(1), 2), Some(Duration::from_secs(8)));
+        assert_eq!(w(429, Some(3600), 0), Some(Duration::from_secs(3600)));
+        // Over the rate: a floor, since a short retry would be too.
+        assert_eq!(w(429, None, 0), Some(RATE_LIMITED_WAIT));
+        // More than a run should wait: it ends, rather than asking early.
+        assert_eq!(w(503, Some(3601), 0), None);
+        assert_eq!(w(429, Some(86400), 0), None);
+    }
+
+    #[test]
+    fn being_told_to_stay_away_stops_at_once() {
+        let mut long = reply(429, "{}").unwrap();
+        long.retry_after = Some(7200);
+        let mut c = client(vec![Ok(long)], 0);
+        assert!(matches!(c.by_barcode("1"), Err(Error::Stop(e)) if e.contains("7200")));
+        assert_eq!(c.requests(), 1);
+        let mut c = client(vec![reply(403, "{}")], 0);
+        assert!(matches!(c.by_barcode("1"), Err(Error::Stop(_))));
+        assert_eq!(c.requests(), 1);
+    }
+
+    #[test]
+    fn a_disc_without_an_answer_is_followed_by_longer_waits() {
+        let c = Client::new(Http::new());
+        assert_eq!(c.cool_off(1), COOL_OFF);
+        assert_eq!(c.cool_off(2), COOL_OFF * 2);
+        assert_eq!(c.cool_off(4), COOL_OFF * 8);
     }
 
     #[test]

@@ -1819,9 +1819,17 @@ fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or sched
   an album and artist from the path, and `import` keeps them on purpose (above), so a later fetch sees
   an edit and leaves them. *Why left:* that rule protects text from a renamed folder, and telling
   the two apart needs a path that may have changed.
+- **A busy service.** *Why it needs care:* on real discs the service answered 503 "currently busy",
+  with a `Retry-After` of 0, about once in 20 requests of an evening, so a large library meets it
+  in every run. `Retry-After` is obeyed in full up to an hour (it was cut to 60 s, which asked early); a
+  429 waits at least 60 s. A disc with no answer is followed by a wait of 1, 2, 4 and 8 minutes and
+  is asked about again at the end of the run; 5 in a row end it, about a quarter of an hour of outage.
+  A 403 or a request to wait over an hour ends the run at once. *Alternatives:* waiting without
+  limit (an unattended run could sit for days); 3 in a row and no second try (about 90 s of outage lost the
+  batch). *Trade-off:* a run in an outage takes longer to say so.
 - **The client.** HTTPS only, no redirects, one fixed host, 8 MiB per response, 60 s per request,
   5 tries with growing waits on 429 and 5xx. Every try starts at least 1.1 s after the last, as in
-  pysacd; the limit is per process. A run stops after 3 images in a row without an answer. Search
+  pysacd; the limit is per process. Search
   results list track counts, so a release that can't fit isn't read: a popular album's name search
   would otherwise cost 25 requests. Responses are hostile input: control characters, overlong text,
   placeholders and malformed ids are dropped, and an id reaches a URL only if it is a UUID. The

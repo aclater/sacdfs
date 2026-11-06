@@ -381,9 +381,15 @@ an ambiguity ends the lookup:
   `--no-multichannel-album-suffix` on your mount, pass the same option here.
 - **Once per disc:** a disc whose tags hold a release group ID isn't asked about again, even if one
   of its areas didn't fit. Remove that line to ask again.
-- **Rate:** at most 1 request per second, with retries at longer waits when the service is busy, so a
-  disc takes a few seconds and a popular album's name search up to about half a minute. After
-  3 images in a row without an answer it stops. Run one at a time: two at once would exceed the rate.
+- **Rate:** at most 1 request per second, so a disc takes a few seconds and a popular album's name
+  search up to about half a minute. Run one at a time: two at once would exceed the rate.
+- **When the service is busy:** MusicBrainz answers 503 now and then (about 1 request in 20 on the
+  evening it was first run on real discs). Each request gets 5 tries, at growing waits, or as long
+  as a `Retry-After` asks, up to an hour. A disc that gets no answer waits for the next one (1
+  minute, then 2, 4 and 8), and gets a second try at the end of the run. 5 discs in a row without an
+  answer end the run, and so does a 403, or a request to wait over an hour. Running it again asks
+  nothing about the discs already matched. The retries were tested with recorded answers, not with a
+  real outage.
   The User-Agent names sacdfs and its project URL, with nothing about you; MusicBrainz also sees your
   IP address, as any site does.
 

@@ -750,6 +750,82 @@ fn a_refusal_writes_nothing_and_an_unusable_tags_file_stops_it_before_asking() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "[albm]\nnot = 'a tags file'\n", "left as it is");
 }
 
+/// Answers with `bad` for the first requests, then as `inner` does.
+#[derive(Debug)]
+struct Busy {
+    bad: Vec<Reply>,
+    inner: Recorded,
+    asked: usize,
+}
+
+impl Transport for Busy {
+    fn get(&mut self, url: &str) -> Result<Reply, String> {
+        self.asked += 1;
+        if self.bad.is_empty() { self.inner.get(url) } else { Ok(self.bad.remove(0)) }
+    }
+}
+
+fn busy() -> Reply {
+    Reply { status: 503, body: b"{\"error\": \"busy\"}".to_vec(), retry_after: Some(0) }
+}
+
+/// A 503 now and then is what a large library meets: the run carries on and loses no disc.
+#[test]
+fn a_busy_service_costs_a_retry_not_the_batch() {
+    let d = tempfile::tempdir().unwrap();
+    let image = corpus_image("no-text");
+    let formats = [("Hybrid SACD", Slot::TwoChannel)];
+    // Two tries of a request fail: the disc still gets its answer.
+    let t = Busy { bad: vec![busy(), busy()], inner: answers(&image, &formats), asked: 0 };
+    let mut c = Client::paced(t, Duration::ZERO, Duration::ZERO);
+    let mut lines = Vec::new();
+    let s = lookup::fetch(d.path(), &[image.clone()], Options::default(), &mut c, |l| lines.push(l));
+    assert_eq!((s.matched, s.failed), (1, 0), "{lines:?}");
+    assert!(c.transport().asked > 2);
+}
+
+/// A disc whose every try failed is asked about again at the end, and the images after it go on.
+#[test]
+fn a_disc_without_an_answer_gets_a_second_try_at_the_end() {
+    let d = tempfile::tempdir().unwrap();
+    let image = corpus_image("no-text");
+    let formats = [("Hybrid SACD", Slot::TwoChannel)];
+    let t = Busy { bad: (0..5).map(|_| busy()).collect(), inner: answers(&image, &formats), asked: 0 };
+    let mut c = Client::paced(t, Duration::ZERO, Duration::ZERO);
+    let mut lines = Vec::new();
+    let images = vec![image.clone(); 2];
+    let s = lookup::fetch(d.path(), &images, Options::default(), &mut c, |l| lines.push(l));
+    assert_eq!((s.matched, s.done, s.failed, s.not_tried), (1, 1, 0, 0), "{lines:?}");
+    assert!(s.all_handled(), "{lines:?}");
+    assert!(lines.iter().any(|l| l.contains("trying them once more")), "{lines:?}");
+
+    // Still nothing on the second try: it counts as failed, once.
+    let d = tempfile::tempdir().unwrap();
+    let t = Busy { bad: (0..10).map(|_| busy()).collect(), inner: Recorded::default(), asked: 0 };
+    let mut c = Client::paced(t, Duration::ZERO, Duration::ZERO);
+    let s = lookup::fetch(d.path(), &[image], Options::default(), &mut c, |_| {});
+    assert_eq!((s.failed, s.not_tried, s.requests), (1, 0, 10));
+}
+
+/// Told to stay away, a run asks nothing more: not the next try, not the next disc.
+#[test]
+fn being_told_to_stay_away_ends_the_run_at_once() {
+    let image = corpus_image("no-text");
+    for bad in [
+        Reply { status: 429, body: b"{}".to_vec(), retry_after: Some(7200) },
+        Reply { status: 503, body: b"{}".to_vec(), retry_after: Some(7200) },
+        Reply { status: 403, body: b"{}".to_vec(), retry_after: None },
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        let t = Busy { bad: vec![bad], inner: Recorded::default(), asked: 0 };
+        let mut c = Client::paced(t, Duration::ZERO, Duration::ZERO);
+        let mut lines = Vec::new();
+        let s = lookup::fetch(d.path(), &vec![image.clone(); 4], Options::default(), &mut c, |l| lines.push(l));
+        assert_eq!((s.failed, s.not_tried), (1, 3), "{lines:?}");
+        assert_eq!(c.transport().asked, 1, "{lines:?}");
+    }
+}
+
 #[test]
 fn failures_in_a_row_end_the_run() {
     #[derive(Debug, Default)]
@@ -762,14 +838,14 @@ fn failures_in_a_row_end_the_run() {
     }
     let d = tempfile::tempdir().unwrap();
     let image = corpus_image("no-text");
-    let images = vec![image; 5];
+    let images = vec![image; 7];
     let mut c = Client::paced(Down::default(), Duration::ZERO, Duration::ZERO);
     let mut lines = Vec::new();
     let s = lookup::fetch(d.path(), &images, Options::default(), &mut c, |l| lines.push(l));
-    assert_eq!((s.failed, s.not_tried), (3, 2), "{lines:?}");
+    assert_eq!((s.failed, s.not_tried), (5, 2), "{lines:?}");
     assert!(!s.all_handled());
     assert!(s.render().contains("not tried"), "{}", s.render());
-    assert_eq!(c.transport().0, 15, "3 images, 5 tries of the first request of each");
+    assert_eq!(c.transport().0, 25, "5 images, 5 tries of the first request of each");
     assert_eq!(fs::read_dir(d.path()).unwrap().count(), 0);
     assert!(lines[0].contains("connection refused"), "{lines:?}");
 }

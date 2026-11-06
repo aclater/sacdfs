@@ -43,6 +43,9 @@ tracks. These are what was seen, not a prediction for yours.
   import stored.
 - **The binary is about 3 MB larger** (7.2 to 10.2 MB in a release build on x86-64): it now holds an
   HTTPS client with its own root certificates (ureq, rustls), used only by `sacdfs tags fetch`.
+- **`sacdfs tags fetch` on a busy service.** It obeys `Retry-After` in full, up to an hour, waits
+  longer between discs that get no answer, tries those again at the end of the run, and ends at once
+  on a 403 or a request to wait longer than an hour.
 
 ## [0.4.1-rc.1] - 2026-11-05
 

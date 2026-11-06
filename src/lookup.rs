@@ -43,8 +43,9 @@ pub const ALBUM_ID: &str = "TXXX:MusicBrainz Album Id";
 pub const GROUP_ID: &str = "TXXX:MusicBrainz Release Group Id";
 /// The key of a recording's id.
 pub const RECORDING_ID: &str = "UFID:http://musicbrainz.org";
-/// How many runs of network failures in a row end a run.
-const MAX_FAILED_IN_A_ROW: usize = 3;
+/// How many discs without an answer in a row end a run. With the waits between them
+/// ([`Client::cool_off`]: 1, 2, 4 and 8 minutes) that is a quarter of an hour of an outage.
+const MAX_FAILED_IN_A_ROW: usize = 5;
 
 /// How tightly durations must fit, in seconds.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -640,17 +641,47 @@ pub fn fetch<T: Transport>(
 ) -> Summary {
     let mut sum = Summary::default();
     let mut failed_in_a_row = 0;
-    for (i, image) in images.iter().enumerate() {
-        if failed_in_a_row >= MAX_FAILED_IN_A_ROW {
-            sum.not_tried = images.len() - i;
+    // Discs without an answer get a second try at the end of the run: a large library meets a
+    // busy service sooner or later, and one disc's bad moment shouldn't need a second run.
+    let mut again: Vec<&PathBuf> = Vec::new();
+    let mut retrying = false;
+    let mut queue: Vec<&PathBuf> = images.iter().collect();
+    let mut i = 0;
+    let mut stopped = false;
+    loop {
+        if !stopped && i == queue.len() && !retrying && !again.is_empty() {
+            say(format!("{} images without an answer: trying them once more", again.len()));
+            queue = std::mem::take(&mut again);
+            i = 0;
+            retrying = true;
+            failed_in_a_row = 0;
+        }
+        let Some(image) = queue.get(i).copied() else { break };
+        if stopped || failed_in_a_row >= MAX_FAILED_IN_A_ROW {
+            sum.not_tried = queue.len() - i;
             break;
         }
+        i += 1;
         client.next_disc();
         match fetch_one(dir, image, options, client, &mut say, &mut sum) {
             Ok(()) => failed_in_a_row = 0,
             Err(Failure::Network(e)) => {
                 failed_in_a_row += 1;
+                say(format!("{}: nothing written: {e}", image.display()));
+                if retrying {
+                    sum.failed += 1;
+                } else {
+                    again.push(image);
+                }
+                let wait = client.cool_off(failed_in_a_row);
+                if failed_in_a_row < MAX_FAILED_IN_A_ROW && !wait.is_zero() {
+                    say(format!("waiting {} s before the next image", wait.as_secs()));
+                    std::thread::sleep(wait);
+                }
+            }
+            Err(Failure::Stop(e)) => {
                 sum.failed += 1;
+                stopped = true;
                 say(format!("{}: nothing written: {e}", image.display()));
             }
             Err(Failure::Local(e)) => {
@@ -659,6 +690,8 @@ pub fn fetch<T: Transport>(
             }
         }
     }
+    // Those a run ended before asking again.
+    sum.failed += again.len();
     sum.requests = client.requests();
     sum
 }
@@ -671,6 +704,8 @@ pub type Outcomes = (Vec<Option<Match>>, Vec<Option<String>>);
 pub enum Failure {
     /// No usable answer: others may fail the same way.
     Network(String),
+    /// The service said to stay away: nothing more is asked in this run.
+    Stop(String),
     /// This image or its tags file.
     Local(String),
 }
@@ -813,7 +848,8 @@ pub fn look_up<T: Transport>(
                     why.push(None);
                     continue;
                 }
-                Err(e) => return Err(Failure::Network(e)),
+                Err(HitsError::Network(e)) => return Err(Failure::Network(e)),
+                Err(HitsError::Stop(e)) => return Err(Failure::Stop(e)),
             };
             let mut cands = Vec::new();
             if hits.is_empty() {
@@ -836,6 +872,7 @@ pub fn look_up<T: Transport>(
                             Ok(r) => Some(r),
                             Err(Error::NotFound) => None,
                             Err(Error::Failed(e)) => return Err(Failure::Network(e)),
+                            Err(Error::Stop(e)) => return Err(Failure::Stop(e)),
                         };
                         releases.insert(id.clone(), r.clone());
                         r
@@ -903,16 +940,23 @@ pub fn look_up<T: Transport>(
     Ok(((0..areas.len()).map(|_| None).collect(), why))
 }
 
+/// Why a step's search gave nothing to go on.
+enum HitsError {
+    Network(String),
+    Stop(String),
+}
+
 /// The releases a step finds for `area`. Inside: `Err` if the step has nothing to ask, and why.
 fn hits_for<T: Transport>(
     step: Step,
     facts: &DiscFacts,
     area: &AreaFacts,
     client: &mut Client<T>,
-) -> Result<Result<Vec<Hit>, String>, String> {
+) -> Result<Result<Vec<Hit>, String>, HitsError> {
     let net = |e: Error| match e {
-        Error::NotFound => "not found".to_owned(),
-        Error::Failed(e) => format!("MusicBrainz: {e}"),
+        Error::NotFound => HitsError::Network("not found".to_owned()),
+        Error::Failed(e) => HitsError::Network(format!("MusicBrainz: {e}")),
+        Error::Stop(e) => HitsError::Stop(format!("MusicBrainz: {e}")),
     };
     match step {
         Step::Number => {
