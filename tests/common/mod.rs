@@ -2,14 +2,67 @@
 
 //! Helpers shared by the integration tests: the corpus manifest and DSF decoding.
 
-#![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(dead_code, unused_macros, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+/// The reason [`skip_without_fuse!`] gives.
+pub const NO_FUSE: &str = "no /dev/fuse or fusermount3";
+
+/// Whether the FUSE tests can run here. `SACDFS_FUSE_TESTS=1`, as CI sets, makes a missing FUSE
+/// fail instead of skip.
+pub fn fuse_available() -> bool {
+    let ok = Path::new("/dev/fuse").exists()
+        && Command::new("fusermount3").arg("-V").output().is_ok_and(|o| o.status.success());
+    if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
+        panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
+    }
+    ok
+}
+
+/// Prints a test's skip in the form `scripts/check_skips.py` reads (#207). It goes to stderr
+/// directly because libtest's capture takes only what the print macros write: a skip shows in
+/// every run, and in CI's job summary, although libtest calls the test `ok`.
+pub fn report_skip(test: &str, reason: &str) {
+    std::io::stderr().write_all(format!("SKIPPED {test}: {reason}\n").as_bytes()).unwrap();
+}
+
+/// The enclosing test as `binary::function`. Not the thread's name: with `--test-threads=1`, as
+/// `scripts/leak-check.sh` runs them, a test runs on the main thread.
+macro_rules! test_name {
+    () => {{
+        fn f() {}
+        let name = std::any::type_name_of_val(&f);
+        name.strip_suffix("::f").unwrap_or(name)
+    }};
+}
+
+/// Skips the enclosing test: reports it, and returns. Every guard goes through this, and a skip
+/// that CI's jobs may have is listed in `tests/expected-skips.json`.
+macro_rules! skip {
+    ($reason:expr) => {{
+        $crate::common::report_skip($crate::common::test_name!(), $reason);
+        return;
+    }};
+}
+
+/// Skips the enclosing test if FUSE is missing, or fails it under `SACDFS_FUSE_TESTS=1`.
+macro_rules! skip_without_fuse {
+    () => {
+        if !$crate::common::fuse_available() {
+            $crate::common::skip!($crate::common::NO_FUSE);
+        }
+    };
+}
+
+#[allow(unused_imports)] // not every test file uses each of them
+pub(crate) use {skip, skip_without_fuse, test_name};
 
 /// Unmounts the FUSE mount at `mountpoint` with `fusermount3 -u`, retrying for up to
 /// 20 s. Right after files on the mount are closed, the kernel can hold it busy for a

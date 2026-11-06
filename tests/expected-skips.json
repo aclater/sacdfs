@@ -1,0 +1,33 @@
+{
+  "jobs": ["tests", "tests-arm64", "coverage", "nfs"],
+  "skips": [
+    {
+      "why": "open_by_handle_at needs CAP_DAC_READ_SEARCH, and these jobs run as a normal user. Each test checks what comes before the handles (mounting, the numbers across --flatten) and returns there. The `nfs export` job runs them as root with SACDFS_EXPORT_TESTS=1, where a missing capability fails.",
+      "reason": "open_by_handle_at needs CAP_DAC_READ_SEARCH: run as root with SACDFS_EXPORT_TESTS=1",
+      "jobs": ["tests", "tests-arm64", "coverage"],
+      "tests": [
+        "export::directory_handles_survive_a_restart",
+        "export::file_handles_survive_a_restart",
+        "export::sidecar_handles_survive_a_restart"
+      ]
+    },
+    {
+      "why": "Needs real disc images, which no CI job has: test images in the repository are synthetic. Run by hand on local discs.",
+      "reason": "needs real disc images: set SACDFS_REAL_IMAGES",
+      "jobs": ["tests", "tests-arm64", "coverage"],
+      "tests": [
+        "dsf_header::real_discs_head_reads",
+        "library_index::real_discs",
+        "wav::real_discs"
+      ]
+    },
+    {
+      "why": "Writes a file of 4.6 GB for checking with other programs by hand; it asserts only the file's size. Which files use RF64 is tested by wav::tests::rf64_only_past_4_gib.",
+      "reason": "writes a 4.6 GB sparse file: set SACDFS_RF64_OUT",
+      "jobs": ["tests", "tests-arm64", "coverage"],
+      "tests": [
+        "wav::rf64_file"
+      ]
+    }
+  ]
+}

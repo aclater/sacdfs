@@ -6,6 +6,25 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1-rc.3] - 2026-11-06
+
+### Fixed
+
+- **A hung image's WAV reads no longer take decoder threads from other images (#238).** Reading a
+  track as WAV read the image on a thread of the decoder pool, which all images share. While one
+  image's source hung (a disk in error recovery, a hung share), its WAV reads held decoder threads
+  for the length of the hang. A read of a healthy disc could then wait until the request timeout and
+  fail with `EIO`; once the hung image's reads held every decoder thread, all DST and WAV reads on the
+  mount did. WAV reads now read the image on their request thread, as DSF reads do, and only decoding
+  and conversion use the pool. Present since 0.4.0 at least. A mount with `--format dsf` was not
+  affected by this. Audio bytes are unchanged.
+
+  **A long hang can still stop the whole mount (#241).** A read that has failed with `EIO` keeps its
+  request thread until the source answers, so clients that keep retrying on the hung image take one
+  more thread each time. Once 64 are blocked, reads of healthy images wait and fail too, in both
+  formats, until the source answers. With 8 clients retrying at the default 30 s timeout, that took
+  about 6 minutes on 2 decoder threads. Healthy reads recover at once when the source comes back.
+
 ## [0.4.1-rc.2] - 2026-11-06
 
 ### Added
@@ -32,6 +51,20 @@ All notable changes to sacdfs are recorded here. The format follows
   arena limit (#73) was set, and each thread kept an arena. The limit now comes first. The mount
   stays several times faster than 0.4.0's.
 
+- **The weekly leak workflow is fixed (a broken check, no leak found).** It had failed on
+  every job. The memcheck job flagged a once-per-process, 55-byte mount that `serve` keeps on
+  purpose (its suppression matched the legacy `_ZN...` symbol names and stopped matching with
+  Rust 1.99's v0 names), an uninitialised read inside the `nix` crate that fuser calls once
+  per mount, and the system tools the tests start (uutils `mkfifo`, `ls`, `df`). The soak job
+  could not mount: `fusermount3` was refused ("Permission denied") in its work directory
+  under `/var/tmp` on the Ubuntu runner (probably its AppArmor profile; not checked). The
+  soak now mounts under the runner's home, where it works (a 20-minute run passes), and `scripts/soak.py` prints
+  sacdfs's stderr when the mount fails.
+- **The soak no longer ignores read errors.** `scripts/soak.py` counted every failed read as
+  "expected" and the verdict never looked at it (8% of the reads in one run). It now sorts
+  them by path and errno into the ones its churner and staller cause and everything else, and
+  fails on any other. See `docs/development.md`.
+
 ### Upgrade notes
 
 What a scanner may see after the move from 0.4.0 to 0.4.1, with counts from one library of 4,902
@@ -44,6 +77,12 @@ tracks. These are what was seen, not a prediction for yours.
   show.
 - **A scanner's one-time cost can be large.** Plex re-read 18.25 GiB once, over 140 s, after the
   upgrade; a no-change scan after that read nothing.
+
+### Continuous integration
+
+- Skipped tests now show (#207). A guard that returned early reported as a pass; guards now print
+  a `SKIPPED` line, and the test jobs count skips in their summary and fail if they differ from
+  `tests/expected-skips.json` (`scripts/check_skips.py`, see docs/development.md).
 
 ## [0.4.1-rc.1] - 2026-11-05
 
@@ -622,7 +661,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.2...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.3...HEAD
+[0.4.1-rc.3]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.2...v0.4.1-rc.3
 [0.4.1-rc.2]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.1...v0.4.1-rc.2
 [0.4.1-rc.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1-rc.1
 [0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
