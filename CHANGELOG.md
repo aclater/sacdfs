@@ -11,7 +11,8 @@ All notable changes to sacdfs are recorded here. The format follows
 - **A memory limit no longer gets sacdfs killed while listing (#237, #231).** Under a cgroup limit, what
   listed images hold is kept to a budget (`--listing-mb`, `SACDFS_LISTING_MB`, default 3/8 of the
   limit): images not used lately are dropped and read again when next used, with the same names, inode
-  numbers, sizes, times and bytes. CHANGELOG-NUMBERS
+  numbers, sizes, times and bytes. 5,000 and 20,000 images now list at 256 MiB, where 0.4.0 and 0.4.1-rc.2
+  were killed. A second pass over a library past its budget takes longer, as TOCs are read again.
 - **Defaults follow the limit.** Under a limit below 512 MiB the cache defaults to 16 MiB, and decoder
   threads to at most one per 64 MiB of the limit (at least 2). The container no longer sets
   `SACDFS_CACHE_MB` by itself. With no limit, nothing changes.

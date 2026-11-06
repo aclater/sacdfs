@@ -29,9 +29,9 @@ pub const SMALL_LIMIT: u64 = 512 * MIB;
 const LIMIT_PER_THREAD: u64 = 64 * MIB;
 
 /// The share of the limit kept for what listed images hold, in eighths. *Why three:* at 256 MiB,
-/// 96 MiB keeps about 2,100 images listed, the size that already fitted there, whose second pass
-/// over the library would otherwise read every TOC again (4.5 times slower with a quarter, at 1,600
-/// images). What it leaves is for the rest of the process and for Samba and NFS when they share the
+/// 96 MiB keeps about 1,800 images listed, close to the size that already fitted there, whose second
+/// pass over the library would otherwise read every TOC again (4.5 times slower with a quarter, at
+/// 1,600 images). What it leaves is for the rest of the process and for Samba and NFS when they share the
 /// limit; if they take more, the memory watch shrinks listings.
 const LISTING_EIGHTHS: u64 = 3;
 

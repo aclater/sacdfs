@@ -300,11 +300,37 @@ A client that gets `ENOMEM` can try again; it isn't told that anything is missin
 isn't remembered once memory is back. This is the last step before an out-of-memory kill, which
 would end the service for every client.
 
-**What was measured.** MEASURED-TABLE
+**What was measured.** sacdfs mounted directly under a memory limit, with its client in the same
+limit, listing and stating every file while a paced reader played a 6-channel WAV. Synthetic
+libraries of links to real discs, about 25 files per image; single runs on a 20-thread machine that
+was busy with other work, so the times only show scale. Peak is sacdfs's anonymous memory.
+
+| Limit | Images | 0.4.0 | 0.4.1-rc.2 | With the budget |
+|---:|---:|---|---|---|
+| 256 MiB | 1,600 | 128 MiB | 125 MiB | 101 MiB |
+| 256 MiB | 5,000 | killed after about 91,000 of 123,974 files | killed after about 90,000 | 126 MiB |
+| 256 MiB | 20,000 | killed after about 83,000 of 495,874 files | killed after about 80,000 | 177 MiB |
+| 512 MiB | 5,000 | 310 MiB | 314 MiB | 228 MiB |
+
+The player had no late read in any of these, and nothing was refused. Restarting and listing 5,000
+images at 256 MiB, with the seek index kept between runs, was killed 4 times out of 4 on 0.4.1-rc.2,
+and worked 3 times out of 3 here.
+
+Over a library past its budget, a second pass reads TOCs again, so it takes longer: at 5,000 images
+and 512 MiB, 24 s against 17 s on 0.4.1-rc.2. Those TOCs were in the page cache. On a slow disk with
+nothing cached a second pass could take about as long as the first; that hasn't been measured. A
+library that fits its budget isn't affected: at 1,600 images and 256 MiB, second passes took 5 to 6
+s, and 5 s on 0.4.1-rc.2, measured side by side.
+
+**Lower limits.** With 5,000 images, listing worked at 128 and 96 MiB. At 64 MiB, one run in three
+was killed; the startup warning says this can happen at that size. Pressure from something else in the limit also
+works as described: with another process holding 205 MiB of a 256 MiB limit, new listings failed with
+`ENOMEM`, sacdfs and the player carried on, and once that process ended every file listed again.
+Not tested: the memory watch under Samba and NFS clients at once, or `--tags`.
 
 ### Small NAS: sizing
 
-What a small NAS needs for the container, measured on 0.4.1-rc.1 (single runs). The container
+What a small NAS needs for the container, measured on 0.4.1-rc.1 (single runs), before listings had a budget; the container runs of the budget are in [Under a memory limit](#under-a-memory-limit), and CPU limits weren't re-run for it. The container
 was limited to 2 or 4 CPUs of an Intel N100-class chip (Gracemont E-cores at about 2.6 GHz) and
 to the memory below; SMB was over loopback, and the library was on network-attached disks. The
 figures are container limits, not whole-box RAM: a NAS's own services need their share, and
@@ -314,8 +340,8 @@ images at 274 MiB against 275), but the limits below were not re-run on it.
 
 | | CPUs | Limit for sacdfs plus Samba | Library |
 |---|---|---|---|
-| Minimum | 2 N100-class cores | 256 MiB | SIZING-MIN |
-| Recommended | 4 cores | 512 MiB | SIZING-REC |
+| Minimum | 2 N100-class cores | 256 MiB | up to about 1,800 images in memory; larger libraries work, and read TOCs again ([Under a memory limit](#under-a-memory-limit)) |
+| Recommended | 4 cores | 512 MiB | up to about 3,600 images in memory, and larger libraries the same way |
 
 Add about 40 MiB if NFS is on (`NFS=1`, the default). To set such a limit,
 for example `podman run --cpus 2 --memory 256m ...` (or `docker run`, with the same options).

@@ -205,10 +205,18 @@ back; the cache and decoders cost a reader some decoding; refusing fails one req
 every client. The alternative of pressure stall information was left out: it reports that reclaim is
 already hurting, and doesn't say how close the kill is.
 
+**Why 3/8 of the limit.** A quarter dropped images from a library that already fitted: at 1,600 images
+under 256 MiB, a second pass read TOCs again. At 3/8, about 1,800 images stay in memory at 256 MiB, close to
+the 2,000 that earlier versions documented as working there. The rest of the limit is for the process, Samba and NFS.
+
+**A race found on CI.** A number looked for along its path could be made and dropped again before it was
+taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
+is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
+
 **The defaults from the limit** (#231). Cache 16 below 512 MiB: it showed no single-reader cost and saves
 about 18 MiB, though several fast readers of one image are about 10% slower, which is accepted on a
-small limit. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB, and one gives about 5
-times real time on 6-channel WAV. With no limit, nothing changes.
+small limit. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, nothing
+changes.
 
 ### Memory: the default cache and the fixed overhead (#150)
 
