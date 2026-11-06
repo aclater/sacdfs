@@ -5,7 +5,10 @@ it works. Each says what it was validated on. The full reference, with every set
 reasons behind it, is the [deployment guide](../deployment.md); what each client was tested
 with is in [clients](../clients.md).
 
-These guides are for **sacdfs 0.4.0**. A guide marked *not validated* has no steps yet:
+These guides were written against **sacdfs 0.4.0**. Each says what it was run on, and that version
+is kept as is: the guides were not re-run on 0.4.1, except for the checks named in them (the rootless
+Podman health check in [docker-podman.md](docker-podman.md), run on a 0.4.1 candidate). Their image tags
+still name 0.4.0, which stays published. A guide marked *not validated* has no steps yet:
 nobody has run sacdfs there and reported back. Reports are welcome on
 [#82](https://github.com/aclater/sacdfs/issues/82).
 

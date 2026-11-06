@@ -6,31 +6,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.4.1-rc.2] - 2026-11-06
+## [0.4.1] - 2026-11-06
 
-### Added
-
-- **`SACDFS_MOUNT_TIMEOUT` (container, #232).** How long the container waits for sacdfs to mount, in
-  seconds (default 300, a whole number from 1 to 86400; anything else stops the container at once
-  with a message). It was a fixed 60 s, which a large library on a slow disk exceeds: on an emulated
-  single disk with nothing cached, 122,676 files took 194 s to mount on 0.4.1-rc.1. The health
-  check's start period is now 300 s to match, in the `Containerfile`, `deploy/compose.yaml` and the
-  commands in the guides.
-- **Docs: "Small NAS: sizing"** in the deployment guide: the container limits that worked (2 N100-class
-  cores and 256 MiB for about 2,000 images; 4 cores and 512 MiB for about 5,000), a sizing rule, where
-  the limits break, idle behaviour and one known limit (#230, #231). Measured on 0.4.1-rc.1. Memory and
-  idle-size claims elsewhere now say they hold for a small library.
-- **Docs: client notes for 0.4.1-rc.1** on Roon, Plex, Windows (Explorer, PowerShell, Robocopy, with
-  Robocopy speed), foobar2000 and JRiver Media Center. Windows can use another SMB port with `/TCPPORT:`;
-  the deployment guide said it could not.
-
-### Fixed
-
-- **Memory after the start-up walk.** 0.4.1-rc.1 held 22 to 25 MiB more than 0.4.0 on a library of
-  414 images (95 to 98 MiB against 73 to 77 MiB after a scan; 100 MiB against 78 MiB for an import
-  replay): the walk that hides folders with no SACD (#175) runs on 16 threads before the malloc
-  arena limit (#73) was set, and each thread kept an arena. The limit now comes first. The mount
-  stays several times faster than 0.4.0's.
+Tested as two release candidates. On rc.1 the scripted servers (Jellyfin, Navidrome, Lyrion, MPD,
+MinimServer) were run against 0.4.0 side by side, and Roon, Plex, Windows (Explorer, PowerShell,
+Robocopy), foobar2000, JRiver Media Center, Linux NFS and SMB mounts and the FFmpeg family of tools
+were run on it; the results are in docs/clients.md. rc.2 adds the memory fix (#224) and
+`SACDFS_MOUNT_TIMEOUT` (#232). The rc.2 gate: TBD-GATE.
 
 ### Upgrade notes
 
@@ -44,11 +26,6 @@ tracks. These are what was seen, not a prediction for yours.
   show.
 - **A scanner's one-time cost can be large.** Plex re-read 18.25 GiB once, over 140 s, after the
   upgrade; a no-change scan after that read nothing.
-
-## [0.4.1-rc.1] - 2026-11-05
-
-### Upgrade notes
-
 - **Discs without text change once; other discs don't.** Files of a disc that lacks a title, album
   or artist get new tags, a new size, a modification time one step (7 hours) later and a new NFS
   generation; those with no title also get a new name. The output version moves for those files
@@ -59,9 +36,10 @@ tracks. These are what was seen, not a prediction for yours.
   doesn't do. So a scanner that skips unchanged folders (Roon) should walk those folders once, and
   any scanner that compares sizes and times should re-read only the changed files. Checked by
   comparing every file's and folder's size and time over the mount with 0.4.0's, on a library of
-  4,890 tracks: 259 files changed, each with every folder above it moved. Untested with Roon, Plex,
-  Navidrome, LMS or MPD themselves. A renamed track should look to a scanner like a removal and an
-  addition, so its play counts and edits in the player may not carry over (also untested).
+  4,890 tracks: 259 files changed, each with every folder above it moved. Roon and Plex were then
+  run through the upgrade on rc.1 (docs/clients.md); Navidrome, LMS and MPD were run on rc.1 and on
+  0.4.0 with fresh libraries, not upgraded in place. A renamed track should look to a scanner like a
+  removal and an addition, so its play counts and edits in the player may not carry over (also untested).
 - **A tags file that sets a title** changes the tag and not the file name, as before: such a track
   is named `NN - Track NN`.
 - `sacdfs verify` and `sacdfs tags import` don't count text from the path as the disc's, so they
@@ -91,6 +69,13 @@ tracks. These are what was seen, not a prediction for yours.
   names, the ID3, DSF and WAV writers, the tree, and the `verify` readers, in `fuzz/` (see
   fuzz/README.md). A CI job runs each for about 60 s on every pull request and 20 minutes every
   week. It is not a required check.
+
+- **`SACDFS_MOUNT_TIMEOUT` (container, #232).** How long the container waits for sacdfs to mount, in
+  seconds (default 300, a whole number from 1 to 86400; anything else stops the container at once
+  with a message). It was a fixed 60 s, which a large library on a slow disk exceeds: on an emulated
+  single disk with nothing cached, 122,676 files took 194 s to mount on 0.4.1-rc.1. The health
+  check's start period is now 300 s to match, in the `Containerfile`, `deploy/compose.yaml` and the
+  commands in the guides.
 
 ### Fixed
 
@@ -133,6 +118,14 @@ tracks. These are what was seen, not a prediction for yours.
     shorter: they gave a usable name before as well.
   - A `verify` report's `loses` column is written the same after `--resume` when frame keys hold
     `,` or `|`.
+- **Memory after the start-up walk (#224).** 0.4.1-rc.1 held 22 to 25 MiB more than 0.4.0 on a
+  library of 414 images (95 to 98 MiB against 73 to 77 MiB after a scan; 100 MiB against 78 MiB for
+  an import replay): the walk that hides folders with no SACD (#175) runs on 16 threads before the
+  malloc arena limit (#73) was set, and each thread kept an arena. The limit now comes first. A build
+  from source with the change held 73.8 to 77.1 MiB on the whole library (4,902 DSF files; 0.4.0:
+  76.0 to 83.4 MiB, rc.1: 93.3 to 98.6 MiB), and the mount, which the walk made several times faster
+  than 0.4.0's on a library on a share, is about twice as fast as 0.4.0's there (1.6 s against 3.1 s,
+  medians) and 0.2 s against 0.15 s on a warm local one. On the rc.2 binary: TBD-GATE.
 
 ### Changed
 
@@ -163,6 +156,13 @@ tracks. These are what was seen, not a prediction for yours.
   that TrueNAS's "SMB share" app storage has no port field (#176).
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
   `rust:1.99.1` container with no other packages, it installs a working `sacdfs` (#155).
+- **Docs: "Small NAS: sizing"** in the deployment guide: the container limits that worked (2 N100-class
+  cores and 256 MiB for about 2,000 images; 4 cores and 512 MiB for about 5,000), a sizing rule, where
+  the limits break, idle behaviour and one known limit (#230, #231). Measured on 0.4.1-rc.1. Memory and
+  idle-size claims elsewhere now say they hold for a small library.
+- **Docs: client notes for 0.4.1-rc.1** on Roon, Plex, Windows (Explorer, PowerShell, Robocopy, with
+  Robocopy speed), foobar2000 and JRiver Media Center. Windows can use another SMB port with `/TCPPORT:`;
+  the deployment guide said it could not.
 
 ## [0.4.0] - 2026-11-03
 
@@ -622,9 +622,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.2...HEAD
-[0.4.1-rc.2]: https://github.com/aclater/sacdfs/compare/v0.4.1-rc.1...v0.4.1-rc.2
-[0.4.1-rc.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1-rc.1
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0
