@@ -618,10 +618,9 @@ Samba configuration:
 
 - **Durable handles can't survive a restart, under any setting here.** Samba grants them (they're on by
   default), and a raw SMB2 client reconnected one after dropping its connection. After a restart it gets
-  "not found", because Samba clears its table of open files when its last process exits, even with
+  "not found", because Samba empties its table of open files when it starts afresh, even with
   the file kept on disk. The server's log then shows
-  `smb2srv_open_recreate_fn: ... NT_STATUS_NOT_FOUND`: this is expected, and the client goes on to
-  reopen by path. `durable handles = no` and `kernel oplocks = yes` only stop them being granted, and
+  `smb2srv_open_recreate_fn: ... NT_STATUS_NOT_FOUND`: this is expected. `durable handles = no` and `kernel oplocks = yes` only stop them being granted, and
   `posix locking = no` changes nothing. The Linux kernel client recovered the same way with `durable handles = no` or `smb2 leases = no`.
 - **The server's identity can change.** Samba's SMB server GUID is made from its NetBIOS name, which is
   the container's host name by default. It stays the same on a restart and changes when the
