@@ -67,12 +67,12 @@ otherwise stated as untested.
 | MinimServer | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
 | Windows 11 Explorer, PowerShell, Robocopy | 1 | SMB 3 | Unattended VM, not a physical client | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
 | Linux NFS and SMB mounts (Fedora, RHEL, Debian, Ubuntu) | 1 | NFSv4, SMB 3 | VMs and containers | 0.4.1-rc.1 on seven distributions | SMB 3.1.1 and NFS 4.2 listings correct, 10 files byte-identical over both, writes refused, SMB reconnects after a restart. Which distributions: not recorded |
-| beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | No candidate result; not run on rc.1 or rc.2 |
+| beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | CI on main green (2026-11-05); import run on the rc.2 mount: pass, see [results](#results-041-rc2-gate-2026-11-06). Run on 0.4.0 too, same result |
 | FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
 | foobar2000 | 2 | SMB 3 | Windows VM | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
 | Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** | Never run |
-| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; no macOS results are in clients.md; Finder and players **never** | Never run |
+| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; no macOS results are in clients.md; Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/aclater/sacdfs/issues/204) and [#205](https://github.com/aclater/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks |
 | Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Never run |
 | Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Never run |
 
@@ -235,6 +235,26 @@ memory or start-up timing was not checked again.
   the same code, not on the published image.
 - **Upgrade, rc.1 to rc.2, on the NAS apps:** identical names and counts; no re-read seen for 12
   minutes; FUSE request counts per kind not obtained.
+- **beets-pysacd 0.2.0** (Tier 1, local mount; PyPI latest, released 2026-11-02). Its CI on main
+  was green on every workflow on its last push (2026-11-05). Run on Python 3.14.9 with the project's
+  hash-pinned lock file: beets 2.14.1, pysacd 0.5.0. Source: 3 images (one stereo plus 5.1 DST, one
+  with no disc text, one plain stereo), mounted with `--format dsf,wav`; beets with its own config,
+  `import: {copy: no, write: no}`, `-A` (no MusicBrainz), `fetchart` from the filesystem only.
+  **Found:** 60 of 60 files (30 DSF, 30 WAV) in 4 albums, the 5.1 copy a separate album with 6
+  channels. **Metadata:** title, artist, album and track number of all 30 DSF equal the mount's tags,
+  and length of all 60 within 1 s: 0 mismatches. **Art:** found for the 2 albums whose image has a
+  sidecar; the third has none to find. **Quiet rescan:** a second `import` and a `beet update`
+  changed nothing (60 items, the same checksum of every field). **Plugin features:** `sacd-info` read
+  all 3 images; `sacd-migrate --catalogue --mount` added 4 albums (30 items, `sacdfs_path` set) and a
+  second run added none. For the no-text disc, `sacdfs_path` is a best-effort name and does not equal
+  the served name (`01.dsf` against `01 - Track 01.dsf`), as the plugin's README says. **Logs:** no
+  errors or warnings in sacdfs's log. **Memory:** sacdfs 32 MiB peak after the run. **Against 0.4.0:** the same 60 files
+  and 4 albums, nothing lost; two differences, both in the changelog: the no-text disc has empty
+  titles and album on 0.4.0 and `Track NN` plus a folder-derived album on rc.2, and the folder art
+  is found only on rc.2 (#148). So nothing that worked on 0.4.0 stopped working. **Not checked:**
+  autotag with MusicBrainz; `format: flac`; `sacd-tags-export`; the `auto` import of ISOs;
+  playback; seek; add, rename and remove during a scan; a restart during an import; output-version
+  change; FUSE request counts per kind; DST read time.
 - **Not verified:** the arm64 image at run time; a cold-cache mount; the clients marked "Carried over
   from rc.1" above (rc.1 results, not re-run); the install channels other than the container (binary archive on the older
   distributions, crates.io, the NAS guides) on rc.2.
