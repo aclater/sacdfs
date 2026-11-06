@@ -47,8 +47,10 @@ python3 scripts/soak.py --sacdfs target/release/sacdfs --images DIR --hours 2 --
 ```
 
 `DIR` holds `.iso` images, at least two; real discs give realistic reads. The script builds
-a library of links to them in a work directory (under `/var/tmp` by default) and mounts it
-with `--tags`. Then:
+a library of links to them in a work directory (under `/var/tmp` by default; `--work DIR`
+to choose; on the GitHub Ubuntu runner a mount under `/var/tmp` was refused with "Permission
+denied" and one under the runner's home worked, so the weekly run uses `--work`) and mounts it with
+`--tags`. If the mount fails, the soak prints sacdfs's stderr and log. Then:
 
 - **Readers** (`--readers 4`) read the mounted files, in three patterns: long stretches from
   random offsets, bursts of small reads at random seeks, and a library scan's
@@ -118,10 +120,22 @@ podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD":/src:z -w /src 
 ```
 
 This runs every test binary under valgrind memcheck, one test at a time. It follows the
-`sacdfs` processes that the mount tests start; `fusermount3` is setuid and is skipped. Any
-definite or indirect leak, or any memory error, fails the run. The logs go to
+`sacdfs` processes that the mount tests start; `fusermount3` is setuid and is skipped, and so
+are the system tools the tests run (`/usr/bin/*`: `mkfifo`, `ls`, `df`, `awk`). On the
+GitHub runner those are uutils coreutils, which leaks at exit (`mkfifo` alone shows 43 KiB
+definitely plus indirectly lost), and they are not sacdfs. Any definite or indirect leak, or
+any memory error, in sacdfs or a test fails the run. The logs go to
 `target/leak-check/`, one per process, and suppressions to `scripts/leak-check.supp`, each
-with its reason.
+with its reason. `ONLY=REGEX` runs only the test binaries whose path matches, for example
+`ONLY='/(mount|stall)-' scripts/leak-check.sh memcheck`.
+
+The suppressions match demangled names (`fun:*fuser*mnt*Mount*new`), not `_ZN...` symbols, so
+they hold under both symbol manglings: the container's Rust 1.92 uses the legacy scheme, the
+1.99 toolchain of the weekly CI run uses v0. A suppression written against the mangled name
+stops matching after a toolchain change and fails the run on a block that was never a leak.
+There are two: the mount that `serve` keeps on purpose (55 bytes in three blocks, once per
+process), and a read of uninitialised memory inside the `nix` crate's `recvmsg` when fuser
+reads fusermount's reply (once per mount, the value is discarded).
 
 *Why memcheck rather than LeakSanitizer:* sacdfs and scarletbook are pure Rust, with no C
 code in the dependency graph. Rust's LeakSanitizer needs a nightly compiler

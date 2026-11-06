@@ -14,6 +14,16 @@ All notable changes to sacdfs are recorded here. The format follows
   arena limit (#73) was set, and each thread kept an arena. The limit now comes first. The mount
   stays several times faster than 0.4.0's.
 
+- **The weekly leak workflow is fixed (a broken check, no leak found).** It had failed on
+  every job. The memcheck job flagged a once-per-process, 55-byte mount that `serve` keeps on
+  purpose (its suppression matched the legacy `_ZN...` symbol names and stopped matching with
+  Rust 1.99's v0 names), an uninitialised read inside the `nix` crate that fuser calls once
+  per mount, and the system tools the tests start (uutils `mkfifo`, `ls`, `df`). The soak job
+  could not mount: `fusermount3` was refused ("Permission denied") in its work directory
+  under `/var/tmp` on the Ubuntu runner (probably its AppArmor profile; not checked). The
+  soak now mounts under the runner's home, where it works (a 20-minute run passes), and `scripts/soak.py` prints
+  sacdfs's stderr when the mount fails.
+
 ### Upgrade notes
 
 What a scanner may see after the move from 0.4.0 to 0.4.1, with counts from one library of 4,902
