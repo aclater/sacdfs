@@ -526,6 +526,7 @@ fn watch_memory(cgroup: &memory::Cgroup, tree: &Tree, engine: &Engine) {
     const WARN_AGAIN: Duration = Duration::from_secs(60);
     let mut was = Pressure::None;
     let mut warned = None;
+    let mut noted = None;
     loop {
         let Some(used) = cgroup.used() else {
             log::debug!("memory use can't be read: not watching it");
@@ -537,8 +538,12 @@ fn watch_memory(cgroup: &memory::Cgroup, tree: &Tree, engine: &Engine) {
             if now == Pressure::Refuse && warned.is_none_or(|t: Instant| t.elapsed() > WARN_AGAIN) {
                 log::warn!("{line}: new listings and opens fail with ENOMEM until it passes");
                 warned = Some(Instant::now());
-            } else {
+            } else if now > was && noted.is_none_or(|t: Instant| t.elapsed() > WARN_AGAIN) {
+                // Use can hover at a level's edge: once a minute is enough to say so.
                 log::info!("{line}");
+                noted = Some(Instant::now());
+            } else {
+                log::debug!("{line}");
             }
             tree.set_pressure(now);
         } else if now != Pressure::None {
