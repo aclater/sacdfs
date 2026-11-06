@@ -482,6 +482,10 @@ when its directory is first listed.
 
 ## On a NAS (#21)
 
+*Historical:* measured before the 32 MiB default cache (#150), when the default was 256 MiB, so the
+memory figure below is not the current one; see the [deployment guide](deployment.md#memory) and
+[Small NAS: sizing](deployment.md#small-nas-sizing) for today's.
+
 Measured by #21 part 1 on the owner's NAS, a different machine from the rest of this page, so
 kept apart: a 12th-gen Intel Core i5-1235U (2 performance and 8 efficiency cores, 12 threads,
 AVX2) with 96 GB of RAM; a generic build of the release code (with #53) in a one-shot app;

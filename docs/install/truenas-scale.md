@@ -48,7 +48,7 @@ shares on **10445** (SMB) and **12049** (NFS). Linux, macOS and Windows clients 
          test: ["CMD", "/usr/local/bin/healthcheck.sh"]
          interval: 30s
          timeout: 10s
-         start_period: 60s
+         start_period: 300s
    volumes:
      sacdfs-cache:
    ```
