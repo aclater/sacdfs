@@ -673,8 +673,8 @@ What clients did when the container restarted (about 8 s):
 | Linux kernel client, SMB 3.1.1 | an open file reads on, `stat` and `ls` work, without a remount | 0.4.1-rc.1, by `restart` and by recreating the container |
 | Linux gvfs 1.62 | the next listing works, without a remount | same |
 | Windows 11 build 26200 | a handle open during the restart fails; the mapped drive then works, with sizes and times unchanged | 0.4.1-rc.1, by restart |
-| Plex on a kernel CIFS mount | recovered by itself | 0.2.0-rc.4 ([clients](clients.md#plex)) |
-| macOS 15.7 and 27.2, `mount_smbfs`, in VMs on Apple hardware | **the mount drops and doesn't come back**, with no hang. Mounting it again works | 0.4.0 and 0.4.1-rc.1, by restart |
+| Plex on a kernel CIFS mount | recovered by itself | 0.1.1, a restart mid-test ([clients](clients.md#plex)) |
+| macOS, `mount_smbfs`, in VMs on Apple hardware | **the mount drops and doesn't come back**, with no hang. Mounting it again works | 15.7 on 0.4.0 and 0.4.1-rc.1; 27.2 on 0.4.1-rc.1; restart of about 8 s |
 
 So on macOS, mount the share again after an upgrade or restart. Whether the server can change this is
 still open ([#204](https://github.com/aclater/sacdfs/issues/204)). What's known about the shipped
@@ -682,10 +682,11 @@ Samba configuration:
 
 - **Durable handles can't survive a restart, under any setting here.** Samba grants them (they're on by
   default), and a raw SMB2 client reconnected one after dropping its connection. After a restart it gets
-  "not found", because Samba empties its table of open files when it starts afresh, even with
-  the file kept on disk. The server's log then shows
-  `smb2srv_open_recreate_fn: ... NT_STATUS_NOT_FOUND`: this is expected. `durable handles = no` and `kernel oplocks = yes` only stop them being granted, and
-  `posix locking = no` changes nothing. The Linux kernel client recovered the same way with `durable handles = no` or `smb2 leases = no`.
+  "not found", because Samba empties its table of open files when it starts afresh, even with the file
+  kept on disk. The server's log then shows `smb2srv_open_recreate_fn: ... NT_STATUS_NOT_FOUND`: this is
+  expected. `durable handles = no` and `kernel oplocks = yes` only stop them being granted, and
+  `posix locking = no` changes nothing. The Linux kernel client recovered the same way with
+  `durable handles = no` or `smb2 leases = no`.
 - **The server's identity can change.** Samba's SMB server GUID is made from its NetBIOS name, which is
   the container's host name by default. It stays the same on a restart and changes when the
   container is recreated. Linux clients don't mind either way. `SMB_EXTRA_GLOBAL=netbios name = sacdfs`
