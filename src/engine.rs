@@ -1136,7 +1136,7 @@ pub fn limit_malloc_arenas() -> bool {
     unsafe { libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS) == 1 }
 }
 
-/// Keeps every allocation of [`LARGE_ALLOCATION`] or more in a mapping of its own, given back when it
+/// Keeps every allocation of 128 KiB or more in a mapping of its own, given back when it
 /// is freed (#237). glibc raises this limit by itself as such blocks are freed, up to 32 MiB, and
 /// then they stay in the heap.
 ///
