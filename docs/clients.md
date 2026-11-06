@@ -394,6 +394,13 @@ files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network
   errors, caused 1 `GETXATTR` and 238 `LISTXATTR` requests for the 206 files, the same on both
   versions; over SMB, `ls -lR` caused none of either. There is no request storm. (Roon's own
   Force Rescan was not part of this run.)
+- **RF64** (a real 6-channel WAV of 4.07 GiB, `--pcm-rate 352800`, one disc, the smallest of the
+  11 in the library that pass 4 GiB): the file hashes the same through FUSE as inside the container
+  and over NFS and SMB (above). Read through the FUSE mount: ffprobe, FFmpeg (seek to 680 s and
+  decode), sox 14.4.2 (`soxi`, `trim` past 4 GiB), MediaInfo, ExifTool, mpv and VLC (decode from
+  680 s) all handled it, and Navidrome imported it (size 4,374,335,960 bytes, duration 688.8 s).
+  A full FFmpeg decode of the whole file was not run. Jellyfin, Lyrion, MPD and MinimServer
+  were not tried on it.
 - **fstab and systemd** (Fedora 44, 0.4.1-rc.1): the documented fstab line for a local mount
   (with `mount.fuse` linked) mounted with `mount -a` and after a reboot; the documented
   `Type=notify` unit started, survived a reboot, and stopped without a failed state (a
