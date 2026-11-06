@@ -102,4 +102,12 @@ docker run --rm --network sacdfs-ci --privileged \
       python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/smb --min 400
       umount /mnt/smb'
 endgroup
+group "A bad SACDFS_MOUNT_TIMEOUT stops the container with a message"
+for v in abc 0 99999; do
+    if out=$(docker run --rm -e SACDFS_MOUNT_TIMEOUT="$v" "$image" 2>&1); then
+        echo "SACDFS_MOUNT_TIMEOUT=$v was accepted"; exit 1
+    fi
+    grep -q "SACDFS_MOUNT_TIMEOUT must be a whole number of seconds" <<<"$out" || { echo "$out"; exit 1; }
+done
+endgroup
 echo "share test passed: $image"

@@ -25,7 +25,8 @@ see [SECURITY.md](SECURITY.md).
    ```
 
    The mount tests need `/dev/fuse` and `fusermount3` (package `fuse3`); without
-   `SACDFS_FUSE_TESTS=1` they are skipped where FUSE is missing. In a container, pass
+   `SACDFS_FUSE_TESTS=1` they are skipped where FUSE is missing, each with a `SKIPPED` line in
+   the output. In a container, pass
    `--device /dev/fuse --cap-add SYS_ADMIN`. `tests/no_growth.rs` checks that mount cycles
    leave no heap behind. For the long checks (the soak, heap profiles, memcheck), see
    [docs/development.md](docs/development.md).
@@ -142,7 +143,10 @@ crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:
 - **Hostile input.** Every image is untrusted. Nothing an image contains may panic, hang or
   grow memory without bound; `clippy::unwrap_used`, `expect_used` and `panic` are warnings,
   and CI treats warnings as errors.
-- **Tests.** New behaviour comes with a test. Test images are synthetic: the corpus in
+- **Tests.** New behaviour comes with a test. A test that can't run here says so with
+  `common::skip!`, never a bare `return`, and a skip that a CI job may have is listed in
+  `tests/expected-skips.json` with why it's legitimate; CI fails on any other change
+  ([docs/development.md](docs/development.md#skipped-tests)). Test images are synthetic: the corpus in
   `tests/corpus/` (CC0), never audio from a real disc. A new parser of anything from outside
   gets a fuzz target or joins one ([fuzz/README.md](fuzz/README.md)), and a crash a fuzzer finds
   becomes a test in `tests/fuzz_regressions.rs`.

@@ -3,7 +3,7 @@
 //! The persistent seek index through the kernel: mount, seek, unmount, remount, seek
 //! again; the second seek gives the same bytes and reads no more of the image.
 //!
-//! Like `mount.rs`, this needs `/dev/fuse` and `fusermount3`, and passes without them
+//! Like `mount.rs`, this needs `/dev/fuse` and `fusermount3`, and skips without them
 //! unless `SACDFS_FUSE_TESTS=1` is set.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -12,19 +12,10 @@ mod common;
 
 use std::os::unix::fs::FileExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use common::*;
-
-fn fuse_available() -> bool {
-    let ok = Path::new("/dev/fuse").exists()
-        && Command::new("fusermount3").arg("-V").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok();
-    if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
-        panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
-    }
-    ok
-}
 
 fn is_mounted(mountpoint: &Path) -> bool {
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
@@ -83,9 +74,7 @@ fn mount_and_seek(image: &Path, args: &[&str], fraction: f64, len: usize) -> (Ve
 
 #[test]
 fn remount_seeks_with_the_saved_index() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let dir = tempfile::tempdir().unwrap();
     let image = corpus().join("images/dst-invalid-frames-2ch.iso");
     let cache = dir.path().join("index");

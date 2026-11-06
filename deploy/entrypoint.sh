@@ -33,6 +33,12 @@ case "${SACDFS_INDEX_CACHE:-/cache}" in
 esac
 case "${SACDFS_VERBOSE:-1}" in 0) ;; 1) args+=(-v) ;; *) args+=(-vv) ;; esac
 
+# How long sacdfs may take to mount (#232): it lists every image first, which on a large
+# library on a slow disk takes minutes. Keep the health check's start period at least as long.
+MOUNT_TIMEOUT=${SACDFS_MOUNT_TIMEOUT:-300}
+[[ $MOUNT_TIMEOUT =~ ^[1-9][0-9]{0,4}$ ]] && [ "$MOUNT_TIMEOUT" -le 86400 ] ||
+    die "SACDFS_MOUNT_TIMEOUT must be a whole number of seconds from 1 to 86400 (got '$MOUNT_TIMEOUT')"
+
 # --- SMB settings -----------------------------------------------------------------------
 SHARE=${SHARE_NAME:-sacd}
 [[ $SHARE =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "SHARE_NAME must be 1 to 64 of A-Z a-z 0-9 . _ -"
@@ -194,12 +200,12 @@ mountpoint -q "$MNT" && fusermount3 -u -z "$MNT" 2>/dev/null || true
 log "sacdfs ${args[*]} $SOURCE $MNT"
 sacdfs "${args[@]}" "$SOURCE" "$MNT" &
 pids+=($!)
-for _ in $(seq 600); do
+for _ in $(seq $((MOUNT_TIMEOUT * 10))); do
     mountpoint -q "$MNT" && break
     kill -0 "${pids[0]}" 2>/dev/null || die "sacdfs exited (needs --device /dev/fuse and CAP_SYS_ADMIN)"
     sleep 0.1
 done
-mountpoint -q "$MNT" || die "sacdfs did not mount within 60 s"
+mountpoint -q "$MNT" || die "sacdfs did not mount within ${MOUNT_TIMEOUT} s (raise SACDFS_MOUNT_TIMEOUT for a large library on a slow disk)"
 log "mounted"
 
 if on "${SMB:-1}"; then
