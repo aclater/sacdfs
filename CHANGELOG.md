@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Memory after the start-up walk.** 0.4.1-rc.1 held 22 to 25 MiB more than 0.4.0 on a library of
+  414 images (95 to 98 MiB against 73 to 77 MiB after a scan; 100 MiB against 78 MiB for an import
+  replay): the walk that hides folders with no SACD (#175) runs on 16 threads before the malloc
+  arena limit (#73) was set, and each thread kept an arena. The limit now comes first. The mount
+  stays several times faster than 0.4.0's.
+
 ### Upgrade notes
 
 What a scanner may see after the move from 0.4.0 to 0.4.1, with counts from one library of 4,902

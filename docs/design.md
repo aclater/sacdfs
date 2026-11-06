@@ -100,7 +100,12 @@ before. Two changes, each needed:
   mimalloc as the global allocator (a C dependency and a new cost for every allocation, for
   what one setting does); `malloc_trim` after evictions (gives back only whole free pages,
   and walks the heap). This is the one `unsafe` call outside the daemonising code: `mallopt`
-  takes two integers.
+  takes two integers. *The limit comes before the start-up walk,* which reads the source's
+  top-level folders on 16 threads (#175): called after it (as in 0.4.1-rc.1), the walk's threads
+  had each made an arena, 31 of them on a library of 414 images, and the mount held 95 to
+  98 MiB after a scan instead of 73 to 77 MiB (`tests/arenas.rs` checks that none is left).
+  *Alternatives measured for that walk:* `malloc_trim` after it freed nothing (95 MiB); two
+  arenas, 79 to 85 MiB.
 - **The cache's frames live in slabs outside the heap** (`engine::Pool`, `FrameBuf`; this
   replaced the reuse of evicted frames' buffers, `FrameCache::spares`, of the first fix).
   Each frame takes a slot of a slab of slots of its length (512 KiB, mapped with `mmap`), DST
