@@ -86,6 +86,9 @@ impl Levels {
 /// A picture: its MIME type and bytes.
 pub type Picture = (&'static str, Arc<Vec<u8>>);
 
+/// A picture read before: its MIME type, and its bytes while anything holds them.
+type KnownPicture = (&'static str, Weak<Vec<u8>>);
+
 /// A tags file as cached: its mtime and size when read, and its tags.
 type Cached = (SystemTime, u64, Option<Arc<DiscTags>>);
 
@@ -332,7 +335,7 @@ pub struct DiscTags {
     pub mtime: SystemTime,
     /// Pictures named by it, by name: `None` if unusable (logged once). Held only as long as
     /// [`RECENT_PICTURES`] or a caller holds them: see there.
-    art: Mutex<HashMap<String, Option<(&'static str, Weak<Vec<u8>>)>>>,
+    art: Mutex<HashMap<String, Option<KnownPicture>>>,
     dir: PathBuf,
 }
 
