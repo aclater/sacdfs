@@ -63,7 +63,7 @@ otherwise stated as untested.
 | foobar2000 | 2 | SMB 3 | Windows VM | Partial, 0.2.0-rc.1 |
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | **Never** |
 | Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** |
-| macOS 15 and the newest: `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | VM on Apple hardware, tests run over SSH | File tools on 0.4.0; Finder and players **never** |
+| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; Finder and players **never** |
 | Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** |
 | Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** |
 
