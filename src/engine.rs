@@ -763,10 +763,18 @@ impl Engine {
         let frame_bytes = self.pcm_frame_bytes(channels);
         let wanted: Vec<bool> = (t0..t1).map(|t| out[(t - first) as usize].is_none()).collect();
         let converted: Mutex<Vec<(u32, Result<Frame, ReadError>)>> = Mutex::new(Vec::new());
-        // A pipeline: this pool thread demultiplexes and decodes the DSD frames in chunks,
-        // and each PCM frame is converted on the other pool threads as soon as its next
+        // A pipeline: this request thread demultiplexes the DSD frames in chunks, the pool
+        // decodes them, and each PCM frame is converted on the pool as soon as its next
         // neighbour is decoded, so that demultiplexing (serial) and conversion overlap.
-        self.pool.scope(|s| -> Result<(), ReadError> {
+        //
+        // *Why `in_place_scope`, not `scope`:* demultiplexing reads the image, which can block
+        // for as long as the source hangs, and no pool thread may ever wait on the source. With
+        // `scope` this closure ran on a pool thread: it was lost for the hang, and when every
+        // thread was lost, no read of any image could decode. Worse, a pool thread waiting for
+        // its own decoding runs other queued jobs meanwhile, so one could take up a read of the
+        // stalled image on top of a healthy read, which then could not return until the source
+        // answered: a healthy disc's read failed with `EIO` while another image was hung.
+        self.pool.in_place_scope(|s| -> Result<(), ReadError> {
             let mut dsd: Vec<Arc<Dsd>> = Vec::with_capacity((d1 - d0) as usize);
             let mut next_job = t0;
             let spawn_ready = |dsd: &Vec<Arc<Dsd>>, next_job: &mut u32, run: u32| {
@@ -899,7 +907,8 @@ impl Engine {
     /// Decoded DSD frames, interleaved, of positions `[d0, d1)`, handed to `sink` in order,
     /// a chunk at a time: first those the stream carries from its last read, then frames
     /// demultiplexed with its cursor and decoded (DST frames in parallel). Keeps the last
-    /// ones in the carry. Runs on a pool thread.
+    /// ones in the carry. Runs on the request thread (it reads the image), never on a pool
+    /// thread: see [`Engine::pcm_frames`].
     fn dsd_frames(
         &self,
         disc: &Disc,
@@ -973,8 +982,9 @@ impl Engine {
                     if jobs.iter().any(|j| matches!(j.content, FrameContent::Dst(_))) {
                         let size = group_size(jobs.len(), self.threads(), channels);
                         let groups = in_groups(jobs.into_iter().map(|j| (j, None)).collect(), size);
-                        let mut decoded: Vec<Result<(u32, Frame), ReadError>> =
-                            groups.into_par_iter().flat_map_iter(|g| decode_group(g, channels)).collect();
+                        let mut decoded: Vec<Result<(u32, Frame), ReadError>> = self.pool.install(|| {
+                            groups.into_par_iter().flat_map_iter(|g| decode_group(g, channels)).collect()
+                        });
                         // A group gives its frames back with those not DST first.
                         decoded.sort_by_key(|r| r.as_ref().map_or(0, |(n, _)| *n));
                         decoded
