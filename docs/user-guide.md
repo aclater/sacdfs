@@ -376,7 +376,8 @@ an ambiguity ends the lookup:
   that text is too.
 - **ISRCs that disagree refuse a release,** even when its titles and durations fit, since it may be
   another edition. The command says so; `--lookup-name` may find a release that fits, or you can write
-  the disc's tags by hand. On real discs this refused 5 of 60 that all proved right on checking.
+  the disc's tags by hand. On real discs this refused 5 of 60 that all proved right on checking, and
+  `--lookup-name` found nothing for any of the 5, so expect to write those by hand.
 - **File names don't change:** a track stays `NN - Track NN.dsf`, with the new title in its tag,
   so that a player's history of the file isn't moved a second time. Files whose tags changed get a
   new modification time, and folders move, as with any edit of a tags file.
@@ -402,8 +403,8 @@ tags file that doesn't parse is left as it is, and nothing is asked for that dis
 
 Tested on real discs with their text hidden, which showed no wrong match: by number on 60 discs, of
 which 44 got tags for at least one area, and by name on 30, of which 15 did. 19 of 21 discs without
-text matched, and their folder names agreed. `--lookup-durations` alone is untested on real discs
-that have text, so its limits are judged, and only 2 discs without text have tried it.
+text matched, and their folder names agreed. `--lookup-durations` alone matched only 2 real discs that
+were checked, both right, so its limits are still a judgement.
 
 As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
 to mount it.

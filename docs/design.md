@@ -1804,8 +1804,8 @@ fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or sched
   delegation, after real discs. *Why:* a wrong tag written to a library costs more than a disc left
   unmatched, and the sample is small. *Measured:* without the rule, 49 of 60 discs matched against 44, and
   the 5 extra were right by hand. *Alternative:* no refusal at the number step, where the number and
-  durations already agree. *Trade-off:* those discs need a name lookup or tags by hand, and the command
-  says so.
+  durations already agree. *Trade-off:* those discs need tags by hand, and the command says so; a name
+  lookup found nothing for any of the 5.
 - **Recorded case: why text must agree.** A live query by durations for one hybrid disc returned the
   disc, a digital release of it, and a box set holding it under another album title. Each has
   fitting durations and the same track titles. Taking "the best" would make the album name a coin
