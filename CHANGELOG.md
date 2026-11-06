@@ -35,10 +35,14 @@ All notable changes to sacdfs are recorded here. The format follows
   single disk with nothing cached, 122,676 files took 194 s to mount on 0.4.1-rc.1. The health
   check's start period is now 300 s to match, in the `Containerfile`, `deploy/compose.yaml` and the
   commands in the guides.
-- **Docs: "Small NAS: sizing"** in the deployment guide: the container limits that worked (2 N100-class
-  cores and 256 MiB for about 2,000 images; 4 cores and 512 MiB for about 5,000), a sizing rule, where
+- **Docs: "Small NAS: sizing"** in the deployment guide: the container limits that worked (2 Gracemont E-cores and 256 MiB for about 2,000 images;
+  4 cores and 512 MiB for about 5,000), a sizing rule, where
   the limits break, idle behaviour and one known limit (#230, #231). Measured on 0.4.1-rc.1. Memory and
   idle-size claims elsewhere now say they hold for a small library.
+- **Docs: Small NAS known limit re-measured on rc.3** (#230). With a fresh cache the starvation of a
+  6-channel WAV player by whole-file scanners also reaches 4 cores; `SACDFS_CACHE_MB=8` kept the player
+  at real time in every cell tested; the earlier 4-core figures (0.31 s, 11.2 s) were taken with a
+  player re-reading a position and are replaced. Figures are given per rig, not as N100-class.
 - **Docs: client notes for 0.4.1-rc.1** on Roon, Plex, Windows (Explorer, PowerShell, Robocopy, with
   Robocopy speed), foobar2000 and JRiver Media Center. Windows can use another SMB port with `/TCPPORT:`;
   the deployment guide said it could not.
