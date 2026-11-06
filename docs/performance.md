@@ -639,14 +639,27 @@ busy; 0.4.0's mount times vary because the host was shared):
 | Import replay (Roon's reads) peak, 4,902 files | 78 MiB (2 runs) | 100 and 101 MiB (**+28 %**) |
 
 The mount is faster on rc.1 and listing and scanning are equal. **Memory is over 10 % higher on
-rc.1:** about 22 MiB more for 414 images (roughly 55 KiB per image); the cause was not
-investigated. It does not contradict the table of [synthetic bench discs](deployment.md#memory)
-(the same builds differ by 2 MiB there), which is a different, much smaller library.
+rc.1:** about 22 MiB more for 414 images. **Cause (found by bisecting main, then confirmed with
+`MALLOC_ARENA_MAX=1`, which gives 73 to 77 MiB):** the start-up walk added in 0.4.1 (hiding
+folders with no SACD, [#175](https://github.com/aclater/sacdfs/issues/175)) reads the top-level
+folders on 16 threads before sacdfs set its one-malloc-arena limit, so each thread made a glibc
+arena (31 of them) and kept what it freed; `malloc_trim` after the walk gave nothing back, and
+two arenas still held 79 to 85 MiB. Setting the limit before the walk brings memory back to
+0.4.0's (73.8 to 77.1 MiB on the quiet desktop, 73.9 to 76.8 MiB here) and the mount to 0.56 to
+1.9 s here (0.4.0: 2.8 to 9.3 s, rc.1: 0.5 s); see
+[PR #224](https://github.com/aclater/sacdfs/pull/224). It does not contradict the table of
+[synthetic bench discs](deployment.md#memory) (the same builds differ by 2 MiB there): that
+library is much smaller and has few folders to walk.
 
 **Other rc.1 measurements on the same host:**
 
 - *MPD first scan with `dsf,wav`*, 9 alternating pairs on a quiet host: 0.4.0 5.67 to 5.98 s,
   rc.1 5.67 to 5.87 s (median 5.77 s on both).
+- *The same cause in the soak, 0.4.0 against rc.1 against the fix of PR #224* (three soaks of 1 hour
+  in parallel on the quiet desktop, same images and settings, source-built binaries; all PASS):
+  resident peak 176.1 MiB on 0.4.0 (second-half trend +0.54 MiB/h), 220.6 MiB on rc.1 (+8.59 MiB/h,
+  against an allowed 9.6), 177.9 MiB with the fix (-0.08 MiB/h); threads, open files and stall
+  recovery are equal.
 - *The 2-hour soak* (`scripts/soak.py`, 5 images, stalls every few minutes): **PASS**. 38 stalls
   injected, 0 stall failures, 23 remounts, 0 remount failures, 263,201 reads (845 GB) of which
   16,725 failed, as the churn and the stalls make them. Resident memory warm 181.5 MiB, peak
