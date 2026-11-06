@@ -41,8 +41,9 @@ fn report(what: &str) {
     );
     #[cfg(target_env = "gnu")]
     {
-        // SAFETY: mallinfo2 takes no arguments and only reads the allocator's counters.
-        let m = unsafe { libc::mallinfo2() };
+        // SAFETY: mallinfo takes no arguments and only reads the allocator's counters. Not
+        // mallinfo2, which the oldest glibc built on doesn't have; its counters wrap at 2 GiB.
+        let m = unsafe { libc::mallinfo() };
         println!(
             "{what}: arena={} mmapped={} in_use={} free={} top={}",
             m.arena, m.hblkhd, m.uordblks, m.fordblks, m.keepcost

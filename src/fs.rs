@@ -538,7 +538,7 @@ impl Shared {
             Some(Node::Dir(_)) if self.tree.is_live(ino) => Ok(FopenFlags::empty()),
             Some(Node::Dir(_)) => Ok(FopenFlags::FOPEN_KEEP_CACHE | FopenFlags::FOPEN_CACHE_DIR),
             Some(Node::File(_) | Node::Sidecar(_)) => Err(Errno::ENOTDIR),
-            None => Err(Errno::ENOENT),
+            None => Err(self.not_found()),
         }
     }
 
@@ -857,7 +857,10 @@ impl Filesystem for SacdFs {
         self.serve(
             What::new("access", Ino(ino.0)),
             reply,
-            move |sh| Shared::access(sh.tree.get(ino.0), mask),
+            move |sh| match sh.tree.get(ino.0) {
+                None => Err(sh.not_found()),
+                node => Shared::access(node, mask),
+            },
             |reply, r| {
                 if let Some(reply) = reply {
                     reply_empty(reply, r)

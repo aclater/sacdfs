@@ -155,6 +155,61 @@ before. Two changes, each needed:
   and the borrow from the library's disc costs nothing per read. *Trade-off:* the TOC is
   borrowed from the library's disc, so it lives as long as the `Disc`, as before.
 
+### Memory: a budget for listings (#237)
+
+A large library under a container memory limit got sacdfs killed while listing, which ended the
+service for every client. An allocation failure can't be relied on, because the kernel's
+out-of-memory killer acts first, so sacdfs has to stay under the limit by itself.
+
+**What the memory was.** About 57 KiB per image, measured with dhat-rs and glibc's own accounting at 395, 1,600
+and 5,000 images (`examples/listing_mem.rs`), at 24.8 files per image: 47% is built per file (header,
+tag bytes, the structs), 18% is the TOC and text, 19% the tree's nodes, entries and names, 2% the
+walk, and 13% the allocator's overhead. Over 90% of the bytes requested can be rebuilt from the image.
+
+**The decision.** The owner's direction was for running short of memory to make sacdfs slower rather
+than kill it, with re-reading the TOC as the accepted cost. So the unit dropped is the whole image:
+its disc, areas and files. *Why it stays correct:* numbers come from paths (see [`ident`](../src/ident.rs)),
+and a number not in the tree is already looked for along its path, for NFS handles kept across a
+restart. A dropped image goes through that same path, and its names, numbers and generations come
+back the same while the image is unchanged. If the image did change, it is what a remount would show.
+
+**Alternatives.**
+- *Drop only the TOC and text:* saves 18%, where 20,000 images at 256 MiB needs about 90%.
+- *A memory-mapped listing file per library,* the first proposal on #237: names, sizes and times are a
+  small part of the memory, so it moves little by itself, and it needs a key covering every image's
+  size and mtime, the tags and the output options, and a format. It also needs this path as its
+  fallback when the cache directory isn't writable. It could still help a warm start (#232); that's a
+  speed question, unmeasured, and the bound doesn't depend on it.
+- *Strict least-recently-used:* needs a lock on requests answered from memory. The clock order here
+  only sets a flag, and a scan that goes through everything once evicts in nearly the same order.
+
+**Trade-offs accepted.** Going back to a dropped image costs a TOC read. A file open keeps its whole
+image, so readers can hold more than the budget. Below the budget, nothing is dropped and nothing is
+added but a flag. The count of nodes in `statfs` falls as images are dropped.
+
+**Details that matter.**
+- A source directory opens its images in batches of 64 under a bound. One directory can hold more
+  images than the bound allows at once.
+- The persistent seek index holds each disc it has registered until the next flush, 30 s later. A scan
+  goes through thousands of images in that time, so it now lets go of dropped discs with nothing to
+  save as soon as a batch has been dropped.
+- A request that holds a directory's node while its image is dropped sees a mark on that node and asks
+  the tree again.
+- A closed image that can't be opened again fails the request and is not remembered, so it isn't
+  shown as empty to a scanner because of a passing error.
+
+**The memory watch.** Item 3 of the issue. What's counted is the cgroup's anonymous and shared memory
+rather than `memory.current`, which includes the page cache and sits at the limit on any machine that
+has been reading. The order is what costs least first: listings cost a disc read for whoever comes
+back; the cache and decoders cost a reader some decoding; refusing fails one request; a kill fails
+every client. The alternative of pressure stall information was left out: it reports that reclaim is
+already hurting, and doesn't say how close the kill is.
+
+**The defaults from the limit** (#231). Cache 16 below 512 MiB: it showed no single-reader cost and saves
+about 18 MiB, though several fast readers of one image are about 10% slower, which is accepted on a
+small limit. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB, and one gives about 5
+times real time on 6-channel WAV. With no limit, nothing changes.
+
 ### Memory: the default cache and the fixed overhead (#150)
 
 The owner asked for lower memory use after 0.3.0: peak RSS under 100 MiB at the default cache and

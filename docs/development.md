@@ -39,6 +39,19 @@ SACDFS_FUSE_TESTS=1 cargo test --test no_growth -- --nocapture
 It prints the heap after each cycle. dhat allows one profiler per process, so the file holds
 one test.
 
+## What a listing holds
+
+```sh
+cargo run --release --example listing_mem -- SOURCE
+RUSTFLAGS='--cfg heap_dhat' cargo run --release --example listing_mem -- SOURCE
+```
+
+`examples/listing_mem.rs` walks SOURCE, lists every directory and makes every file's node, with no
+mount and no bound (#237). The first form prints the process's anonymous memory and glibc's accounting
+at each step. The second writes `dhat-heap.json` while the tree is still alive, so the "end" figures
+of each allocation site are what the listing holds. The breakdown in
+[design](design.md#memory-a-budget-for-listings-237) came from these.
+
 ## The soak
 
 ```sh
