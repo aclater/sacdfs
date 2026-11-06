@@ -16,7 +16,8 @@
 #                       sites still live at the end, and the growth between the first
 #                       snapshot after the warm-up and the last.
 #
-# Output goes to $OUT (default target/leak-check).
+# Output goes to $OUT (default target/leak-check). ONLY=REGEX (memcheck) runs only the test
+# binaries whose path matches, for example ONLY='/(mount|stall)-'.
 set -euo pipefail
 
 OUT=${OUT:-target/leak-check}
@@ -31,14 +32,16 @@ memcheck() {
 for l in sys.stdin:
     m = json.loads(l)
     if m.get("reason") == "compiler-artifact" and m.get("executable") and m["profile"]["test"]:
-        print(m["executable"])' | grep -v '/no_growth-' >"$OUT/tests.txt"
+        print(m["executable"])' | grep -v '/no_growth-' | grep -E "${ONLY:-.}" >"$OUT/tests.txt"
     # tests/no_growth.rs is left out: dhat replaces the allocator there (memcheck would see
     # nothing), and its in-process mount hangs under valgrind.
+    # The system tools the tests run (mkfifo, ls, df, awk) are not followed: on the CI runner
+    # they are uutils coreutils, which leaks at exit (43 KiB from mkfifo alone) and is not ours.
     # No --error-exitcode: it would change the exit status of the sacdfs processes the tests
     # start and check. The verdict comes from the logs instead.
     local vg=(valgrind --leak-check=full --show-leak-kinds=definite,indirect
         --errors-for-leak-kinds=definite,indirect --trace-children=yes
-        "--trace-children-skip=*fusermount3,*/kill,*/sh,*/bash,*/python3"
+        "--trace-children-skip=*fusermount3,*/kill,*/sh,*/bash,*/python3,/usr/bin/*,/bin/*"
         --suppressions=scripts/leak-check.supp --num-callers=30)
     local fail=0
     while read -r bin; do

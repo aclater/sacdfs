@@ -67,9 +67,20 @@ jobs:
           done
           python3 -I scripts/soak.py --sacdfs target/release/sacdfs --images target/soak-images \
             --hours 0.33 --interval 30 --warmup 300 --cache-mb 16 --out target/soak.tsv
+      - name: Soak logs (sacdfs's stderr and log, from the work directory)
+        if: always()
+        run: |
+          mkdir -p target/soak-logs
+          for d in /var/tmp/sacdfs-soak.*; do
+            [ -d "$d" ] || continue
+            cp "$d"/*.stderr "$d"/*.log target/soak-logs/ 2>/dev/null || true
+            tail -n 40 "$d"/*.stderr 2>/dev/null || true
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()
         with:
           name: soak
-          path: target/soak.tsv
+          path: |
+            target/soak.tsv
+            target/soak-logs/
           retention-days: 14

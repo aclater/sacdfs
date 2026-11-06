@@ -103,7 +103,17 @@ class Mount:
                                      stderr=open(args.work / f"{logname}.stderr", "ab"))
         wait(lambda: is_mounted(mp) or self.proc.poll() is not None, 120, f"the mount on {mp}")
         if self.proc.poll() is not None:
-            raise RuntimeError(f"sacdfs exited with {self.proc.returncode}")
+            # Say why: sacdfs's own words are in its stderr and log, in the work directory
+            # (which a CI runner throws away).
+            why = ""
+            for name in (f"{logname}.stderr", logname):
+                try:
+                    text = (args.work / name).read_text(errors="replace").strip()
+                except OSError:
+                    continue
+                if text:
+                    why += f"\n--- {name} ---\n{text[-4000:]}"
+            raise RuntimeError(f"sacdfs exited with {self.proc.returncode} (mount on {mp}){why}")
         self.pid = find_sacdfs(self.proc.pid)
 
     def stop(self, secs=60):
