@@ -8,8 +8,7 @@
 mod common;
 
 use std::os::unix::fs::FileExt;
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use common::*;
@@ -100,15 +99,6 @@ fn library_walk_stays_within_the_bound() {
     assert!(handles::global().opens() > opens, "the interleaved walk reopened no image");
 }
 
-fn fuse_available() -> bool {
-    let ok = Path::new("/dev/fuse").exists()
-        && Command::new("fusermount3").arg("-V").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok();
-    if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
-        panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
-    }
-    ok
-}
-
 fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
     let start = Instant::now();
     while !cond() {
@@ -121,9 +111,7 @@ fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
 /// audio and the end of every file, and sacdfs never holds more than 2 images open.
 #[test]
 fn mount_walk_stays_within_the_bound() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let dir = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
         .args(["-f", "--no-index-cache", "--max-open-images", "2"])

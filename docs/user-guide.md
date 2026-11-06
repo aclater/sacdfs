@@ -65,7 +65,10 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
 - `--cache-mb N` (default 32) bounds the cache of decoded DSD frames and converted PCM
   frames, which DSF and WAV reads share. It is sacdfs's main use of memory, whatever the
   number of open files: about 45 to 70 MiB in all with the default during scans and straight
-  reads, and about 11 MiB once a mount has been idle for 60 s, when the cache is given back.
+  reads of a small library, and about 11 MiB once a small library has been idle for 60 s, when
+  the cache is given back. A larger library needs more (about 53 KiB for each image, and its
+  listing is not given back): see
+  [Small NAS: sizing](deployment.md#small-nas-sizing).
   Below 32, several fast readers or WAV copies slow down. A larger cache helps only when the same parts of files are read again and the
   kernel's page cache has dropped them.
 - `--max-open-images N` (default 64, 1 to 1024): an image stays open after its directory is

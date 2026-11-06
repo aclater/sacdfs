@@ -3,31 +3,19 @@
 //! What the kernel asks of a mount, counted in fuser's request log (#61), and what `df` and
 //! `stat` are told (#62, #64).
 //!
-//! These tests need `/dev/fuse` and `fusermount3`. Without them they pass without doing
-//! anything, unless `SACDFS_FUSE_TESTS=1` is set (as CI does), which makes a missing FUSE
-//! a failure.
+//! These tests need `/dev/fuse` and `fusermount3`. Without them they skip (`common::skip!`
+//! prints each one), unless `SACDFS_FUSE_TESTS=1` is set (as CI does), which makes a missing
+//! FUSE a failure.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::time::{Duration, Instant, SystemTime};
 
 use common::*;
-
-fn fuse_available() -> bool {
-    let ok = Path::new("/dev/fuse").exists()
-        && Command::new("fusermount3").arg("-V").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok();
-    if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
-        panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
-    }
-    if !ok {
-        eprintln!("skipping: no /dev/fuse or fusermount3");
-    }
-    ok
-}
 
 fn is_mounted(mountpoint: &Path) -> bool {
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
@@ -135,9 +123,7 @@ fn ls_l(dir: &Path) {
 
 #[test]
 fn probes_are_answered_once() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let mount = Mount::new(&corpus().join("images"), &["--threads", "2"]);
     let area = mount.path().join("dsd-stereo-mch-2048/Stereo");
     assert!(std::fs::read_dir(&area).unwrap().count() > 2);
@@ -217,9 +203,7 @@ fn df(p: &Path) -> (u64, u64) {
 
 #[test]
 fn df_shows_the_images_size_full() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let images = corpus().join("images");
     let mut bytes = 0;
     let mut todo = vec![images.clone()];
@@ -247,9 +231,7 @@ fn df_shows_the_images_size_full() {
 /// No images is not a 0-byte filesystem either (#62): the source's filesystem says the size.
 #[test]
 fn df_of_no_images_shows_the_source_size_full() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let empty = tempfile::tempdir().unwrap();
     let mount = Mount::new(empty.path(), &[]);
     let (size, avail) = df(&mount.path());
@@ -259,9 +241,7 @@ fn df_of_no_images_shows_the_source_size_full() {
 
 #[test]
 fn pcm_options_move_the_wav_mtime() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let images = corpus().join("images");
     let stats = |extra: &[&str]| -> Vec<(String, u64, SystemTime)> {
         let mount = Mount::new(&images, extra);
