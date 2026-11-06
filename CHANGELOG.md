@@ -8,11 +8,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [0.4.1] - 2026-11-06
 
-Tested as two release candidates. On rc.1 the scripted servers (Jellyfin, Navidrome, Lyrion, MPD,
+Tested as three release candidates. On rc.1 the scripted servers (Jellyfin, Navidrome, Lyrion, MPD,
 MinimServer) were run against 0.4.0 side by side, and Roon, Plex, Windows (Explorer, PowerShell,
 Robocopy), foobar2000, JRiver Media Center, Linux NFS and SMB mounts and the FFmpeg family of tools
 were run on it; the results are in docs/clients.md. rc.2 adds the memory fix (#224) and
-`SACDFS_MOUNT_TIMEOUT` (#232). The rc.2 gate, on 2026-11-06:
+`SACDFS_MOUNT_TIMEOUT` (#232). rc.3 adds the fix for #238, which the 2-hour soak on rc.2 exposed (see
+Fixed). The rc.2 gate, on 2026-11-06:
 
 - **Memory,** a real library of 4,902 DSF files on a 32-core machine, listed / after a head-and-tail
   read of every file / after 10 minutes idle: 0.4.0 29.0 / 79.5 / 35.2 MiB, rc.1 33.2 / 95.1 / 54.0,
@@ -22,7 +23,8 @@ were run on it; the results are in docs/clients.md. rc.2 adds the memory fix (#2
   slower than rc.1 (accepted); the arena limit is the suspected cause, not confirmed. A cold-cache
   mount was not measured on rc.2.
 - **Soak:** the 60-minute run passed (224,491 reads, 686 GB, 0 unexpected errors, 19 stalls, 11
-  remounts, memory +1.4 MiB/h). The 2-hour soak: TBD-GATE.
+  remounts, memory +1.4 MiB/h). The 2-hour soak on rc.2 failed on #238
+  (fixed in rc.3), so it is not counted as a pass. The 2-hour soak on rc.3: TBD-GATE.
 - **Share paths:** SMB 3.1.1 and NFS 4.2 listings were correct; 10 files were byte-identical over
   both; writes were refused; SMB reconnected after a restart.
 - **Container:** `SACDFS_MOUNT_TIMEOUT` and the health check passed on the rc.2 image under Docker and
@@ -102,6 +104,20 @@ tracks. These are what was seen, not a prediction for yours.
 
 ### Fixed
 
+- **A hung image's WAV reads no longer take decoder threads from other images (#238).** Reading a
+  track as WAV read the image on a thread of the decoder pool, which all images share. While one
+  image's source hung (a disk in error recovery, a hung share), its WAV reads held decoder threads
+  for the length of the hang. A read of a healthy disc could then wait until the request timeout and
+  fail with `EIO`; once the hung image's reads held every decoder thread, all DST and WAV reads on the
+  mount did. WAV reads now read the image on their request thread, as DSF reads do, and only decoding
+  and conversion use the pool. Present since 0.4.0 at least. A mount with `--format dsf` was not
+  affected by this. Audio bytes are unchanged.
+
+  **A long hang can still stop the whole mount (#241).** A read that has failed with `EIO` keeps its
+  request thread until the source answers, so clients that keep retrying on the hung image take one
+  more thread each time. Once 64 are blocked, reads of healthy images wait and fail too, in both
+  formats, until the source answers. With 8 clients retrying at the default 30 s timeout, that took
+  about 6 minutes on 2 decoder threads. Healthy reads recover at once when the source comes back.
 - **`sacdfs verify` could exit 0 with files not checked (#196).** A panic while checking a file
   ended that worker silently, so the report and summary left the file out, and with one thread
   every file after it too. The exit status said that all was identical. A panic now gives that file
@@ -154,6 +170,20 @@ tracks. These are what was seen, not a prediction for yours.
   0.4.0's 3.1 s (medians), and a warm local one in 0.2 s against 0.15 s. These come from different
   libraries and machines, so they are not combined.
 
+- **The weekly leak workflow is fixed (a broken check, no leak found).** It had failed on
+  every job. The memcheck job flagged a once-per-process, 55-byte mount that `serve` keeps on
+  purpose (its suppression matched the legacy `_ZN...` symbol names and stopped matching with
+  Rust 1.99's v0 names), an uninitialised read inside the `nix` crate that fuser calls once
+  per mount, and the system tools the tests start (uutils `mkfifo`, `ls`, `df`). The soak job
+  could not mount: `fusermount3` was refused ("Permission denied") in its work directory
+  under `/var/tmp` on the Ubuntu runner (probably its AppArmor profile; not checked). The
+  soak now mounts under the runner's home, where it works (a 20-minute run passes), and `scripts/soak.py` prints
+  sacdfs's stderr when the mount fails.
+- **The soak no longer ignores read errors.** `scripts/soak.py` counted every failed read as
+  "expected" and the verdict never looked at it (8% of the reads in one run). It now sorts
+  them by path and errno into the ones its churner and staller cause and everything else, and
+  fails on any other. See `docs/development.md`.
+
 ### Changed
 
 - **scarletbook and scarletbook-pcm 0.5.7 → 0.5.8** (#206). The release fixes the saved seek
@@ -175,6 +205,10 @@ tracks. These are what was seen, not a prediction for yours.
 - Pull requests that touch the code run an informational benchmark: base and head read DST stereo,
   DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
   summary and as a warning. Not a required check (#162).
+
+- Skipped tests now show (#207). A guard that returned early reported as a pass; guards now print
+  a `SKIPPED` line, and the test jobs count skips in their summary and fail if they differ from
+  `tests/expected-skips.json` (`scripts/check_skips.py`, see docs/development.md).
 
 ### Documentation
 
