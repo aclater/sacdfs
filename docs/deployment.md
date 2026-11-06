@@ -672,17 +672,19 @@ sees after a restart depends on the NFS server:
   Docker 29 in a Fedora 44 VM, a Fedora 44 client, `docker restart`): the open file read on,
   `stat` and `ls` of the same path worked, and the identity was unchanged. This is what the
   container CI job checks too.
-- **Podman, NFSv4.2: a remount is needed.** Tested on 0.4.0 and 0.4.1-rc.1 (the published images,
-  rootful Podman in the same VM, two runs of each, `podman restart`): after the restart a file
-  held open reads on with `Stale file handle`, and so do `stat` of the same path and `ls` of its
-  directory. After the client unmounts and mounts again, the same path has the same inode,
-  modification time and size, so the identity is stable; only handles the client held from
-  before are refused. The cause was not investigated. After restarting a Podman container,
-  remount NFS on its clients (an automount for NFS was not tried).
+- **Rootful Podman, NFSv4.2: a remount is needed ([#218](https://github.com/aclater/sacdfs/issues/218)).**
+  Tested on 0.4.0 and 0.4.1-rc.1 (two runs of each, `podman restart`), and the release gate saw the
+  same on rc.2: after the restart a file held open reads on with `Stale file handle`, and so do
+  `stat` of the same path and `ls` of its directory. After the client unmounts and mounts again,
+  the same path has the same inode, modification time and size, so the identity is stable; only
+  handles the client held from before are refused. After restarting a Podman container, remount NFS
+  on its clients (an automount for NFS was not tried). A fix is planned for 0.5.0
+  ([#221](https://github.com/aclater/sacdfs/pull/221)); it is not in 0.4.1.
 - **NFSv3:** the container's Ganesha serves NFSv4 only (`Protocols = 4` in its configuration),
   so an NFSv3 client, which keeps nothing but handles, could not be tried against it.
 - **SMB** is path-based and reconnects by itself: after the restart the share answered again
-  and the automount mounted on first use (0.4.1-rc.1, Fedora 44 client).
+  and the automount mounted on first use (0.4.1-rc.1, Fedora 44 client). The release gate saw SMB
+  reconnect after a restart on rc.2.
 - **The kernel NFS server, NFSv3, on loopback (CI):** a client opens files, reads half of each,
   sacdfs restarts (with the NFS server stopped around it), and the client reads the rest
   through the same open file. This is CI's `nfs` workflow; it is the case the file-handle design
