@@ -466,7 +466,9 @@ fn side_by_side_names() {
 #[ignore = "needs real disc images: set SACDFS_REAL_IMAGES"]
 fn real_discs() {
     use sha2::{Digest, Sha256};
-    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else { return };
+    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else {
+        common::skip!("needs real disc images: set SACDFS_REAL_IMAGES")
+    };
     let rate = match std::env::var("SACDFS_PCM_RATE").ok().as_deref() {
         Some("88200") => PcmRate::R88200,
         Some("352800") => PcmRate::R352800,
@@ -558,7 +560,9 @@ fn real_discs() {
 #[ignore = "writes a 4.6 GB sparse file: set SACDFS_RF64_OUT"]
 fn rf64_file() {
     use std::io::{Seek, SeekFrom, Write};
-    let Some(path) = std::env::var_os("SACDFS_RF64_OUT") else { return };
+    let Some(path) = std::env::var_os("SACDFS_RF64_OUT") else {
+        common::skip!("writes a 4.6 GB sparse file: set SACDFS_RF64_OUT")
+    };
     let layout = wav::Layout { channels: 6, frames: 25 * 60 * 75, samples_per_frame: 2352, rate: 176_400 };
     use scarletbook::output::{TagItem, TagSet};
     let mut tags = TagSet::new();

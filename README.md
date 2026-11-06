@@ -67,7 +67,7 @@ Statuses, extracts in their own tree, and keeping their tags:
 
 - [User guide](docs/user-guide.md): options in detail, tags, sidecar files, fstab and systemd, troubleshooting
 - [Options](docs/options.md), [what the mount shows](docs/layout.md) and [limits](docs/limits.md)
-- [Deployment guide](docs/deployment.md): the container reference, every setting and why
+- [Deployment guide](docs/deployment.md): the container reference, every setting and why; [Small NAS: sizing](docs/deployment.md#small-nas-sizing) for memory and cores
 - [Design](docs/design.md) (how it works, and why), [performance](docs/performance.md), [PCM quality](docs/pcm-quality.md)
 - [Changelog](CHANGELOG.md), [releases](https://github.com/aclater/sacdfs/releases), and
   what each minor version brought: [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)

@@ -57,7 +57,7 @@ LABEL org.opencontainers.image.title="sacdfs" \
 
 EXPOSE 445/tcp 2049/tcp
 VOLUME ["/cache"]
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
     CMD ["/usr/local/bin/healthcheck.sh"]
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

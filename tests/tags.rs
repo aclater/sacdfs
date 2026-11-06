@@ -236,13 +236,7 @@ fn key_command_and_mount_with_tags() {
     assert!(line.contains("\tnone\t"), "{line}");
     fs::write(tags_dir.join(format!("{key}.toml")), "[track.1]\ntitle = \"Through The Kernel\"\n").unwrap();
 
-    let fuse = Path::new("/dev/fuse").exists()
-        && Command::new("fusermount3").arg("-V").output().is_ok_and(|o| o.status.success());
-    if !fuse {
-        assert!(std::env::var_os("SACDFS_FUSE_TESTS").is_none_or(|v| v != "1"), "no FUSE");
-        eprintln!("skipping the mount: no /dev/fuse or fusermount3");
-        return;
-    }
+    common::skip_without_fuse!();
     let mp = dir.path().join("mnt");
     fs::create_dir_all(&mp).unwrap();
     let cache = dir.path().join("cache");
