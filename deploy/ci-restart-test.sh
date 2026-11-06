@@ -8,8 +8,8 @@
 #   1. a plain restart, what the user runs;
 #   2. stop, take the mount's device number away, start. A FUSE mount's device number is the
 #      lowest free one, so whether a restart changes it depends on what else mounted in
-#      between: Podman nearly always changes it, Docker rarely. This round changes it on purpose,
-#      and fails if it did not.
+#      between, and on the runtime's version: a plain restart may keep it. This round changes
+#      it on purpose, and fails if it did not.
 #
 #   deploy/ci-restart-test.sh RUNTIME IMAGE     # RUNTIME: "docker" or "sudo podman"
 #
