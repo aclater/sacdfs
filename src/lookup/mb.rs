@@ -124,7 +124,12 @@ pub enum Error {
 /// next try, or `None` if the service asks for more than a run should wait, so that it ends rather
 /// than asks early. *Why a floor for a 429:* the service counts every request, and the growing waits
 /// start at seconds.
-pub fn wait_after(status: u16, retry_after: Option<u64>, attempt: u32, backoff: Duration) -> Option<Duration> {
+pub fn wait_after(
+    status: u16,
+    retry_after: Option<u64>,
+    attempt: u32,
+    backoff: Duration,
+) -> Option<Duration> {
     if retry_after.is_some_and(|s| s > MAX_RETRY_AFTER) {
         return None;
     }

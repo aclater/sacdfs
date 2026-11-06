@@ -779,7 +779,7 @@ fn a_busy_service_costs_a_retry_not_the_batch() {
     let t = Busy { bad: vec![busy(), busy()], inner: answers(&image, &formats), asked: 0 };
     let mut c = Client::paced(t, Duration::ZERO, Duration::ZERO);
     let mut lines = Vec::new();
-    let s = lookup::fetch(d.path(), &[image.clone()], Options::default(), &mut c, |l| lines.push(l));
+    let s = lookup::fetch(d.path(), std::slice::from_ref(&image), Options::default(), &mut c, |l| lines.push(l));
     assert_eq!((s.matched, s.failed), (1, 0), "{lines:?}");
     assert!(c.transport().asked > 2);
 }
@@ -820,7 +820,8 @@ fn being_told_to_stay_away_ends_the_run_at_once() {
         let t = Busy { bad: vec![bad], inner: Recorded::default(), asked: 0 };
         let mut c = Client::paced(t, Duration::ZERO, Duration::ZERO);
         let mut lines = Vec::new();
-        let s = lookup::fetch(d.path(), &vec![image.clone(); 4], Options::default(), &mut c, |l| lines.push(l));
+        let s =
+            lookup::fetch(d.path(), &vec![image.clone(); 4], Options::default(), &mut c, |l| lines.push(l));
         assert_eq!((s.failed, s.not_tried), (1, 3), "{lines:?}");
         assert_eq!(c.transport().asked, 1, "{lines:?}");
     }
