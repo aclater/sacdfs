@@ -6,6 +6,17 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A hung image no longer stalls or fails reads of other images (#238).** Reading a track as WAV
+  read the image on a thread of the decoder pool, which all images share. While one image's source
+  hung (a disk in error recovery, a hung share), its WAV reads held decoder threads for the length of
+  the hang. A read of a healthy disc could then wait until the request timeout and fail with `EIO`; once
+  the hung image's reads held every decoder thread, all DST and WAV reads on the mount did. WAV reads
+  now read the image on their request thread, as DSF reads do, and only decoding and conversion use
+  the pool. Present since 0.4.0 at least. A mount with `--format dsf` was not affected. Audio bytes
+  are unchanged.
+
 ## [0.4.1-rc.2] - 2026-11-06
 
 ### Added
