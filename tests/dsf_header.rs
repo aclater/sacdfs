@@ -33,7 +33,9 @@ fn dsf_tag_walk_starts_no_read_ahead() {
 #[test]
 #[ignore = "needs real disc images: set SACDFS_REAL_IMAGES"]
 fn real_discs_head_reads() {
-    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else { return };
+    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else {
+        common::skip!("needs real disc images: set SACDFS_REAL_IMAGES")
+    };
     let tree = Tree::with_options(
         SourceDir::scan(std::path::Path::new(&dir)).unwrap(),
         sacdfs::disc::Tuning::default(),

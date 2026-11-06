@@ -17,7 +17,7 @@ mod common;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -27,18 +27,6 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 /// How much later than the timeout a stalled request may fail: the watchdog checks every
 /// half second at this timeout, and a loaded CI runner is slow.
 const SLACK: Duration = Duration::from_secs(4);
-
-fn fuse_available() -> bool {
-    let ok = Path::new("/dev/fuse").exists()
-        && Command::new("fusermount3").arg("-V").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok();
-    if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
-        panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
-    }
-    if !ok {
-        eprintln!("skipping: no /dev/fuse or fusermount3");
-    }
-    ok
-}
 
 fn is_mounted(mountpoint: &Path) -> bool {
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
@@ -136,9 +124,7 @@ fn release(fifo: &Path) {
 
 #[test]
 fn a_stalled_image_fails_its_requests_and_holds_up_no_other() {
-    if !fuse_available() {
-        return;
-    }
+    common::skip_without_fuse!();
     let corpus = common::corpus().join("images");
     // SOURCE has one directory per image, each holding a link to a link outside SOURCE
     // (`links/`) to the corpus image; `links/` is what is switched to FIFOs.
