@@ -698,7 +698,8 @@ None of these settings has been run on macOS, so none is recommended for it.
 NFS clients keep file handles across server restarts. sacdfs gives every file and
 directory the same inode number on every mount, and supports NFS export (#18). So after the
 container restarts (a NAS reboot, an update), NFS clients go on reading the files they had
-open, and their cached directories stay valid. SMB is path-based and reconnects by itself.
+open, and their cached directories stay valid. SMB clients differ, and macOS needs a remount: see
+[SMB and restarts](#smb-and-restarts).
 
 CI checks both: a client opens a file over SMB and over NFS (4.2), reads half of it, the
 container restarts, and the client reads the rest through the same open file.
