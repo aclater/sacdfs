@@ -744,6 +744,9 @@ fn fetch_one<T: Transport>(
     for (a, reason) in pending.iter().zip(&why) {
         if let Some(reason) = reason {
             say(format!("{shown}: {}: nothing written: {reason}", a.name()));
+            if let Some(advice) = advice_for(reason, options) {
+                say(format!("{shown}: {}: {advice}", a.name()));
+            }
         }
     }
     if matched < pending.len() {
@@ -801,6 +804,20 @@ fn fetch_one<T: Transport>(
     sum.written += 1;
     sum.keys += added;
     Ok(())
+}
+
+/// What to do after a refusal, if the reason calls for it: a release refused because the disc's
+/// ISRCs disagree with it. *Why that refusal stays, though most such releases proved right on real
+/// discs:* a wrong tag in a library costs more than a disc left unmatched, so a person decides.
+fn advice_for(reason: &str, options: Options) -> Option<&'static str> {
+    if !reason.contains("ISRCs disagree") {
+        return None;
+    }
+    Some(if options.by_name {
+        "the disc's ISRCs disagree with that release, so it may be another edition. To take it anyway, write its tags by hand in the tags file"
+    } else {
+        "the disc's ISRCs disagree with that release, so it may be another edition. `--lookup-name` may find one that fits, or write its tags by hand in the tags file"
+    })
 }
 
 /// The tags file at `path`, if there is one.
@@ -1086,7 +1103,20 @@ pub fn plan(
 
 #[cfg(test)]
 mod tests {
-    use super::format_rank;
+    use super::{Options, advice_for, format_rank};
+
+    /// A refusal on ISRCs says what's next, and doesn't suggest what was already tried.
+    #[test]
+    fn a_refusal_on_isrcs_says_what_to_do() {
+        let reason = "no confident match: release x: ISRCs disagree on 9 tracks, agree on 0";
+        let plain = advice_for(reason, Options::default()).unwrap();
+        assert!(
+            plain.contains("ISRCs disagree") && plain.contains("--lookup-name") && plain.contains("by hand")
+        );
+        let named = advice_for(reason, Options { by_name: true, ..Options::default() }).unwrap();
+        assert!(named.contains("by hand") && !named.contains("--lookup-name"));
+        assert_eq!(advice_for("a track is 20.0 s off (limit 15.0 s)", Options::default()), None);
+    }
 
     /// As MusicBrainz names them. "SACD layer" holds the words "CD layer": on real discs this made
     /// every SACD layer rank as a CD, with a note saying so.

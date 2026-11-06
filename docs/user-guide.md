@@ -374,6 +374,9 @@ an ambiguity ends the lookup:
   aren't kept, as with `tags import`, since the file is written anew. `Track NN` stored by an
   earlier `tags import` isn't taken for an edit and is replaced, so a title you set by hand to exactly
   that text is too.
+- **ISRCs that disagree refuse a release,** even when its titles and durations fit, since it may be
+  another edition. The command says so; `--lookup-name` may find a release that fits, or you can write
+  the disc's tags by hand. On real discs this refused 5 of 60 that all proved right on checking.
 - **File names don't change:** a track stays `NN - Track NN.dsf`, with the new title in its tag,
   so that a player's history of the file isn't moved a second time. Files whose tags changed get a
   new modification time, and folders move, as with any edit of a tags file.
