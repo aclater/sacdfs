@@ -1010,8 +1010,9 @@ fn serve(session: Session<SacdFs>) -> io::Result<()> {
     guard.join().map_err(|_| io::Error::other("the FUSE session panicked"))?
 }
 
-/// Unmounts the file system at `at`: `umount`, or `fusermount3 -u -z` if not root (as fuser
-/// did; the setuid helper detaches, so a busy mount is not refused).
+/// Unmounts the file system at `at`: `umount`, or `fusermount3 -u -z` (`fusermount -u -z` where
+/// only FUSE 2's helper is installed) if not root (as fuser did; the setuid helper detaches, so a
+/// busy mount is not refused).
 #[allow(unsafe_code)]
 fn unmount(at: &std::path::Path) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
@@ -1025,8 +1026,31 @@ fn unmount(at: &std::path::Path) -> io::Result<()> {
     if e.raw_os_error() != Some(libc::EPERM) {
         return Err(e);
     }
-    let st = std::process::Command::new("fusermount3").args(["-u", "-z", "--"]).arg(at).status()?;
-    if st.success() { Ok(()) } else { Err(io::Error::other(format!("fusermount3 -u -z: {st}"))) }
+    helper_detach(at)
+}
+
+/// The setuid helpers that unmount for users other than root, in the order fuser mounts with
+/// them: FUSE 3's `fusermount3`, then FUSE 2's `fusermount`, which is all some systems have
+/// (Synology DSM, for one). `FUSERMOUNT_PATH`, which fuser mounts with when it is set, comes
+/// first.
+fn fusermount_helpers() -> Vec<std::ffi::OsString> {
+    let mut helpers: Vec<std::ffi::OsString> = std::env::var_os("FUSERMOUNT_PATH").into_iter().collect();
+    helpers.extend(["fusermount3", "fusermount"].map(Into::into));
+    helpers
+}
+
+/// Detaches the mount at `at` through the first setuid helper that exists (`-u -z`).
+fn helper_detach(at: &std::path::Path) -> io::Result<()> {
+    let mut last = io::Error::new(io::ErrorKind::NotFound, "neither fusermount3 nor fusermount found");
+    for helper in fusermount_helpers() {
+        match std::process::Command::new(&helper).args(["-u", "-z", "--"]).arg(at).status() {
+            Ok(st) if st.success() => return Ok(()),
+            Ok(st) => return Err(io::Error::other(format!("{} -u -z: {st}", helper.to_string_lossy()))),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => last = e,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last)
 }
 
 /// Detaches the mount at `at` (`umount -l`).
@@ -1041,11 +1065,7 @@ fn lazy_unmount(at: &std::path::Path) -> io::Result<()> {
     }
     let e = io::Error::last_os_error();
     // Not root: the setuid helper, lazily.
-    let st = std::process::Command::new("fusermount3").args(["-u", "-z", "--"]).arg(at).status();
-    match st {
-        Ok(s) if s.success() => Ok(()),
-        _ => Err(e),
-    }
+    helper_detach(at).map_err(|_| e)
 }
 
 #[allow(unsafe_code)]

@@ -28,7 +28,8 @@ nobody has run sacdfs there and reported back. Reports are welcome on
 | ASUSTOR ADM | [asustor.md](asustor.md) | Validated in a VM (ADM 5.1.4; binary and Docker) |
 | TerraMaster TOS | [terramaster.md](terramaster.md) | Validated in a VM (TOS 7.0, binary route only) |
 
-Without a container, on any Linux host (x86_64; FUSE 3's `fusermount3`, package `fuse3`):
+Without a container, on any Linux host (x86_64; as a user other than root, FUSE 3's `fusermount3`,
+package `fuse3`, or from 0.5.0 FUSE 2's `fusermount`; root needs neither):
 a [release binary](binary.md#binaries), or, from 0.4.0, `cargo install --locked sacdfs`
 from crates.io (Rust 1.85 or later; tested on 0.4.0 in a clean Rust container). The [user guide](../user-guide.md) covers running it.
 

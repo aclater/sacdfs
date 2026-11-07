@@ -783,7 +783,7 @@ services:
       interval: 30s
       timeout: 10s
       start_period: 300s
-      start_interval: 2s
+      # start_interval: 2s   # Docker 25 / Compose 2.20 or later only: see below
   navidrome:
     image: deluan/navidrome:latest
     restart: unless-stopped
@@ -804,8 +804,15 @@ volumes:
   nd-data:
 ```
 
-`start_interval` makes the health check run every 2 s while sacdfs starts, so the player starts a few
-seconds after the mount instead of after the first 30 s interval. This file, with a small test library
+Without `start_interval`, the player waits for sacdfs's first regular health check, up to 30 s (the
+interval) after the mount: that follows from Docker's health check rules and was not timed. With Docker
+Engine 25 or later and a Compose that accepts it, uncomment `start_interval`:
+the check then runs every 2 s while sacdfs starts, so the player starts a few seconds after the mount.
+It is commented out because an older Compose refuses the whole file: Compose 2.17.3 and 2.19.1 (from
+the Docker 20.10 and 24.0 CLI images) stop with "services.sacdfs.healthcheck Additional property
+start_interval is not allowed", and 2.29.1 (Docker 25.0 CLI image) accepts it; NAS systems often lag
+behind Docker's releases. With the line commented out, `docker compose config` accepts the file on all
+three. This file, with `start_interval`, and a small test library
 (8 images, 230 DSF files), was installed on TrueNAS SCALE
 25.10.7 as one custom app (the API call behind "Install via YAML") with the 0.4.1 image: sacdfs
 mounted, Navidrome was ready 4 s later, and its first scan found all 230 files. After the app was
