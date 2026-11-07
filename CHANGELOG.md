@@ -6,6 +6,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The real-disc tests are runnable and strict (#220).** `scripts/real-discs.sh DIR` runs the three
+  tests on a directory of real images and exits 0 only if all three ran and passed; with no images it
+  reports a skip (exit 77), not a pass. `library_index::real_discs` used to pass when an image failed
+  to open; now an image that doesn't open or compares nothing fails the run, as does one that serves
+  no file in the DSF and WAV tests. The release test plan has a step for them. Tests only; no
+  change to the program.
+
 ## [0.4.1] - 2026-11-07
 ### Changed
 ### Changed

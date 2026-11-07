@@ -13,7 +13,7 @@
       ]
     },
     {
-      "why": "Needs real disc images, which no CI job has: test images in the repository are synthetic. Run by hand on local discs.",
+      "why": "Needs real disc images, which no CI job has: test images in the repository are synthetic. Run by hand on local discs with scripts/real-discs.sh, as a release step (docs/test-plan.md).",
       "reason": "needs real disc images: set SACDFS_REAL_IMAGES",
       "jobs": ["tests", "tests-arm64", "coverage"],
       "tests": [

@@ -1,4 +1,4 @@
-# Development: leak hunting, memory profiling and skipped tests
+# Development: leak hunting, memory profiling, skipped tests and real-disc tests
 
 sacdfs runs for days on a NAS, so memory it keeps alive by mistake adds up. A map that only
 grows, nodes kept after a re-read, or the buffers of abandoned requests all count. In Rust,
@@ -209,6 +209,39 @@ out `SACDFS_FUSE_TESTS=1` to see which tests skip; the check then reports each a
 *Why it reads cargo's output rather than a report file, as pysacd does:* the reasons of `#[ignore]`
 tests are only there, and the output needs nothing passed through `sudo` (the `nfs export` job) or
 into a container. The release workflow's tests in its UBI 8 container don't run this check yet.
+
+## Real-disc tests
+
+Three tests run on real discs, which no CI job has: images can't go into a public repository
+(copyright), and the corpus is synthetic. They are `#[ignore]`d, so a plain `cargo test` lists them
+as ignored. They check that
+
+- `dsf_header::real_discs_head_reads`: a tagger's and a player's reads of every DSF file start
+  read-ahead only where they should (#78);
+- `library_index::real_discs`: 300 random ranges per area, located by sacdfs, equal reads through
+  a complete library index and a straight read;
+- `wav::real_discs`: every WAV file's audio equals its track's positions of the area stream, and
+  random ranges equal the straight read.
+
+Run them with:
+
+```sh
+scripts/real-discs.sh DIR
+```
+
+`DIR` holds `.iso` images of SACDs only, at least one, searched recursively (links to files are
+followed). `SACDFS_PCM_RATE=88200` or `352800` picks the WAV rate (default 176400); `CARGO_FLAGS`
+adds cargo options. The script runs `cargo test --release` with `SACDFS_REAL_TESTS=1`, and exits
+0 only when all three tests ran and passed. Without a directory it prints `SKIPPED` and exits 77,
+which is a skip and not a pass. The same holds under plain cargo: with `SACDFS_REAL_IMAGES` unset,
+the tests print `SKIPPED` (counted by `check_skips.py`), and with `SACDFS_REAL_TESTS=1` they fail.
+
+A run that looked at nothing fails: a directory that doesn't exist or holds no image, and an image
+that doesn't open, has no area, or serves no file, each fail the run, because the tree and
+`check_image` drop such images silently. So don't put non-SACD images in `DIR`. The run takes
+minutes per image on the 32-core build host; the DST areas dominate.
+
+The release checklist runs this before every release candidate ([test plan](test-plan.md#real-disc-tests)).
 
 ## Fuzzing
 
