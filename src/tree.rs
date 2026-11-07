@@ -1773,6 +1773,19 @@ impl Tree {
         if !crate::tags::installed() {
             return self;
         }
+        let images = self.images();
+        let mut w = crate::tags::Watch::load(file, images.iter().map(PathBuf::as_path));
+        for (image, t) in w.check(true) {
+            self.bump(&image, Stamp { own: None, other: Some(t), image: None });
+        }
+        w.save();
+        *self.tagged.lock().unwrap_or_else(|p| p.into_inner()) = w;
+        self
+    }
+
+    /// The image files of SOURCE as scanned at the mount: what the tag layer watches, and what
+    /// the background lookup (`--musicbrainz`) goes through.
+    pub fn images(&self) -> Vec<PathBuf> {
         let mut images = Vec::new();
         let root = self.get(ROOT);
         if let Some(DirKind::Source(top)) = root.as_deref().and_then(|n| match n {
@@ -1785,13 +1798,7 @@ impl Tree {
                 stack.extend(d.dirs.iter().map(|(_, s)| s));
             }
         }
-        let mut w = crate::tags::Watch::load(file, images.iter().map(PathBuf::as_path));
-        for (image, t) in w.check(true) {
-            self.bump(&image, Stamp { own: None, other: Some(t), image: None });
-        }
-        w.save();
-        *self.tagged.lock().unwrap_or_else(|p| p.into_inner()) = w;
-        self
+        images
     }
 
     /// Writes what is known of the tags files, if it changed (at unmount).
