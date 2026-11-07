@@ -174,6 +174,22 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 | [#175](https://github.com/aclater/sacdfs/issues/175) | Folders with no SACD below them are hidden | rc.1: on a real library 649 entries disappeared (4 top-level folders among them) and no DSF file. Carried over from rc.1 |
 | `verify` | A file it can't check gives an ERROR row and a non-zero exit, and an interrupted run leaves nothing that reads as a finished report. Users delete extracts on its word | Tested against the fix on its pull request branch and in CI; not run on a published 0.4.1 candidate |
 
+## Real-disc tests
+
+Real images can't go into CI, so three `#[ignore]`d tests (`dsf_header::real_discs_head_reads`,
+`library_index::real_discs`, `wav::real_discs`) run by hand. Before each release candidate the
+coordinator runs, on a build of the candidate commit:
+
+```sh
+scripts/real-discs.sh DIR
+```
+
+`DIR` is the Small library's images ([Test libraries](#test-libraries)) or larger, SACDs only. The
+release report records the counts (images, tests passed of 3, skipped) and the exit status, never
+disc titles. Exit 0 passes. Exit 77 (no images given) is a skip and is reported as one: the gate
+was not run, which [the exit criteria](#exit-criteria) do not count as passed. Details:
+[development.md](development.md#real-disc-tests).
+
 ## Install channels
 
 Run on the release they describe, following the docs as written, in a clean environment.
@@ -348,6 +364,7 @@ A final tag needs all of:
   failure is filed and in the docs;
 - no regression in the [table above](#regressions-that-must-stay-fixed);
 - audio identical, or the change declared;
+- the [real-disc tests](#real-disc-tests) pass on the last candidate (exit 0), or are reported as not run;
 - no unexplained performance regression over 10 %;
 - the soak passes on the last candidate, or the [soak rule](#when-a-soak-is-needed) shows none is
   needed (the final carries only the version change on top of a candidate that passed);

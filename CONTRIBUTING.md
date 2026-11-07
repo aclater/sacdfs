@@ -148,7 +148,7 @@ crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:
 - **Tests.** New behaviour comes with a test. A test that can't run here says so with
   `common::skip!`, never a bare `return`, and a skip that a CI job may have is listed in
   `tests/expected-skips.json` with why it's legitimate; CI fails on any other change
-  ([docs/development.md](docs/development.md#skipped-tests)). Test images are synthetic: the corpus in
+  ([docs/development.md](docs/development.md#skipped-tests)). Tests on real discs run by hand with `scripts/real-discs.sh DIR` ([docs/development.md](docs/development.md#real-disc-tests)); they are a release step. Test images in the repository are synthetic: the corpus in
   `tests/corpus/` (CC0), never audio from a real disc. A new parser of anything from outside
   gets a fuzz target or joins one ([fuzz/README.md](fuzz/README.md)), and a crash a fuzzer finds
   becomes a test in `tests/fuzz_regressions.rs`.

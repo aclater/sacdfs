@@ -31,6 +31,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- **The real-disc tests are runnable and strict (#220).** `scripts/real-discs.sh DIR` runs the three
+  tests on a directory of real images and exits 0 only if all three ran and passed; with no images it
+  reports a skip (exit 77), not a pass. `library_index::real_discs` used to pass when an image failed
+  to open; now an image that doesn't open or compares nothing fails the run, as does one that serves
+  no file in the DSF and WAV tests. The release test plan has a step for them. Tests only; no
+  change to the program.
+
 - **A memory limit no longer gets sacdfs killed while listing (#237, #231).** Under a cgroup limit, what
   listed images hold is kept to a budget (`--listing-mb`, `SACDFS_LISTING_MB`, default 3/8 of the
   limit): images not used lately are dropped and read again when next used, with the same names, inode
