@@ -731,10 +731,44 @@ the host:
 - **Permissions.** The container's sacdfs runs with `--allow-other`, and every file is
   `r--r--r--` and every folder `r-xr-xr-x`, so a player running as any user can read them: tested
   as root, uid 1000 and TrueNAS's apps user (568).
-- **Rootful only.** The host directory must be on a mount with shared propagation (`findmnt -o
-  TARGET,PROPAGATION /home` shows `shared` on Fedora; a TrueNAS dataset under `/mnt` worked).
-  Under rootless Podman the mount reached neither the host nor another rootless container of the
-  same user, so this needs rootful Docker or Podman (`sudo podman`), as on a NAS.
+- **Rootful only.** Under rootless Podman the mount reached neither the host nor another rootless
+  container of the same user, so this needs rootful Docker or Podman (`sudo podman`), as on a NAS.
+- **The host directory must be on a mount with shared propagation.** Check it with
+  `findmnt -o TARGET,PROPAGATION -T DIR` (`shared`), or, where there is no `findmnt`, with
+  `grep " DIR " /proc/self/mountinfo` (`shared:N` among the optional fields). Without it, sacdfs's
+  mount reaches neither the host nor the player. systemd makes the root mount shared, so most Linux
+  hosts have it; NAS systems differ:
+
+  | System | Shared? | How it was checked |
+  |---|---|---|
+  | TrueNAS SCALE 25.10 | yes (a dataset under `/mnt`) | this recipe, on the NAS |
+  | Fedora 45 | yes (`/home`) | this recipe, rootful Podman |
+  | TerraMaster TOS 7.0 | yes (`/` and the volume) | mount table read in a VM |
+  | Synology DSM 7.4 | **no** (`/` and `/volume1` private) | mount table read in a VM |
+  | ASUSTOR ADM 5.1 | **no** (`/` and `/volume1` private) | mount table read, and the workaround below run, in a VM |
+  | QNAP QTS and QuTScloud, UGREEN UGOS, Unraid, OpenMediaVault | not checked | |
+
+  **Workaround where it isn't shared:** make the host directory a shared mount of its own, as root,
+  before the containers start, and again after every boot (it doesn't persist; how to run it at boot
+  differs per NAS and is untested):
+
+  ```sh
+  # the host directory that sacdfs's /srv and the player bind, for example /volume1/sacdfs-mnt
+  mount --bind /volume1/sacdfs-mnt /volume1/sacdfs-mnt
+  mount --make-rshared /volume1/sacdfs-mnt
+  ```
+
+  Run on ASUSTOR ADM 5.1.4 in a VM, with ADM's own BusyBox `mount`; there is no Docker in that VM, so
+  each side was played by a plain mount namespace, not by a container: sacdfs (the 0.4.1 release
+  binary, as root) in a namespace of its own, with the host directory bound at another path and made
+  `rshared` there, as the container's `/srv` is; and a player in a second namespace made with
+  `unshare -m --propagation slave`, with the host directory bound in it. Without the workaround,
+  neither the host directory nor the player ever showed the mount (0 entries for 40 s). With it, the
+  host directory showed the mount's two disc folders, and so did the player, from 2 s after sacdfs
+  started; after sacdfs was stopped with SIGTERM and started again, the host directory went empty
+  and then showed the tree again, the player read the tree throughout, and a DSF file read through
+  the player had the same SHA-256 as through the host directory. Not run: Docker or Podman on such a
+  host, and the workaround at boot.
 
 With Docker or Podman (on SELinux hosts add `--security-opt label=disable` to both). These options
 were run with `sudo podman run` on Fedora 45, with Jellyfin as the player; Docker was run through the

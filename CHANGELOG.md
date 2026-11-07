@@ -132,6 +132,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- `docs/deployment.md`, "Players on the same host": the host directory must be on a shared mount, which
+  Synology DSM 7.4 and ASUSTOR ADM 5.1 don't give it (checked in VMs), with a workaround
+  (`mount --bind DIR DIR; mount --make-rshared DIR`) run on ADM in a VM, and how to check it.
 - `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
   needs a remount; the durable-handle message in Samba's log is expected, and no setting tried
   makes those handles survive a restart (#204).
