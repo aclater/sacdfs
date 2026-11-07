@@ -277,7 +277,8 @@ impl Worker {
 fn lower_priority() {
     // SAFETY: plain system calls on the calling thread, with no pointers.
     unsafe {
-        let tid = libc::gettid();
+        // The raw call: glibc before 2.30 (the release's oldest baseline) has no gettid().
+        let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
         if libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, 19) != 0 {
             log::debug!("musicbrainz: nice: {}", std::io::Error::last_os_error());
         }
