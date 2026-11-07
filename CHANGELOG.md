@@ -168,6 +168,9 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- `docs/deployment.md`, "Players on the same host": the host directory must be on a shared mount, which
+  Synology DSM 7.4 and ASUSTOR ADM 5.1 don't give it (checked in VMs), with a workaround
+  (`mount --bind DIR DIR; mount --make-rshared DIR`) run on ADM in a VM, and how to check it.
 - `docs/deployment.md`, "Players on the same host": the Compose example's `start_interval` is
   commented out, because Compose 2.17 and 2.19 (the Docker 20.10 and 24.0 CLI images) refuse a file
   that has it; uncomment it with Docker Engine 25 or later. The install docs, the README and the user
