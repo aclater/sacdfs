@@ -13,7 +13,8 @@ All notable changes to sacdfs are recorded here. The format follows
   limit): images not used lately are dropped and read again when next used, with the same names, inode
   numbers, sizes, times and bytes. 5,000 and 20,000 images now list at 256 MiB, where 0.4.0 and 0.4.1-rc.2
   were killed. A second pass over a library past its budget takes longer, as TOCs are read again.
-- **Defaults follow the limit.** Under a limit below 512 MiB the cache defaults to 16 MiB, and decoder
+- **Defaults follow the limit.** Under a limit up to 512 MiB the cache defaults to 8 MiB, as a 6-channel WAV player then keeps real time
+  during whole-file scans, at the cost of scans 2.4 to 2.6 times slower (#230), and decoder
   threads to at most one per 64 MiB of the limit (at least 2). The container no longer sets
   `SACDFS_CACHE_MB` by itself. With no limit, nothing changes.
 - **A warning at startup** when the library won't fit in memory as listed, naming the size that would.

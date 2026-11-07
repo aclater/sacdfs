@@ -213,9 +213,23 @@ the 2,000 that earlier versions documented as working there. The rest of the lim
 taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
 is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
 
-**The defaults from the limit** (#231). Cache 16 below 512 MiB: it showed no single-reader cost and saves
-about 18 MiB, though several fast readers of one image are about 10% slower, which is accepted on a
-small limit. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
+**The defaults from the limit** (#231). Cache 8 up to 512 MiB. The first choice was 16, which showed no
+cost to a single reader, but the fresh-container measurements of #230 changed it: with whole-file
+scanners running, a 6-channel WAV player held real time at 8 and didn't at 16. On this branch, on E-cores
+with a fresh container per condition, 3 rounds each, player speed relative to real time, cache 16 then 8:
+
+| | 2 cores, 256 MiB | 4 cores, 512 MiB |
+|---|---|---|
+| 1 whole-file scanner | 0.51, 1.00 | 0.96, 1.00 |
+| 4 whole-file scanners | 0.55, 0.98 | 0.77, 1.00 |
+| Whole-file WAV scan alone, MB/s | 34, 14.5 | 63, 24 |
+| Headroom of a reader alone, times real time | 9.9, 4.3 | 18.8, 7.1 |
+
+The trade-off is that scans take 2.4 to 2.6 times as long and headroom falls by about as much, which still
+leaves over 4 times real time. On a small machine, playback that doesn't stop is worth more than a scan
+that ends sooner. The alternative of keeping 16 and waiting for the fix to #230 is open: if that fix holds
+real time at 16, this default should be measured again. Limits above 512 MiB keep 32; they weren't measured.
+Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
 defaults don't change.
 
 **What real clients and tags files added.** Three costs lay outside the budget, and running under real

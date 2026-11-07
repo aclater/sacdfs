@@ -20,11 +20,14 @@ const MIB: u64 = 1 << 20;
 /// Cache size without a limit, or with a roomy one, in MiB.
 pub const CACHE_MB: usize = 32;
 
-/// Cache size under a limit below [`SMALL_LIMIT`], in MiB. *Why not 8:* it slows WAV 2 to 2.6
-/// times; 16 showed no cost to a single reader, and saves about 18 MiB.
-pub const CACHE_MB_SMALL: usize = 16;
+/// Cache size under a limit up to [`SMALL_LIMIT`], in MiB. *Why 8, not 16:* with whole-file scanners
+/// running, a 6-channel WAV player held real time at 8 (0.97 to 1.00), and fell to 0.34 to 0.96 at
+/// 16, on 2 cores at 256 MiB and 4 cores at 512 MiB (#230). The price is whole-file WAV scans 2.4 to
+/// 2.6 times slower, and headroom of 4.3 and 7 times real time, down from 9.9 and 18.8. A player
+/// that keeps up matters more on a small machine than a scan that ends sooner.
+pub const CACHE_MB_SMALL: usize = 8;
 
-/// Limits below this are small, for the cache's default.
+/// Limits up to this are small, for the cache's default.
 pub const SMALL_LIMIT: u64 = 512 * MIB;
 
 /// Limit per decoder thread: each costs about 3.7 MiB with its frames in flight, and on a host
@@ -214,7 +217,7 @@ fn parse_limit(text: &str) -> Option<u64> {
 /// The default size of the cache of frames under `limit`, in MiB.
 pub fn default_cache_mb(limit: Option<u64>) -> usize {
     match limit {
-        Some(l) if l < SMALL_LIMIT => CACHE_MB_SMALL,
+        Some(l) if l <= SMALL_LIMIT => CACHE_MB_SMALL,
         _ => CACHE_MB,
     }
 }
@@ -384,8 +387,9 @@ mod tests {
 
     #[test]
     fn defaults_follow_the_limit() {
-        assert_eq!(default_cache_mb(Some(256 * MIB)), 16);
-        assert_eq!(default_cache_mb(Some(512 * MIB)), 32);
+        assert_eq!(default_cache_mb(Some(256 * MIB)), 8);
+        assert_eq!(default_cache_mb(Some(512 * MIB)), 8);
+        assert_eq!(default_cache_mb(Some(513 * MIB)), 32);
         assert_eq!(default_threads(24, Some(256 * MIB)), 4);
         assert_eq!(default_threads(2, Some(256 * MIB)), 2);
         assert_eq!(default_threads(24, Some(64 * MIB)), 2);

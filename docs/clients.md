@@ -325,7 +325,7 @@ documented but have no test report on #82.
 - **Deploy server-side on the NAS.** sacdfs runs next to the images in the container and the
   clients see ordinary files over SMB or NFS. A cold seek costs about 5 to 6 ms over SMB on a
   gigabit LAN ([deployment](deployment.md)).
-- **The default cache suits a NAS.** Since #150 the default `--cache-mb` is 32 (was 256; since 0.5.0, 16 under a memory limit below 512 MiB), and
+- **The default cache suits a NAS.** Since #150 the default `--cache-mb` is 32 (was 256; since 0.5.0, 8 under a memory limit up to 512 MiB), and
   a Plex-like scan of the bench images peaks at 46 MiB RSS (0.3.0 at its default: 103 MiB), a
   Roon-like import replay at 45 MiB (134 MiB). The 0.4.0-rc.2 server tests ran at the default,
   with no errors and sacdfs at 18 to 53 MiB RSS (Jellyfin's LUFS pass: 52 MiB). On
