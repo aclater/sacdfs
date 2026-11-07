@@ -5,7 +5,6 @@ All notable changes to sacdfs are recorded here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
 ### Added
 
 - **Players on the same host read the mount directly, with no SMB hop (#186).** The container's mount
@@ -30,6 +29,16 @@ All notable changes to sacdfs are recorded here. The format follows
   matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
 
 ### Changed
+
+- **A listing over SMB asks sacdfs about a quarter as often (#205).** A first `ls -lR` through the container's
+  Samba took 1,765 requests to sacdfs for 2,412 entries, down from 6,897; repeated 30 s later, 1,555, down from
+  6,469. The kernel now checks access from the modes itself (Samba's `ACCESS` per entry is gone), listings
+  carry each entry's attributes (`readdirplus`, no `LOOKUP` per entry), and a track's name and attributes are
+  kept for a day again: since folder art in the areas (#95) they were kept for 2 s, and every listing after
+  that asked for every track once more. The container's Samba also keeps the free space for a minute
+  (`dfree cache time = 60`). What a client sees and reads is unchanged. See
+  [deployment](docs/deployment.md#what-a-listing-costs-over-smb), which lists the Samba settings to use
+  with your own Samba.
 
 - **The real-disc tests are runnable and strict (#220).** `scripts/real-discs.sh DIR` runs the three
   tests on a directory of real images and exits 0 only if all three ran and passed; with no images it

@@ -1011,6 +1011,53 @@ edit the copy). **Untested** on Windows and macOS, including how each shows the 
 copies keep it, and with Roon and Plex, whichever platform they run on. To go back to no
 attribute: `SMB_EXTRA_GLOBAL=map readonly = no`.
 
+### What a listing costs over SMB
+
+Samba serves the share from the FUSE mount, so every SMB request becomes one or more requests to
+sacdfs. Up to 0.4.1 a listing cost about three of them per file or folder, most of them the same
+question asked again (#205). Counted with the kernel's `fuse:fuse_request_send` tracepoint, on 95 images
+(284 folders, 2,412 entries), the container's Samba 4.24.7, and the Linux kernel client (SMB 3.1.1,
+Fedora 45, kernel 7.2) over loopback:
+
+| Listing | 0.4.1 | Unreleased |
+|---|---|---|
+| `ls -lR`, first | 6,897 (2.86 per entry) | 1,765 (0.73) |
+| `ls -lR`, again after 30 s | 6,469 (2.68) | 1,555 (0.64) |
+| `find` | 2,515 (1.04) | 1,425 (0.59) |
+| `smbclient`, `recurse ON; ls` | 3,330 (1.38) | 1,542 (0.64) |
+| `stat -f` (free space), 200 times | 200 | 0 |
+
+- **Access checks:** gone (2,713 per `ls -lR`). Samba changes directory for nearly every request, and each
+  one was an `ACCESS` request. The kernel now checks the modes itself.
+- **A name per file:** gone (2,412). Each entry's attributes come with the folder's listing, and a
+  track's name is kept for a day instead of 2 s, so a listing repeated later doesn't ask again.
+- **Free space:** the container's Samba asks sacdfs at most once a minute (`dfree cache time = 60`).
+- **What's left is per folder:** an open and a release, two reads of the listing, a name lookup for a folder
+  that is checked for changes (every 2 s), and one `STATFS`. Samba makes that `STATFS` when it reopens a
+  folder's path handle; no Samba setting was found that avoids it.
+- **Time:** on an idle machine, a local `ls -lR` of the same mount (the kernel, no Samba; 7 alternating
+  rounds, median) took 0.32 s instead of 0.40 s the first time, and 0.07 s instead of 0.12 s when repeated
+  after 3 s. Times through Samba were taken on a loaded machine only, so none is given here.
+- **The client's own requests don't change:** 3.5 SMB2 requests per entry for `ls -l` on the kernel client,
+  on either version. What the client asks is up to the client.
+
+**If you run your own Samba** on a sacdfs mount instead of the container, put the container's settings in
+`smb.conf`'s `[global]` section, as the container does:
+
+```ini
+ea support = no
+store dos attributes = no
+map archive = no
+kernel change notify = no
+dfree cache time = 60
+```
+
+Measured on the same tree with the unreleased sacdfs: without these five, `ls -lR` costs 7,195 requests
+(2.98 per entry) instead of 1,765, mostly two `LISTXATTR` per entry, and `stat -f` reaches sacdfs every
+time. They were measured as a group, not one by one. Adding `vfs objects = streams_xattr` with them changed
+nothing (1,743). Measured on Linux clients only: the macOS client that showed the highest counts in #205,
+Windows, and the scans of Roon and Plex have not been run with these changes.
+
 ## Client-side: images on hard disks over NFS
 
 This guide is about running sacdfs on the NAS. If you run it on a Linux client instead, over

@@ -282,3 +282,51 @@ fn pcm_options_move_the_wav_mtime() {
         }
     }
 }
+
+/// A listing as a file server makes it (#205): the folder, then every entry's attributes,
+/// then the same a while later. No track name is asked for again after the refresh interval
+/// (an area is re-read for its folder art only), and no access check reaches sacdfs (the
+/// kernel checks the modes itself). Samba changes directory for nearly every request, which
+/// was one ACCESS each.
+#[test]
+fn a_listing_repeated_later_asks_for_no_track_again() {
+    common::skip_without_fuse!();
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    std::fs::create_dir_all(src.join("Album")).unwrap();
+    std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), src.join("Album/disc.iso"))
+        .unwrap();
+    let mount = Mount::new(&src, &["--threads", "2"]);
+    let area = mount.path().join("Album/disc/Stereo");
+    let list = || {
+        let mut names = Vec::new();
+        for e in std::fs::read_dir(&area).unwrap() {
+            let e = e.unwrap();
+            std::fs::symlink_metadata(e.path()).unwrap();
+            names.push(e.file_name().into_string().unwrap());
+        }
+        names
+    };
+    let tracks: Vec<String> = list().into_iter().filter(|n| n.ends_with(".dsf")).collect();
+    assert!(!tracks.is_empty());
+    let track_lookups = || tracks.iter().map(|t| mount.count(&format!("LOOKUP name {t:?}"))).sum::<usize>();
+    let first = track_lookups();
+    // Past the refresh interval (2 s), after which the folders above are asked for again.
+    std::thread::sleep(Duration::from_secs(3));
+    let access = mount.requests(" ACCESS ", || {
+        list();
+        let st = Command::new("sh")
+            .arg("-c")
+            .arg("cd \"$1\" && test -r \"$2\" && test ! -w \"$2\" && test ! -x \"$2\"")
+            .arg("sh")
+            .arg(&area)
+            .arg(&tracks[0])
+            .status()
+            .unwrap();
+        assert!(st.success(), "access as before: readable, not writable or executable");
+    });
+    let again = track_lookups() - first;
+    println!("track lookups: {first} on the first listing, {again} on the second");
+    assert_eq!(again, 0, "track names looked up again");
+    assert_eq!(access, 0, "access checks reached sacdfs");
+}
