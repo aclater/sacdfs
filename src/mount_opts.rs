@@ -47,7 +47,15 @@ const IGNORED: &[&str] = &[
 /// Prefixes that are ignored too: `x-systemd.automount`, `x-mount.mkdir`, `fsname=…`.
 const IGNORED_PREFIXES: &[&str] = &["x-", "fsname=", "subtype=", "uid=", "gid=", "max_read=", "context="];
 /// sacdfs options that take no value, as the option name without the dashes.
-const FLAGS: &[&str] = &["foreground", "flatten", "allow_other", "no_index_cache"];
+const FLAGS: &[&str] = &[
+    "foreground",
+    "flatten",
+    "allow_other",
+    "no_index_cache",
+    "musicbrainz",
+    "lookup_name",
+    "lookup_durations",
+];
 /// sacdfs options that take a value (`key=value`).
 const VALUES: &[&str] = &[
     "threads",

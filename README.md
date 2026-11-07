@@ -12,9 +12,10 @@ as DSF files, and as 24-bit WAV files next to them, decoded on demand. Players, 
 music servers see every track of every disc, with tags, without extracting anything: you
 keep the ISOs and can delete the extracted copies.
 
-A disc with little or no text can be looked up on MusicBrainz, on demand, with
-`sacdfs tags fetch`. That's the only part of sacdfs that uses the network, and a mount never does:
-see the [user guide](docs/user-guide.md#your-own-tags---tags).
+A disc with little or no text can be looked up on MusicBrainz, on demand with
+`sacdfs tags fetch`, or by the mount in the background with `--musicbrainz`. Both are off unless
+you ask for them; nothing else in sacdfs uses the network, and no read waits for it: see the
+[user guide](docs/user-guide.md#your-own-tags---tags).
 
 ## Quick start
 
@@ -35,7 +36,9 @@ The [Docker and Podman guide](docs/install/docker-podman.md) explains each line 
 check it works.
 
 **Directly on Linux:** build it (Rust 1.85 or later; the [binary guide](docs/install/binary.md)
-has release downloads), then mount. You need `fusermount3` (package `fuse3`).
+has release downloads), then mount. As a user other than root you need FUSE's setuid helper:
+`fusermount3` (package `fuse3`), or FUSE 2's `fusermount` where that is all there is (from 0.5.0).
+Root mounts without either.
 
 ```sh
 cargo build --release

@@ -178,7 +178,10 @@ All settings are environment variables.
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
 | `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |
-| `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there, read-only is enough); see the [user guide](user-guide.md#your-own-tags---tags) |
+| `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there; read-only is enough unless `SACDFS_MUSICBRAINZ` is on); see the [user guide](user-guide.md#your-own-tags---tags) |
+| `SACDFS_MUSICBRAINZ` | `0` | `1` for `--musicbrainz`: look up discs without track titles, album or artist on MusicBrainz in the background, and write what matches to `SACDFS_TAGS`, which must then be mounted read-write. The container needs outbound HTTPS to musicbrainz.org. Off by default; see the [user guide](user-guide.md#in-the-background---musicbrainz) for what is sent |
+| `SACDFS_LOOKUP_NAME` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-name` (also search by album and artist) |
+| `SACDFS_LOOKUP_DURATIONS` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-durations` (also ask by the tracks' start times) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | (32, or 8 under a limit up to 512 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
 | `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
@@ -783,7 +786,7 @@ services:
       interval: 30s
       timeout: 10s
       start_period: 300s
-      start_interval: 2s
+      # start_interval: 2s   # Docker 25 / Compose 2.20 or later only: see below
   navidrome:
     image: deluan/navidrome:latest
     restart: unless-stopped
@@ -804,8 +807,15 @@ volumes:
   nd-data:
 ```
 
-`start_interval` makes the health check run every 2 s while sacdfs starts, so the player starts a few
-seconds after the mount instead of after the first 30 s interval. This file, with a small test library
+Without `start_interval`, the player waits for sacdfs's first regular health check, up to 30 s (the
+interval) after the mount: that follows from Docker's health check rules and was not timed. With Docker
+Engine 25 or later and a Compose that accepts it, uncomment `start_interval`:
+the check then runs every 2 s while sacdfs starts, so the player starts a few seconds after the mount.
+It is commented out because an older Compose refuses the whole file: Compose 2.17.3 and 2.19.1 (from
+the Docker 20.10 and 24.0 CLI images) stop with "services.sacdfs.healthcheck Additional property
+start_interval is not allowed", and 2.29.1 (Docker 25.0 CLI image) accepts it; NAS systems often lag
+behind Docker's releases. With the line commented out, `docker compose config` accepts the file on all
+three, and so does the older `docker-compose` 1.27.4 and 1.29.2. This file, with `start_interval`, and a small test library
 (8 images, 230 DSF files), was installed on TrueNAS SCALE
 25.10.7 as one custom app (the API call behind "Install via YAML") with the 0.4.1 image: sacdfs
 mounted, Navidrome was ready 4 s later, and its first scan found all 230 files. After the app was
@@ -850,8 +860,54 @@ starts there again, or `umount -l` removes it.
   made in the host directory first. Started first with an empty `sacd`, it found all 93 tracks once
   sacdfs ran and the library was scanned again.
 
-Not measured yet: import and playback times through the direct mount against SMB on the same NAS
-(#186).
+**Direct mount or SMB on the same NAS: what it costs.** The direct mount imports faster, and the
+NAS does far less work for it. Navidrome 0.64.2 imported a library and a reader read whole files, once
+through the direct mount and once through sacdfs's own SMB share, mounted by the Linux kernel client
+(`ro,guest,vers=3.1.1`, defaults otherwise) in a container on the same NAS. NAS: TrueNAS SCALE
+25.10.7, 10 cores, hard-disk pool. Image: 0.4.1, `SACDFS_FLATTEN=1`, DSF and WAV. Medians of 3 rounds,
+alternating direct and SMB, with the range in brackets.
+
+| Library, 416 images (9,822 DSF and WAV files, 442 albums) | Direct mount | SMB |
+|---|---|---|
+| Full import (Navidrome scan of an empty database) | **45.1 s** (44.3 to 45.1) | 61.8 s (61.6 to 62.8) |
+| Data sacdfs served for it | **5.4 MB** | 5,802 MB (5,415 to 5,802) |
+| Read by sacdfs from the images for it | **5.6 MB** | 3,917 MB |
+| CPU time: sacdfs / Samba / Navidrome | **3.2 / 0 / 83 s** | 223 / 27 / 95 s |
+| First byte of a stereo DSF track (open and first 64 KiB; DSD and DST discs) | **1.6 ms** (0.7 to 2.0) | 25.7 ms (24.8 to 27.8) |
+| Whole stereo DSF track | **85 MB/s** (80 to 91) | 54 MB/s (53 to 56) |
+| First byte of a 6-channel WAV track | **0.5 ms** (0.3 to 0.5) | 12.1 ms (8.0 to 15.9) |
+| Whole 6-channel WAV track | **126 MB/s** (121 to 128) | 102 MB/s (96 to 103) |
+| sacdfs CPU time per GB read (the WAV's decoding dominates) | **84 s** | 103 s, and Samba 1.4 s |
+
+| Test set, 18 images (460 files, 20 albums) | Direct mount | SMB |
+|---|---|---|
+| Full import | **2.29 s** (2.29 to 2.29) | 3.32 s (3.31 to 3.57) |
+| Data sacdfs served for it / CPU time of sacdfs and Samba | **0.2 MB / 0.15 s** | 271 MB / 11.0 s and 1.3 s |
+| First byte, stereo DSF from a plain DSD disc / 6-channel WAV from a DST disc | **1.3 / 0.8 ms** | 12.6 / 7.5 ms |
+| Whole file, the same | **241 / 119 MB/s** | 200 / 98 MB/s |
+
+- **Why SMB costs so much more on import.** A player reads only a file's header and tags to import
+  it, a few hundred bytes. Through the direct mount sacdfs serves just that. The kernel SMB client
+  reads ahead in large blocks, so for each file sacdfs reads and serves about 600 KB, and decodes it
+  for the WAV and DST files: 1,000 times the data and 70 times sacdfs's CPU time for the import.
+  Smaller SMB read sizes may lower that; not tested.
+- **Playback.** Both routes read faster than any track plays: a stereo DSF track at 64 fs plays at
+  about 0.7 MB/s, a 6-channel WAV (24-bit, 176.4 kHz, the default) at about 3.2 MB/s. Through the direct mount a
+  file opens and starts 10 to 25 times sooner, which shows as a quicker start and seek in players.
+- **How it was measured.** Every run used a new app: a new sacdfs container with an empty index
+  cache, a new Navidrome with an empty database, and (SMB) a new kernel mount, so no page cache of
+  sacdfs's files carried over. On the library, measurements began once sacdfs was idle after
+  mounting (it works in the background for up to about 75 s after mounting a large library); on the
+  test set, 10 s after. Each run read different tracks, never
+  read before in the test. The NAS's ZFS cache was not dropped: a warm-up import before the rounds put
+  the images' headers in it for every run alike, and the tracks read came from the disks. CPU time and
+  bytes are from `/proc` of the sacdfs, smbd and Navidrome processes; the kernel SMB client's own CPU
+  time is not counted. The NAS ran its other apps, idle (Roon and Plex read nothing during the runs). Load
+  before each library run was 1.3 to 2.6, with 90 s between runs; the test set's runs ran back to
+  back (load up to 5.6, mostly from the run before).
+- **Not measured:** Plex, Roon and Jellyfin this way; playback through a player's own streaming (the
+  reads here are file reads); 0.5.0's change to SMB listings (#205), which these 0.4.1 numbers
+  predate. Over SMB from another machine the LAN adds its own round trip on top of the SMB figures.
 
 ### Multichannel copies and music servers
 
@@ -1165,11 +1221,14 @@ The container speaks only NFSv4 (`Protocols = 4`); NFSv3 can't be tried against 
   before its error, because the kernel asks again for the same data. Raise
   `SACDFS_REQUEST_TIMEOUT` if the images are on disks that spin down and take longer than
   30 s to wake.
-  **The other images are safe only for a while:** if clients keep retrying through a long hang,
-  each retry holds one more thread, and once 64 are held, reads of every image fail too until
-  the source answers. With 8 clients at the default timeout on 2 decoder threads, that took about
-  6 minutes ([#241](https://github.com/aclater/sacdfs/issues/241)). Lowering the timeout makes it
-  come sooner.
+  **If clients keep retrying through a long hang,** a failed read keeps its thread until the
+  source answers. Once 4 reads of one image are blocked past the timeout, the log says
+  `<image>: 4 reads still blocked after the 30 s request timeout: failing its new reads with
+  EIO at once until they finish`, and new reads of that image fail at once, without a thread,
+  so that the other images keep their threads
+  ([#241](https://github.com/aclater/sacdfs/issues/241)). `<image>: its blocked reads finish:
+  reading it again` follows when the source answers. A hang of many images at once (a whole
+  share) can still use every read thread, and then reads of every image fail until it answers.
 - **`sacdfs did not mount within 300 s`**: sacdfs lists every image before it mounts, and a
   large library on a slow disk can take longer than the container waits. Raise
   `SACDFS_MOUNT_TIMEOUT` (seconds, 1 to 86400, default 300) and the health check's start
