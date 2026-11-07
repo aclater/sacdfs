@@ -812,7 +812,7 @@ It is commented out because an older Compose refuses the whole file: Compose 2.1
 the Docker 20.10 and 24.0 CLI images) stop with "services.sacdfs.healthcheck Additional property
 start_interval is not allowed", and 2.29.1 (Docker 25.0 CLI image) accepts it; NAS systems often lag
 behind Docker's releases. With the line commented out, `docker compose config` accepts the file on all
-three. This file, with `start_interval`, and a small test library
+three, and so does the older `docker-compose` 1.27.4 and 1.29.2. This file, with `start_interval`, and a small test library
 (8 images, 230 DSF files), was installed on TrueNAS SCALE
 25.10.7 as one custom app (the API call behind "Install via YAML") with the 0.4.1 image: sacdfs
 mounted, Navidrome was ready 4 s later, and its first scan found all 230 files. After the app was
