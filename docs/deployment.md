@@ -337,15 +337,19 @@ was 0.45 times real time with one scanner and 0.28 with four, and other caches w
 
 A smaller cache removes the starvation in these runs: `SACDFS_CACHE_MB=8` (`--cache-mb 8`) kept the
 player at real time with 1 and with 4 scanners on 2 and on 4 cores, on both rigs. `16` is not
-enough on rig B or on 2 cores. It costs speed for everyone else: on rc.1 on rig A with 4 cores,
-whole-file WAV scans dropped from about 61 to about 22 MB/s and 6-channel WAV headroom from about 18
-to about 7 times real time, and with 2 cores from 9.7 to 4.7. The cost was not re-measured on rc.3.
+enough on rig B or on 2 cores. It costs speed for everyone else. Measured on rc.3 on rig A, 3 rounds each, fresh container, medians
+(range within 2 for scans and 0.4 for headroom): with 4 cores, whole-file WAV scans run at 61 MB/s
+at cache 32 and 16 and 23 MB/s at cache 8, and a 6-channel WAV reader reading as fast as it can
+reaches 18.9 times real time at 32, 18.8 at 16 and 7.0 at 8. With 2 cores: scans 34, 33 and 14 MB/s;
+headroom 9.9, 9.9 and 4.3 times real time. Cache 16 therefore costs nothing measurable, but
+starvation is only partly cured by it (table above). On rc.1 the same figures were about 61 and 22
+MB/s and 18 and 7 times real time.
 Memory at the floors is [#231](https://github.com/aclater/sacdfs/issues/231). The earlier version of
 this section gave 0.31 s behind with one scanner and 11.2 s with four on 4 cores at the default
 cache; both were taken with a player re-reading a position it had read before, and the 0.31 s was
 wrong (see the table).
 
-Not re-run: the headroom figures on rc.3 and the 128 MiB and 96 MiB memory floors.
+Not re-run on rc.3: the no-load headroom table above (rc.1 and rc.2 figures), rig B's cost of cache 8, and the 128 MiB and 96 MiB memory floors.
 
 **Idle.** sacdfs used 0.007 % of a CPU and woke 1.5 times a second, and 5 minutes of `strace`
 showed no image reads and no metadata calls, so sacdfs itself does not keep a disk awake. Not
