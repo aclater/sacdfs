@@ -75,25 +75,27 @@ never moved.
 
 1. **Before:** `main` is green, the scarletbook pin is the one meant for the release, and
    the docs describe the release (README, docs/).
-2. **Dry run:** Actions, "release", "Run workflow" on `main` (or
+2. **Test:** run the [release test plan](docs/test-plan.md) on a release candidate; its exit criteria
+   decide whether the final version is tagged.
+3. **Dry run:** Actions, "release", "Run workflow" on `main` (or
    `gh workflow run release.yml -R aclater/sacdfs --ref main`). It builds and tests both
    binaries and the image, runs the container share test, and publishes nothing; its summary
    lists the assets and checksums a tag would publish. Pull requests that change the release
    files run it too.
-3. **Release pull request:** bump `version` in `Cargo.toml` (and `Cargo.lock`, with
+4. **Release pull request:** bump `version` in `Cargo.toml` (and `Cargo.lock`, with
    `cargo update -p sacdfs --offline`), and rename `## [Unreleased]` in CHANGELOG.md to
    `## [X.Y.Z] - YYYY-MM-DD`, with a new empty `## [Unreleased]` above it. That section
    becomes the release notes. At the end of the file, point `[Unreleased]` at
    `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: .../compare/v<previous>...vX.Y.Z`, so every
    heading links to its changes. Merge it once its checks pass.
-4. **Tag** the merge commit on `main`: `git tag -a vX.Y.Z -m "sacdfs X.Y.Z" && git push origin vX.Y.Z`.
+5. **Tag** the merge commit on `main`: `git tag -a vX.Y.Z -m "sacdfs X.Y.Z" && git push origin vX.Y.Z`.
    The workflow stops before building anything if the tag isn't `v` plus Cargo.toml's
    version, or CHANGELOG.md has no section for it.
-5. **After:** the release has both archives with `.sha256`, `.intoto.jsonl` and
+6. **After:** the release has both archives with `.sha256`, `.intoto.jsonl` and
    `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
    `gh attestation verify`. A version with a hyphen (`0.2.0-rc.1`) is marked as a
    pre-release and doesn't move `:latest`.
-6. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
+7. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
    in aclater/sacd (the minor version's summary and release list).
 
 **crates.io (#155).** On a tag of a final version (no hyphen, so not `0.4.0-rc.1`), the

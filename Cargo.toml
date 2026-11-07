@@ -1,6 +1,6 @@
 [package]
 name = "sacdfs"
-version = "0.4.1-rc.3"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Read-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand"
