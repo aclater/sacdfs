@@ -1749,44 +1749,60 @@ decisions, each with its reason:
 everything but publish when run by hand or on a pull request that changes it (a dry run).
 The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its reason:
 
-- **glibc 2.28, not static musl.** A static musl binary was the first choice (it runs on
-  any Linux), and sacdfs builds so: fuser is used without libfuse, and no dependency
-  compiles C. It passed the DSF gate (93/93 on the real discs), but measured (3 fresh-mount
-  straight reads of a stereo area each, same compiler and flags, generic x86-64) it was much
-  slower:
+- **glibc 2.17 through zig (#244), not static musl, not container-only.** *Why:* the release
+  binary built on UBI 8 needed glibc 2.28, and QNAP's QuTScloud 5.2.9 has glibc 2.21: the binary
+  stopped at start (`symbol statx, version GLIBC_2.28 not defined`). The owner chose to build
+  against glibc 2.17's symbols, the oldest Rust's std supports, with
+  [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild): zig, as the linker, links
+  against the symbol versions of the glibc named in the target (`x86_64-unknown-linux-gnu.2.17`)
+  whatever the build system's glibc, so the build runs on the runner and no old build image is
+  needed (UBI 7 ships no gcc). zig (0.16.0, its archive checked by SHA-256) and cargo-zigbuild
+  (0.24.0, `--locked`) are pinned to exact versions. The binary still uses the system's glibc at
+  run time, with glibc's malloc and the tuning below (one arena, `malloc_trim`), and `statx` is
+  only a weak reference that Rust's std falls back from. CI fails the build if the binary needs a
+  newer glibc symbol than 2.17.
 
-  | Straight read, stereo area, s | glibc | musl | |
-  |---|---|---|---|
-  | DST disc, DSF files | 5.47 | 7.79 | 1.42x (median 1.34x) |
-  | DST disc, WAV files | 5.26 | 8.20 | 1.56x |
-  | plain DSD disc, WAV files | 2.47 | 3.73 | 1.51x |
+  Measured on the benchmark host (real discs, stereo area read straight through a fresh mount,
+  `--no-index-cache`, image warm in the page cache, 6 alternating rounds, medians, ratio to the
+  glibc 2.28 build of the same commit; peak = the sacdfs process's VmHWM). The served bytes were
+  identical across all builds:
 
-  A second round of 2 runs each, with the UBI 8 build added: WAV files of the DST disc 4.65 s
-  (glibc build on UBI 10), 4.66 s (UBI 8) and 7.24 s (musl, 1.56x); of the plain DSD disc
-  2.01, 2.01 and 3.31 s (1.65x). Building against the older glibc costs nothing: the binary
-  runs on the system's glibc. Most likely musl's allocator and memory copies, under many
-  decoder threads; not investigated further. Performance comes first for sacdfs, so the
-  release builds against glibc instead, on **UBI 8** (RHEL 8's glibc 2.28) so that one binary
-  covers RHEL 8 and later, Debian 10, Ubuntu 20.04 and Fedora 29 and later. CI fails the build
-  if the binary needs a newer glibc symbol. Older bases (glibc 2.17, CentOS 7) are out of
-  support and not Red Hat's current images. *Possible later:* musl with a faster allocator
-  (mimalloc), measured against this.
-- **Two builds: generic x86-64 and x86-64-v3,** `-C target-cpu` always explicit, since RHEL's
-  Rust defaults to x86-64-v3. Generic runs everywhere and already converts with AVX2 where
+  | | DST, DSF | DST, WAV | plain DSD, WAV | plain DSD, DSF | peak MiB |
+  |---|---|---|---|---|---|
+  | glibc 2.28 build | 8.52 s | 9.38 s | 7.74 s | 2.54 s | 43-59 |
+  | **glibc 2.17 build (zig)** | 0.99x | 1.00x | 1.03x | 0.91x | 43-59 |
+  | static musl, musl's malloc | 1.29x | 1.25x | 1.31x | 2.58x | 40-55 |
+  | static musl + mimalloc | 1.00x | 1.00x | 0.95x | 0.93x | 161-273 |
+  | static musl + jemalloc (1 arena, decay 0) | 1.05x | 1.05x | 1.34x | 1.92x | 45-70 |
+
+  *Alternatives:* **static musl** (runs on any Linux, with or without a C library): with musl's
+  malloc 1.25 to 2.6 times slower (an earlier round, on UBI 10 and UBI 8 builds, gave 1.3 to 1.65);
+  with mimalloc as fast, but 3.5 to 4.6 times the peak memory, too much under a NAS's memory
+  limit; with jemalloc set for low memory, 1.34 to 1.92 times slower on plain DSD discs; and in
+  every case a C allocator in the build and glibc's tuning gone. **Container only on such
+  systems:** no build change, but QuTScloud had no container runtime to test with, and a binary
+  is the simpler install on a NAS. *Trade-off accepted:* a third-party toolchain (zig and
+  cargo-zigbuild) in the release build instead of a vendor build image, and systems older than
+  glibc 2.17 stay unsupported. Kernels before 4.18 (RHEL 7's 3.10) are untested.
+- **Three builds: generic x86-64, x86-64-v3 and aarch64,** `-C target-cpu` always explicit on
+  x86_64, never a toolchain's default. Generic runs everywhere and already converts with AVX2 where
   the CPU has it (#23); v3 compiles the rest of sacdfs and scarletbook for AVX2 as well. The
   v3 build is tested on the runner only if its CPU is x86-64-v3, and the release stops
   otherwise.
-- **Rust from rustup** (the version the other workflows use), not RHEL's: RHEL 8's Rust is
-  older than sacdfs's MSRV, and the tested toolchain should be the shipped one.
-- **Each build is tested as built:** the whole suite, FUSE tests required, in the UBI 8
-  container with the release profile and the build's flags; then the packaged binary,
-  unpacked on the runner, mounts the corpus and every track is checked against the corpus
-  manifest (DSF hashes, WAV headers).
+- **Rust from rustup** (the version the other workflows use): the tested toolchain should be the
+  shipped one.
+- **Each build is tested as built:** on its native runner (aarch64 on an arm64 runner), the whole
+  suite, FUSE tests required, linked the same way (`cargo-zigbuild test`) with the release
+  profile and the build's flags; then the packaged binary, unpacked on the runner, mounts the
+  corpus and every track is checked against the corpus manifest (DSF hashes, WAV headers). On
+  x86_64 the packaged binary also mounts the corpus in a UBI 7 container (RHEL 7's glibc 2.17,
+  no `fusermount` installed: as root, sacdfs mounts with mount(2) itself), and every served
+  file must hash the same as on the runner.
 - **Stripped** (`CARGO_PROFILE_RELEASE_STRIP=symbols`, so Cargo.toml's release profile, which
   the measurements use, is unchanged), **build paths remapped**, and the tarballs
   **reproducible** (sorted, fixed owner, the commit's time, `gzip -n`).
 - **Integrity:** a `.sha256` per archive and `SHA256SUMS`; a GitHub build provenance
-  attestation (Sigstore) for both archives and for the image, the archives' bundle also on
+  attestation (Sigstore) for the archives and for the image, the archives' bundle also on
   the release as `.intoto.jsonl` for offline checks. The tag must equal `v` plus
   Cargo.toml's version (and Cargo.lock's), and the notes are the tag's CHANGELOG.md section
   (`.github/scripts/changelog-notes.py`); either missing stops the release before any build.

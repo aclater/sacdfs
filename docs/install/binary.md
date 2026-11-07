@@ -1,8 +1,8 @@
 # sacdfs without a container: release binary, crates.io or source
 
-sacdfs runs on Linux (x86_64) and needs FUSE 3's `fusermount3` helper (package `fuse3` on
-most distributions). Each [release](https://github.com/aclater/sacdfs/releases) has two
-builds. From 0.4.0, sacdfs is also on crates.io (`cargo install sacdfs`,
+sacdfs runs on Linux (x86_64 and aarch64) and, unless run as root, needs FUSE 3's `fusermount3`
+helper (package `fuse3` on most distributions). Each [release](https://github.com/aclater/sacdfs/releases)
+has three builds. From 0.4.0, sacdfs is also on crates.io (`cargo install sacdfs`,
 [below](#from-source); #155). Tested on 0.4.0: `cargo install --locked sacdfs` in a clean
 `rust:1.99.1` container, with no other packages, installs a working `sacdfs`.
 Running it is in the [user guide](../user-guide.md); the options are in
@@ -16,9 +16,16 @@ Running it is in the [user guide](../user-guide.md); the options are in
   and AMD CPUs since about 2015, the Intel N100 family included), with all of sacdfs built for
   them: DST areas read 10 to 18 % faster ([performance](../performance.md#straight-reads)).
   On an older CPU this build stops with an illegal-instruction error. `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
+- `sacdfs-<version>-aarch64-linux.tar.gz`: aarch64 (64-bit ARM), from the first release after
+  0.4.1.
 
-Both need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). The
-generic build was tested on the oldest of each, with their own kernels (4.18 to 5.4) and
+All need glibc 2.17 or later, from the first release after 0.4.1 (#244; 0.4.1 and earlier
+needed 2.28). Every release build is checked in CI to need no newer glibc symbol, and the x86_64
+builds mount the test corpus in a UBI 7 container (glibc 2.17) with the same bytes as on a
+current system. It also runs on QNAP's QuTScloud 5.2.9 (glibc 2.21; [qnap.md](qnap.md)). Kernels
+older than 4.18 (RHEL 7's 3.10, for instance) are untested. Run as root, sacdfs mounts without
+`fusermount3`. With glibc 2.28 builds (0.4.1), the generic build was tested on the oldest of
+RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, with their own kernels (4.18 to 5.4) and
 `fusermount3` (3.3 to 3.9): mounting in the foreground and in the background, with and
 without `--allow-other`, reads identical to a current system, and a clean stop on SIGTERM
 with a file open ([testing](../design.md#oldest-distributions-58)). Each
@@ -26,7 +33,7 @@ archive holds `sacdfs`, `COPYING`, `README.md` and `CHANGELOG.md`. To download, 
 install one:
 
 ```sh
-v=0.4.1 a=x86_64          # or a=x86_64-v3
+v=0.4.1 a=x86_64          # or a=x86_64-v3 (or a=aarch64, after 0.4.1)
 gh release download "v$v" -R aclater/sacdfs -p "sacdfs-$v-$a-linux.tar.gz*"
 sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
 gh attestation verify "sacdfs-$v-$a-linux.tar.gz" -R aclater/sacdfs

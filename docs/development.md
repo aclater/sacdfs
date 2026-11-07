@@ -225,7 +225,7 @@ tests the soak's verdict on built series (a step, a leak, a thread spike).
 
 *Why it reads cargo's output rather than a report file, as pysacd does:* the reasons of `#[ignore]`
 tests are only there, and the output needs nothing passed through `sudo` (the `nfs export` job) or
-into a container. The release workflow's tests in its UBI 8 container don't run this check yet.
+into a container. The release workflow's binary tests don't run this check yet.
 
 ## Real-disc tests
 
