@@ -5,7 +5,11 @@ All notable changes to sacdfs are recorded here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Added
+
+- **An aarch64 release binary**, `sacdfs-<version>-aarch64-linux.tar.gz`, built and tested the
+  same way.
 
 - **Players on the same host read the mount directly, with no SMB hop (#186).** The container's mount
   can be shared through a host directory bound over `/srv` with `rshared`, and a player container
@@ -14,6 +18,9 @@ All notable changes to sacdfs are recorded here. The format follows
   crash of sacdfs, without a restart of its own; a file open during a restart fails once the runtime
   stops sacdfs. Rootless Podman can't share the mount this way. See
   [deployment](docs/deployment.md#players-on-the-same-host-no-smb-hop).
+  Measured against sacdfs's SMB share on the same NAS (0.4.1, 416 images, Navidrome): the import took
+  45 s instead of 62 s, sacdfs served 5.4 MB for it instead of 5.8 GB and used 3 instead of 223 CPU
+  seconds (Samba another 27), and files started in 0.5 to 2 ms instead of 12 to 26 ms.
 - **The container makes `/srv/sacd` itself** when a host directory is bound over `/srv`, so that
   directory can start empty. A dead mount left there by a killed sacdfs doesn't stop the start: sacdfs
   detaches it, as before. CI checks both on every pull request (`deploy/ci-same-host-test.sh`).
@@ -23,12 +30,53 @@ All notable changes to sacdfs are recorded here. The format follows
   directory. `--lookup-name` also searches by album and artist, and `--lookup-durations` by the
   tracks' start times. `--dry-run` shows what would be written. No match, or an ambiguous one,
   writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
-  own text stays. Nothing goes on the network unless you run this command: a mount never does. It
-  sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
+  own text stays. Nothing goes on the network unless you run this command, or turn on
+  `--musicbrainz` (below). It sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
   (docs/user-guide.md, "From MusicBrainz"). Run on 9 real discs by barcode or catalogue number: 7
   matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
+- **`--musicbrainz`: the mount looks up discs without text by itself, in the background** (#185,
+  MusicBrainz part of phase 4; `SACDFS_MUSICBRAINZ=1` in the container, with `SACDFS_LOOKUP_NAME` and
+  `SACDFS_LOOKUP_DURATIONS`). Off by default. A thread of its own goes through the images 30 s after
+  the mount and every hour after, and looks up only the discs with a track without a title, or
+  without album or artist, with the same code and limits as `tags fetch` (`--lookup-name` and
+  `--lookup-durations` add the same steps). It writes matches to the tags directory, which must then
+  be writable, and the mount serves them as any edit of a tags file: tags change and mtimes move, so
+  scanners read the files again. Each disc is asked about once: a match stays in its tags file, and
+  the rest is kept in the seek index cache directory; a disc without a match is asked again after
+  30 days. At most 1 request per second, and no listing or read waits for it. On a library sample of
+  395 real images, the first round took about 4 minutes and 111 requests: 23 discs lacked text, 19 of
+  them matched, every tags file byte for byte what `tags fetch` writes (checked by hand in phase 2),
+  and the other 372 were not asked about. A restart asked nothing. Listings and reads through the
+  mount kept the latency of a mount without the option while it ran
+  ([user guide](docs/user-guide.md#in-the-background---musicbrainz)).
 
 ### Changed
+
+- **Reading DST through the mount is faster** (#210), measured with `cp -r` of an area on a fresh
+  mount against 0.4.0: one thread 44.78 → 33.09 s for 41 minutes of stereo, the library's own
+  33.29 s; all threads 3.98 → 3.18 s for 50 minutes of stereo and 11.37 → 10.18 s for 50 minutes
+  of six channels. Reads of plain DSD are about as before: most of what they spend is FUSE's own.
+  Frames are decoded in groups in long batches, demultiplexing overlaps decoding, and a fast
+  reader gets a longer read-ahead (32 frames per decoder thread, at most 1200 and a share of a quarter
+  of the cache, which fast readers divide between them) from 4 MiB on instead of 16. Files keep their bytes. Peak memory of an all-thread DST
+  read rises by up to 10 MiB at the default cache (45 → 55 MiB for DST stereo; WAV 66 → 73 MiB).
+  Cold seeks of six-channel DST (mean 0.98 → 1.05 ms) and of plain DSD (0.149 → 0.156 ms), and four
+  readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads, and a fast reader's
+  worst single read rises from 3 to 6 ms to about 12 ms. A player's reads are as before. Through SMB,
+  `smbclient` copies 5.71 → 3.18 s (DST stereo) and 14.54 → 11.59 s (six channels), and four readers
+  over gvfs stay as fast as 0.4.0. On a NAS-class CPU (12-thread i5-1235U) against scarletbook 0.5.9:
+  one thread, stereo -1 % from the library (0.4.1: +34 %), six channels +23 %; all threads, stereo
+  +15 % (0.4.1: +49 %), six channels +21 % (+32 %). Pinned to three P-cores, DSF reads of six channels
+  are 10 to 14 % faster than without this change; stereo and WAV with one reader are unchanged within the
+  spread. On 2 or 4 cores under a 256 or 512 MiB limit, sacdfs peaks
+  at most 3 MiB higher with a player and a copy running.
+- **The release binaries need glibc 2.17, not 2.28 (#244).** They now run on systems with an
+  older glibc, such as QNAP's QuTScloud 5.2.9 (glibc 2.21), where 0.4.1 did not start. They are
+  linked against glibc 2.17's symbols with zig (cargo-zigbuild) and run at the same speed as
+  before (design.md, "Release binaries"). Static musl builds were measured and not chosen: up to
+  2.6 times slower with musl's malloc, and slower on plain DSD discs or much larger in memory
+  with other allocators.
+
 
 - **A listing over SMB asks sacdfs about a quarter as often (#205).** A first `ls -lR` through the container's
   Samba took 1,765 requests to sacdfs for 2,412 entries, down from 6,897; repeated 30 s later, 1,555, down from
@@ -109,19 +157,6 @@ All notable changes to sacdfs are recorded here. The format follows
   on a three-sample end level now pass and the others keep their verdict. `--trend-floor-mb` default 4 to 3. The thread check now lets a short spike pass the
   `--thread-spike` line (up to twice it; failing only if three samples in a row, `--spike-hold`, stay above the first line), and its end level is the median of the last
   sixth rather than of the last three samples. `scripts/test_soak.py` tests the verdict.
-- **Reading DST through the mount is faster** (#210), measured with `cp -r` of an area on a fresh
-  mount against 0.4.0: one thread 44.78 → 33.09 s for 41 minutes of stereo, the library's own
-  33.29 s; all threads 3.98 → 3.18 s for 50 minutes of stereo and 11.37 → 10.18 s for 50 minutes
-  of six channels. Reads of plain DSD are about as before: most of what they spend is FUSE's own.
-  Frames are decoded in groups in long batches, demultiplexing overlaps decoding, and a fast
-  reader gets a longer read-ahead (32 frames per decoder thread, at most 1200 and a share of a quarter
-  of the cache, which fast readers divide between them) from 4 MiB on instead of 16. Files keep their bytes. Peak memory of an all-thread DST
-  read rises by up to 10 MiB at the default cache (45 → 55 MiB for DST stereo; WAV 66 → 73 MiB).
-  Cold seeks of six-channel DST (mean 0.98 → 1.05 ms) and of plain DSD (0.149 → 0.156 ms), and four
-  readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads, and a fast reader's
-  worst single read rises from 3 to 6 ms to about 12 ms. A player's reads are as before. Through SMB,
-  `smbclient` copies 5.71 → 3.18 s (DST stereo) and 14.54 → 11.59 s (six channels), and four readers
-  over gvfs stay as fast as 0.4.0.
 
 ### Fixed
 
@@ -155,8 +190,35 @@ All notable changes to sacdfs are recorded here. The format follows
   device number. Clients of an earlier release go stale once, when the first fixed container
   starts: remount. CI now restarts the container under Docker and Podman, also with the device number
   changed on purpose (`deploy/ci-restart-test.sh`).
+- **A user other than root can stop sacdfs where only FUSE 2 is installed.** Mounting already worked
+  through FUSE 2's `fusermount` when there is no `fusermount3` (Synology DSM, for one), but unmounting
+  on SIGINT, SIGTERM or SIGHUP called `fusermount3` only: sacdfs kept running and the mount stayed.
+  It now falls back to `fusermount -u -z` (after `FUSERMOUNT_PATH`, then `fusermount3`). Tested as an
+  ordinary user in a Fedora 45 container with FUSE 2.9.9's setuid `fusermount` and no `fusermount3`:
+  0.4.1 logged "detaching: Operation not permitted" and stayed mounted; with the fix sacdfs unmounted
+  and exited, and the files read the same SHA-256 through both. Root never needed a helper.
+- **Clients retrying through a long hang of one image no longer stall the other images (#241).** A
+  read that fails with `EIO` after the request timeout keeps its thread until the source answers, so
+  clients that kept retrying on a hung image took one more read thread each time. Once all 64 were
+  blocked, reads of healthy images failed too, in both formats, until the source answered: with 8
+  clients, 2 decoder threads and a 2 s timeout, that took about 24 s. Now, once 4 reads of an image
+  are still blocked past the timeout, its new reads fail with `EIO` at once, without taking a thread,
+  until one of the blocked reads finishes. With the same test the hung image held at most 8 read
+  threads over 60 s, and every healthy DSF and WAV read during the hang succeeded. Reads of an image
+  that is slow but answers within the timeout are not affected, however many there are. A client
+  retrying without a pause now gets its errors at once rather than once per timeout. Logged once
+  when an image starts failing its reads this way and once when it reads again.
 
 ### Documentation
+
+- `docs/deployment.md`, "Players on the same host": the host directory must be on a shared mount, which
+  Synology DSM 7.4 and ASUSTOR ADM 5.1 don't give it (checked in VMs), with a workaround
+  (`mount --bind DIR DIR; mount --make-rshared DIR`) run on ADM in a VM, and how to check it.
+- `docs/deployment.md`, "Players on the same host": the Compose example's `start_interval` is
+  commented out, because Compose 2.17 and 2.19 (the Docker 20.10 and 24.0 CLI images) refuse a file
+  that has it; uncomment it with Docker Engine 25 or later. The install docs, the README and the user
+  guide now say that root needs no FUSE helper, and that FUSE 2's `fusermount` serves where there is no
+  `fusermount3`.
 
 - `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
   needs a remount; the durable-handle message in Samba's log is expected, and no setting tried

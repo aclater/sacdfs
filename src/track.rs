@@ -913,6 +913,8 @@ impl Reader {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     /// Readers count while they read and until they close or pause.
@@ -928,6 +930,71 @@ mod tests {
         assert_eq!(r.note(3, t0), 2);
         let later = t0 + FAST_READER_IDLE + std::time::Duration::from_millis(1);
         assert_eq!(r.note(3, later), 1, "the other paused");
+    }
+
+    fn longest_dsf(tree: &crate::tree::Tree) -> Arc<TrackFile> {
+        tree.all_files()
+            .into_iter()
+            .filter(|(p, _)| p.extension().is_some_and(|e| e == "dsf"))
+            .map(|(_, f)| f)
+            .max_by_key(|f| f.layout.frames)
+            .expect("a DSF file in the corpus")
+    }
+
+    fn corpus() -> crate::tree::Tree {
+        let images = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/images");
+        crate::tree::Tree::with_options(
+            crate::tree::SourceDir::scan(&images).unwrap(),
+            crate::disc::Tuning::default(),
+            crate::tree::Output::default(),
+        )
+    }
+
+    /// A reader's state after `FAST_AFTER` bytes, begun `ago`. No file of the corpus is that
+    /// long, so the test sets it instead of reading it.
+    fn has_read(file: &Arc<TrackFile>, ago: std::time::Duration) -> Reader {
+        let reader = Reader::new(file.clone());
+        {
+            let mut s = reader.seq.lock().unwrap();
+            s.audio_reads = 1;
+            s.started = Some((std::time::Instant::now() - ago, 0));
+            s.max_end = FAST_AFTER;
+            s.pace_from = s.started;
+        }
+        reader
+    }
+
+    /// A reader far ahead of real time gets the long window and shares it with the others as
+    /// long as it reads; one at the file's rate keeps the 2 s window and doesn't count.
+    #[test]
+    fn only_a_fast_reader_gets_the_long_window() {
+        let tree = corpus();
+        let f = longest_dsf(&tree);
+        let engine = Engine::new(32, 32 << 20).unwrap();
+        let (cap, frames) = (engine.cache().cap(), f.layout.frames);
+        let plan = |r: &Reader| r.plan_read_ahead(&engine, FAST_AFTER, FAST_AFTER + 4096, 0, 0).unwrap();
+        let t0 = std::time::Instant::now();
+
+        let player = has_read(&f, std::time::Duration::from_secs(3600));
+        assert_eq!(plan(&player).end, frames.min(READ_AHEAD_FRAMES));
+        assert_eq!(engine.traffic().fast.note(u64::MAX, t0), 1, "a player counted as fast");
+        engine.traffic().fast.forget(u64::MAX);
+        // While a player is about, readers for throughput share less (#230); this test is of the
+        // windows with none.
+        drop(player);
+
+        let fast = has_read(&f, std::time::Duration::ZERO);
+        let ahead = plan(&fast);
+        assert_eq!((ahead.first, ahead.end), (0, frames.min(f.read_ahead_frames(32, cap, 1))));
+        let second = has_read(&f, std::time::Duration::ZERO);
+        assert_eq!(plan(&second).end, frames.min(f.read_ahead_frames(32, cap, 2)));
+
+        let now = std::time::Instant::now();
+        assert_eq!(engine.traffic().fast.note(u64::MAX, now), 3, "both readers and this one");
+        drop(fast);
+        assert_eq!(engine.traffic().fast.note(u64::MAX, now), 2, "closed readers stop counting");
+        drop(second);
+        assert_eq!(engine.traffic().fast.note(u64::MAX, now), 1);
     }
 
     /// A paced reader is a player, however far it gets; one that reads faster is not, once it

@@ -938,6 +938,7 @@ impl Engine {
         d1: u32,
         mut sink: impl FnMut(Vec<Arc<Dsd>>),
     ) -> Result<(), ReadError> {
+        debug_assert!(self.pool.current_thread_index().is_none());
         let mut last: VecDeque<(u32, Arc<Dsd>)> = VecDeque::with_capacity(CARRY + 1);
         let mut keep = |t: u32, d: &Arc<Dsd>| {
             last.push_back((t, d.clone()));
@@ -1002,8 +1003,16 @@ impl Engine {
                     if jobs.iter().any(|j| matches!(j.content, FrameContent::Dst(_))) {
                         let size = group_size(jobs.len(), self.threads(), channels);
                         let groups = in_groups(jobs.into_iter().map(|j| (j, None)).collect(), size);
+                        // `install`: this is the request thread, so a bare `into_par_iter` would
+                        // run on rayon's global pool, with the wrong threads and thread count.
                         let mut decoded: Vec<Result<(u32, Frame), ReadError>> = self.pool.install(|| {
-                            groups.into_par_iter().flat_map_iter(|g| decode_group(g, channels)).collect()
+                            groups
+                                .into_par_iter()
+                                .flat_map_iter(|g| {
+                                    debug_assert!(self.pool.current_thread_index().is_some());
+                                    decode_group(g, channels)
+                                })
+                                .collect()
                         });
                         // A group gives its frames back with those not DST first.
                         decoded.sort_by_key(|r| r.as_ref().map_or(0, |(n, _)| *n));
@@ -1101,11 +1110,17 @@ impl Engine {
                 group.push((job, buf));
                 if group.len() >= size {
                     let g = std::mem::replace(&mut group, Vec::with_capacity(size));
-                    s.spawn(move |_| add(decode_group(g, channels)));
+                    s.spawn(move |_| {
+                        debug_assert!(self.pool.current_thread_index().is_some());
+                        add(decode_group(g, channels));
+                    });
                 }
             }
             if !group.is_empty() {
-                s.spawn(move |_| add(decode_group(group, channels)));
+                s.spawn(move |_| {
+                    debug_assert!(self.pool.current_thread_index().is_some());
+                    add(decode_group(group, channels));
+                });
             }
         });
         if let Some(e) = failed {
