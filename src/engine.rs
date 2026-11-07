@@ -1136,10 +1136,34 @@ pub fn limit_malloc_arenas() -> bool {
     unsafe { libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS) == 1 }
 }
 
+/// Keeps every allocation of 128 KiB or more in a mapping of its own, given back when it
+/// is freed (#237). glibc raises this limit by itself as such blocks are freed, up to 32 MiB, and
+/// then they stay in the heap.
+///
+/// *Why only under a memory limit with a tags directory:* tags with art make a block of hundreds
+/// of KiB for every file listed, and the heap then held over 100 MiB more than was in use, enough
+/// to get a mount killed at 256 MiB. Elsewhere, blocks that size are not made while listing.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[allow(unsafe_code)]
+pub fn map_large_allocations() {
+    // SAFETY: mallopt takes two integers and only changes allocator settings.
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, LARGE_ALLOCATION);
+    }
+}
+
+/// Elsewhere, nothing to set.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn map_large_allocations() {}
+
+/// What [`map_large_allocations`] counts as large: glibc's starting value.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const LARGE_ALLOCATION: libc::c_int = 128 << 10;
+
 /// Gives the heap's free pages back to the system (glibc's `malloc_trim`).
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[allow(unsafe_code)]
-fn trim_heap() {
+pub fn trim_heap() {
     // SAFETY: malloc_trim takes an integer and only releases free memory of the allocator.
     unsafe {
         libc::malloc_trim(0);
@@ -1148,7 +1172,7 @@ fn trim_heap() {
 
 /// Elsewhere, nothing to trim.
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn trim_heap() {}
+pub fn trim_heap() {}
 
 /// Elsewhere there is no glibc arena to limit.
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]

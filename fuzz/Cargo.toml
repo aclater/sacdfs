@@ -85,3 +85,10 @@ path = "fuzz_targets/verify_report.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "lookup_json"
+path = "fuzz_targets/lookup_json.rs"
+test = false
+doc = false
+bench = false

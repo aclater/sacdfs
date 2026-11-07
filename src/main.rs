@@ -22,6 +22,7 @@ use sacdfs::disc::Tuning;
 use sacdfs::engine::{Engine, default_threads};
 use sacdfs::fs::{MAX_READ, SacdFs};
 use sacdfs::index_cache::{self, IndexCache};
+use sacdfs::memory;
 use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
 use sacdfs::sidecar::Sidecars;
 use sacdfs::tree::{Output, SourceDir, Tree};
@@ -47,12 +48,19 @@ struct Args {
     /// Stay in the foreground and log to standard error.
     #[arg(short, long)]
     foreground: bool,
-    /// DST decoder threads (0: one per CPU).
+    /// DST decoder threads (0: one per CPU; under a memory limit, at most one per 64 MiB of it,
+    /// and at least 2).
     #[arg(long, default_value_t = 0, value_name = "N")]
     threads: usize,
-    /// Size of the cache of decoded and converted frames, in MiB.
-    #[arg(long, default_value_t = 32, value_name = "N")]
-    cache_mb: usize,
+    /// Size of the cache of decoded and converted frames, in MiB (default: 32, or 8 under a
+    /// memory limit up to 512 MiB).
+    #[arg(long, value_name = "N")]
+    cache_mb: Option<usize>,
+    /// Memory kept for what listed images hold (their TOCs and files), in MiB; past it, those
+    /// not used lately are read again when next used. 0: no bound (default: no bound, or 3/8
+    /// of the memory limit under one).
+    #[arg(long, value_name = "N")]
+    listing_mb: Option<usize>,
     /// Which files to show: dsf, wav, or both (dsf,wav).
     #[arg(long, default_value = "dsf,wav", value_name = "LIST", value_parser = parse_formats)]
     format: Formats,
@@ -308,6 +316,32 @@ fn run(args: Args) -> io::Result<()> {
         root.image_count(),
         args.sidecars.describe()
     );
+    // What the memory limit asks of the defaults (#231, #237). Said here, before the fork, so
+    // that whoever started it sees it without a log file.
+    let cgroup = memory::Cgroup::find();
+    let limit = cgroup.as_ref().map(memory::Cgroup::limit);
+    if limit.is_some() && args.tags.is_some() {
+        sacdfs::engine::map_large_allocations();
+    }
+    let threads =
+        if args.threads == 0 { memory::default_threads(default_threads(), limit) } else { args.threads };
+    let cache_mb = args.cache_mb.unwrap_or_else(|| memory::default_cache_mb(limit));
+    let budget = match args.listing_mb {
+        Some(0) => None,
+        Some(mb) => Some(mb.saturating_mul(1 << 20)),
+        None => memory::listing_budget(limit),
+    };
+    if let Some(limit) = limit {
+        log::info!(
+            "memory limit {} MiB: cache {cache_mb} MiB, {threads} decoder threads, listings {}",
+            limit >> 20,
+            budget.map_or_else(|| "not bounded".to_owned(), |b| format!("{} MiB", b >> 20)),
+        );
+        let plan = memory::Plan { limit, images: root.image_count(), cache_mb, threads, budget };
+        if let Some(warning) = plan.warning() {
+            log::warn!("{warning}");
+        }
+    }
 
     // Before daemonizing, which changes the working directory.
     if let Some(dir) = &cache_dir {
@@ -322,7 +356,6 @@ fn run(args: Args) -> io::Result<()> {
     };
     sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
 
-    let threads = if args.threads == 0 { default_threads() } else { args.threads };
     // Opening the images of a directory listing runs on rayon's global pool.
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(threads.min(8))
@@ -334,11 +367,13 @@ fn run(args: Args) -> io::Result<()> {
         samples_per_frame: rate.samples_per_frame() as u32,
         pauses_kept: args.pauses == "kept",
     };
-    let engine = Arc::new(Engine::with_pcm(threads, args.cache_mb.saturating_mul(1 << 20), pcm)?);
+    let engine = Arc::new(Engine::with_pcm(threads, cache_mb.saturating_mul(1 << 20), pcm)?);
     // An idle mount gives its cache and decoders back (#150).
     engine.start_idle_release()?;
+    let shedding = engine.clone();
     let tree = Tree::with_options(root, Tuning::default(), output)
         .with_flatten(args.flatten)
+        .with_listing_budget(budget)
         .with_pcm(&pcm)
         .excluding(&mountpoint)
         // The tags files' state is kept with the seek index (#81).
@@ -431,6 +466,12 @@ fn run(args: Args) -> io::Result<()> {
         }
     })?;
     sacdfs::handles::start_idle_closer()?;
+    if let Some(cgroup) = cgroup {
+        let (tree, engine) = (tags_tree.clone(), shedding);
+        std::thread::Builder::new()
+            .name("sacdfs-memory".to_owned())
+            .spawn(move || memory::watch(&cgroup, &tree, &engine))?;
+    }
     if let Some(cache) = index_cache::global() {
         let cache = cache.clone();
         std::thread::Builder::new().name("sacdfs-index".to_owned()).spawn(move || {

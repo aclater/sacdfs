@@ -50,6 +50,10 @@ pub const KERNEL_FIRST_WINDOW: u64 = 256 << 10;
 /// file, and held the decoder threads while the scanner went on to the next file.
 pub const HEAD_WINDOW: u64 = 1 << 20;
 
+/// What a file's node holds without its trailer, in bytes: the struct, the layout or header, the
+/// name and entry, the node and its place in the map, with the allocator's overhead on them.
+const FILE_HELD: usize = 1200;
+
 /// The file format of a track file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
@@ -230,6 +234,12 @@ impl TrackFile {
         })
     }
 
+    /// About what this file's node holds on the heap, for the bound on listed images (#237):
+    /// its tag and trailer, which a tags file can make large, and the rest as measured.
+    pub(crate) fn held_bytes(&self) -> usize {
+        FILE_HELD + self.trailer.capacity() * if self.dsf.is_some() { 2 } else { 1 }
+    }
+
     /// Frames read ahead of a fast sequential reader. For a WAV file, about 8 MiB of PCM: a
     /// longer window than DSF's keeps the pipeline of demultiplexing and conversion busy for
     /// a fast reader (`cp`) of a plain DSD area, where conversion is the only cost.
@@ -265,7 +275,10 @@ impl TrackFile {
     }
 
     /// The frames an extract's tag is compared with (`verify`, `tags import`): the file's tag,
-    /// without what came from the image's path ([`dsf::stored_tag`]).
+    /// without what came from the image's path ([`dsf::stored_tag`]). A generated `Track NN` title
+    /// stays. *Why:* it depends on nothing that can change, so an extract that has it from a mount
+    /// loses nothing when it goes, and `import` storing it as if edited by hand would keep a
+    /// lookup's title out (#185).
     pub fn stored_frames(&self) -> Vec<crate::verify::id3::Frame> {
         if !self.filled {
             return crate::verify::id3::frames(self.tag());
@@ -275,7 +288,14 @@ impl TrackFile {
             let track = a.tracks.iter().find(|t| t.number == self.number)?;
             Some(dsf::stored_tag(toc, a, track))
         });
-        crate::verify::id3::frames(&tag.unwrap_or_default())
+        let mut frames = crate::verify::id3::frames(&tag.unwrap_or_default());
+        if !frames.iter().any(|f| f.key == "TIT2" && !f.value.trim().is_empty()) {
+            frames.push(crate::verify::id3::Frame {
+                key: "TIT2".to_owned(),
+                value: crate::names::fallback_title(self.number),
+            });
+        }
+        frames
     }
 
     /// Length of everything before the first audio byte.

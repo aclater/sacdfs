@@ -447,7 +447,7 @@ files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network
   the NFS and SMB lines of [the Linux client guide](install/linux-client.md) (with `port=` for
   SMB) mounted, were mounted after a reboot with the server up, the boot finished in 56 s with
   the server down, and the SMB automount worked once it was back.
-- **Restart of the container:** [NFS and restarts](deployment.md#nfs-and-restarts).
+- **Restart of the container:** [NFS and restarts](deployment.md#nfs-and-restarts) and, including macOS, which needs a remount, [SMB and restarts](deployment.md#smb-and-restarts).
 - **Container channels:** see [the Docker and Podman guide](install/docker-podman.md).
 
 Cold-seek and read-latency figures for NFS and SMB, server-side and client-side, are in
@@ -460,7 +460,7 @@ on #82.
 - **Deploy server-side on the NAS.** sacdfs runs next to the images in the container and the
   clients see ordinary files over SMB or NFS. A cold seek costs about 5 to 6 ms over SMB on a
   gigabit LAN ([deployment](deployment.md)).
-- **The default cache suits a NAS.** Since #150 the default `--cache-mb` is 32 (was 256), and
+- **The default cache suits a NAS.** Since #150 the default `--cache-mb` is 32 (was 256; since 0.5.0, 8 under a memory limit up to 512 MiB), and
   a Plex-like scan of the bench images peaks at 46 MiB RSS (0.3.0 at its default: 103 MiB), a
   Roon-like import replay at 45 MiB (134 MiB). The 0.4.0-rc.2 server tests ran at the default,
   with no errors and sacdfs at 18 to 53 MiB RSS (Jellyfin's LUFS pass: 52 MiB). On

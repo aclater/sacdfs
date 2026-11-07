@@ -56,6 +56,21 @@ pub fn guess(image: &Path) -> DiscNames {
     DiscNames { album, artist: None }
 }
 
+/// The year the image's name or folder gives, by the same shapes as [`guess`]. *Not a date tag:* a
+/// folder's year may be a reissue's. A lookup uses it only to choose between candidates.
+pub fn year(image: &Path) -> Option<String> {
+    let stem = readable(image.file_stem());
+    let folder = readable(image.parent().and_then(Path::file_name));
+    for name in [stem, folder].into_iter().flatten() {
+        let mut parts = name.split(" - ").map(str::trim);
+        let (a, b) = (parts.next()?, parts.next());
+        if let Some(y) = [Some(a), b].into_iter().flatten().find(|p| is_year(p)) {
+            return Some(y.to_owned());
+        }
+    }
+    None
+}
+
 /// A path component that can be read as a name: valid UTF-8, no control characters.
 fn readable(name: Option<&OsStr>) -> Option<&str> {
     name.and_then(OsStr::to_str).filter(|n| !has_control(n))
@@ -144,7 +159,7 @@ fn is_artist(s: &str) -> bool {
 
 /// `s` as lower-case words, for comparing names that differ in case and punctuation
 /// (`Some.Artist-2001` starts with `Some Artist`).
-fn normalized(s: &str) -> String {
+pub(crate) fn normalized(s: &str) -> String {
     let lower = s.to_lowercase();
     let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
     words.join(" ")
@@ -240,6 +255,17 @@ mod tests {
             assert_eq!(names(path).0.as_deref(), Some(want), "{path}");
             assert_eq!(names(path).1, None, "{path}");
         }
+    }
+
+    #[test]
+    fn the_year_of_a_path() {
+        let y = |p: &str| year(Path::new(p));
+        assert_eq!(y("/l/A - 2001 - B [x].iso").as_deref(), Some("2001"));
+        assert_eq!(y("/l/A/2001 - B [x]/c.iso").as_deref(), Some("2001"));
+        assert_eq!(y("/l/A - 2001 - B/c.iso").as_deref(), Some("2001"));
+        assert_eq!(y("/l/A/B/c.iso"), None);
+        assert_eq!(y("/l/A - B - 2001.iso"), None);
+        assert_eq!(y("/l/A - 1899 - B.iso"), None);
     }
 
     #[test]

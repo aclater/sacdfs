@@ -55,7 +55,7 @@ shares on **10445** (SMB) and **12049** (NFS). Linux, macOS and Windows clients 
 
    - The images are mounted read-only; sacdfs never writes to them.
    - `sacdfs-cache` keeps the seek index across updates (a few MB).
-   - The default cache (`SACDFS_CACHE_MB`, 32) suits a NAS; leave it out.
+   - The default cache (`SACDFS_CACHE_MB`: 32 MiB, or 8 under a memory limit up to 512 MiB) suits a NAS; leave it out.
    - `NFS_CLIENTS` takes one address (`192.0.2.15`), a network (`192.0.2.0/24`), a
      comma-separated list of them, or `*`.
    - For Roon or MPD, add `SACDFS_FORMATS: dsf`; see your server's guide.

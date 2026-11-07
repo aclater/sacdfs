@@ -239,8 +239,8 @@ pub struct SacdFs {
     /// [`SacdFs::serve`].
     meta: Workers,
     watchdog: Watchdog,
-    /// The source filesystem's size, and when it was read: see [`SacdFs::statfs`].
-    source_size: Arc<Mutex<SourceSize>>,
+    /// The size `statfs` reports, and when it was read: see [`SacdFs::statfs`].
+    size: Arc<Mutex<ShareSize>>,
 }
 
 /// What the request threads share with the filesystem.
@@ -290,23 +290,41 @@ fn read_plain(file: &std::fs::File, offset: u64, size: u32) -> io::Result<Vec<u8
     Ok(buf)
 }
 
-/// The size of the source filesystem, as `statfs` reports it.
+/// The share's size, as `statfs` reports it: see [`SacdFs::statfs`].
 #[derive(Debug, Clone, Copy)]
-struct SourceSize {
+struct ShareSize {
     blocks: u64,
     frsize: u32,
     read: Instant,
+    /// Read from the source's filesystem, for want of images: read again now and then.
+    refresh: bool,
     refreshing: bool,
 }
 
-impl SourceSize {
+impl ShareSize {
+    /// The images' total, in blocks of 64 KiB; with no images, what [`ShareSize::of_source`]
+    /// says, so that this is never a 0-byte filesystem (#62).
+    fn of_images(bytes: u64, source: &std::path::Path) -> ShareSize {
+        if bytes == 0 {
+            return ShareSize::of_source(source);
+        }
+        let frsize = 1 << 16;
+        ShareSize {
+            blocks: bytes.div_ceil(u64::from(frsize)),
+            frsize,
+            read: Instant::now(),
+            refresh: false,
+            refreshing: false,
+        }
+    }
+
     /// `statvfs` of `path`; 0 blocks if it fails.
-    fn of(path: &std::path::Path) -> SourceSize {
+    fn of_source(path: &std::path::Path) -> ShareSize {
         let (blocks, frsize) = statvfs(path).unwrap_or_else(|e| {
             log::debug!("{}: statvfs: {e}", path.display());
             (0, 1 << 16)
         });
-        SourceSize { blocks, frsize, read: Instant::now(), refreshing: false }
+        ShareSize { blocks, frsize, read: Instant::now(), refresh: true, refreshing: false }
     }
 }
 
@@ -354,8 +372,8 @@ impl SacdFs {
         let requests = Workers::new(request_threads, "sacdfs-read")?;
         // As many as fuser's own threads, whose waiting these take over.
         let meta = Workers::new(4, "sacdfs-meta")?;
-        // Read now, while the source has just been walked; refreshed in the background.
-        let source_size = Arc::new(Mutex::new(SourceSize::of(tree.source())));
+        // Read now, while the source has just been walked.
+        let size = Arc::new(Mutex::new(ShareSize::of_images(tree.image_bytes(), tree.source())));
         Ok(SacdFs {
             shared: Arc::new(Shared {
                 tree,
@@ -368,7 +386,7 @@ impl SacdFs {
             requests,
             meta,
             watchdog: Watchdog::new(Some(watchdog::DEFAULT_TIMEOUT))?,
-            source_size,
+            size,
         })
     }
 
@@ -463,6 +481,12 @@ impl Shared {
         by_fh.or_else(|| handles.values().find(|(i, _)| *i == ino)).map(|(_, o)| Arc::new(o.node()))
     }
 
+    /// The error for a number the tree doesn't find: `ENOMEM` if it isn't looking, for lack of
+    /// memory (#237).
+    fn not_found(&self) -> Errno {
+        if self.tree.refusing() { Errno::ENOMEM } else { Errno::ENOENT }
+    }
+
     fn lookup(&self, parent: u64, name: &OsStr) -> Result<(Duration, FileAttr, Generation), Errno> {
         let mut negative = false;
         let ino = match name.as_encoded_bytes() {
@@ -482,7 +506,12 @@ impl Shared {
                 None => None,
             },
         };
-        match ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n))) {
+        let found = ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n)));
+        // Not "missing", which the kernel would remember, but short of memory (#237).
+        if found.is_none() && self.tree.refusing() {
+            return Err(Errno::ENOMEM);
+        }
+        match found {
             // A directory that is re-read when its source changes (#101), and what is in
             // it, is remembered for a short time only.
             Some((ino, node)) => {
@@ -500,13 +529,17 @@ impl Shared {
     fn getattr(&self, ino: u64, node: Option<Arc<Node>>) -> Result<(Duration, FileAttr), Errno> {
         match node {
             Some(node) => Ok((self.ttl(ino, ino), self.attr(ino, &node))),
-            None => Err(Errno::ENOENT),
+            None => Err(self.not_found()),
         }
     }
 
     /// Opens `node`: a new file handle.
     fn open(&self, ino: u64, node: Option<Arc<Node>>) -> Result<u64, Errno> {
-        let Some(node) = node else { return Err(Errno::ENOENT) };
+        let Some(node) = node else { return Err(self.not_found()) };
+        // New readers wait out a shortage, so that the ones reading now go on (#237).
+        if self.tree.refusing() && matches!(&*node, Node::File(_)) {
+            return Err(Errno::ENOMEM);
+        }
         let open = match &*node {
             Node::File(file) => Open::Track(Arc::new(Reader::new(file.clone()))),
             Node::Sidecar(s) => match self.tree.open_sidecar(s) {
@@ -529,7 +562,7 @@ impl Shared {
             Some(Node::Dir(_)) if self.tree.is_live(ino) => Ok(FopenFlags::empty()),
             Some(Node::Dir(_)) => Ok(FopenFlags::FOPEN_KEEP_CACHE | FopenFlags::FOPEN_CACHE_DIR),
             Some(Node::File(_) | Node::Sidecar(_)) => Err(Errno::ENOTDIR),
-            None => Err(Errno::ENOENT),
+            None => Err(self.not_found()),
         }
     }
 
@@ -807,6 +840,8 @@ impl Filesystem for SacdFs {
 
     fn readdir(&self, _req: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, reply: ReplyDirectory) {
         // Listing a directory the first time opens its images (reads their TOCs).
+        let tree = self.shared.tree.clone();
+        let refusing = move || tree.refusing();
         self.serve(
             What::new("readdir", Ino(ino.0)),
             reply,
@@ -814,7 +849,7 @@ impl Filesystem for SacdFs {
             move |reply: Option<ReplyDirectory>, found: Option<(Arc<Vec<Entry>>, u64)>| {
                 let Some(mut reply) = reply else { return };
                 let Some((children, parent)) = found else {
-                    reply.error(Errno::ENOTDIR);
+                    reply.error(if refusing() { Errno::ENOMEM } else { Errno::ENOTDIR });
                     return;
                 };
                 let dots = [
@@ -846,7 +881,10 @@ impl Filesystem for SacdFs {
         self.serve(
             What::new("access", Ino(ino.0)),
             reply,
-            move |sh| Shared::access(sh.tree.get(ino.0), mask),
+            move |sh| match sh.tree.get(ino.0) {
+                None => Err(sh.not_found()),
+                node => Shared::access(node, mask),
+            },
             |reply, r| {
                 if let Some(reply) = reply {
                     reply_empty(reply, r)
@@ -875,17 +913,17 @@ impl Filesystem for SacdFs {
         }
     }
 
-    /// The source filesystem's size, all of it used: `df` and SMB clients see a filesystem
-    /// of that size, full (#62). Read at mount and again at most every minute, in the
-    /// background, so that a slow source never holds up this reply.
+    /// The total size of the images found at mount, all of it used, as read-only media report
+    /// (#217). With no images, the size of the source's filesystem, read at most every minute
+    /// in the background so that a slow source never holds up this reply: never 0 bytes (#62).
     fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
         let size = {
-            let mut s = self.source_size.lock().unwrap_or_else(|p| p.into_inner());
-            if !s.refreshing && s.read.elapsed() >= STATFS_REFRESH {
+            let mut s = self.size.lock().unwrap_or_else(|p| p.into_inner());
+            if s.refresh && !s.refreshing && s.read.elapsed() >= STATFS_REFRESH {
                 s.refreshing = true;
-                let (cell, path) = (self.source_size.clone(), self.shared.tree.source().to_owned());
+                let (cell, path) = (self.size.clone(), self.shared.tree.source().to_owned());
                 self.requests.spawn(move || {
-                    let new = SourceSize::of(&path);
+                    let new = ShareSize::of_source(&path);
                     *cell.lock().unwrap_or_else(|p| p.into_inner()) = new;
                 });
             }

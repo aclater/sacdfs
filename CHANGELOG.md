@@ -7,6 +7,97 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ## [0.4.1] - 2026-11-07
+### Changed
+### Changed
+
+- **A memory limit no longer gets sacdfs killed while listing (#237, #231).** Under a cgroup limit, what
+  listed images hold is kept to a budget (`--listing-mb`, `SACDFS_LISTING_MB`, default 3/8 of the
+  limit): images not used lately are dropped and read again when next used, with the same names, inode
+  numbers, sizes, times and bytes. 5,000 and 20,000 images now list at 256 MiB, where 0.4.0 and 0.4.1-rc.2
+  were killed. A second pass over a library past its budget takes longer, as TOCs are read again.
+- **Defaults follow the limit.** Under a limit up to 512 MiB the cache defaults to 8 MiB, as a 6-channel WAV player then keeps real time
+  during whole-file scans, at the cost of scans 2.4 to 2.6 times slower (#230), and decoder
+  threads to at most one per 64 MiB of the limit (at least 2). The container no longer sets
+  `SACDFS_CACHE_MB` by itself. With no limit, nothing changes.
+- **A warning at startup** when the library won't fit in memory as listed, naming the size that would.
+- **A memory watch** under a limit: past 75% of the limit listings shrink, past 85% the cache and idle
+  decoders go, past 93% new listings and opens fail with `ENOMEM`, while files already open go on.
+- **NFS-Ganesha's cache follows the limit, in the container.** Its cache of entries is kept to what an
+  eighth of the limit holds (16,384 entries at 256 MiB). At its default, a client going through 5,000
+  images took it to about 180 MiB of a 256 MiB limit, which sacdfs can't free, and new requests kept failing.
+- **`--tags` with covers under a limit.** Under a limit with a tags directory, blocks from 128 KiB up keep
+  their own mappings, as the heap otherwise held over 100 MiB of freed covers. Listings are also kept to
+  their budget as each directory is listed.
+- **`--tags`, with or without a limit:** only the last 16 covers read stay in memory, not every disc's for
+  as long as the mount lasts. A disc listed again reads its cover again, so a cover image edited during a
+  mount can show then, with no new generation for its files.
+- File nodes are smaller, by about 4.4 KiB per image at about 25 files per image, for every library.
+
+## [0.4.1-rc.3] - 2026-11-06
+
+- **The share says it is read-only, and has the size of its images (#217).** Over SMB, files and
+  folders now carry the read-only attribute (`map readonly = yes`; gvfs's `can-write` is FALSE for
+  files, the Linux kernel client shows no write bit). `df` and clients now see the total size of the
+  images found at mount instead of the capacity of the disk they're on, still with 0 free, and
+  the source's size only when there are no images. Untested on Windows, macOS, Roon and Plex; to go back
+  on the attribute, `SMB_EXTRA_GLOBAL=map readonly = no`.
+### Changed
+
+- **scarletbook and scarletbook-pcm 0.5.8 -> 0.5.9** (not part of 0.4.1; for the release after it). 0.5.9 makes
+  DST decoding faster (about 1 to 14 % in scarletbook's own figures, on Zen 2 only), changes the DSF
+  partial-row code, and adds nothing sacdfs can use to delete code of its own: the new
+  `with_dst_lanes` is a setting to measure with, and the per-track DSF writer recipe is documentation
+  (the writer is planned for 0.6.0, scarletbook-rs#202). Audio bytes are unchanged: every DSF and WAV file
+  served from the 136-image corpus (914 files) and from the five bench discs (186 files) has the same
+  SHA-256 as with the 0.4.1-rc.3 build (0.5.8), and the bench-disc hashes equal 0.4.0's. The
+  library's notes warn that a DSF read of part of a row now asks for all of that row's positions, so on
+  damaged media a read that used to succeed can return an I/O error. The extra work the library reports for DST reads under 4 KiB was not measured
+  through the mount.
+### Fixed
+
+- **NFS clients keep their handles when the container restarts, under any runtime (#218).** Under
+  Podman, nearly every restart gave `Stale file handle` on open files, `stat` and `ls`, until a
+  remount; under Docker it could happen too. NFS-Ganesha's handles no longer hold the FUSE mount's
+  device number. Clients of an earlier release go stale once, when the first fixed container
+  starts: remount. CI now restarts the container under Docker and Podman, also with the device number
+  changed on purpose (`deploy/ci-restart-test.sh`).
+### Documentation
+
+- `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
+  needs a remount; the durable-handle message in Samba's log is expected, and no setting tried
+  makes those handles survive a restart (#204).
+### Added
+
+- **`sacdfs tags fetch IMAGE...`: tags from MusicBrainz, on demand** (#185, phase 2). It finds the
+  disc's release by barcode or catalogue number, confirms it by track count, durations and ISRCs,
+  and writes titles, artists, album, date and MusicBrainz IDs to the disc's file in the tags
+  directory. `--lookup-name` also searches by album and artist, and `--lookup-durations` by the
+  tracks' start times. `--dry-run` shows what would be written. No match, or an ambiguous one,
+  writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
+  own text stays. Nothing goes on the network unless you run this command: a mount never does. It
+  sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
+  (docs/user-guide.md, "From MusicBrainz"). Run on 9 real discs by barcode or catalogue number: 7
+  matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
+
+### Changed
+
+- **A tags file's title still doesn't rename a file** (#185, phase 2, now decided for lookups): a
+  track given a title by `sacdfs tags fetch` stays `NN - Track NN.dsf`, with the title in its tag.
+- **`sacdfs tags import` leaves out a generated `Track NN` title, and `sacdfs verify` doesn't report
+  it as lost** (#185). An extract copied from a 0.4.1 mount has that text, and an import stored it
+  as if edited by hand, which would have kept a lookup's title out. A title of any other form,
+  `Track 3` for instance, is still kept. `sacdfs tags fetch` replaces a `Track NN` that an earlier
+  import stored.
+- **The binary is about 3 MB larger** (7.2 to 10.2 MB in a release build on x86-64): it now holds an
+  HTTPS client with its own root certificates (ureq, rustls), used only by `sacdfs tags fetch`.
+- **`sacdfs tags fetch`'s duration limits come from real discs:** by number, 15 s on a track and 5 s on
+  average; by name, 6 s and 3 s. The limits for `--lookup-durations` stay as judged. It also no longer
+  takes a SACD layer for a CD layer.
+- **`sacdfs tags fetch` on a busy service.** It obeys `Retry-After` in full, up to an hour, waits
+  longer between discs that get no answer, tries those again at the end of the run, and ends at once
+  on a 403 or a request to wait longer than an hour.
+
+## [0.4.1-rc.3] - 2026-11-06
 
 Tested as three release candidates. On rc.1 the scripted servers (Jellyfin, Navidrome, Lyrion, MPD,
 MinimServer) were run against 0.4.0 side by side, and Roon, Plex, Windows (Explorer, PowerShell,
