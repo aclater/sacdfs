@@ -454,7 +454,14 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
 For the server-side deployment (#17, #18): an NFS client keeps file handles, which hold the
 inode and generation numbers, across server restarts. Numbers handed out in walk order would
 change on every mount, and clients would get `ESTALE` on open files and cached directories
-after every NAS reboot or app update.
+after every NAS reboot or app update. In the container, NFS-Ganesha's handles must not depend
+on the mount's device number either (`fsid_type = Major64`, #218). *Why that setting:* FUSE
+reports no filesystem id, so Ganesha uses the device number, and a new mount can get another
+one. *Alternatives:* `Filesystem_Id` only sets what clients see, not what handles hold; `One64`
+and the others still include the varying minor number; a fixed device number can't be asked of the
+kernel for a FUSE mount, and the kernel NFS server needs a privileged container (see
+deployment.md). *Trade-off:* a handle can't tell two filesystems of one export apart, which an
+export of one FUSE mount doesn't have; and old clients go stale once on the upgrade.
 
 **Inode numbers** (`src/ident.rs`) are 64 bits:
 

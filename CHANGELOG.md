@@ -27,6 +27,14 @@ All notable changes to sacdfs are recorded here. The format follows
   library's notes warn that a DSF read of part of a row now asks for all of that row's positions, so on
   damaged media a read that used to succeed can return an I/O error. The extra work the library reports for DST reads under 4 KiB was not measured
   through the mount.
+### Fixed
+
+- **NFS clients keep their handles when the container restarts, under any runtime (#218).** Under
+  Podman, nearly every restart gave `Stale file handle` on open files, `stat` and `ls`, until a
+  remount; under Docker it could happen too. NFS-Ganesha's handles no longer hold the FUSE mount's
+  device number. Clients of an earlier release go stale once, when the first fixed container
+  starts: remount. CI now restarts the container under Docker and Podman, also with the device number
+  changed on purpose (`deploy/ci-restart-test.sh`).
 
 ## [0.4.1-rc.3] - 2026-11-06
 

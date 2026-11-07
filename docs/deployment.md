@@ -64,8 +64,8 @@ shares. The clients tested so far, with the settings that worked for each, are i
     its mount point to go before mounting, and detaches a dead sacdfs mount there at once
     (#57).
   - The NFS export has the same fixed filesystem id (`Filesystem_Id = 101.1`) on every
-    start, because FUSE has no stable device number. A changing id would also invalidate
-    every client's handles.
+    start, and its file handles carry no device number (`fsid_type = Major64`), because FUSE
+    has no stable device number: see [NFS and restarts](#nfs-and-restarts).
 
 ## The published image
 
@@ -740,34 +740,34 @@ an NFS share of images on hard disks, these are the measured findings (#71,
 
 ## NFS and restarts
 
-NFS clients keep file handles across server restarts. sacdfs gives every file and
-directory the same inode number on every mount, and supports NFS export (#18). What a client
-sees after a restart depends on the NFS server:
+An NFS client keeps its file handles across a restart of the container. So after a NAS reboot
+or an update, NFS clients go on reading the files they had open, and `stat` and `ls` of the
+same paths work, with the same inode, modification time and size, without a remount. SMB is
+path-based: Linux and Windows clients reconnect by themselves, and macOS drops the mount and needs a
+remount ([#204](https://github.com/aclater/sacdfs/issues/204)).
 
-- **Docker, NFSv4.2: handles survive.** Tested on 0.4.0 and 0.4.1-rc.1 (the published images,
-  Docker 29 in a Fedora 44 VM, a Fedora 44 client, `docker restart`): the open file read on,
-  `stat` and `ls` of the same path worked, and the identity was unchanged. This is what the
-  container CI job checks too.
-- **Rootful Podman, NFSv4.2: a remount is needed ([#218](https://github.com/aclater/sacdfs/issues/218)).**
-  Tested on 0.4.0 and 0.4.1-rc.1 (two runs of each, `podman restart`), and the release gate saw the
-  same on rc.2: after the restart a file held open reads on with `Stale file handle`, and so do
-  `stat` of the same path and `ls` of its directory. After the client unmounts and mounts again,
-  the same path has the same inode, modification time and size, so the identity is stable; only
-  handles the client held from before are refused. After restarting a Podman container, remount NFS
-  on its clients (an automount for NFS was not tried). A fix is planned for 0.5.0
-  ([#221](https://github.com/aclater/sacdfs/pull/221)); it is not in 0.4.1.
-- **NFSv3:** the container's Ganesha serves NFSv4 only (`Protocols = 4` in its configuration),
-  so an NFSv3 client, which keeps nothing but handles, could not be tried against it.
-- **SMB** is path-based and reconnects by itself: after the restart the share answered again
-  and the automount mounted on first use (0.4.1-rc.1, Fedora 44 client). The release gate saw SMB
-  reconnect after a restart on rc.2.
-- **The kernel NFS server, NFSv3, on loopback (CI):** a client opens files, reads half of each,
-  sacdfs restarts (with the NFS server stopped around it), and the client reads the rest
-  through the same open file. This is CI's `nfs` workflow; it is the case the file-handle design
-  (stable inodes) is for, and it passes. It is not the container's Ganesha.
+Run on the Linux kernel client with NFS 4.0, 4.1 and 4.2 under rootful Podman 6.1, and 4.2
+under Docker 29, for `restart`, for stop and start, and for removing and recreating the
+container (Podman) with the same image volume. The same in CI on every pull request, with the
+versions the runner has: see [Testing](#testing).
 
-An image whose file changed (size or modification time) gets new file handles, so a client
-holding an old one gets "stale file handle" instead of other data.
+Two things do give "stale file handle":
+
+- **An image whose file changed** (size or modification time) gets new file handles for its
+  files, so a client holding an old one gets that error instead of other data. Other images'
+  files aren't affected. The path itself works again at once.
+- **Moving to the first release with this fix, once.** 0.4.1 and earlier put the mount's device
+  number in each handle, so clients of those releases get "stale file handle" when the first
+  fixed container starts, even if their handles survived restarts before. Remount, or
+  reopen the file if the mount still answers. Later restarts and updates keep the handles.
+
+*Why it depended on the runtime before (#218):* each handle from NFS-Ganesha holds its own id for
+the backing filesystem. A FUSE mount has none, so Ganesha took the mount's device number, which is
+the lowest number free when the mount is made. Under Podman the number changed on most restarts here
+(157 to 159, say), and every handle went stale. Under Docker it stayed the same, which was luck:
+when the test took the number away on purpose, Docker's clients went stale as well. `Filesystem_Id` doesn't help: it's only what clients see as the filesystem id.
+
+The container speaks only NFSv4 (`Protocols = 4`); NFSv3 can't be tried against it.
 
 ## Troubleshooting
 
@@ -807,6 +807,8 @@ CI (`.github/workflows/container.yml`) builds the image, starts it on the test c
 mounts the shares with the kernel's SMB and NFS clients from a client container. It reads
 every track the corpus manifest expects and checks each DSF file's per-channel SHA-256 and
 each WAV file's header (`deploy/check-share.py`), over SMB and over NFS. A second run checks
-user access (guests refused), `SACDFS_FORMATS=dsf` and `SACDFS_FLATTEN=1`. In between, a
-client opens a file over SMB and over NFS, reads half of it, and reads the rest through the
-same open file after the container restarts.
+user access (guests refused), `SACDFS_FORMATS=dsf` and `SACDFS_FLATTEN=1`. In between, under
+Docker and then Podman (`deploy/ci-restart-test.sh`), a client opens a file over SMB and over
+NFS 4.2, reads half of it, and reads the rest through the same open file after the container
+restarts, and stats and lists the same paths. A second round per runtime takes the mount's device
+number away first, so the test doesn't depend on the number happening to stay the same.
