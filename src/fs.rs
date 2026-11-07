@@ -489,6 +489,7 @@ impl Shared {
 
     fn lookup(&self, parent: u64, name: &OsStr) -> Result<(Duration, FileAttr, Generation), Errno> {
         let mut negative = false;
+        let mut volatile = false;
         let ino = match name.as_encoded_bytes() {
             // The kernel's export code asks for `.` of an inode number from a file handle
             // and for `..` of a directory, to rebuild its path.
@@ -498,13 +499,13 @@ impl Shared {
                 Some(Node::File(_) | Node::Sidecar(_)) => return Err(Errno::ENOTDIR),
                 None => None,
             },
-            _ => match self.tree.children(parent) {
-                Some(children) => {
-                    negative = true;
-                    children.iter().find(|e| e.name == name).map(|e| e.ino)
-                }
-                None => None,
-            },
+            _ => {
+                // Art in an area is checked against its source, and asked about again each time (#235).
+                let (ino, art) = self.tree.lookup_art(parent, name);
+                volatile = art;
+                negative = self.tree.children(parent).is_some();
+                ino
+            }
         };
         let found = ino.and_then(|ino| self.tree.get(ino).map(|n| (ino, n)));
         // Not "missing", which the kernel would remember, but short of memory (#237).
@@ -514,7 +515,13 @@ impl Shared {
         match found {
             // A directory that is re-read when its source changes (#101), and what is in
             // it, is remembered for a short time only.
-            Some((ino, node)) => Ok(self.entry(parent, ino, &node)),
+            Some((ino, node)) => {
+                let mut entry = self.entry(parent, ino, &node);
+                if volatile {
+                    entry.0 = Duration::ZERO;
+                }
+                Ok(entry)
+            }
             // A name missing from a directory stays missing (unless the directory is re-read,
             // #101), so the kernel may remember that it is: inode 0 is a negative entry,
             // cached for the TTL (#61). `.` and `..` of an unknown number stay errors, for the export
@@ -534,6 +541,8 @@ impl Shared {
     /// (#81) a track's size and time follow its tags file, so they stay short.
     fn entry(&self, parent: u64, ino: u64, node: &Node) -> (Duration, FileAttr, Generation) {
         let ttl = match node {
+            // Art in an area is asked about again each time (#235), in a listing too.
+            Node::Sidecar(_) if self.tree.is_area_art(parent, node) => Duration::ZERO,
             Node::File(_) if !crate::tags::installed() => TTL,
             _ => self.ttl(parent, ino),
         };
@@ -583,7 +592,12 @@ impl Shared {
                 Ok(f) => Open::Sidecar(Arc::new(f), s.clone()),
                 Err(e) => {
                     log::info!("sidecar {}: open: {e}", s.target.display());
-                    return Err(Errno::from_i32(e.raw_os_error().unwrap_or(libc::EIO)));
+                    let errno = e.raw_os_error().unwrap_or(libc::EIO);
+                    // Gone since the kernel was told of it (#235): it asks again, then.
+                    if errno == libc::ENOENT && self.tree.art_told_lately(ino) {
+                        return Err(Errno::ESTALE);
+                    }
+                    return Err(Errno::from_i32(errno));
                 }
             },
             Node::Dir(_) => return Err(Errno::EISDIR),

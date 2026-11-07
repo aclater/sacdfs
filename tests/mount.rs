@@ -1360,3 +1360,101 @@ fn a_tags_file_edit_moves_the_files_and_their_ancestors() {
     assert!(has(&std::fs::read(&track).unwrap(), b"While Stopped"));
     m.stop("TERM");
 }
+
+/// `cover.jpg` in an area stays visible while the art it stands for is replaced (#235): by
+/// rename over the old file, by writing it in place, and by adding a new art file and removing
+/// the old one (what a tagger does when it changes the file name). A poller `stat`s the name and
+/// lists the folder throughout; neither may ever miss it, and it ends up showing the new art.
+#[test]
+fn cover_name_stays_while_art_is_replaced() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    common::skip_without_fuse!();
+    let mut failures = Vec::new();
+    for mode in ["rename", "in place", "new name"] {
+        let top = tempfile::tempdir().unwrap();
+        let src = top.path().canonicalize().unwrap();
+        let album = src.join("Artist/Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), album.join("disc.iso"))
+            .unwrap();
+        std::fs::write(album.join("cover-0.jpg"), b"art 0").unwrap();
+        let m = Mount::foreground(&src, &[]);
+        let area = m.path().join("Artist/Album/disc/Stereo");
+        let cover = area.join("cover.jpg");
+        assert_eq!(std::fs::read(&cover).unwrap(), b"art 0", "{mode}");
+
+        let done = Arc::new(AtomicBool::new(false));
+        let poller = {
+            let (done, area, cover) = (done.clone(), area.clone(), cover.clone());
+            std::thread::spawn(move || {
+                let (mut polls, mut misses) = (0u32, Vec::new());
+                while !done.load(Ordering::Relaxed) {
+                    polls += 1;
+                    if let Err(e) = std::fs::metadata(&cover) {
+                        misses.push(format!("stat: {e}"));
+                    }
+                    if let Err(e) = std::fs::read(&cover) {
+                        misses.push(format!("read: {e}"));
+                    }
+                    let listed = std::fs::read_dir(&area)
+                        .map(|rd| rd.filter_map(Result::ok).any(|e| e.file_name() == "cover.jpg"))
+                        .unwrap_or(false);
+                    if !listed {
+                        misses.push("not listed".to_owned());
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                (polls, misses)
+            })
+        };
+        for n in 1..=6u32 {
+            let body = format!("art {n}");
+            match mode {
+                "rename" => {
+                    std::fs::write(album.join(".tmp"), &body).unwrap();
+                    std::fs::rename(album.join(".tmp"), album.join("cover-0.jpg")).unwrap();
+                }
+                "in place" => std::fs::write(album.join("cover-0.jpg"), &body).unwrap(),
+                _ => {
+                    // Two files are kept, the rest removed, as the soak's churner does.
+                    std::fs::write(album.join(format!("cover-{}.jpg", n * 5)), &body).unwrap();
+                    let mut all: Vec<_> = std::fs::read_dir(&album)
+                        .unwrap()
+                        .filter_map(|e| e.ok().map(|e| e.path()))
+                        .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("cover-"))
+                        .collect();
+                    all.sort();
+                    let keep = all.len().saturating_sub(2);
+                    for old in &all[..keep] {
+                        std::fs::remove_file(old).unwrap();
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1500));
+            // With two files kept the name stands for the first by name: any is right then.
+            if mode != "new name" {
+                let start = Instant::now();
+                while !std::fs::read(&cover).is_ok_and(|b| b == body.as_bytes()) {
+                    if start.elapsed() > Duration::from_secs(10) {
+                        failures.push(format!("{mode}: the new art ({n}) did not show within 10 s"));
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+        done.store(true, Ordering::Relaxed);
+        let (polls, misses) = poller.join().unwrap();
+        let mut kinds = BTreeMap::new();
+        for m in &misses {
+            *kinds.entry(m.clone()).or_insert(0u32) += 1;
+        }
+        if !misses.is_empty() {
+            failures
+                .push(format!("{mode}: cover.jpg failed in {} of {polls} polls: {kinds:?}", misses.len()));
+        }
+        m.stop("TERM");
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}

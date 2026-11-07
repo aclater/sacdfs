@@ -1325,7 +1325,8 @@ changes directory each time), a `LOOKUP` per entry, and the same again 2 s later
 - **`readdirplus`** (`FUSE_DO_READDIRPLUS` with `FUSE_READDIRPLUS_AUTO`): a listing carries each
   entry's attributes and TTL, the same as its `lookup` would, so a server that lists a folder and
   then looks at each entry sends no `LOOKUP` per entry. With `AUTO` the kernel asks for it only
-  when lookups follow listings, as libfuse does by default. A name whose node was just let go of
+  when lookups follow listings, as libfuse does by default. Art in an area comes with a zero timeout, as from
+  its `lookup` (#235), so the kernel still asks about it each time. A name whose node was just let go of
   (#237) is left out of that page of the listing, and shows again in the next; short of memory the
   listing fails with `ENOMEM`, as `readdir` does.
 - **Track files keep the 24-hour TTL in an area** even though the area is re-read for its art: the
@@ -1342,6 +1343,19 @@ of the folder's path handle, and a `LOOKUP` for a folder that is re-read. *Not d
 because the kernel then caches every listing, including those of folders that are re-read, which
 would rely on their mtime moving for every change, and an area's does not move when its art does.
 Test: `tests/probes.rs` `a_listing_repeated_later_asks_for_no_track_again`.
+
+Art in an area is the exception to the long cache (#235). A listing is made again at most once per
+refresh interval, so for up to that long it can name a file that was replaced or removed, and
+`cover.jpg` (an alias of whichever image is picked, #148) can stand for a file that has just gone.
+A lookup of such a name therefore compares the source file with what was listed (one `fstatat`); if
+it changed, or an open finds it changed or gone (a file gone since the kernel was told of it is
+`ESTALE`, so the kernel looks the name up again), a counter moves and every area reads its art again
+at its next look, whatever its directory's time. Replies for these names carry a zero timeout, so the
+kernel asks again each time and never keeps a number whose file is gone. *Why not keep the old
+inode for `cover.jpg`:* the alias is the same node as the image's other name (the same inode, #148),
+and a second, stable inode would break that. *Why not serve the old bytes:* once a file is replaced
+there is nothing to read them from, and the sizes the kernel holds would clip the new bytes.
+*Cost:* one extra `LOOKUP` and `fstatat` per access to an art file in an area.
 
 Two kinds of probe are answered so that the kernel stops asking (#61):
 

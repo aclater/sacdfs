@@ -112,6 +112,17 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- **`cover.jpg` no longer disappears for about a second when a cover is replaced (#235).** In the
+  `Stereo` and `Multichannel` folders, art whose source file had been replaced or removed failed to
+  open (`ESTALE`, or `ENOENT` for `cover.jpg` when the file it stood for was removed) until the area
+  was read again, up to the refresh interval later. Now each lookup of an art file in an area compares
+  it with its source file and, if it changed, reads the art again at once; the kernel asks again each
+  time for these names instead of remembering them. A cover written in place (no directory time moves)
+  used to stay unreadable for good, until something else made the area read again; it now shows the new
+  file at once. Measured with a poller that `stat`s, lists and reads `cover.jpg` during six
+  replacements of each kind: on 0.4.1, `rename` over the file failed 1395 of 3326 polls, in place
+  25995 of 25995 (the new art never showed), and adding a new file while removing the old one 2001
+  of 3602; with the fix, none. `scripts/soak.py` no longer allows a `cover.jpg` error.
 - **NFS clients keep their handles when the container restarts, under any runtime (#218).** Under
   Podman, nearly every restart gave `Stale file handle` on open files, `stat` and `ls`, until a
   remount; under Docker it could happen too. NFS-Ganesha's handles no longer hold the FUSE mount's
