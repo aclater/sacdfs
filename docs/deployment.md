@@ -232,6 +232,10 @@ cache, a fresh mount, one run each, a 32-thread host), 0.4.0 against 0.4.1-rc.1 
 | the same, 4 readers | 76 MiB | 85 MiB |
 | Full read of the same files as DSF (1.98 GiB), 4 readers | 50 MiB | 54 MiB |
 
+The longer read-ahead and grouped decoding after 0.4.1 (#210) add 6 to 10 MiB to whole-file reads:
+on a real stereo DST disc of 14 files, DSF 45 → 55 MiB with one reader and 49 → 59 MiB with four,
+WAV 66 → 72 and 76 → 84 MiB. The planning figure below still holds.
+
 So on this small library a scan that only reads the ends of files stays under 50 MiB, but a scan that reads whole files,
 which a media server does when it re-analyses or upgrades its library, does not: more readers at
 once hold more frames, and WAV holds more than DSF. Real servers on a NAS showed more: 160 MB for

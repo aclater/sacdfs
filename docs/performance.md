@@ -293,7 +293,7 @@ images in the page cache; ms per file, mean of 3 rounds, and the image calls and
 
 - The 6-channel DST file costs about 7 ms more than a stereo one here, in both builds, so seeking
   is not where #78's extra time goes. The same bytes of a 6-channel file are a third as many
-  frames, each about three times the decoding, and sacdfs decodes one frame per job: probably
+  frames, each about three times the decoding, and sacdfs then decoded one frame per job: probably
   fewer, longer jobs at the head of each file. On the NAS's slower CPU (#21: about 40x real time
   for 6-channel DST) that would scale up toward #78's 0.09 s; not measured there.
 - (b) reads fewer bytes per file but makes more, smaller calls on plain DSD and on 6 channels
@@ -321,6 +321,118 @@ in the page cache; seconds, means of 3, and sacdfs's CPU time:
   scarletbook's DST decoder is then compiled for AVX2 too; the converter chooses its AVX2 code
   at run time in either build ([below](#converter-throughput)). Plain DSD WAV reads are the
   same in both.
+
+## Straight reads against the library (#210)
+
+`cp -r` of an area's DSF files out of a fresh mount (`--no-index-cache`) against scarletbook 0.5.8's
+`bench dsf` (generic build) of the same area, images in the page cache, to a RAM disk unless noted.
+Wall seconds, medians of 5 alternating rounds (3 for the first row), on the machine above under the
+benchmark lock, with the firmware's `performance` platform profile throughout. pysacd on the same
+library is within 1 to 4 % of it on DST.
+
+| Area | Threads | Library | 0.4.0 | Now | Over the library, before → after | Peak RSS (MiB), before → after |
+|---|---|---|---|---|---|---|
+| DST stereo, 41 min | 1 | 33.29 | 44.78 | **33.09** | +34.5 % → -0.6 % | 39 → 39 |
+| DST stereo, 5 min, stress frames | 1 | 3.85 | 5.57 | **4.10** | +44 % → +6 % | 38 → 39 |
+| DST 6 channels, 2 min, stress frames | 1 | 4.80 | 5.81 | **5.13** | +21 % → +7 % | 41 → 42 |
+| DST stereo, 41 min | all | 1.98 | 3.27 | **2.60** | +65 % → +31 % | 45 → 55 |
+| DST stereo, 50 min | all | 2.42 | 3.98 | **3.18** | +64 % → +31 % | 45 → 55 |
+| DST stereo, 50 min, to NVMe | all | 2.42 | 4.28 | **3.32** | +77 % → +37 % | 45 → 55 |
+| DST 5 channels, 46 min | all | 5.75 | 7.99 | **6.91** | +39 % → +20 % | 48 → 55 |
+| DST 6 channels, 50 min | all | 8.02 | 11.37 | **10.18** | +42 % → +27 % | 57 → 58 |
+| plain DSD stereo, 79 min | 1 | 0.77 | 1.37 | 1.32 | +78 % → +71 % | 40 → 40 |
+| plain DSD stereo, 79 min | all | 0.79 | 1.44 | 1.42 | +84 % → +81 % | 42 → 43 |
+| plain DSD stereo, 79 min, to NVMe | 1 | 0.36 | 0.97 | 1.03 | +169 % → +185 % (ranges overlap) | 41 → 40 |
+
+What else moved, 0.4.0 → now, same rounds:
+
+| Workload | 0.4.0 | Now |
+|---|---|---|
+| Cold seek, mean ms: DST stereo, all threads / one thread | 0.65 / 4.32 | 0.57 / 3.34 |
+| Cold seek, mean ms: DST 6 channels, all threads / one thread | 0.98 / 4.94 | **1.05** / 4.80 |
+| Cold seek, mean ms: plain DSD | 0.149 | **0.156** |
+| Four readers, one image: s, peak RSS | 2.43, 61 | **2.53**, 60 |
+| Import replay: s, peak RSS | 0.19, 42 | 0.19, 42 |
+| WAV straight read, DST stereo: s, peak RSS | 4.25, 66 | 4.21, **73** |
+| WAV straight read, plain DSD: s, peak RSS | 1.92, 61 | 1.87, 63 |
+| `--cache-mb 8`, DST stereo / 6 channels: s | 4.00 / 11.41 | 3.49 / 11.19 |
+| Four real-time players: worst read, p99, ms | 0.56, 0.26 | 0.55, 0.27 |
+
+Each step alone, on an earlier round with the `balanced` profile (so only the ratios within a row
+compare with the table above):
+
+| Step, added in turn | DST stereo 5 min, one thread | DST stereo 50 min, all | DST 6 ch. 50 min, all | plain, NVMe |
+|---|---|---|---|---|
+| 0.4.1-rc.1 | 5.75 | 4.14 | 12.00 | 0.99 |
+| Longer window for fast readers | 5.71 | 3.54 | 11.22 | 0.99 |
+| Demultiplexing overlaps decoding | 5.81 | 3.39 | 10.94 | 0.99 |
+| Decoding in groups in long batches | 4.28 | 3.35 | 10.86 | 0.99 |
+| Reply buffers kept | 4.18 | 3.37 | 10.79 | 0.96 |
+
+**What a reader's read size changes:** the time of a straight read doesn't depend on it, since the
+kernel sends the mount 128 KiB at a time whatever the reader asks for. One 188 MB stereo DST file,
+all threads, local reads, medians of 3:
+
+| Read size | MB/s, 0.4.0 → now | Worst read (ms), 0.4.0 → now | p99 (ms), 0.4.0 → now |
+|---|---|---|---|
+| 64 KiB | 530 → 687 | 4.2 → **12.2** | 1.4 → **2.3** |
+| 128 KiB | 514 → 683 | 2.9 → **12.6** | 1.5 → **4.1** |
+| 1 MiB | 519 → 687 | 5.5 → **12.7** | 4.4 → **5.8** |
+
+That is the longer window's trade-off: a fast reader that catches the decoder waits for a longer
+batch. At real-time rate the window is the old one, and reads are as before (worst 1.1 ms at 128
+KiB, 4.6 ms at 1 MiB, in both). These are local reads.
+
+**Through shares** (the published 0.4.0 image against one built from this code, alternating, on the
+same machine, images in the page cache, default 32 MiB cache, reads to `/dev/null`; 4 rounds; wall
+seconds, median):
+
+| Client, workload | 0.4.0 | This code |
+|---|---|---|
+| `smbclient`, DST stereo DSF | 5.71 | **3.18** |
+| `smbclient`, DST six channels DSF | 14.54 | **11.59** |
+| `smbclient`, plain DSD DSF | 2.07 | **1.14** |
+| `smbclient`, DST stereo WAV | 4.72 | 4.74 |
+| `smbclient`, four readers, one image | 3.82 | **3.19** |
+| `smbclient`, four readers, four areas | 16.30 | **13.75** |
+| gvfs, DST stereo DSF | 4.37 | 4.03 |
+| gvfs, four readers, one image | 3.84 | 3.74 |
+| gvfs, four readers, four areas | 16.89 | 16.63 |
+| gvfs, four readers, WAV | 10.41 | 10.85 (+4 %) |
+
+A window of a quarter of the cache for each reader took gvfs's four readers to 6.47 and 27.37 s, which
+is why they now share it ([design](design.md)). A player at real-time rate has the same worst read as
+before over libsmbclient (3.1 ms on DST stereo), or 3.9 → 5.4 ms while another client copies six
+channels. Measured on loopback, so without a network's latency. Kernel CIFS and NFS mounts were
+measured before readers shared the window, on the same loopback, and gained 15 to 52 % on DSF; not
+over a real network, and not repeated with this change.
+
+**With little CPU and memory** (a container with a CPU quota and a hard memory limit, decoder threads
+to match, `smbclient`, 2 rounds; seconds, peak RSS in MiB; no process was killed for memory):
+
+| | 2 CPUs, 256 MiB: 0.4.0 | This code | 4 CPUs, 512 MiB: 0.4.0 | This code |
+|---|---|---|---|---|
+| DST stereo DSF | 28.88, 41 | **24.23**, 42 | 15.64, 41 | **13.33**, 42 |
+| DST six channels DSF | 77.72, 45 | 77.38, 46 | 40.81, 46 | 40.75, 48 |
+| DST stereo WAV | 33.06, 49 | **26.95**, 51 | 17.15, 51 | **14.25**, 53 |
+| Plain DSD DSF | 2.15, 42 | 1.92, 42 | 2.54, 43 | 2.07, 42 |
+| Four readers, one image | 29.95, 46 | **23.79**, 46 | 15.32, 46 | **12.54**, 48 |
+
+A quota isn't a small CPU: its caches and memory stay those of a large machine.
+
+Where the time goes, for those who want to take it further:
+
+- **One thread, DST:** the decoder thread is 98 % of the wall time (5.3 of 5.4 s for 5 minutes of
+  stereo, on `perf`, 95 % in the decoder's core); the mount's other threads take 0.2 s and `cp` 0.15 s.
+  Compiling without overflow checks, with one codegen unit or with LTO stays within the noise.
+- **All threads, DST:** the mount spends about as much CPU as the library (about 80 s each for 50
+  minutes of stereo, on the `balanced` profile); what remains is decoder threads idle at the end of each batch, and the cores
+  `cp` and the kernel use.
+- **Plain DSD:** the floor is FUSE's own. Serving the same bytes from a file in the page cache
+  through a trivial file system on the same FUSE library took 0.67 to 0.75 s to NVMe and 0.93 to
+  1.0 s to a RAM disk, against the library's 0.38 and 0.66, and sacdfs's 0.97 and 1.30 (the first
+  round, medians of 5). The kernel asks for 128 KiB at a time ([why](design.md#read-ahead)), so
+  that is 25 465 round trips, each of which also copies the data into the page cache and out again.
 
 ## Converter throughput
 
@@ -706,6 +818,7 @@ against its own "before", on the code of its day).
 | #243 | scarletbook and scarletbook-pcm 0.5.8 → 0.5.9 (`=0.5.9`), after 0.4.1 | bytes unchanged (DSF and WAV hashes of the corpus and bench discs equal 0.4.1-rc.3's, 0.5.8; the bench discs also equal 0.4.0's); straight reads, 0.5.8 → this branch (0.4.0 in brackets): DST stereo DSF 8.73 → 8.43 s (8.70), DST 6 ch. DSF 28.25 → 27.29 s (28.24), plain-DSD DSF 2.77 → 2.64 s (3.00; ranges overlap), DST stereo WAV 9.50 → 9.28 s (9.38); mount and first listing of the corpus 0.097 → 0.094 s (0.094; ranges overlap); nothing slower than 0.5.8 or 0.4.0. Same host as the #206 row (mars), so compare the columns (medians of 11, alternating three builds, under the benchmark lock, generic build, 2026-11-07; WAV runs of 0.4.0 and 0.5.8 saw 20 and 3 package thermal events, none on this branch) |
 | (#73) | One malloc arena; the frame cache reuses evicted frames' buffers within its cap | library-import replay, 60 images, peak memory at `--cache-mb` 256 / 16: 473 → 271 MiB, 125 → 58 MiB; after straight reads 965–1 066 → 327 MiB; 6-channel DST straight read DSF 11.11 → 11.55 s, WAV 13.52 → 13.98 s, plain DSD 1.69 → 1.59 s |
 | #192 | Names for discs without text (#185): a tag and name change only | whole library of 4,890 tracks, warm caches, 6 runs each against main: mount 1.36 → 0.68 s (within its noise), import-style scan 8.4 → 8.4 s, RSS 87 → 88 MiB (within noise) |
+| #212 | DST decoded in groups in long batches, demultiplexing overlaps decoding, longer window for fast readers, shared between them (#210) | one thread, 41 min stereo 44.78 → 33.09 s; all threads, 50 min stereo 3.98 → 3.18 s |
 | (#78) | No read-ahead within a file's first 1 MiB (a scanner's head read) | library-import pattern, 12 decoder threads, per 6-channel DST file: CPU 141–177 → 42–44 ms, wall 17.4–21.6 → 10.3–11.1 ms; stereo DST CPU 60–84 → 46–50 ms |
 | #240 | Listings kept to a budget under a memory limit; only the last 16 covers kept | No limit, 1,600 images, fresh index cache, 11 alternating rounds under a lock, listing and stating every file, median (min to max): first pass 2.485 s (2.13 to 4.00) against 0.4.1-rc.3 built the same way 2.489 s (2.30 to 2.68), and 0.4.0 2.504 s; second pass 0.613 s (0.30 to 0.75) against 0.660 s (0.37 to 0.99) and 0.564 s; anonymous memory 81 MiB against 88 and 87: no cost beyond the spread. Under 256 MiB with tags and a 400 KiB cover per disc, 9 rounds, with the mapping of large blocks against without: WAV 3.69 s against 3.71, DSF 4.89 s against 4.89, 200 random reads 2.27 s against 2.23, listing 8 images 0.36 s against 0.27. With 40 images, the build without it failed new opens with `ENOMEM`. Memory under a limit: [deployment](deployment.md#under-a-memory-limit) |
 | #239 | WAV reads demultiplex on the request thread (#238) | bytes unchanged (109 WAV and 109 DSF files equal 0.4.0's and 0.4.1-rc.2's). Reads of healthy discs during a hang, 4 decoder threads, 30 s timeout, 8 clients on the hung image: rc.2 2 `EIO` of 6 reads, worst 60.9 s; this change 0 of 33,595, worst 152 ms. WAV straight reads and seeks, against rc.2: no difference beyond the noise (most medians within 3%, worst −4.9% on 6-channel DST with one reader, whose runs spread by more than that). Local: the hang figures are a single run of each case, the speed figures 5 rounds. Peak memory, 2 decoder threads, 2 images, 16 to 64 fast 6-channel WAV readers, 5 rounds: median 4 to 16 MiB above rc.2, worst 109 MiB against 94 MiB, nothing killed at 256 or 512 MiB. A long hang with retrying clients can still fill the read threads (#241) |

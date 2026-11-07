@@ -6,6 +6,22 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Reading DST through the mount is faster** (#210), measured with `cp -r` of an area on a fresh
+  mount against 0.4.0: one thread 44.78 → 33.09 s for 41 minutes of stereo, the library's own
+  33.29 s; all threads 3.98 → 3.18 s for 50 minutes of stereo and 11.37 → 10.18 s for 50 minutes
+  of six channels. Reads of plain DSD are about as before: most of what they spend is FUSE's own.
+  Frames are decoded in groups in long batches, demultiplexing overlaps decoding, and a fast
+  reader gets a longer read-ahead (32 frames per decoder thread, at most 1200 and a share of a quarter
+  of the cache, which fast readers divide between them) from 4 MiB on instead of 16. Files keep their bytes. Peak memory of an all-thread DST
+  read rises by up to 10 MiB at the default cache (45 → 55 MiB for DST stereo; WAV 66 → 73 MiB).
+  Cold seeks of six-channel DST (mean 0.98 → 1.05 ms) and of plain DSD (0.149 → 0.156 ms), and four
+  readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads, and a fast reader's
+  worst single read rises from 3 to 6 ms to about 12 ms. A player's reads are as before. Through SMB,
+  `smbclient` copies 5.71 → 3.18 s (DST stereo) and 14.54 → 11.59 s (six channels), and four readers
+  over gvfs stay as fast as 0.4.0.
+
 ## [0.4.1] - 2026-11-07
 ### Changed
 ### Changed

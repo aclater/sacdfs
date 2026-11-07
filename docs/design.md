@@ -1046,14 +1046,32 @@ A read of `[offset, offset + len)`:
    frames.
 3. The frames come from the decoded-frame cache, or are decoded: a scarletbook range cursor
    gives the positions' frames as stored ([Seeking](#seeking-scarletbooks-28)), and the DST
-   frames are decoded in parallel (one `DstDecoder` per worker thread, one frame per job).
-4. `Layout::fill` lays the frames out in DSF order, bits reversed, as it copies them.
+   frames are decoded on the pool while the reading thread goes on demultiplexing.
+4. `Layout::fill` lays the frames out in DSF order, bits reversed, as it copies them, into a
+   reply buffer used again by later reads.
 
-*Why one DST frame per job:* scarletbook's `DstDecoder::decode_many` decodes two to four
-frames together on one thread, but grouping the pool's frames that way (always, or only when
-there are enough frames for every thread) made no measurable difference to a straight read
-through the mount: a FUSE read needs only a few dozen frames at a time, so longer jobs mostly
-delay the reply.
+*Why frames are decoded in groups, in long batches (#210):* scarletbook's
+`DstDecoder::decode_many` decodes `dst::lanes` frames together on one thread, which is most of
+the difference between a one-thread read through the mount and the library's own: 41 minutes of
+stereo took 45.1 s frame by frame against 33.4 s for the library, and 34.3 s in groups. A batch
+ends with its slowest job, though, and a group takes longer than a frame, so with many threads
+and short batches grouping made reads slower (4.15 to 4.65 s for 50 minutes of stereo, with
+batches of 75 frames on 32 threads). So a batch is grouped only with at least 8 frames per
+thread (`GROUPS_FROM`). This replaces 0.4.0's one frame per job, chosen when grouping made no
+measurable difference to all-thread reads with the shorter window.
+
+*Why demultiplexing overlaps decoding (#210):* the thread reading the batch demultiplexes and
+hands frames to the pool as it finds them (`in_place_scope`), so the decoder threads no longer
+stand idle while it does. It keeps the open file's cursor until the batch ends, as before, so a
+read of those frames waits for them instead of decoding them twice. *Alternative not taken:*
+letting the next batch start while the last one finishes, which takes the batches' wait away
+altogether but needs a record of frames in flight. Doubling the window twice more suggests it
+is worth at most about 8 % on all threads.
+
+*Why reply buffers are kept (#210):* a read allocated and zeroed a new buffer of 128 KiB, at
+glibc's mapping threshold. Up to 8 are kept (`READ_BUFFERS`), at most 1 MiB each and given back
+with an idle engine's other memory. *Trade-off:* a buffer holds an earlier read's bytes, so
+whatever `Layout::fill` leaves unwritten is zeroed.
 
 ### Seeking: scarletbook's (#28)
 
@@ -1245,7 +1263,27 @@ when the read reaches the middle of the current one; it runs on a request thread
 the open file's demultiplexer, so a read that needs those frames waits for them instead of
 decoding them twice.
 
-- **Window:** 2 s of audio (150 frames). For a WAV reader that has read at least 16 MiB at
+- **Window of a fast DSF reader (#210):** for a DSF reader that has read at least 4 MiB at more
+  than 4 times the file's byte rate, 32 frames per decoder thread, at most 1200 and its share of
+  a quarter of the cache, at least 150. Fast readers share that quarter equally: those that read in
+  the last second and haven't closed. *Why:* the decoder threads wait for each batch's slowest frame,
+  and that wait's share of the time is about the threads over the window. On 32 threads, 50
+  minutes of stereo took 4.14 s at 150 frames and 3.54 s at 890. *Why a quarter of the cache:*
+  frames evicted before they are read are decoded again. A window of 1024 six-channel frames
+  (29 MiB, in a cache that holds 28) made the read take 32 s against 12. *Why shared:* a quarter for each reader let four readers on
+  32 threads fill the cache between them. Counted on a build with counters, over gvfs: of 225,000
+  frames decoded by 0.4.0, none was decoded twice; with a quarter each, 128,000 were decoded again,
+  and four readers took 6.5 s against 3.8 s. Shared, 178 were (3.7 s), and one reader keeps its
+  whole quarter. *Alternatives:* an eighth of the cache for everyone cured that too, but lost
+  most of a single reader's gain (DST stereo 3.2 → 4.1 s, six channels 11.4 → 13.8 s); a larger
+  cache also cures it, at the memory cost. *Trade-off:* a reader's window shrinks at once when
+  another fast reader starts, and it takes up to a second to grow back after one pauses. A WAV reader's
+  window is measured in PCM bytes and isn't shared. *Trade-off of the window itself:* a fast
+  reader that stops early has decoded up to that window for nothing; a player and a scanner's
+  head (the rules below) are not fast readers. *Why 4 MiB, not 16:* over a whole area the first
+  16 MiB of each file went at the short window, and 4 MiB is still four times the head a
+  scanner reads.
+- **Window:** 2 s of audio (150 frames). For a WAV reader that has read at least 4 MiB at
   more than 4 times the file's byte rate (`cp`, a scanner), about 8 MiB of PCM, between 150
   and 600 frames (8 s of stereo at 176.4 kHz, 2 s of six channels at 352.8 kHz). *Why:* a fast
   reader of a plain DSD area used up a 2 s window before the next was ready; the longer window
@@ -1302,6 +1340,22 @@ average, all at the track's start. The options of #32 were measured:
   read-ahead for every reader.
 - *Accept the rest:* chosen. The WAV files hold no audio in their first 256 KiB (the `JUNK`
   chunk), so their header and tags still read nothing.
+
+**What the kernel sends (#210).** sacdfs asks for 1 MiB of read-ahead (`MAX_READ`), and the kernel
+grants the 128 KiB it offered, so reads through the page cache arrive 128 KiB at a time whatever
+the reader asks for: 25 441 of the 25 465 requests of a straight read of a plain DSD area. Only
+root can raise it, by the mount's `/sys/class/bdi/*/read_ahead_kb`; that is untested, so nothing
+here recommends it. Other options, measured on a trivial pass-through file system of the same
+bytes, or ruled out:
+
+- *`direct_io`:* passes the reader's own size, and reads to `/dev/null` took 0.40 s at 1 MiB against
+  0.58 to 0.61 s through the page cache at 128 KiB or 1 MiB. But `cp` to a real file gained
+  nothing (0.74 against 0.67 s to NVMe), and it turns off the page cache for every reader, a
+  player's re-reads and NFS and SMB servers on top included. Not taken.
+- *FUSE passthrough:* maps a FUSE file onto a backing file byte for byte, and DSF bytes are not
+  the image's. It also needs root. Sidecar files could use it, but they aren't what's slow.
+- *Splice:* fuser 0.18 replies by `writev` and has no way to reply from a pipe, and the kernel would
+  copy into the page cache anyway. Not measured.
 
 ## Kernel caching
 
