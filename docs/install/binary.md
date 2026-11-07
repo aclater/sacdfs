@@ -17,7 +17,12 @@ Running it is in the [user guide](../user-guide.md); the options are in
   them: DST areas read 10 to 18 % faster ([performance](../performance.md#straight-reads)).
   On an older CPU this build stops with an illegal-instruction error. `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
 
-Both need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). The
+- `sacdfs-<version>-x86_64-linux-musl.tar.gz` and `sacdfs-<version>-aarch64-linux-musl.tar.gz`
+  (from the first release that has them, #244): static builds that use no C library of the
+  system, for systems whose glibc is older than 2.28, or that have none. Their speed and memory against the glibc builds are in design.md, "Release binaries". Run as
+  root, they mount without `fusermount3`; as another user, `fusermount3` is still needed.
+
+The two glibc builds need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). The
 generic build was tested on the oldest of each, with their own kernels (4.18 to 5.4) and
 `fusermount3` (3.3 to 3.9): mounting in the foreground and in the background, with and
 without `--allow-other`, reads identical to a current system, and a clean stop on SIGTERM

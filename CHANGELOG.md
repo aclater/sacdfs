@@ -5,6 +5,12 @@ All notable changes to sacdfs are recorded here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- **Static musl binaries for x86_64 and aarch64 (#244).** For systems whose glibc is older than
+  2.28, such as QNAP's QuTScloud 5.2.9 (glibc 2.21), where the release binary did not start. They
+  use jemalloc instead of musl's slower malloc (design.md, "Release binaries"). As
+  root they mount without `fusermount3`.
 
 ## [0.4.1] - 2026-11-07
 ### Changed

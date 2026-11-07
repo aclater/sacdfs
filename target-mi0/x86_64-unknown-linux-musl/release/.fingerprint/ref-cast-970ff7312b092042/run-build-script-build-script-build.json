@@ -1,0 +1,1 @@
+{"rustc":11835527281324007204,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[8113244197676767044,"build_script_build",false,12439814172894109305]],"local":[{"RerunIfChanged":{"output":"x86_64-unknown-linux-musl/release/build/ref-cast-970ff7312b092042/output","paths":["build.rs"]}}],"rustflags":["-C","target-cpu=x86-64"],"config":0,"compile_kind":0}
