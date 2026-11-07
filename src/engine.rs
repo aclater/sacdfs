@@ -506,6 +506,11 @@ impl FrameCache {
         self.lock().bytes
     }
 
+    /// The cache's cap in bytes.
+    pub fn cap(&self) -> usize {
+        self.cap
+    }
+
     /// Bytes the cache's pool has mapped for frames: at most the cap.
     pub fn mapped(&self) -> usize {
         self.pool.mapped()
@@ -565,7 +570,7 @@ const PIPELINE_CHUNK: u32 = 16;
 /// One decoded DSD frame in scarletbook's interleaved layout, the converter's input.
 #[derive(Debug)]
 struct Dsd {
-    data: Vec<u8>,
+    data: FrameBuf,
     fill: Fill,
 }
 
@@ -581,6 +586,7 @@ pub struct Stream {
 /// The decoder: a frame cache and a thread pool for DST decoding and PCM conversion.
 pub struct Engine {
     cache: FrameCache,
+    fast_readers: Arc<crate::track::FastReaders>,
     pool: rayon::ThreadPool,
     pcm: PcmConfig,
     id: u64,
@@ -635,7 +641,7 @@ impl Engine {
             .build()
             .map_err(io::Error::other)?;
         let id = NEXT_ENGINE.fetch_add(1, Ordering::Relaxed);
-        Ok(Engine { cache: FrameCache::new(cache_bytes), pool, pcm, id })
+        Ok(Engine { cache: FrameCache::new(cache_bytes), fast_readers: Arc::default(), pool, pcm, id })
     }
 
     /// Gives back what an idle engine holds (#150), if its cache has not been used for
@@ -651,6 +657,7 @@ impl Engine {
         }
         drop(std::mem::take(&mut *DECODERS.lock().unwrap_or_else(|p| p.into_inner())));
         drop_converters(self.id);
+        crate::track::drop_read_buffers();
         trim_heap();
         true
     }
@@ -683,6 +690,11 @@ impl Engine {
     /// Number of decoder threads.
     pub fn threads(&self) -> usize {
         self.pool.current_num_threads()
+    }
+
+    /// The fast readers at the moment.
+    pub fn fast_readers(&self) -> &Arc<crate::track::FastReaders> {
+        &self.fast_readers
     }
 
     /// The frame cache.
@@ -835,13 +847,13 @@ impl Engine {
             return Ok(vec![self.convert_one(channels, frame_bytes, prev, one, next)?]);
         }
         let mut data = vec![0u8; frame_bytes * cur.len()];
-        let frames: Vec<&[u8]> = cur.iter().map(|d| d.data.as_slice()).collect();
+        let frames: Vec<&[u8]> = cur.iter().map(|d| &d.data[..]).collect();
         let mut clips = vec![0u32; cur.len()];
         self.with_converter(channels, |c| {
             if c.frame_bytes() != frame_bytes {
                 return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
             }
-            let (p, n) = (prev.map(|d| d.data.as_slice()), next.map(|d| d.data.as_slice()));
+            let (p, n) = (prev.map(|d| &d.data[..]), next.map(|d| &d.data[..]));
             c.convert_run(p, &frames, n, &mut data, &mut clips);
             Ok(())
         })?;
@@ -872,12 +884,7 @@ impl Engine {
             if c.frame_bytes() != frame_bytes {
                 return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
             }
-            Ok(c.convert(
-                prev.map(|d| d.data.as_slice()),
-                &cur.data,
-                next.map(|d| d.data.as_slice()),
-                &mut data,
-            ))
+            Ok(c.convert(prev.map(|d| &d.data[..]), &cur.data, next.map(|d| &d.data[..]), &mut data))
         })?;
         Ok(Frame { data, fill: cur.fill, clips })
     }
@@ -911,6 +918,7 @@ impl Engine {
         d1: u32,
         mut sink: impl FnMut(Vec<Arc<Dsd>>),
     ) -> Result<(), ReadError> {
+        debug_assert!(self.pool.current_thread_index().is_none());
         let mut last: VecDeque<(u32, Arc<Dsd>)> = VecDeque::with_capacity(CARRY + 1);
         let mut keep = |t: u32, d: &Arc<Dsd>| {
             last.push_back((t, d.clone()));
@@ -973,9 +981,25 @@ impl Engine {
                 }
                 let decoded: Vec<Result<(u32, Dsd), ReadError>> =
                     if jobs.iter().any(|j| matches!(j.content, FrameContent::Dst(_))) {
-                        self.pool.install(|| {
-                            jobs.into_par_iter().map(|j| decode_interleaved(j, channels)).collect()
-                        })
+                        let size = group_size(jobs.len(), self.threads(), channels);
+                        let groups = in_groups(jobs.into_iter().map(|j| (j, None)).collect(), size);
+                        // `install`: this is the request thread, so a bare `into_par_iter` would
+                        // run on rayon's global pool, with the wrong threads and thread count.
+                        let mut decoded: Vec<Result<(u32, Frame), ReadError>> = self.pool.install(|| {
+                            groups
+                                .into_par_iter()
+                                .flat_map_iter(|g| {
+                                    debug_assert!(self.pool.current_thread_index().is_some());
+                                    decode_group(g, channels)
+                                })
+                                .collect()
+                        });
+                        // A group gives its frames back with those not DST first.
+                        decoded.sort_by_key(|r| r.as_ref().map_or(0, |(n, _)| *n));
+                        decoded
+                            .into_iter()
+                            .map(|r| r.map(|(n, f)| (n, Dsd { data: f.data, fill: f.fill })))
+                            .collect()
                     } else {
                         jobs.into_iter().map(|j| decode_interleaved(j, channels)).collect()
                     };
@@ -1025,29 +1049,65 @@ impl Engine {
         };
         cur.reserve(disc, t1)?;
         let channels = cur.channels();
-        let mut jobs = Vec::with_capacity((t1 - t0) as usize);
-        for t in t0..t1 {
-            let content = match cur.content(disc, t) {
-                Ok(c) => c,
-                Err(e) => {
-                    *cursor = None;
-                    return Err(e);
+        let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
+        let mut left = out.iter().filter(|f| f.is_none()).count();
+        let size = group_size(left, self.threads(), channels);
+        let decoded: Mutex<Vec<Result<(u32, Frame), ReadError>>> = Mutex::new(Vec::with_capacity(left));
+        let add = |r: Vec<Result<(u32, Frame), ReadError>>| {
+            decoded.lock().unwrap_or_else(|p| p.into_inner()).extend(r);
+        };
+        let mut failed = None;
+        // This thread demultiplexes while the pool decodes what it has found so far; the pool
+        // has until the scope's end, so the open file's cursor stays held (see `Reader`) and
+        // a read of these frames waits instead of decoding them twice. *Why not demultiplex
+        // first (#210):* the decoder threads then stood idle for it, once per batch.
+        self.pool.in_place_scope(|s| {
+            let add = &add;
+            let mut spare: Vec<FrameBuf> = Vec::new();
+            let mut group = Vec::with_capacity(size);
+            for t in t0..t1 {
+                let content = match cur.content(disc, t) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        failed = Some(e);
+                        break;
+                    }
+                };
+                if out[(t - first) as usize].is_some() {
+                    continue;
                 }
-            };
-            if out[(t - first) as usize].is_none() {
-                jobs.push(TrackFrame { number: t, content });
+                // Buffers a few at a time: a lock of the pool per few frames, not per frame.
+                if spare.is_empty() {
+                    spare = self.cache.buffers(len, left.clamp(1, BUFFERS_AT_ONCE));
+                }
+                left -= 1;
+                let job = TrackFrame { number: t, content };
+                let buf = spare.pop();
+                if !matches!(job.content, FrameContent::Dst(_)) {
+                    add(vec![decode(job, channels, buf)]);
+                    continue;
+                }
+                group.push((job, buf));
+                if group.len() >= size {
+                    let g = std::mem::replace(&mut group, Vec::with_capacity(size));
+                    s.spawn(move |_| {
+                        debug_assert!(self.pool.current_thread_index().is_some());
+                        add(decode_group(g, channels));
+                    });
+                }
             }
+            if !group.is_empty() {
+                s.spawn(move |_| {
+                    debug_assert!(self.pool.current_thread_index().is_some());
+                    add(decode_group(group, channels));
+                });
+            }
+        });
+        if let Some(e) = failed {
+            *cursor = None;
+            return Err(e);
         }
-        let bufs = self.cache.buffers(usize::from(channels) * FRAME_BYTES_PER_CHANNEL, jobs.len());
-        let jobs: Vec<(TrackFrame, Option<FrameBuf>)> =
-            jobs.into_iter().zip(bufs.into_iter().map(Some)).collect();
-        let decoded: Vec<Result<(u32, Frame), ReadError>> =
-            if jobs.iter().any(|(j, _)| matches!(j.content, FrameContent::Dst(_))) {
-                self.pool.install(|| jobs.into_par_iter().map(|(j, b)| decode(j, channels, b)).collect())
-            } else {
-                jobs.into_iter().map(|(j, b)| decode(j, channels, b)).collect()
-            };
-        for r in decoded {
+        for r in decoded.into_inner().unwrap_or_else(|p| p.into_inner()) {
             let (t, frame) = r?;
             let frame = Arc::new(frame);
             self.cache.insert(Self::key(disc, area, t), frame.clone());
@@ -1095,6 +1155,73 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
     Ok((job.number, Frame { data: buf, fill, clips: 0 }))
 }
 
+/// Frame buffers taken from the cache's pool at once while demultiplexing.
+const BUFFERS_AT_ONCE: usize = 16;
+
+/// Frames of a batch per decoder thread from which frames are decoded in groups: see
+/// [`group_size`].
+const GROUPS_FROM: usize = 8;
+
+/// How many frames of a batch of `n` to decode together on one of `threads` threads: the
+/// decoder's best (`dst::lanes`) in a batch long enough for each thread to take several
+/// groups, else one.
+///
+/// *Why (#210):* grouping is what makes one thread as fast as the library's: 5.69 against
+/// 4.32 s for 5 minutes of stereo. *Why not in a short batch:* the batch ends with its slowest
+/// job, and a group takes about twice as long as a frame.
+fn group_size(n: usize, threads: usize, channels: u8) -> usize {
+    if n / threads.max(1) >= GROUPS_FROM { scarletbook::dst::lanes(channels).max(1) } else { 1 }
+}
+
+/// Splits `items` into groups of `size`, in order.
+fn in_groups<T>(items: Vec<T>, size: usize) -> Vec<Vec<T>> {
+    let mut items = items.into_iter().peekable();
+    let mut groups = Vec::new();
+    while items.peek().is_some() {
+        groups.push(items.by_ref().take(size.max(1)).collect());
+    }
+    groups
+}
+
+/// Decodes a group of timeline positions together on this thread: what [`decode`] gives for
+/// each, the DST frames by `DstDecoder::decode_many`.
+fn decode_group(
+    group: Vec<(TrackFrame, Option<FrameBuf>)>,
+    channels: u8,
+) -> Vec<Result<(u32, Frame), ReadError>> {
+    if group.len() == 1 || !(1..=6).contains(&channels) {
+        return group.into_iter().map(|(j, b)| decode(j, channels, b)).collect();
+    }
+    let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
+    let mut numbers = Vec::with_capacity(group.len());
+    let mut stored = Vec::with_capacity(group.len());
+    let mut bufs = Vec::with_capacity(group.len());
+    let mut out = Vec::with_capacity(group.len());
+    for (job, buf) in group {
+        match job.content {
+            FrameContent::Dst(bytes) => {
+                numbers.push(job.number);
+                stored.push(bytes);
+                bufs.push(buf.filter(|b| b.len() == len).unwrap_or_else(|| FrameBuf::heap(len)));
+            }
+            content => out.push(decode(TrackFrame { number: job.number, content }, channels, buf)),
+        }
+    }
+    let frames: Vec<&[u8]> = stored.iter().map(Vec::as_slice).collect();
+    let mut outs: Vec<&mut [u8]> = bufs.iter_mut().map(|b| &mut **b).collect();
+    let results = with_decoder(|d| d.decode_many(&frames, channels, &mut outs));
+    for ((number, mut buf), r) in numbers.into_iter().zip(bufs).zip(results) {
+        let fill = if r.is_ok() {
+            Fill::Audio
+        } else {
+            buf.fill(scarletbook::audio::INVALID_FILL);
+            Fill::Invalid
+        };
+        out.push(Ok((number, Frame { data: buf, fill, clips: 0 })));
+    }
+    out
+}
+
 /// Decodes one timeline position, in scarletbook's interleaved layout.
 fn decode_interleaved(job: TrackFrame, channels: u8) -> Result<(u32, Dsd), ReadError> {
     let number = job.number;
@@ -1104,7 +1231,7 @@ fn decode_interleaved(job: TrackFrame, channels: u8) -> Result<(u32, Dsd), ReadE
         FrameStatus::Invalid(_) => Fill::Invalid,
         _ => Fill::Audio,
     };
-    Ok((number, Dsd { data: audio.data, fill }))
+    Ok((number, Dsd { data: audio.data.into(), fill }))
 }
 
 /// Malloc arenas glibc may use, set by [`limit_malloc_arenas`].
@@ -1197,6 +1324,50 @@ mod tests {
 
     fn key(i: u32) -> Key {
         Key { disc: 1, area: 0, frame: i, kind: Kind::Dsd }
+    }
+
+    /// Long batches are decoded in groups; a short one, which ends with its slowest job, not.
+    #[test]
+    fn groups_only_in_long_batches() {
+        let best = scarletbook::dst::lanes(2);
+        assert_eq!(group_size(14, 1, 2), best);
+        assert_eq!(group_size(7, 1, 2), 1);
+        assert_eq!(group_size(75, 32, 2), 1);
+        assert_eq!(group_size(445, 32, 2), best);
+        assert_eq!(group_size(8, 0, 2), best);
+    }
+
+    /// A group gives each kind of position what `decode` gives it, whatever else is in it.
+    #[test]
+    fn a_group_decodes_every_kind_of_position() {
+        let len = 2 * FRAME_BYTES_PER_CHANNEL;
+        let job = |number, content| (TrackFrame { number, content }, None);
+        let mut got = decode_group(
+            vec![
+                job(1, FrameContent::Dst(vec![0xff; 16])),
+                job(2, FrameContent::Missing),
+                job(3, FrameContent::Dsd(vec![7; len])),
+                job(4, FrameContent::Dst(vec![0xff; 32])),
+            ],
+            2,
+        )
+        .into_iter()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+        got.sort_by_key(|(n, _)| *n);
+        let kinds: Vec<_> = got.iter().map(|(n, f)| (*n, f.fill, f.data.len())).collect();
+        assert_eq!(
+            kinds,
+            [
+                (1, Fill::Invalid, len),
+                (2, Fill::Missing, len),
+                (3, Fill::Audio, len),
+                (4, Fill::Invalid, len)
+            ]
+        );
+        assert!(got[0].1.data.iter().all(|&b| b == scarletbook::audio::INVALID_FILL));
+        assert!(got[1].1.data.iter().all(|&b| b == scarletbook::audio::MISSING_FILL));
+        assert!(got[2].1.data.iter().all(|&b| b == 7));
     }
 
     #[test]
