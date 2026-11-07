@@ -40,6 +40,36 @@ All notable changes to sacdfs are recorded here. The format follows
 - `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
   needs a remount; the durable-handle message in Samba's log is expected, and no setting tried
   makes those handles survive a restart (#204).
+### Added
+
+- **`sacdfs tags fetch IMAGE...`: tags from MusicBrainz, on demand** (#185, phase 2). It finds the
+  disc's release by barcode or catalogue number, confirms it by track count, durations and ISRCs,
+  and writes titles, artists, album, date and MusicBrainz IDs to the disc's file in the tags
+  directory. `--lookup-name` also searches by album and artist, and `--lookup-durations` by the
+  tracks' start times. `--dry-run` shows what would be written. No match, or an ambiguous one,
+  writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
+  own text stays. Nothing goes on the network unless you run this command: a mount never does. It
+  sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
+  (docs/user-guide.md, "From MusicBrainz"). Run on 9 real discs by barcode or catalogue number: 7
+  matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
+
+### Changed
+
+- **A tags file's title still doesn't rename a file** (#185, phase 2, now decided for lookups): a
+  track given a title by `sacdfs tags fetch` stays `NN - Track NN.dsf`, with the title in its tag.
+- **`sacdfs tags import` leaves out a generated `Track NN` title, and `sacdfs verify` doesn't report
+  it as lost** (#185). An extract copied from a 0.4.1 mount has that text, and an import stored it
+  as if edited by hand, which would have kept a lookup's title out. A title of any other form,
+  `Track 3` for instance, is still kept. `sacdfs tags fetch` replaces a `Track NN` that an earlier
+  import stored.
+- **The binary is about 3 MB larger** (7.2 to 10.2 MB in a release build on x86-64): it now holds an
+  HTTPS client with its own root certificates (ureq, rustls), used only by `sacdfs tags fetch`.
+- **`sacdfs tags fetch`'s duration limits come from real discs:** by number, 15 s on a track and 5 s on
+  average; by name, 6 s and 3 s. The limits for `--lookup-durations` stay as judged. It also no longer
+  takes a SACD layer for a CD layer.
+- **`sacdfs tags fetch` on a busy service.** It obeys `Retry-After` in full, up to an hour, waits
+  longer between discs that get no answer, tries those again at the end of the run, and ends at once
+  on a 403 or a request to wait longer than an hour.
 
 ## [0.4.1-rc.3] - 2026-11-06
 

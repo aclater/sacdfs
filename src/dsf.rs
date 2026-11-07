@@ -277,6 +277,12 @@ pub fn stored_tag(toc: &Toc, area: &Area, track: &Track) -> Vec<u8> {
     tagged(toc, area, track, None).map_or_else(Vec::new, |t| region(&t.layout, RegionKind::Trailer))
 }
 
+/// The tag items of `track` of `area` from the disc alone: no path, no tags file, and no layout, so
+/// also for a track the library refuses to lay out. What a lookup must not replace (#185).
+pub fn disc_tag_set(toc: &Toc, area: &Area, track: &Track) -> TagSet {
+    tag_set(toc, area, track, &options(area, track), None).0
+}
+
 /// The DSF layout of `track` of `area`, with its tag from the disc alone; `None` if the library
 /// refuses the track (then no file is shown for it).
 pub fn layout(toc: &Toc, area: &Area, track: &Track) -> Option<LibLayout> {

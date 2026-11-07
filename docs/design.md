@@ -1781,7 +1781,8 @@ with no network and no stored state; the lookups of its later phases write tags 
   split by a guess on the others.
 - **File names stay the disc's.** A tags file changes tags, not names, as before (#81): a track
   given a title there keeps the name `NN - Track NN`. *Why:* a name that follows the tags file
-  would move a file when a tag is edited, and players would see a removal and an addition.
+  would move a file when a tag is edited, and players would see a removal and an addition. Lookups
+  keep to this ([Looking tags up](#looking-tags-up-185-phase-2)).
 - **Path safety.** What comes from the path goes only into tags, never into a path of the mount;
   a name that isn't valid UTF-8 or holds control characters gives nothing to the patterns, and
   the plain name goes through `names::sanitize`.
@@ -1802,9 +1803,110 @@ sidecars below stay. *Why:* as with tags files, only those files'
   is only a new name for the same number. `golden_dsf_corpus` hashes paths and header sizes, so
   its value moved without a version bump, this once; the audio was compared with 0.4.0's on the
   pull request.
-- **`verify` and `tags import`** compare an extract with the tag without the fill-in
+- **`verify` and `tags import`** compare an extract with the tag without the fill-in from the path
   (`TrackFile::stored_frames`). *Why:* text that happens to match the folder's name is still lost
   if the extract goes and the folder is later renamed, so `verify` reports it and `import` keeps it.
+  The generated `Track NN` title does count as served. *Why:* it depends only on the track number,
+  so nothing is lost with the extract, and an import storing it would look like a hand edit and
+  keep a lookup's title out. *Alternative:* a check in `import` alone, which would leave `verify`
+  reporting a loss that isn't one. *Trade-off:* a title set by hand to exactly `Track 03` on track 3
+  isn't imported, and is served the same anyway. `Track 3`, or `Track 03` on another track, is kept.
+
+### Looking tags up (#185, phase 2)
+
+`sacdfs tags fetch IMAGE...` looks a disc up on MusicBrainz and writes to its tags file
+(`src/lookup.rs`, `src/lookup/mb.rs`). It runs on demand: never in a mount or the FUSE path, and
+with no worker (phase 4). *Why a command first:* it keeps the server process simple until the
+fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or schedules it.
+
+- **The method is pysacd's, made stricter.** pysacd takes the best candidate, with a person
+  checking its output as the fallback. Here the result is served to players with nobody looking, and
+  a wrong match is worse than none, so:
+
+  | Point | pysacd | sacdfs |
+  |---|---|---|
+  | A search hit | a candidate | must carry the number or names searched for (a search matches on analysed words) |
+  | Tracks without a length | left out of the mean, so one length can confirm a disc | each must have a length, or its ISRC on the recording |
+  | One wrong track | hidden in a mean (30 s over 12 tracks is 2.5 s) | a limit per track too |
+  | ISRCs | hits can excuse durations | never; more disagreeing than agreeing refuses |
+  | Limits | 3 s mean for all | tighter as the way of finding it weakens |
+  | Several fit | the best | SACD media first, then the most ISRC hits, then the path's year; if text still differs, nothing |
+  | A later, weaker method | n/a | can't overrule a stronger one's ambiguity |
+
+  *Why each limit:* a number identifies the release, so durations guard against a wrong number
+  (5 s mean, 15 s per track). A name says less (3 s, 6 s). Durations alone say least, and the fuzzy
+  lookup returns near misses on purpose, so only the same master should fit (1 s, 2.5 s, 4 tracks at
+  least). *Measured:* on 60 real discs with their text hidden, of 100 media whose titles agreed with
+  the disc, 72 were within the first limits chosen (6 s, 3 s) and 90 within these; the worst track
+  was 10 to 20 s off on 15 and over 30 s on 4, and many were off by a similar 2 to 5 s on every track,
+  which is what a different split of pauses between tracks would give (the cause wasn't checked). Releases with other tracks were over 60 s off. Going from 6 s and 3 s to
+  15 s and 5 s took discs with at least one matched area from 35 to 44 of 60, every one right by hand; by
+  name, on 30 discs, 4 s and 2 s to 6 s and 3 s took them from 11 to 15, and wider gained none. *Not
+  measured:* the limits for durations alone, since the run ended before that step, on the service's
+  503s. *Trade-off:* a wrong release with the same number, the same track count and tracks within
+  15 s would pass; none was seen. Real discs still refused: 16 of 60, 8 with no release found, 5 on ISRCs
+  that disagree and 3 on durations.
+- **ISRCs that disagree still refuse, also by number.** The coordinator decided this under the owner's
+  delegation, after real discs. *Why:* a wrong tag written to a library costs more than a disc left
+  unmatched, and the sample is small. *Measured:* without the rule, 49 of 60 discs matched against 44, and
+  the 5 extra were right by hand. *Alternative:* no refusal at the number step, where the number and
+  durations already agree. *Trade-off:* those discs need tags by hand, and the command says so; a name
+  lookup found nothing for any of the 5.
+- **Recorded case: why text must agree.** A live query by durations for one hybrid disc returned the
+  disc, a digital release of it, and a box set holding it under another album title. Each has
+  fitting durations and the same track titles. Taking "the best" would make the album name a coin
+  toss, so that disc is refused. Another release listed two discs with the same durations, a stereo
+  mix and a 5.1 mix, whose titles differ: refused, unless the disc's set number names one.
+- **What several agreeing candidates leave out.** Text must be the same in all. IDs and the date
+  must be too or they are dropped, so that pressings of one album still give titles. A name or
+  durations never write a release ID or date: they find the album, not the pressing.
+- **One disc, one album.** An ambiguous area stops the whole disc, as do two areas matching different
+  albums. An area that doesn't fit the release its sibling matched is left alone and gets no second
+  lookup by a weaker way.
+- **Who wins.** A value anywhere in the tags file, in any spelling (`TIT2`, `title`) and empty ones
+  included, because hand edits win (#81); then the disc's text, since a label's own text may be
+  correct where a database romanises it; then the lookup. *Alternative:* the lookup replacing disc
+  text. *Trade-off:* a disc with bad text keeps it unless it is edited by hand. Values go at the
+  least specific level that says them, so a later edit at a more specific one wins as levels do.
+- **A title from a lookup doesn't rename the file.** *Choice:* the name stays `NN - Track NN` and the
+  title goes in the tag. *Why:* phase 1's rename already moved those files once, and players likely
+  key play history on paths; a second rename, on top of one per tag edit afterwards, would likely
+  lose it again (not tested with a player). Players show the tag; only file browsers show the
+  name. It also keeps third-party text out of paths, and listing a folder needs no tags file.
+  *Alternatives:* names that follow the tags file (a move per edit); renaming on lookups only (the
+  same move, and a mount that must know who wrote a value). *Trade-off accepted:* file names stay
+  generic on these discs, which shows in file browsers and players that list by name.
+- **`Track NN` already in a tags file gives way.** `tags import` from 0.4.1 stored it from an extract
+  of a mount. Fetch removes it where it has a title for that track. *Trade-off:* a title set by hand
+  to exactly that text is replaced; such a choice is improbable, and the file says the same thing
+  once a real title is wanted.
+- **Path-derived text an older import stored is still kept.** An extract of a 0.4.1 mount can hold
+  an album and artist from the path, and `import` keeps them on purpose (above), so a later fetch sees
+  an edit and leaves them. *Why left:* that rule protects text from a renamed folder, and telling
+  the two apart needs a path that may have changed.
+- **A busy service.** *Why it needs care:* on real discs the service answered 503 "currently busy",
+  with a `Retry-After` of 0, about once in 20 requests of an evening, so a large library meets it
+  in every run. `Retry-After` is obeyed in full up to an hour (it was cut to 60 s, which asked early); a
+  429 waits at least 60 s. A disc with no answer is followed by a wait of 1, 2, 4 and 8 minutes and
+  is asked about again at the end of the run; 5 in a row end it, about a quarter of an hour of outage.
+  A 403 or a request to wait over an hour ends the run at once. *Alternatives:* waiting without
+  limit (an unattended run could sit for days); 3 in a row and no second try (about 90 s of outage lost the
+  batch). *Trade-off:* a run in an outage takes longer to say so.
+- **The client.** HTTPS only, no redirects, one fixed host, 8 MiB per response, 60 s per request,
+  5 tries with growing waits on 429 and 5xx. Every try starts at least 1.1 s after the last, as in
+  pysacd; the limit is per process. Search
+  results list track counts, so a release that can't fit isn't read: a popular album's name search
+  would otherwise cost 25 requests. Responses are hostile input: control characters, overlong text,
+  placeholders and malformed ids are dropped, and an id reaches a URL only if it is a UUID. The
+  `lookup_json` fuzz target covers this. Its tests answer from recorded responses, so CI never
+  touches the network.
+- **ureq with rustls and bundled roots.** *Why:* a release binary that needs no OpenSSL or CA store,
+  including on the older systems the release supports (it isn't static, but links only glibc).
+  *Alternatives:* running `curl` (a run-time dependency, and an argument and exit-code interface);
+  native-tls (an OpenSSL dependency that the glibc-baseline build would then pin). *Trade-off:* about
+  3 MB of binary and 15 crates for one optional command, and root certificates that age with the
+  release; `deny.toml` now allows ISC (rustls's and ring's parts) and CDLA-Permissive-2.0
+  (webpki-roots's data), both compatible with GPL-3.0-or-later. Nothing here runs in the mount.
 
 ## Verifying extracts (`sacdfs verify`, #80)
 

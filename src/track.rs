@@ -265,7 +265,10 @@ impl TrackFile {
     }
 
     /// The frames an extract's tag is compared with (`verify`, `tags import`): the file's tag,
-    /// without what came from the image's path ([`dsf::stored_tag`]).
+    /// without what came from the image's path ([`dsf::stored_tag`]). A generated `Track NN` title
+    /// stays. *Why:* it depends on nothing that can change, so an extract that has it from a mount
+    /// loses nothing when it goes, and `import` storing it as if edited by hand would keep a
+    /// lookup's title out (#185).
     pub fn stored_frames(&self) -> Vec<crate::verify::id3::Frame> {
         if !self.filled {
             return crate::verify::id3::frames(self.tag());
@@ -275,7 +278,14 @@ impl TrackFile {
             let track = a.tracks.iter().find(|t| t.number == self.number)?;
             Some(dsf::stored_tag(toc, a, track))
         });
-        crate::verify::id3::frames(&tag.unwrap_or_default())
+        let mut frames = crate::verify::id3::frames(&tag.unwrap_or_default());
+        if !frames.iter().any(|f| f.key == "TIT2" && !f.value.trim().is_empty()) {
+            frames.push(crate::verify::id3::Frame {
+                key: "TIT2".to_owned(),
+                value: crate::names::fallback_title(self.number),
+            });
+        }
+        frames
     }
 
     /// Length of everything before the first audio byte.

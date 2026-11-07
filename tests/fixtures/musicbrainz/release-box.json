@@ -1,0 +1,1139 @@
+{
+ "label-info": [
+  {
+   "label": {
+    "name": "Name 1",
+    "id": "00000001-0000-4000-8000-000000000001"
+   },
+   "catalog-number": "TEST-1"
+  }
+ ],
+ "artist-credit": [
+  {
+   "artist": {
+    "id": "00000002-0000-4000-8000-000000000002",
+    "name": "Name 2"
+   },
+   "joinphrase": "; ",
+   "name": "Name 3"
+  },
+  {
+   "name": "Name 4",
+   "artist": {
+    "id": "00000003-0000-4000-8000-000000000003",
+    "name": "Name 4"
+   },
+   "joinphrase": ""
+  }
+ ],
+ "status": "Official",
+ "date": "2023",
+ "id": "0000002d-0000-4000-8000-00000000002d",
+ "title": "Title 18",
+ "media": [
+  {
+   "track-offset": 0,
+   "position": 1,
+   "title": "",
+   "id": "0000002e-0000-4000-8000-00000000002e",
+   "format": "SACD",
+   "track-count": 8,
+   "tracks": [
+    {
+     "id": "0000002f-0000-4000-8000-00000000002f",
+     "title": "Title 19",
+     "position": 1,
+     "length": 455573,
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       }
+      }
+     ],
+     "recording": {
+      "length": 455573,
+      "isrcs": [
+       "ZZTST0000013"
+      ],
+      "id": "00000030-0000-4000-8000-000000000030",
+      "title": "Title 19",
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        },
+        "name": "Name 4"
+       }
+      ]
+     },
+     "number": "1"
+    },
+    {
+     "length": 563360,
+     "title": "Title 20",
+     "id": "00000031-0000-4000-8000-000000000031",
+     "position": 2,
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "joinphrase": "",
+       "name": "Name 2"
+      }
+     ],
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        }
+       }
+      ],
+      "isrcs": [
+       "ZZTST0000014"
+      ],
+      "title": "Title 20",
+      "id": "00000032-0000-4000-8000-000000000032",
+      "length": 563360
+     },
+     "number": "2"
+    },
+    {
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        }
+       }
+      ],
+      "id": "00000033-0000-4000-8000-000000000033",
+      "title": "Title 21",
+      "isrcs": [
+       "ZZTST0000015"
+      ],
+      "length": 383880
+     },
+     "number": "3",
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "position": 3,
+     "id": "00000034-0000-4000-8000-000000000034",
+     "title": "Title 21",
+     "length": 383880
+    },
+    {
+     "position": 4,
+     "id": "00000035-0000-4000-8000-000000000035",
+     "title": "Title 22",
+     "length": 566906,
+     "recording": {
+      "id": "00000036-0000-4000-8000-000000000036",
+      "title": "Title 22",
+      "isrcs": [
+       "ZZTST0000016"
+      ],
+      "length": 566906,
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": "",
+        "name": "Name 4"
+       }
+      ]
+     },
+     "number": "4",
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "joinphrase": "",
+       "name": "Name 2"
+      }
+     ]
+    },
+    {
+     "artist-credit": [
+      {
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "joinphrase": "",
+       "name": "Name 2"
+      }
+     ],
+     "recording": {
+      "length": 426066,
+      "isrcs": [
+       "ZZTST0000017"
+      ],
+      "id": "00000037-0000-4000-8000-000000000037",
+      "title": "Title 23",
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        },
+        "joinphrase": ""
+       }
+      ]
+     },
+     "number": "5",
+     "title": "Title 23",
+     "id": "00000038-0000-4000-8000-000000000038",
+     "position": 5,
+     "length": 426066
+    },
+    {
+     "id": "00000039-0000-4000-8000-000000000039",
+     "title": "Title 24",
+     "position": 6,
+     "length": 423906,
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "recording": {
+      "length": 423906,
+      "title": "Title 24",
+      "id": "0000003a-0000-4000-8000-00000000003a",
+      "isrcs": [
+       "ZZTST0000018"
+      ],
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": "",
+        "name": "Name 4"
+       }
+      ]
+     },
+     "number": "6"
+    },
+    {
+     "recording": {
+      "isrcs": [
+       "ZZTST0000019"
+      ],
+      "title": "Title 25",
+      "id": "0000003b-0000-4000-8000-00000000003b",
+      "length": 396280,
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": ""
+       }
+      ]
+     },
+     "number": "7",
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "length": 396280,
+     "position": 7,
+     "title": "Title 25",
+     "id": "0000003c-0000-4000-8000-00000000003c"
+    },
+    {
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       }
+      }
+     ],
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        }
+       }
+      ],
+      "length": 498666,
+      "isrcs": [
+       "ZZTST0000020"
+      ],
+      "id": "0000003d-0000-4000-8000-00000000003d",
+      "title": "Title 26"
+     },
+     "number": "8",
+     "length": 498666,
+     "title": "Title 26",
+     "id": "0000003e-0000-4000-8000-00000000003e",
+     "position": 8
+    }
+   ]
+  },
+  {
+   "tracks": [
+    {
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        }
+       }
+      ],
+      "length": 560786,
+      "isrcs": [
+       "ZZTST0000021"
+      ],
+      "title": "Title 27",
+      "id": "0000003f-0000-4000-8000-00000000003f"
+     },
+     "number": "1",
+     "artist-credit": [
+      {
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "joinphrase": "",
+       "name": "Name 2"
+      }
+     ],
+     "position": 1,
+     "id": "00000040-0000-4000-8000-000000000040",
+     "title": "Title 27",
+     "length": 560786
+    },
+    {
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       }
+      }
+     ],
+     "recording": {
+      "id": "00000041-0000-4000-8000-000000000041",
+      "title": "Title 28",
+      "isrcs": [
+       "ZZTST0000022"
+      ],
+      "length": 364306,
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        }
+       }
+      ]
+     },
+     "number": "2",
+     "length": 364306,
+     "id": "00000042-0000-4000-8000-000000000042",
+     "title": "Title 28",
+     "position": 2
+    },
+    {
+     "position": 3,
+     "title": "Title 29",
+     "id": "00000043-0000-4000-8000-000000000043",
+     "length": 421453,
+     "number": "3",
+     "recording": {
+      "isrcs": [
+       "ZZTST0000023"
+      ],
+      "title": "Title 29",
+      "id": "00000044-0000-4000-8000-000000000044",
+      "length": 421453,
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        },
+        "name": "Name 4"
+       }
+      ]
+     },
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "joinphrase": "",
+       "name": "Name 2"
+      }
+     ]
+    },
+    {
+     "recording": {
+      "length": 664120,
+      "id": "00000045-0000-4000-8000-000000000045",
+      "title": "Title 30",
+      "isrcs": [
+       "ZZTST0000024"
+      ],
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        }
+       }
+      ]
+     },
+     "number": "4",
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       }
+      }
+     ],
+     "position": 4,
+     "id": "00000046-0000-4000-8000-000000000046",
+     "title": "Title 30",
+     "length": 664120
+    },
+    {
+     "position": 5,
+     "title": "Title 31",
+     "id": "00000047-0000-4000-8000-000000000047",
+     "length": 206280,
+     "number": "5",
+     "recording": {
+      "title": "Title 31",
+      "id": "00000048-0000-4000-8000-000000000048",
+      "isrcs": [
+       "ZZTST0000025"
+      ],
+      "length": 206280,
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": "",
+        "name": "Name 4"
+       }
+      ]
+     },
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "joinphrase": ""
+      }
+     ]
+    },
+    {
+     "length": 252933,
+     "id": "00000049-0000-4000-8000-000000000049",
+     "title": "Title 32",
+     "position": 6,
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       }
+      }
+     ],
+     "recording": {
+      "length": 252933,
+      "isrcs": [
+       "ZZTST0000026"
+      ],
+      "title": "Title 32",
+      "id": "0000004a-0000-4000-8000-00000000004a",
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "name": "Name 4"
+       }
+      ]
+     },
+     "number": "6"
+    },
+    {
+     "recording": {
+      "isrcs": [
+       "ZZTST0000027"
+      ],
+      "title": "Title 33",
+      "id": "0000004b-0000-4000-8000-00000000004b",
+      "length": 527720,
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        },
+        "joinphrase": ""
+       }
+      ]
+     },
+     "number": "7",
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "name": "Name 2"
+      }
+     ],
+     "position": 7,
+     "title": "Title 33",
+     "id": "0000004c-0000-4000-8000-00000000004c",
+     "length": 527720
+    },
+    {
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "name": "Name 2"
+      }
+     ],
+     "number": "8",
+     "recording": {
+      "length": 311373,
+      "title": "Title 34",
+      "id": "0000004d-0000-4000-8000-00000000004d",
+      "isrcs": [
+       "ZZTST0000028"
+      ],
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": ""
+       }
+      ]
+     },
+     "length": 311373,
+     "id": "0000004e-0000-4000-8000-00000000004e",
+     "title": "Title 34",
+     "position": 8
+    },
+    {
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       }
+      }
+     ],
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": ""
+       }
+      ],
+      "isrcs": [
+       "ZZTST0000029"
+      ],
+      "id": "0000004f-0000-4000-8000-00000000004f",
+      "title": "Title 35",
+      "length": 444026
+     },
+     "number": "9",
+     "id": "00000050-0000-4000-8000-000000000050",
+     "title": "Title 35",
+     "position": 9,
+     "length": 444026
+    },
+    {
+     "length": 674013,
+     "position": 10,
+     "id": "00000051-0000-4000-8000-000000000051",
+     "title": "Title 36",
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        },
+        "joinphrase": ""
+       }
+      ],
+      "length": 674013,
+      "id": "00000052-0000-4000-8000-000000000052",
+      "title": "Title 36",
+      "isrcs": [
+       "ZZTST0000030"
+      ]
+     },
+     "number": "10",
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "name": "Name 2"
+      }
+     ]
+    }
+   ],
+   "track-count": 10,
+   "format": "SACD",
+   "id": "00000053-0000-4000-8000-000000000053",
+   "title": "",
+   "position": 2,
+   "track-offset": 0
+  },
+  {
+   "id": "00000054-0000-4000-8000-000000000054",
+   "title": "",
+   "position": 3,
+   "track-offset": 0,
+   "tracks": [
+    {
+     "length": 319093,
+     "id": "00000055-0000-4000-8000-000000000055",
+     "title": "Title 5",
+     "position": 1,
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "joinphrase": "",
+       "name": "Name 2"
+      }
+     ],
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        }
+       }
+      ],
+      "isrcs": [
+       "ZZTST0000001"
+      ],
+      "title": "Title 5",
+      "id": "00000004-0000-4000-8000-000000000004",
+      "length": 319093
+     },
+     "number": "1"
+    },
+    {
+     "length": 455306,
+     "position": 2,
+     "title": "Title 6",
+     "id": "00000056-0000-4000-8000-000000000056",
+     "recording": {
+      "isrcs": [
+       "ZZTST0000002"
+      ],
+      "title": "Title 6",
+      "id": "00000006-0000-4000-8000-000000000006",
+      "length": 455306,
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        },
+        "joinphrase": ""
+       }
+      ]
+     },
+     "number": "2",
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "joinphrase": ""
+      }
+     ]
+    },
+    {
+     "length": 120000,
+     "id": "00000057-0000-4000-8000-000000000057",
+     "title": "Title 7",
+     "position": 3,
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "name": "Name 2"
+      }
+     ],
+     "recording": {
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "name": "Name 4"
+       }
+      ],
+      "length": 120000,
+      "title": "Title 7",
+      "id": "00000008-0000-4000-8000-000000000008",
+      "isrcs": [
+       "ZZTST0000003"
+      ]
+     },
+     "number": "3"
+    },
+    {
+     "number": "4",
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": ""
+       }
+      ],
+      "id": "0000000b-0000-4000-8000-00000000000b",
+      "title": "Title 8",
+      "isrcs": [
+       "ZZTST0000004"
+      ],
+      "length": 268880
+     },
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "length": 268880,
+     "position": 4,
+     "title": "Title 8",
+     "id": "00000058-0000-4000-8000-000000000058"
+    },
+    {
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "recording": {
+      "length": 380853,
+      "title": "Title 9",
+      "id": "0000000d-0000-4000-8000-00000000000d",
+      "isrcs": [
+       "ZZTST0000005"
+      ],
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": "",
+        "name": "Name 4"
+       }
+      ]
+     },
+     "number": "5",
+     "title": "Title 9",
+     "id": "00000059-0000-4000-8000-000000000059",
+     "position": 5,
+     "length": 380853
+    },
+    {
+     "id": "0000005a-0000-4000-8000-00000000005a",
+     "title": "Title 10",
+     "position": 6,
+     "length": 393053,
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "name": "Name 2"
+      }
+     ],
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        }
+       }
+      ],
+      "id": "0000000e-0000-4000-8000-00000000000e",
+      "title": "Title 10",
+      "isrcs": [
+       "ZZTST0000006"
+      ],
+      "length": 393053
+     },
+     "number": "6"
+    },
+    {
+     "position": 7,
+     "title": "Title 11",
+     "id": "0000005b-0000-4000-8000-00000000005b",
+     "length": 233813,
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        }
+       }
+      ],
+      "length": 233813,
+      "id": "00000011-0000-4000-8000-000000000011",
+      "title": "Title 11",
+      "isrcs": [
+       "ZZTST0000007"
+      ]
+     },
+     "number": "7",
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       }
+      }
+     ]
+    },
+    {
+     "length": 259693,
+     "position": 8,
+     "title": "Title 12",
+     "id": "0000005c-0000-4000-8000-00000000005c",
+     "recording": {
+      "title": "Title 12",
+      "id": "00000012-0000-4000-8000-000000000012",
+      "isrcs": [
+       "ZZTST0000008"
+      ],
+      "length": 259693,
+      "artist-credit": [
+       {
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        },
+        "joinphrase": "",
+        "name": "Name 4"
+       }
+      ]
+     },
+     "number": "8",
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "joinphrase": ""
+      }
+     ]
+    },
+    {
+     "length": 437666,
+     "title": "Title 13",
+     "id": "0000005d-0000-4000-8000-00000000005d",
+     "position": 9,
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       }
+      }
+     ],
+     "number": "9",
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        }
+       }
+      ],
+      "length": 437666,
+      "isrcs": [
+       "ZZTST0000009"
+      ],
+      "id": "00000014-0000-4000-8000-000000000014",
+      "title": "Title 13"
+     }
+    },
+    {
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Name 4",
+        "joinphrase": "",
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        }
+       }
+      ],
+      "id": "00000017-0000-4000-8000-000000000017",
+      "title": "Title 14",
+      "isrcs": [
+       "ZZTST0000010"
+      ],
+      "length": 170413
+     },
+     "number": "10",
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "name": "Name 2",
+        "id": "00000002-0000-4000-8000-000000000002"
+       },
+       "name": "Name 2"
+      }
+     ],
+     "length": 170413,
+     "position": 10,
+     "id": "0000005e-0000-4000-8000-00000000005e",
+     "title": "Title 14"
+    },
+    {
+     "recording": {
+      "artist-credit": [
+       {
+        "artist": {
+         "name": "Name 4",
+         "id": "00000003-0000-4000-8000-000000000003"
+        },
+        "joinphrase": "",
+        "name": "Name 4"
+       }
+      ],
+      "isrcs": [
+       "ZZTST0000011"
+      ],
+      "title": "Title 15",
+      "id": "00000019-0000-4000-8000-000000000019",
+      "length": 491613
+     },
+     "number": "11",
+     "artist-credit": [
+      {
+       "name": "Name 2",
+       "joinphrase": "",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       }
+      }
+     ],
+     "position": 11,
+     "title": "Title 15",
+     "id": "0000005f-0000-4000-8000-00000000005f",
+     "length": 491613
+    },
+    {
+     "length": 390066,
+     "position": 12,
+     "title": "Title 16",
+     "id": "00000060-0000-4000-8000-000000000060",
+     "recording": {
+      "title": "Title 16",
+      "id": "0000001a-0000-4000-8000-00000000001a",
+      "isrcs": [
+       "ZZTST0000012"
+      ],
+      "length": 390066,
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "00000003-0000-4000-8000-000000000003",
+         "name": "Name 4"
+        },
+        "joinphrase": "",
+        "name": "Name 4"
+       }
+      ]
+     },
+     "number": "12",
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "id": "00000002-0000-4000-8000-000000000002",
+        "name": "Name 2"
+       },
+       "name": "Name 2"
+      }
+     ]
+    }
+   ],
+   "track-count": 12,
+   "format": "SACD"
+  }
+ ],
+ "barcode": "0000000067890",
+ "release-group": {
+  "id": "00000061-0000-4000-8000-000000000061",
+  "primary-type": "Album",
+  "title": "Title 18",
+  "artist-credit": [
+   {
+    "artist": {
+     "name": "Name 2",
+     "id": "00000002-0000-4000-8000-000000000002"
+    },
+    "joinphrase": "; ",
+    "name": "Name 3"
+   },
+   {
+    "joinphrase": "",
+    "artist": {
+     "id": "00000003-0000-4000-8000-000000000003",
+     "name": "Name 4"
+    },
+    "name": "Name 4"
+   }
+  ]
+ }
+}
