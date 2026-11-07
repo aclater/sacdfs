@@ -283,6 +283,11 @@ The mount stays read-only; the files are edited out of band.
   while sacdfs is stopped show after the mount the same way (sacdfs keeps which disc each image
   is in its cache directory). With a single image as SOURCE, remount after editing.
 
+Each file holds its own copy of a cover. Under a [memory limit](deployment.md#under-a-memory-limit), that
+means few images stay listed, and going through the library takes longer. A disc listed again reads its
+cover again, so a cover edited during a mount can show then; edit the tags file too, or remount, to
+make sure players see the change.
+
 ```toml
 [album]                         # every file of the disc
 genre = "Jazz"

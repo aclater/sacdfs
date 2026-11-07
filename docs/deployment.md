@@ -259,8 +259,8 @@ minutes idle on a 395-image library (0.4.1-rc.1). Limiting open images
 ### Under a memory limit
 
 sacdfs reads the limit of its cgroup at startup: a container's `--memory`, or a systemd unit's
-`MemoryMax=` or `MemoryHigh=`. It sets four things from it. With no limit, none of this applies,
-and nothing changes from earlier versions.
+`MemoryMax=` or `MemoryHigh=`. It sets four things from it, and the container a fifth. With no
+limit, none of this applies.
 
 | What | With a limit |
 |---|---|
@@ -268,6 +268,7 @@ and nothing changes from earlier versions.
 | Decoder threads (`--threads`) | one per CPU, at most one per 64 MiB of the limit, and at least 2 |
 | Memory for what listed images hold (`--listing-mb`) | 3/8 of the limit, at least 8 MiB |
 | Memory watch | see below |
+| NFS-Ganesha's cache of entries, in the container | what an eighth of the limit holds at about 2 KiB each: 16,384 entries at 256 MiB, against its default of 100,000. From about 1.5 GiB, its default |
 
 An option you set yourself always wins.
 
@@ -300,33 +301,89 @@ A client that gets `ENOMEM` can try again; it isn't told that anything is missin
 isn't remembered once memory is back. This is the last step before an out-of-memory kill, which
 would end the service for every client.
 
-**What was measured.** sacdfs mounted directly under a memory limit, with its client in the same
-limit, listing and stating every file while a paced reader played a 6-channel WAV. Synthetic
-libraries of links to real discs, about 25 files per image; single runs on a 20-thread machine that
-was busy with other work, so the times only show scale. Peak is sacdfs's anonymous memory.
+**The memory watch has a limit.** It frees only what sacdfs holds. Something else in the same limit
+that goes on taking whatever is freed can still get the container killed: a test process that kept
+refilling the limit to 94% was killed, then NFS-Ganesha, and the container stopped.
 
-| Limit | Images | 0.4.0 | 0.4.1-rc.2 | With the budget |
-|---:|---:|---|---|---|
-| 256 MiB | 1,600 | 128 MiB | 125 MiB | 101 MiB |
-| 256 MiB | 5,000 | killed after about 91,000 of 123,974 files | killed after about 90,000 | 126 MiB |
-| 256 MiB | 20,000 | killed after about 83,000 of 495,874 files | killed after about 80,000 | 177 MiB |
-| 512 MiB | 5,000 | 310 MiB | 314 MiB | 228 MiB |
+**What was measured, sacdfs mounted directly.** sacdfs under a memory limit, with its client in the
+same limit, listing and stating every file while a paced reader played a 6-channel WAV. Synthetic
+libraries of links to real discs, about 25 files per image; single runs on busy machines, so the
+times only show scale. Peak is sacdfs's anonymous memory. The 0.4.0 and 0.4.1-rc.2 columns were
+measured on another machine than the other two.
 
-The player had no late read in any of these, and nothing was refused. Restarting and listing 5,000
-images at 256 MiB, with the seek index kept between runs, was killed 4 times out of 4 on 0.4.1-rc.2,
-and worked 3 times out of 3 here.
+| Limit | Images | 0.4.0 | 0.4.1-rc.2 | 0.4.1-rc.3 | With the budget |
+|---:|---:|---|---|---|---|
+| 256 MiB | 1,600 | 128 MiB | 125 MiB | 110 MiB | 93 MiB |
+| 256 MiB | 5,000 | killed after about 91,000 of 123,974 files | killed after about 90,000 | killed | 125 MiB |
+| 256 MiB | 20,000 | killed after about 83,000 of 495,874 files | killed after about 80,000 | killed after about 84,000 | 177 MiB |
+| 512 MiB | 5,000 | 310 MiB | 314 MiB | 316 MiB | 226 MiB |
+
+The player had no late read in the runs with the budget, and nothing was refused. Starting again and
+listing 5,000 images at 256 MiB with the seek index kept between runs worked 3 times out of 3, and
+was killed 4 times out of 4 on 0.4.1-rc.2.
 
 Over a library past its budget, a second pass reads TOCs again, so it takes longer: at 5,000 images
-and 512 MiB, 24 s against 17 s on 0.4.1-rc.2. Those TOCs were in the page cache. On a slow disk with
+and 512 MiB, 4.6 s against 2.8 s on 0.4.1-rc.3. Those TOCs were in the page cache. On a slow disk with
 nothing cached a second pass could take about as long as the first; that hasn't been measured. A
-library that fits its budget isn't affected: at 1,600 images and 256 MiB, second passes took 5 to 6
-s, and 5 s on 0.4.1-rc.2, measured side by side.
+library that fits its budget isn't affected: at 1,600 images and 256 MiB, second passes took 0.3 s,
+and 0.4 s on 0.4.1-rc.3.
 
-**Lower limits.** With 5,000 images, listing worked at 128 and 96 MiB. At 64 MiB, one run in three
-was killed; the startup warning says this can happen at that size. Pressure from something else in the limit also
-works as described: with another process holding 205 MiB of a 256 MiB limit, new listings failed with
-`ENOMEM`, sacdfs and the player carried on, and once that process ended every file listed again.
-Not tested: the memory watch under Samba and NFS clients at once, or `--tags`.
+**The container, 256 MiB, default settings.** With a client in user space over SMB and a paced
+6-channel WAV reader over SMB, NFS on but not in use, on a busy machine:
+
+| Images | Files listed | Errors | Peak of the whole limit | Time | Player's worst read |
+|---:|---:|---:|---:|---:|---:|
+| 5,000 | 123,974 | 0 | 152 MiB | about 6 min | 187 ms |
+| 20,000 | 495,874 | 0 | 202 MiB | about 19 min | 77 ms |
+
+With the same client, the 0.4.1-rc.3 image at 5,000 images was killed after about 61,000 files.
+
+**Fast readers.** 16 or 64 unpaced readers of 6-channel WAVs during a listing, with the readers' own
+memory outside the limit, sacdfs mounted directly at 256 MiB, 3 rounds each. Peak of the whole limit:
+
+| Images | 16 readers | 64 readers |
+|---:|---:|---:|
+| 5,000 | 155 to 158 MiB | 172 to 175 MiB |
+| 20,000 | 194 to 196 MiB | 203 to 206 MiB |
+
+No errors and no kills. Reading a WAV on its request thread (0.4.1-rc.3) made no difference beyond the
+spread here. The 20,000-image runs passed 75% once, and listings shrank. With the readers' own memory
+inside the limit, which took about 150 MiB, new listings failed with `ENOMEM` for a while, and nothing
+was killed.
+
+**`--tags`.** With a text tags file for each of 382 discs and 5,000 images at 256 MiB, the tree, numbers,
+sizes and times, and a file's bytes read after its image was dropped, were the same as with no bound. With
+a 400 KiB cover in every disc's tags as well, listing worked with no errors, at a peak of 219 MiB, but took about 110 s
+a pass against about 7 s without tags, on a busy machine: dropped images read their covers again and copy
+them into each file's tag. Every file holds a copy of its cover, so an image of 25 files holds about 10 MiB
+more, and few images stay listed. Under a limit with `--tags`, sacdfs keeps blocks from 128 KiB up
+in mappings of their own, since the heap otherwise kept over 100 MiB of freed covers.
+
+**Lower limits.** With 5,000 images, listing worked at 128 and 96 MiB. At 64 MiB, one run in three stopped
+at about half the files with `ENOMEM` for its listings; none was killed, though the startup warning says
+this can happen at that size. Pressure from something else in the limit also works as described: with
+another process holding 205 MiB of a 256 MiB limit, new listings failed with `ENOMEM`, sacdfs and the
+player carried on, and once that process ended every file listed again.
+
+**Real SMB and NFS clients at once.** Linux kernel clients, SMB 3.1.1 and NFS 4.2 mounted on the container's host, each
+listing and stating the whole library at the same time at 256 MiB, with a paced 6-channel WAV reader over NFS. The libraries
+were links to 5 discs, about 37 files per image; single runs on a busy machine.
+
+| Images | Files per client | Errors | Peak of the whole limit | sacdfs / NFS-Ganesha / Samba | Player's worst read |
+|---:|---:|---:|---:|---|---:|
+| 5,000 (2 passes) | 186,000 | 0 | 193 MiB | 133 / 54 / 13 MiB | 104 ms |
+| 20,000 | 744,000 | 0 | 195 MiB | 135 / 53 / 13 MiB | 96 ms |
+
+Nothing was killed, the player had no late read, and a file read the same on both clients after its image had been dropped,
+through a new open and through an NFS handle kept open.
+
+**What a client sees when a request is refused.** `ENOMEM` reaches a local client as is. Samba and NFS-Ganesha pass it on as a
+server error, and the Linux clients report `Remote I/O error` (`EREMOTEIO`), at once and with no retry. With something else holding
+the limit above 93%, a listing of an image not yet listed failed that way on both clients, as did a new open over SMB. A new open over NFS still
+worked, as NFS-Ganesha kept the file open already. A read of a file open before the shortage went on working on both clients, and
+every request worked again once the memory was back. Other clients weren't tested.
+
+@@KERNELREADERS@@
 
 ### Small NAS: sizing
 
@@ -343,7 +400,7 @@ images at 274 MiB against 275), but the limits below were not re-run on it.
 | Minimum | 2 N100-class cores | 256 MiB | up to about 1,800 images in memory; larger libraries work, and read TOCs again ([Under a memory limit](#under-a-memory-limit)) |
 | Recommended | 4 cores | 512 MiB | up to about 3,600 images in memory, and larger libraries the same way |
 
-Add about 40 MiB if NFS is on (`NFS=1`, the default). To set such a limit,
+Add about 40 MiB if NFS is on (`NFS=1`, the default); under a limit, NFS-Ganesha peaked at 54 MiB with a client going through 5,000 images. To set such a limit,
 for example `podman run --cpus 2 --memory 256m ...` (or `docker run`, with the same options).
 
 **Sizing rule, with no bound on listings.** 100 MiB (the peak while scanning, up to about 400 images, with the default

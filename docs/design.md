@@ -215,8 +215,29 @@ is still there: 3 failures in 400 runs of the racing test without that, none in 
 
 **The defaults from the limit** (#231). Cache 16 below 512 MiB: it showed no single-reader cost and saves
 about 18 MiB, though several fast readers of one image are about 10% slower, which is accepted on a
-small limit. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, nothing
-changes.
+small limit. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
+defaults don't change.
+
+**What real clients and tags files added.** Three costs lay outside the budget, and running under real
+NFS clients and `--tags` found them.
+
+- *NFS-Ganesha's cache of entries.* Its default of 100,000 entries reached about 180 MiB at 256 MiB, with
+  sacdfs down to 59 MiB and refusing for as long as that cache stayed full, as nothing sacdfs could give
+  up would help. The entrypoint now sets `Entries_HWMark` to what an eighth of the limit holds at about 2 KiB
+  each, and `Chunks_HWMark` to match. The alternative of having sacdfs refuse earlier would fail requests that
+  the memory could serve. The trade-off is that entries past the mark are looked up again from sacdfs.
+- *Covers kept by each disc's tags.* Tags kept each disc's picture for as long as the mount lasted, up to
+  a few GiB for a large library, with or without a bound. A tag copies its picture, so it's needed only
+  while a disc's files are made; only the last 16 read are kept now. This one applies with no limit too. The
+  alternative of counting them in the budget would keep them in memory without any use. The trade-off is
+  a read of the picture each time a disc is listed, and a cover image edited during a mount can show
+  then, without a new generation.
+- *Freed covers in the heap.* Blocks of hundreds of KiB, made and freed for each file, raise glibc's mapping
+  threshold, and then stay in the heap: over 100 MiB more than was in use. Under a limit with a tags directory,
+  the threshold is fixed at 128 KiB. Only then, as other mounts don't make such blocks while listing.
+  The budget also runs as each directory is listed now, since one image with covers can hold tens of MiB,
+  and the watch trims the heap at the Caches level, at most every 2 s, since a trim holds up every thread
+  that allocates.
 
 ### Memory: the default cache and the fixed overhead (#150)
 

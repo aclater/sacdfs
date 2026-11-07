@@ -19,6 +19,15 @@ All notable changes to sacdfs are recorded here. The format follows
 - **A warning at startup** when the library won't fit in memory as listed, naming the size that would.
 - **A memory watch** under a limit: past 75% of the limit listings shrink, past 85% the cache and idle
   decoders go, past 93% new listings and opens fail with `ENOMEM`, while files already open go on.
+- **NFS-Ganesha's cache follows the limit, in the container.** Its cache of entries is kept to what an
+  eighth of the limit holds (16,384 entries at 256 MiB). At its default, a client going through 5,000
+  images took it to about 180 MiB of a 256 MiB limit, which sacdfs can't free, and new requests kept failing.
+- **`--tags` with covers under a limit.** Under a limit with a tags directory, blocks from 128 KiB up keep
+  their own mappings, as the heap otherwise held over 100 MiB of freed covers. Listings are also kept to
+  their budget as each directory is listed.
+- **`--tags`, with or without a limit:** only the last 16 covers read stay in memory, not every disc's for
+  as long as the mount lasts. A disc listed again reads its cover again, so a cover image edited during a
+  mount can show then, with no new generation for its files.
 - File nodes are smaller, by about 4.4 KiB per image at about 25 files per image, for every library.
 
 ## [0.4.1-rc.3] - 2026-11-06
