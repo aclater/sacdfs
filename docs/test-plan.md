@@ -63,7 +63,7 @@ its first use is the decision on the 0.4.1 final, where it is untested as a proc
 
 **Goals, not results.** The tables and lists on this page that say what is tested, on what, and how
 (libraries, tiers, behaviours, protocols, install channels) are goals. Only the cells headed "Result"
-or "Last result", and the [results section](#results-041-rc2-gate-2026-11-06), say what was run. A
+or "Last result", and the results sections for [rc.2](#results-041-rc2-gate-2026-11-06) and [rc.3](#results-041-rc3-gate), say what was run. A
 row with no result is untested.
 
 ## Test libraries
@@ -296,12 +296,44 @@ memory or start-up timing was not checked again.
 
 ## Results: 0.4.1-rc.3 gate
 
-**Not yet recorded.** rc.3 adds the fix for [#238](https://github.com/aclater/sacdfs/issues/238)
-(a hung image's WAV reads held decoder threads) after the rc.2 2-hour soak failed on it. Its
-2-hour soak was still running when this page was written; no rc.3 result is stated here. Until
-this section is filled in, everything on rc.3 is untested, and the rc.2 results above are not rc.3
-results. The code diff since rc.2 is in `src/engine.rs` and `src/fs.rs` plus tests and `scripts/`; a
-client result is carried over only with the diff check in the soak rule.
+rc.3 adds the fix for [#238](https://github.com/aclater/sacdfs/issues/238) (a hung image's WAV reads
+held decoder threads), after the rc.2 2-hour soak failed on it. The shipped code changed since rc.2 only
+where WAV reads are demultiplexed, so a full soak ran and the clients that read WAV were re-run. The
+final 0.4.1 tag carries only the version change on top of rc.3, so under the
+[soak rule](#when-a-soak-is-needed) it needs no soak of its own.
+
+**Soak, rc.3 with rc.2 running beside it on the same machine under the same load.** Rig A is a 12-core
+AMD laptop, rig B a 16-core AMD desktop, rig C a 14-core Intel machine. "Unexpected" counts read errors
+not explained by the induced stall or churn.
+
+| Rig | Length | rc.3 verdict | rc.3 memory trend | rc.3 unexpected | rc.2 verdict | rc.2 unexpected |
+|---|---|---|---|---|---|---|
+| C | 2 h | Pass | within limit | 0 | Fail | 14 |
+| A | 2 h | **Fail, memory** | +8.02 MiB/h (limit 4.4) | 0 | Fail | 1 |
+| A | 2 h, repeat | **Fail, memory** | +8.90 MiB/h (limit 4.4) | 0 | Pass | 0 |
+| A | 6 h | Pass | +0.08 MiB/h (limit 4.0) | 0 | Fail | 5 |
+| B | 8 h | Pass | +1.14 MiB/h (limit 4.0) | 0 | Fail | 3 |
+
+**How the two failures were judged.** Both came from a single step of about 5 to 6.5 MiB inside the
+2-hour run's short trend window. Before the long runs, the rule was set that a climb past the plateau
+would mean a leak and a new candidate, and a flat line would mean a one-time step. Both long runs stayed
+flat: on rig A at about 155 MiB from hour 3 to the end. The check itself was not changed, and the gate
+was counted as passed on those long runs. Steps of this size also appear on rc.2 and 0.4.0, in both
+directions. **Still unexplained:** what the steps are, and why rc.3 sits a steady 4 to 5 MiB above rc.2
+on rig A, without growth (on rig B the gap moved between -2 and +2.4 MiB). Both are in
+[#247](https://github.com/aclater/sacdfs/issues/247). No soak covers a long hang with retrying clients
+([#241](https://github.com/aclater/sacdfs/issues/241)).
+
+**Clients re-run on rc.3,** details in [clients.md](clients.md#041-rc3-checks): seven Linux distributions
+over NFS 4.2 and SMB 3.1.1 (the one failure is the known Ubuntu 24.04 non-ASCII name problem); Navidrome,
+Lyrion and MPD with `dsf,wav`, the same counts as rc.1. The fix candidate read 218 files byte-identically
+against rc.2, and used up to 16 MiB more memory (median) in a 60-run comparison with no kills.
+
+**Not run on rc.3:** Jellyfin (the test harness never created the library, so this says nothing about
+sacdfs; rc.1 is its last result); Windows, macOS, foobar2000, JRiver and MinimServer (carried over from
+rc.1, or rc.2 where stated above); playback in Roon and Plex (their test deployments moved to the rc.3
+image and the share lists the library, but no player was driven); the arm64 image at run time; a
+cold-cache mount.
 
 ## Exit criteria
 

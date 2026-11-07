@@ -31,6 +31,22 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 | [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | Fedora 44, RHEL 10.1 and 9.7, Debian 13 and 12, Ubuntu 26.04 and 24.04 kernels | 0.4.1-rc.1 | NFSv4.2, SMB 3.1.1 | Works | All checks pass; Ubuntu 24.04 cloud image needs `linux-modules-extra` for non-ASCII names over SMB; after a Podman container restart NFS needs a remount |
 | [FFmpeg, sox, mediainfo, ExifTool, mpv, VLC](#ffmpeg-sox-mediainfo-exiftool-mpv-and-vlc) | 7.1.5, 14.4.2, 25.04, 13.25, 0.40.0, VLC 3 | 0.4.1-rc.1 | Mount | Works | sox and ExifTool do not read DSF; this VLC cannot decode DSD (also true of a plain copy) |
 
+## 0.4.1-rc.3 checks
+
+rc.3 changed where WAV reads are demultiplexed, so the clients that read WAV were re-run on it. These
+are the only client results on rc.3. The table above keeps each client's last full run.
+
+- **Linux NFS 4.2 and SMB 3.1.1 mounts,** 206 DSF and WAV files, 22 checks per client, including hashes
+  of 19 files and ranges across 4 GiB of an RF64 WAV: Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian
+  12 and Ubuntu 26.04 pass all 22. Ubuntu 24.04 passes 21; `stat` sizes over SMB fail for 4 files with
+  non-ASCII names, the known problem.
+- **Navidrome, Lyrion and MPD,** `dsf,wav`: 186 files and 7 albums each, matching rc.1.
+- **Jellyfin: not verified on rc.3.** The test harness never created the library, so the run says
+  nothing about sacdfs. Its last result is 0.4.1-rc.1.
+- **Roon and Plex:** their test deployments run the rc.3 image and the share lists the library. No
+  player was driven on rc.3.
+- **Not run on rc.3:** Windows, macOS, foobar2000, JRiver, MinimServer and the Tier 2 tools.
+
 ## How the 0.4.0-rc.2 tests were run
 
 The Jellyfin, Navidrome, LMS, MPD and MinimServer results below were measured on
