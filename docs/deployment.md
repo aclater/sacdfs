@@ -850,8 +850,54 @@ starts there again, or `umount -l` removes it.
   made in the host directory first. Started first with an empty `sacd`, it found all 93 tracks once
   sacdfs ran and the library was scanned again.
 
-Not measured yet: import and playback times through the direct mount against SMB on the same NAS
-(#186).
+**Direct mount or SMB on the same NAS: what it costs.** The direct mount imports faster, and the
+NAS does far less work for it. Navidrome 0.64.2 imported a library and a reader read whole files, once
+through the direct mount and once through sacdfs's own SMB share, mounted by the Linux kernel client
+(`ro,guest,vers=3.1.1`, defaults otherwise) in a container on the same NAS. NAS: TrueNAS SCALE
+25.10.7, 10 cores, hard-disk pool. Image: 0.4.1, `SACDFS_FLATTEN=1`, DSF and WAV. Medians of 3 rounds,
+alternating direct and SMB, with the range in brackets.
+
+| Library, 416 images (9,822 DSF and WAV files, 442 albums) | Direct mount | SMB |
+|---|---|---|
+| Full import (Navidrome scan of an empty database) | **45.1 s** (44.3 to 45.1) | 61.8 s (61.6 to 62.8) |
+| Data sacdfs served for it | **5.4 MB** | 5,802 MB (5,415 to 5,802) |
+| Read by sacdfs from the images for it | **5.6 MB** | 3,917 MB |
+| CPU time: sacdfs / Samba / Navidrome | **3.2 / 0 / 83 s** | 223 / 27 / 95 s |
+| First byte of a stereo DSF track (open and first 64 KiB; DSD and DST discs) | **1.6 ms** (0.7 to 2.0) | 25.7 ms (24.8 to 27.8) |
+| Whole stereo DSF track | **85 MB/s** (80 to 91) | 54 MB/s (53 to 56) |
+| First byte of a 6-channel WAV track | **0.5 ms** (0.3 to 0.5) | 12.1 ms (8.0 to 15.9) |
+| Whole 6-channel WAV track | **126 MB/s** (121 to 128) | 102 MB/s (96 to 103) |
+| sacdfs CPU time per GB read (the WAV's decoding dominates) | **84 s** | 103 s, and Samba 1.4 s |
+
+| Test set, 18 images (460 files, 20 albums) | Direct mount | SMB |
+|---|---|---|
+| Full import | **2.29 s** (2.29 to 2.29) | 3.32 s (3.31 to 3.57) |
+| Data sacdfs served for it / CPU time of sacdfs and Samba | **0.2 MB / 0.15 s** | 271 MB / 11.0 s and 1.3 s |
+| First byte, stereo DSF from a plain DSD disc / 6-channel WAV from a DST disc | **1.3 / 0.8 ms** | 12.6 / 7.5 ms |
+| Whole file, the same | **241 / 119 MB/s** | 200 / 98 MB/s |
+
+- **Why SMB costs so much more on import.** A player reads only a file's header and tags to import
+  it, a few hundred bytes. Through the direct mount sacdfs serves just that. The kernel SMB client
+  reads ahead in large blocks, so for each file sacdfs reads and serves about 600 KB, and decodes it
+  for the WAV and DST files: 1,000 times the data and 70 times sacdfs's CPU time for the import.
+  Smaller SMB read sizes may lower that; not tested.
+- **Playback.** Both routes read faster than any track plays: a stereo DSF track at 64 fs plays at
+  about 0.7 MB/s, a 6-channel WAV (24-bit, 176.4 kHz, the default) at about 3.2 MB/s. Through the direct mount a
+  file opens and starts 10 to 25 times sooner, which shows as a quicker start and seek in players.
+- **How it was measured.** Every run used a new app: a new sacdfs container with an empty index
+  cache, a new Navidrome with an empty database, and (SMB) a new kernel mount, so no page cache of
+  sacdfs's files carried over. On the library, measurements began once sacdfs was idle after
+  mounting (it works in the background for up to about 75 s after mounting a large library); on the
+  test set, 10 s after. Each run read different tracks, never
+  read before in the test. The NAS's ZFS cache was not dropped: a warm-up import before the rounds put
+  the images' headers in it for every run alike, and the tracks read came from the disks. CPU time and
+  bytes are from `/proc` of the sacdfs, smbd and Navidrome processes; the kernel SMB client's own CPU
+  time is not counted. The NAS ran its other apps, idle (Roon and Plex read nothing during the runs). Load
+  before each library run was 1.3 to 2.6, with 90 s between runs; the test set's runs ran back to
+  back (load up to 5.6, mostly from the run before).
+- **Not measured:** Plex, Roon and Jellyfin this way; playback through a player's own streaming (the
+  reads here are file reads); 0.5.0's change to SMB listings (#205), which these 0.4.1 numbers
+  predate. Over SMB from another machine the LAN adds its own round trip on top of the SMB figures.
 
 ### Multichannel copies and music servers
 
