@@ -87,13 +87,29 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
 
 - resident and anonymous memory stay within the cache cap (`--cache-mb`, default 64) plus
   32 MiB of noise above their level at the end of the warm-up;
-- their least-squares trend over the second half is at most 4 MiB/h, or adds less than 4 MiB
-  over that half (`--trend-floor-mb`), so that a short run's noise does not fail it;
-- threads do not climb: the median and the end level (the last three samples) of the second
-  half are at most 4 above the first half's median, and no sample passes `--thread-spike`
-  (default 16) above it. The staller makes sacdfs spawn spare threads on purpose (#167, #168),
-  so one sample taken during a stall may be several threads high; that does not fail a run,
-  while threads that accumulate still do;
+- their trend over the second half is at most 4 MiB/h, or adds less than 3 MiB over the part of
+  it that is judged (`--trend-floor-mb`), so that a short run's noise does not fail it. The
+  trend is taken with the largest single step set aside: the second half is cut into six equal
+  runs of samples, each reduced to its median, and the largest change between neighbouring
+  medians (up or down) is dropped with the time it spans. What is left, as a rate, is the
+  trend. *Why:* the memory of a healthy run moves in steps of 3 to 6.5 MiB, both ways and
+  unexplained ([#247](https://github.com/aclater/sacdfs/issues/247)), and a line through the
+  second half of a 2-hour run counted such a step as a climb of 8 to 9 MiB/h. A step shows in
+  one change between medians, a leak in all of them; a step down is dropped too, or it would
+  hide a leak beside it. *Limit:* in a 2-hour run (about 0.6 h is left after the step) this
+  fails a steady climb of about 5 MiB/h or more; a slower one needs a longer run (an 8-hour run
+  fails at 4 MiB/h). Two steps in the same direction count as a climb, one of them is not
+  set aside;
+- threads do not climb: the median and the end level (the median of the last sixth of the
+  second half, at least five samples) are at most 4 above the first half's median. The staller
+  makes sacdfs spawn spare threads on purpose (#167, #168), and a spare thread ends 10 s after
+  its work, so a sample taken during a stall may be well above the median: a sample over
+  `--thread-spike` (default 16) above the first half's median is allowed, up to twice that, as
+  long as the samples above the first line don't span `--spike-hold` (default 120 s, so three
+  in a row at the default interval). One sample past twice `--thread-spike` fails, and threads
+  that accumulate fail. *Why:* the peak of healthy 2-hour runs reached the single line of
+  first-half median + 16 on one rig (80 of 80 on 0.4.1-rc.3; 79 of 80 on 0.4.0), so one more
+  thread would have failed a run that did nothing different;
 - open files do not climb: the second half's maximum is at most 8 above the first half's;
 - the cache directory plateaus;
 - no read error is unexpected. Reads fail on purpose in some places, and the soak sorts every
@@ -204,7 +220,8 @@ python3 -I scripts/check_skips.py --job tests target/test-output.txt
 
 As a normal user with FUSE, this gives the `tests` job's result. On a machine without FUSE, leave
 out `SACDFS_FUSE_TESTS=1` to see which tests skip; the check then reports each as unexpected.
-`python3 -I scripts/test_check_skips.py` tests the script itself.
+`python3 -I scripts/test_check_skips.py` tests the script itself. `python3 -I scripts/test_soak.py`
+tests the soak's verdict on built series (a step, a leak, a thread spike).
 
 *Why it reads cargo's output rather than a report file, as pysacd does:* the reasons of `#[ignore]`
 tests are only there, and the output needs nothing passed through `sudo` (the `nfs export` job) or

@@ -232,7 +232,12 @@ comparable. Every timed run is under the benchmark lock. Other jobs on the same 
 - NAS: SMB and NFS throughput on the NAS itself.
 - Memory: import replay and the default cache's peak.
 - **Soak:** two hours with induced stalls (`scripts/soak.py`), passing its memory, thread, file and
-  cache checks. Whether a candidate needs one is decided by [When a soak is needed](#when-a-soak-is-needed).
+  cache checks. Pass criteria ([development.md](development.md#the-soak)): memory within the cache cap
+  plus noise, and a trend of at most 4 MiB/h once the largest single step in the second half is set
+  aside ([#247](https://github.com/aclater/sacdfs/issues/247): healthy runs step by 3 to 6.5 MiB, and a
+  steady climb of 10 MiB/h still fails, a 2-hour run catching about 5 MiB/h and up); threads at the
+  first half's median + 4 at the median and end, with a spike above median + 16 allowed for under two
+  minutes and never above median + 32; open files and cache directory level. Whether a candidate needs one is decided by [When a soak is needed](#when-a-soak-is-needed).
   It does not cover a long hang with retrying clients ([#241](https://github.com/aclater/sacdfs/issues/241)).
 - Weekly leak checks and fuzzing are green on the release commit. For 0.4.1 the fuzz workflow was
   green on the rc.1 tag commit. The `leaks` workflow's first run was on this release and it failed
