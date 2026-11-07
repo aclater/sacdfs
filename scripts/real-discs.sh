@@ -31,7 +31,8 @@ SACDFS_REAL_IMAGES="$dir" SACDFS_REAL_TESTS=1 cargo test --locked --release ${CA
     --test dsf_header --test library_index --test wav \
     real_discs -- --ignored --nocapture --test-threads=1 2>&1 | tee "$out"
 status=${PIPESTATUS[0]}
-passed=$(grep -E '^test .*real_discs.* \.\.\. ok$' "$out" | wc -l)
+# --nocapture interleaves a test's output with libtest's "ok", so count the result lines instead.
+passed=$(grep -cE '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$out")
 skipped=$(grep -c 'SKIPPED' "$out")
 echo "real-discs: $passed of 3 tests passed, $skipped skipped, cargo exit $status"
 if [ "$status" -ne 0 ] || [ "$passed" -ne 3 ] || [ "$skipped" -ne 0 ]; then
