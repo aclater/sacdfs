@@ -538,6 +538,8 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   source folder of its own. *Kernel caches:* the 24-hour `TTL` and cached listings would
   hide all of this, so for a folder that is re-read (and for the names looked up in it)
   entries are remembered for the refresh interval only, and its `readdir` is not cached.
+  An area is re-read too, for its folder art (#95), but its track files keep the 24 hours
+  (#205; with `--tags` their size and time follow the tags file, so they don't).
   Everything else (the audio, the images' own areas) keeps the 24 hours, and a mount that
   does not watch (a single image as SOURCE) is as before. *Why not inotify or
   `inval_entry` notifications:* inotify does not see changes made by other clients of a
@@ -1387,6 +1389,49 @@ opened with `keep_cache`, and the kernel's page cache serves repeated reads. Rea
 1 MiB (the kernel grants at most its own default, typically 128 KiB, as fuser's `INIT` log
 shows), and up to 64 background requests are allowed. The filesystem is mounted `ro`,
 `nodev`, `nosuid`, `noexec`.
+
+**Requests per listing (#205).** Samba serves the share from the mount, and up to 0.4.1 a listing
+through it cost about three requests per entry: an `ACCESS` for nearly every SMB request (Samba
+changes directory each time), a `LOOKUP` per entry, and the same again 2 s later. Three changes:
+
+- **`default_permissions`:** the kernel checks access from the modes (0555 folders, 0444 files, a
+  read-only mount) instead of sending `ACCESS`. The answers are the ones `access` gave: read for
+  everyone, no write (`EROFS`), no execute on files. *Trade-off:* none found; `access` is kept for a
+  mount made without the option.
+- **`readdirplus`** (`FUSE_DO_READDIRPLUS` with `FUSE_READDIRPLUS_AUTO`): a listing carries each
+  entry's attributes and TTL, the same as its `lookup` would, so a server that lists a folder and
+  then looks at each entry sends no `LOOKUP` per entry. With `AUTO` the kernel asks for it only
+  when lookups follow listings, as libfuse does by default. Art in an area comes with a zero timeout, as from
+  its `lookup` (#235), so the kernel still asks about it each time. A name whose node was just let go of
+  (#237) is left out of that page of the listing, and shows again in the next; short of memory the
+  listing fails with `ENOMEM`, as `readdir` does.
+- **Track files keep the 24-hour TTL in an area** even though the area is re-read for its art: the
+  art never changes a track's name, number or attributes. Since #95 every area holding an image has
+  an art watch, so every track's name was looked up again on any listing more than 2 s after the
+  last, which nothing else needed.
+
+*Measured* with the kernel's `fuse:fuse_request_send` tracepoint through the container's Samba 4.24.7
+and the Linux kernel client, 95 images, 2,412 entries: a first `ls -lR` 6,897 requests on 0.4.1 and
+1,765 after, a repeat 30 s later 6,469 and 1,555 ([deployment](deployment.md#what-a-listing-costs-over-smb)).
+*Left:* per folder, an `OPENDIR`/`RELEASEDIR` pair, two listing reads, a `STATFS` from Samba's reopening
+of the folder's path handle, and a `LOOKUP` for a folder that is re-read. *Not done:* answering
+`OPENDIR` with `ENOSYS` (the kernel then stops sending `OPENDIR` and `RELEASEDIR` for the mount),
+because the kernel then caches every listing, including those of folders that are re-read, which
+would rely on their mtime moving for every change, and an area's does not move when its art does.
+Test: `tests/probes.rs` `a_listing_repeated_later_asks_for_no_track_again`.
+
+Art in an area is the exception to the long cache (#235). A listing is made again at most once per
+refresh interval, so for up to that long it can name a file that was replaced or removed, and
+`cover.jpg` (an alias of whichever image is picked, #148) can stand for a file that has just gone.
+A lookup of such a name therefore compares the source file with what was listed (one `fstatat`); if
+it changed, or an open finds it changed or gone (a file gone since the kernel was told of it is
+`ESTALE`, so the kernel looks the name up again), a counter moves and every area reads its art again
+at its next look, whatever its directory's time. Replies for these names carry a zero timeout, so the
+kernel asks again each time and never keeps a number whose file is gone. *Why not keep the old
+inode for `cover.jpg`:* the alias is the same node as the image's other name (the same inode, #148),
+and a second, stable inode would break that. *Why not serve the old bytes:* once a file is replaced
+there is nothing to read them from, and the sizes the kernel holds would clip the new bytes.
+*Cost:* one extra `LOOKUP` and `fstatat` per access to an art file in an area.
 
 Two kinds of probe are answered so that the kernel stops asking (#61):
 
@@ -2244,7 +2289,7 @@ the owner's NAS already used.
   ranges of every corpus case read through sacdfs equal reads through a complete library index
   and a straight library read; provisional library readings on an image made for it (late audio
   sectors written again near an area's start) differ from the exact ones and are all refuted;
-  an ignored test, `real_discs`, does the same on local real discs (`SACDFS_REAL_IMAGES`).
+  an ignored test, `real_discs`, does the same on local real discs (`scripts/real-discs.sh DIR`).
 - **DSF header reads:** `tests/dsf_header.rs` reads every DSF file of the corpus as the
   kernel does for a tagger (128 KiB at 0, 128 KiB at 128 KiB, the tag's page): none of the
   reads starts read-ahead, and a player reading on starts it exactly at 256 KiB.
@@ -2272,7 +2317,7 @@ the owner's NAS already used.
   reads no audio sector and fills no cache; a sequential read makes about as many calls to the
   image as the DSF file's. `tests/mount.rs` reads every WAV file through the kernel and
   compares it with the library, and checks `--format` and `--pcm-*`. An ignored test,
-  `real_discs`, runs the stream check on local real discs (`SACDFS_REAL_IMAGES`).
+  `real_discs`, runs the stream check on local real discs (`scripts/real-discs.sh DIR`).
 - **The converter:** `tests/pcm.rs` and the unit tests of `src/pcm.rs` (quality against the
   targets, silence, determinism, pinned hashes), black-box on scarletbook-pcm; see
   [pcm-quality.md](pcm-quality.md).

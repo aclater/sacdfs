@@ -5,7 +5,6 @@ All notable changes to sacdfs are recorded here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
 ### Added
 
 - **Players on the same host read the mount directly, with no SMB hop (#186).** The container's mount
@@ -30,6 +29,23 @@ All notable changes to sacdfs are recorded here. The format follows
   matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
 
 ### Changed
+
+- **A listing over SMB asks sacdfs about a quarter as often (#205).** A first `ls -lR` through the container's
+  Samba took 1,765 requests to sacdfs for 2,412 entries, down from 6,897; repeated 30 s later, 1,555, down from
+  6,469. The kernel now checks access from the modes itself (Samba's `ACCESS` per entry is gone), listings
+  carry each entry's attributes (`readdirplus`, no `LOOKUP` per entry), and a track's name and attributes are
+  kept for a day again: since folder art in the areas (#95) they were kept for 2 s, and every listing after
+  that asked for every track once more. The container's Samba also keeps the free space for a minute
+  (`dfree cache time = 60`). What a client sees and reads is unchanged. See
+  [deployment](docs/deployment.md#what-a-listing-costs-over-smb), which lists the Samba settings to use
+  with your own Samba.
+
+- **The real-disc tests are runnable and strict (#220).** `scripts/real-discs.sh DIR` runs the three
+  tests on a directory of real images and exits 0 only if all three ran and passed; with no images it
+  reports a skip (exit 77), not a pass. `library_index::real_discs` used to pass when an image failed
+  to open; now an image that doesn't open or compares nothing fails the run, as does one that serves
+  no file in the DSF and WAV tests. The release test plan has a step for them. Tests only; no
+  change to the program.
 
 - **A memory limit no longer gets sacdfs killed while listing (#237, #231).** Under a cgroup limit, what
   listed images hold is kept to a budget (`--listing-mb`, `SACDFS_LISTING_MB`, default 3/8 of the
@@ -122,6 +138,17 @@ All notable changes to sacdfs are recorded here. The format follows
   fell up to 0.77 s behind, and up to 14 of about 700 reads were more than 0.5 s late.
   At 8 MiB, the default under a memory limit up to 512 MiB (#240), the player held real time with no
   read more than 0.5 s late, and whole-file scans ran 18 to 28 % slower than at 32 MiB.
+- **`cover.jpg` no longer disappears for about a second when a cover is replaced (#235).** In the
+  `Stereo` and `Multichannel` folders, art whose source file had been replaced or removed failed to
+  open (`ESTALE`, or `ENOENT` for `cover.jpg` when the file it stood for was removed) until the area
+  was read again, up to the refresh interval later. Now each lookup of an art file in an area compares
+  it with its source file and, if it changed, reads the art again at once; the kernel asks again each
+  time for these names instead of remembering them. A cover written in place (no directory time moves)
+  used to stay unreadable for good, until something else made the area read again; it now shows the new
+  file at once. Measured with a poller that `stat`s, lists and reads `cover.jpg` during six
+  replacements of each kind: on 0.4.1, `rename` over the file failed 1395 of 3326 polls, in place
+  25995 of 25995 (the new art never showed), and adding a new file while removing the old one 2001
+  of 3602; with the fix, none. `scripts/soak.py` no longer allows a `cover.jpg` error.
 - **NFS clients keep their handles when the container restarts, under any runtime (#218).** Under
   Podman, nearly every restart gave `Stale file handle` on open files, `stat` and `ls`, until a
   remount; under Docker it could happen too. NFS-Ganesha's handles no longer hold the FUSE mount's
