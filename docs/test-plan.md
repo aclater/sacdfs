@@ -54,9 +54,10 @@ other) must give each build the same load. A PR that is risky for the read path 
 shorter, stall-heavy soak before it merges; that run does not replace the candidate's soak.
 
 **What the soak does not cover.** It does not exercise a long hang of one image's source with
-clients that keep retrying: the retries can use every read thread of the mount
-([#241](https://github.com/aclater/sacdfs/issues/241), open, a documented limit of 0.4.1). A pass
-does not say this case is safe.
+clients that keep retrying, which could use every read thread of the mount up to 0.4.1
+([#241](https://github.com/aclater/sacdfs/issues/241)). `tests/stall.rs` covers that case
+(`retrying_clients_of_a_stalled_image_leave_threads_to_the_others`); a soak pass says nothing
+about it.
 
 **Status of this rule.** It is new in this revision and has not been applied to a release yet:
 its first use is the decision on the 0.4.1 final, where it is untested as a process.
@@ -222,7 +223,8 @@ comparable. Every timed run is under the benchmark lock. Other jobs on the same 
   steady climb of 10 MiB/h still fails, a 2-hour run catching about 5 MiB/h and up); threads at the
   first half's median + 4 at the median and end, with a spike above median + 16 allowed for under two
   minutes and never above median + 32; open files and cache directory level. Whether a candidate needs one is decided by [When a soak is needed](#when-a-soak-is-needed).
-  It does not cover a long hang with retrying clients ([#241](https://github.com/aclater/sacdfs/issues/241)).
+  It does not cover a long hang with retrying clients ([#241](https://github.com/aclater/sacdfs/issues/241)),
+  which `tests/stall.rs` covers.
 - Weekly leak checks and fuzzing are green on the release commit. For 0.4.1 the fuzz workflow was
   green on the rc.1 tag commit. The `leaks` workflow's first run was on this release and it failed
   because its own checks were broken (a fix is [#226](https://github.com/aclater/sacdfs/pull/226));
