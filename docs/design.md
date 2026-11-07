@@ -1724,8 +1724,24 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   release builds against glibc instead, on **UBI 8** (RHEL 8's glibc 2.28) so that one binary
   covers RHEL 8 and later, Debian 10, Ubuntu 20.04 and Fedora 29 and later. CI fails the build
   if the binary needs a newer glibc symbol. Older bases (glibc 2.17, CentOS 7) are out of
-  support and not Red Hat's current images. *Possible later:* musl with a faster allocator
-  (mimalloc), measured against this.
+  support and not Red Hat's current images.
+- **Static musl builds as well, with jemalloc (#244, draft, awaiting the owner's decision).**
+  *Why:* a system with a glibc older than 2.28 (QNAP's QuTScloud 5.2.9 has 2.21) could not
+  start the glibc build, and a static binary needs nothing from the system's C library. The
+  slowness above looks like musl's allocator: on a loaded machine (not a speed claim; the
+  timed comparison is pending), a real DST disc's stereo area read through a fresh mount
+  took about the same time with jemalloc or mimalloc as with the glibc build, against about
+  1.3 (DSF) and 1.5 (WAV) times longer with musl's malloc. Peak memory of the same reads
+  (VmHWM): glibc build 59 to 66 MiB, musl's malloc 57 to 64, mimalloc with its defaults 208
+  to 341, mimalloc with eager arena commit off 102 to 166, jemalloc with 4 arenas 83 to 105,
+  jemalloc with one arena and freed pages returned at once
+  (`narenas:1,dirty_decay_ms:0,muzzy_decay_ms:0`) 83 to 88. That last is used. *Trade-off,
+  if accepted:* a C allocator in the musl builds (built by musl-gcc), a peak about 20 to 25 MiB
+  above the glibc build's, glibc's tuning (`malloc_trim`, the arena limit) absent there, and two more builds
+  in each release. The glibc builds stay the main ones. *Alternatives:* a glibc 2.17 build
+  (zig as the linker, which links against 2.17's symbols; glibc's
+  malloc and speed unchanged, but a new toolchain in the release and no build image from a
+  vendor), or no binary for such systems (container only).
 - **Two builds: generic x86-64 and x86-64-v3,** `-C target-cpu` always explicit, since RHEL's
   Rust defaults to x86-64-v3. Generic runs everywhere and already converts with AVX2 where
   the CPU has it (#23); v3 compiles the rest of sacdfs and scarletbook for AVX2 as well. The
