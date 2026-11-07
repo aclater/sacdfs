@@ -188,7 +188,6 @@ impl<T: Transport> Client<T> {
         if let Some(wait) = self.last.and_then(|l| self.interval.checked_sub(l.elapsed())) {
             thread::sleep(wait);
         }
-        self.last = Some(Instant::now());
         self.requests += 1;
     }
 
@@ -200,7 +199,12 @@ impl<T: Transport> Client<T> {
         for attempt in 0..ATTEMPTS {
             self.pace();
             let mut wait = self.backoff.saturating_mul(1 << attempt);
-            match self.transport.get(url) {
+            let answer = self.transport.get(url);
+            // The gap is measured from the end of the last request, so it is never shorter than
+            // the interval between two requests, however long the first took to be sent. Noting
+            // the time before the transport sends lets a delay in sending eat into the gap.
+            self.last = Some(Instant::now());
+            match answer {
                 Ok(r) if r.status == 403 => {
                     return Err(Error::Stop("HTTP 403: the service refuses this client".to_owned()));
                 }

@@ -219,6 +219,11 @@ stop_all() {
 trap 'stop_all; exit 0' TERM INT
 
 mountpoint -q "$MNT" && fusermount3 -u -z "$MNT" 2>/dev/null || true
+# A host directory bound over /srv to share the mount with other containers on the same host
+# (docs/deployment.md, "Players on the same host") hides the image's /srv/sacd: make it there.
+# A dead mount left there by a sacdfs that was killed fails the mkdir ("Transport endpoint is
+# not connected"); sacdfs detaches that one itself (#57), so the error is not fatal.
+mkdir -p "$MNT" 2>/dev/null || true
 log "sacdfs ${args[*]} $SOURCE $MNT"
 sacdfs "${args[@]}" "$SOURCE" "$MNT" &
 pids+=($!)

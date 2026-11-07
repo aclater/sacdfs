@@ -20,7 +20,7 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 |---|---|---|---|---|---|
 | [Roon](#roon) | Roon 2.x (Roon Server official image); 2.74 build 1719 on 0.4.1-rc.1 | 0.1.1, 0.2.0-rc.1 to rc.4, 0.2.0 final, 0.4.1-rc.1 | SMB, same NAS | Works (0.4.1-rc.1: no regression, no extended-attribute requests in a Force Rescan) | Use `dsf` only; needs the SMB-mount rights; art and playlists work; picks up upgrades by itself; multichannel areas are separate albums |
 | [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4, 0.4.1-rc.1 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 0.4.1-rc.1: healthy, upgrade and rollback from 0.4.0 fine, 279 untitled tracks named, 3 albums (26 tracks) still blank in Plex (cause unknown); 0.1.1: 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used ([#95](https://github.com/aclater/sacdfs/issues/95)) |
-| [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
+| [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.4.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
 | [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
 | [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
 | [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
@@ -42,7 +42,7 @@ are the only client results on rc.3. The table above keeps each client's last fu
   non-ASCII names, the known problem.
 - **Navidrome, Lyrion and MPD,** `dsf,wav`: 186 files and 7 albums each, matching rc.1.
 - **Jellyfin: not verified on rc.3.** The test harness never created the library, so the run says
-  nothing about sacdfs. Its last result is 0.4.1-rc.1.
+  nothing about sacdfs. It was re-run on the 0.4.1 release instead and matched; see [Jellyfin](#jellyfin).
 - **Roon and Plex:** their test deployments run the rc.3 image and the share lists the library. No
   player was driven on rc.3.
 - **Not run on rc.3:** Windows, macOS, foobar2000, JRiver, MinimServer and the Tier 2 tools.
@@ -177,6 +177,8 @@ times; see [restarts and rescans](#restarts-and-rescans).
 - 20 of the 291 images were not seen in Plex's paths in that run, and the cause was not found.
 
 ## Jellyfin
+
+**0.4.1** (release binary, generic x86-64; same image 12.4.0, 2 CPUs, same 5 images): two fresh scans per format on a quiet host gave the same counts, albums, art and bytes served as 0.4.0-rc.2. 93 of 93 with `dsf` and 186 of 186 with `dsf,wav`; 7 albums, each multichannel area its own "… (Multichannel)" album; 6 of 7 with art. The first scan read 17.9 MiB with `dsf` and 648.5 MiB with `dsf,wav`. sacdfs peaked at 30 MiB RSS with `dsf` and 52 MiB with `dsf,wav`, with no errors or warnings in its log. Scans took 43 to 47 s with `dsf` and 45 to 53 s with `dsf,wav`. A 5.1 DST track and a stereo track transcoded to MP3 for their full length; a transcode started at 60 % sent its first bytes in under 10 ms, and a direct read of a file's first 4 MiB took 4 to 17 ms. LUFS normalization was not re-measured. The earlier "0 albums" runs were a race in the test script: it added the library while Jellyfin's own startup scan ran, and that scan dropped the refresh. The script now waits for Jellyfin to be idle, adds the library, then starts the scan itself.
 
 **0.4.1-rc.1:** same image (12.4.0), 93 of 93 with `dsf`, 186 of 186 with `dsf,wav`, 7 albums with distinct names (2 "… (Multichannel)"), art for 5 or 6 of 7 (it fetches online art for some); first scan on a quiet host 52.5 s on both 0.4.0 and rc.1 (one run each); the LUFS task 508 s on rc.1 against 478 s on 0.4.0 (+6 %, one run each, 39.6 and 39.8 GiB served). Twice, 0.4.0 was the first Jellyfin start of a run and reported 0 albums after 8 s while sacdfs saw no reads; the same binary worked on its next run, so this is taken as a race in the test script, not a sacdfs result.
 
