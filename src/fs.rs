@@ -39,7 +39,9 @@ const TTL: Duration = Duration::from_secs(24 * 3600);
 /// How long a reading of the source's size is used before it is read again.
 const STATFS_REFRESH: Duration = Duration::from_secs(60);
 
-/// Largest read the kernel is asked to send, and its read-ahead.
+/// Largest read the kernel is asked to send, and the read-ahead it is asked for. It grants
+/// no more read-ahead than it offers, 128 KiB unless root has raised the mount's
+/// `read_ahead_kb`, so reads through the page cache arrive 128 KiB at a time (#210).
 pub const MAX_READ: u32 = 1 << 20;
 
 type Job = Box<dyn FnOnce() + Send>;
@@ -952,6 +954,7 @@ impl Filesystem for SacdFs {
             match result {
                 Ok(Ok((data, ahead))) => {
                     reply.data(&data);
+                    crate::track::give_back(data);
                     if let Some(ahead) = ahead {
                         pool.spawn(move || {
                             let _ = catch_unwind(AssertUnwindSafe(|| reader.read_ahead(&engine, ahead)));

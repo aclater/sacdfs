@@ -72,3 +72,25 @@ fn readers_of_one_disc_on_several_threads() {
     });
     assert!(handles::global().open_count() <= 2);
 }
+
+/// Fast readers of DSF files share a quarter of the cache (#210): one keeps it all, four don't
+/// fill the cache between them, and nobody falls below the 2 s window. Few threads never reach it.
+#[test]
+fn fast_readers_share_a_quarter_of_the_cache() {
+    let t = tree(Tuning::default());
+    let all = t.all_files();
+    let (_, f) = all
+        .iter()
+        .find(|(p, _)| p.extension().is_some_and(|e| e == "dsf"))
+        .expect("a DSF file in the corpus");
+    let frame = 4704 * u64::from(f.layout.channels);
+    let cache = 32usize << 20;
+    let quarter = (cache as u64 / 4 / frame) as u32;
+    let by_threads = 32 * 32;
+    assert_eq!(f.read_ahead_frames(32, cache, 1), by_threads.min(quarter).max(150));
+    let four = f.read_ahead_frames(32, cache, 4);
+    assert_eq!(four, by_threads.min(quarter / 4).max(150));
+    assert_eq!(f.read_ahead_frames(32, cache, 1000), 150);
+    assert_eq!(f.read_ahead_frames(4, cache, 1), 150);
+    assert_eq!(f.read_ahead_frames(32, cache, 0), f.read_ahead_frames(32, cache, 1));
+}
