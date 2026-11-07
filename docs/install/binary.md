@@ -1,7 +1,8 @@
 # sacdfs without a container: release binary, crates.io or source
 
-sacdfs runs on Linux (x86_64 and aarch64) and, unless run as root, needs FUSE 3's `fusermount3`
-helper (package `fuse3` on most distributions). Each [release](https://github.com/aclater/sacdfs/releases)
+sacdfs runs on Linux (x86_64 and aarch64). As a user other than root it needs FUSE 3's
+`fusermount3` (package `fuse3` on most distributions), or from 0.5.0 FUSE 2's `fusermount` where
+that is all there is; root needs neither. Each [release](https://github.com/aclater/sacdfs/releases)
 has three builds. From 0.4.0, sacdfs is also on crates.io (`cargo install sacdfs`,
 [below](#from-source); #155). Tested on 0.4.0: `cargo install --locked sacdfs` in a clean
 `rust:1.99.1` container, with no other packages, installs a working `sacdfs`.
@@ -24,7 +25,7 @@ needed 2.28). Every release build is checked in CI to need no newer glibc symbol
 builds mount the test corpus in a UBI 7 container (glibc 2.17) with the same bytes as on a
 current system. It also runs on QNAP's QuTScloud 5.2.9 (glibc 2.21; [qnap.md](qnap.md)). Kernels
 older than 4.18 (RHEL 7's 3.10, for instance) are untested. Run as root, sacdfs mounts without
-`fusermount3`. With glibc 2.28 builds (0.4.1), the generic build was tested on the oldest of
+any FUSE helper. With glibc 2.28 builds (0.4.1), the generic build was tested on the oldest of
 RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, with their own kernels (4.18 to 5.4) and
 `fusermount3` (3.3 to 3.9): mounting in the foreground and in the background, with and
 without `--allow-other`, reads identical to a current system, and a clean stop on SIGTERM
@@ -50,7 +51,8 @@ Sigstore) shows that this repository's release workflow built it, from which com
 ## From source
 
 sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through `/dev/fuse`
-and mounts with `fusermount3`, without linking libfuse.
+and, as a user other than root, mounts with `fusermount3` (or FUSE 2's `fusermount`), without
+linking libfuse.
 
 ```sh
 cargo install --locked sacdfs     # from crates.io, from 0.4.0

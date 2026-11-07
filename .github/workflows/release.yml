@@ -370,7 +370,7 @@ jobs:
             echo
             echo "## Downloads"
             echo
-            echo "Linux binaries, glibc 2.17 or later (RHEL 7 era and later), needing FUSE and, unless run as root, \`fusermount3\` (package fuse3):"
+            echo "Linux binaries, glibc 2.17 or later (RHEL 7 era and later), needing FUSE and, as a user other than root, FUSE 3's \`fusermount3\` (package fuse3) or FUSE 2's \`fusermount\`; root needs neither:"
             echo
             echo "- \`sacdfs-$VERSION-x86_64-linux.tar.gz\`: generic x86-64, for any x86_64 CPU."
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
