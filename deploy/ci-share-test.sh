@@ -4,7 +4,8 @@
 # The container share test (CI): serve the corpus from an image of the Containerfile and read
 # it back over SMB and NFS from a client container with kernel mounts, checking every track's
 # hashes against the corpus manifest; keep reading open files across a server restart, under
-# Docker and Podman (deploy/ci-restart-test.sh); then user access, DSF only, flattened.
+# Docker and Podman (deploy/ci-restart-test.sh); a player container on the same host reading the
+# mount directly (deploy/ci-same-host-test.sh); then user access, DSF only, flattened.
 #
 #   deploy/ci-share-test.sh IMAGE
 #
@@ -87,6 +88,10 @@ group "Keep reading across a server restart (Podman)"
 command -v podman >/dev/null || sudo apt-get install -y -q --no-install-recommends podman
 podman_image=$(docker save "$image" | sudo podman load -q | sed -n 's/^Loaded image[^:]*: //p' | head -n 1)
 RUNTIME="sudo podman" "$here/ci-restart-test.sh" "sudo podman" "$podman_image"
+endgroup
+
+group "Players on the same host read the mount directly (#186)"
+"$here/ci-same-host-test.sh" "$image"
 endgroup
 
 group "User access, DSF only, flattened"
