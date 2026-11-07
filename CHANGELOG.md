@@ -6,6 +6,19 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Players on the same host read the mount directly, with no SMB hop (#186).** The container's mount
+  can be shared through a host directory bound over `/srv` with `rshared`, and a player container
+  binds that directory with `ro,rslave`. Validated on TrueNAS SCALE 25.10 (Docker, Navidrome) and on
+  rootful Podman (Jellyfin): the player sees the tree again by itself after a restart, an update or a
+  crash of sacdfs, without a restart of its own; a file open during a restart fails once the runtime
+  stops sacdfs. Rootless Podman can't share the mount this way. See
+  [deployment](docs/deployment.md#players-on-the-same-host-no-smb-hop).
+- **The container makes `/srv/sacd` itself** when a host directory is bound over `/srv`, so that
+  directory can start empty. A dead mount left there by a killed sacdfs doesn't stop the start: sacdfs
+  detaches it, as before. CI checks both on every pull request (`deploy/ci-same-host-test.sh`).
+
 ## [0.4.1] - 2026-11-07
 ### Changed
 ### Changed

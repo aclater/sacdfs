@@ -78,5 +78,15 @@ published 10445. This was observed with the 0.4.0-rc.2 image, where Plex could m
 only on 445 and a container address on a custom bridge network worked, as in [roon.md](roon.md);
 it was not re-run with 0.4.0, because that would mean changing another app on the NAS.
 
+## Players on this NAS, without SMB
+
+A player installed as a custom app on the same NAS (Navidrome, Jellyfin, ...) can read sacdfs's
+mount directly instead of through a share: give sacdfs a dataset of its own (for example
+`pool/apps/sacdfs-mnt`) bound over `/srv` with `rshared`, and bind the same dataset into the player
+with `ro,rslave`; the player's library is then `/music/sacd`. Validated on TrueNAS SCALE 25.10.7 with
+the 0.4.1 image, as one app with Navidrome and as two apps, through restarts, updates and a crash of
+sacdfs. The YAML, what happens on a restart and what to avoid (catalog apps can't set `rslave`) are
+in the [deployment guide](../deployment.md#players-on-the-same-host-no-smb-hop).
+
 Not validated in this form: a host-path dataset for the cache (the test used the named volume
 above) and an alias address for port 445. Roon on the same NAS: [roon.md](roon.md).
