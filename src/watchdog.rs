@@ -30,7 +30,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::Thread;
 use std::time::{Duration, Instant};
 
-use fuser::{Errno, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen};
+use fuser::{
+    Errno, ReplyAttr, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyOpen,
+};
 
 /// How long a request may wait by default before it fails.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -50,7 +52,7 @@ macro_rules! fail_impl {
         }
     )*};
 }
-fail_impl!(ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen);
+fail_impl!(ReplyAttr, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyOpen);
 
 /// What a request asks for, for the log line of one that timed out.
 pub struct What {

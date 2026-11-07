@@ -457,8 +457,8 @@ fn side_by_side_names() {
     assert_eq!(merged, both);
 }
 
-/// The same checks on real discs, run locally: `SACDFS_REAL_IMAGES=DIR cargo test --release
-/// --test wav real_discs -- --ignored --nocapture` (optionally `SACDFS_PCM_RATE=88200`).
+/// The same checks on real discs, run by `scripts/real-discs.sh DIR`
+/// ([docs/development.md](../docs/development.md#real-disc-tests); optionally `SACDFS_PCM_RATE=88200`).
 /// Every WAV file's audio equals its positions of the area stream (compared by SHA-256,
 /// streaming, so that a whole area need not fit in memory), and random ranges equal the
 /// straight read.
@@ -466,22 +466,17 @@ fn side_by_side_names() {
 #[ignore = "needs real disc images: set SACDFS_REAL_IMAGES"]
 fn real_discs() {
     use sha2::{Digest, Sha256};
-    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else {
-        common::skip!("needs real disc images: set SACDFS_REAL_IMAGES")
-    };
+    let (dir, images) = common::real_images_or_skip!();
     let rate = match std::env::var("SACDFS_PCM_RATE").ok().as_deref() {
         Some("88200") => PcmRate::R88200,
         Some("352800") => PcmRate::R352800,
         _ => PcmRate::R176400,
     };
     let cfg = config(rate);
-    let tree = Tree::with_options(
-        SourceDir::scan(std::path::Path::new(&dir)).unwrap(),
-        Tuning::default(),
-        output(rate, false),
-    );
+    let tree = Tree::with_options(SourceDir::scan(&dir).unwrap(), Tuning::default(), output(rate, false));
     let engine = Engine::with_pcm(0, 256 << 20, cfg).unwrap();
     let files = wav_files(&tree);
+    common::assert_every_image_served(&images, files.iter().map(|(_, f)| f.disc.path.clone()));
     // Group by disc and area.
     let mut areas: BTreeMap<(std::path::PathBuf, usize), Vec<Arc<TrackFile>>> = BTreeMap::new();
     for (_, f) in &files {

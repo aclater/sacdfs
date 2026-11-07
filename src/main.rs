@@ -395,6 +395,11 @@ fn run(args: Args) -> io::Result<()> {
         MountOption::NoDev,
         MountOption::NoSuid,
         MountOption::NoExec,
+        // The kernel checks access from the modes itself (0555 folders, 0444 files, a
+        // read-only mount: the same answers `access` gave), instead of asking sacdfs for
+        // every access(2) and chdir(2). Samba changes directory for nearly every SMB request:
+        // about one ACCESS per entry listed (#205).
+        MountOption::DefaultPermissions,
         MountOption::CUSTOM(format!("max_read={MAX_READ}")),
     ];
     if args.allow_other {
