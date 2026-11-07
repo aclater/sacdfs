@@ -5,20 +5,11 @@ All notable changes to sacdfs are recorded here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
-
-- **The release binaries need glibc 2.17, not 2.28 (#244).** They now run on systems with an
-  older glibc, such as QNAP's QuTScloud 5.2.9 (glibc 2.21), where 0.4.1 did not start. They are
-  linked against glibc 2.17's symbols with zig (cargo-zigbuild) and run at the same speed as
-  before (design.md, "Release binaries"). Static musl builds were measured and not chosen: up to
-  2.6 times slower with musl's malloc, and slower on plain DSD discs or much larger in memory
-  with other allocators.
 
 ### Added
 
 - **An aarch64 release binary**, `sacdfs-<version>-aarch64-linux.tar.gz`, built and tested the
   same way.
-### Added
 
 - **Players on the same host read the mount directly, with no SMB hop (#186).** The container's mount
   can be shared through a host directory bound over `/srv` with `rshared`, and a player container
@@ -79,6 +70,14 @@ All notable changes to sacdfs are recorded here. The format follows
   are 10 to 14 % faster than without this change; stereo and WAV with one reader are unchanged within the
   spread. On 2 or 4 cores under a 256 or 512 MiB limit, sacdfs peaks
   at most 3 MiB higher with a player and a copy running.
+- **The release binaries need glibc 2.17, not 2.28 (#244).** They now run on systems with an
+  older glibc, such as QNAP's QuTScloud 5.2.9 (glibc 2.21), where 0.4.1 did not start. They are
+  linked against glibc 2.17's symbols with zig (cargo-zigbuild) and run at the same speed as
+  before (design.md, "Release binaries"). Static musl builds were measured and not chosen: up to
+  2.6 times slower with musl's malloc, and slower on plain DSD discs or much larger in memory
+  with other allocators.
+
+
 - **A listing over SMB asks sacdfs about a quarter as often (#205).** A first `ls -lR` through the container's
   Samba took 1,765 requests to sacdfs for 2,412 entries, down from 6,897; repeated 30 s later, 1,555, down from
   6,469. The kernel now checks access from the modes itself (Samba's `ACCESS` per entry is gone), listings
