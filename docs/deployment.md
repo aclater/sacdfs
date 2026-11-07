@@ -258,7 +258,7 @@ holds is not given back, so the idle size grows with the library: 39 MiB at 10 m
 ### Small NAS: sizing
 
 What a small NAS needs for the container, measured on 0.4.1-rc.1 (single runs). The container
-was limited to 2 or 4 CPUs of an Intel N100-class chip (Gracemont E-cores at about 2.6 GHz) and
+was limited to 2 or 4 CPUs of Gracemont E-cores (rig A below, about 2.7 GHz under load) and
 to the memory below; SMB was over loopback, and the library was on network-attached disks. The
 figures are container limits, not whole-box RAM: a NAS's own services need their share, and
 whole-box sizes were not tested. The current `main` has #224, which matched or beat these
@@ -267,7 +267,7 @@ images at 274 MiB against 275), but the limits below were not re-run on it.
 
 | | CPUs | Limit for sacdfs plus Samba | Library |
 |---|---|---|---|
-| Minimum | 2 N100-class cores | 256 MiB | up to about 2,000 images at the default settings |
+| Minimum | 2 E-cores (rig A below) | 256 MiB | up to about 2,000 images at the default settings |
 | Recommended | 4 cores | 512 MiB | up to about 5,000 images (about 312 MiB used) |
 
 Add about 40 MiB if NFS is on (`NFS=1`, the default). To set such a limit,
@@ -287,17 +287,69 @@ MiB at 1,600 images).
   cache 8). 96 MiB played, but a whole-file scan killed it. 64 MiB was killed during playback.
   Do not size a container to these floors.
 
-**Playback** on 2 E-cores and 256 MiB: stereo and 6-channel DST, DSF and WAV, with one or two
-players, had no late reads with a 0.25 s buffer. The headroom for 6-channel at cache 32 was 11.8
-times real time for DSF and 9.7 times for WAV.
+**Playback.** Two rigs were measured, both on E-cores (Gracemont), and they differ by a constant
+factor. Rig A is the E-cores of a mobile Intel Core i9 at about 2.7 GHz under load, with the
+container on the same host and SMB over loopback (0.4.1-rc.1, and rc.3 for the scan cells below).
+Rig B is the E-cores of a 15 W Intel Core i5 in a NAS, with a client on another host over wired SMB
+(0.4.1-rc.2 and rc.3). Neither is an N100; the figures above were first described as N100-class,
+which was wrong. Between rc.1 and rc.2 nothing changed on the read or decode path, and the headroom
+on rig B is 0.77 to 0.78 times that of rig A in each of the four cells compared (2 and 4 cores, DSF and
+WAV), so the difference is the CPU, not the release.
 
-**Known limit.** A whole-file WAV scan starves a 6-channel WAV player on 2 cores: the player
-fell about 13 s behind
-([#230](https://github.com/aclater/sacdfs/issues/230)). A smaller cache helps, at a cost. On 4
-cores, `SACDFS_CACHE_MB=8` left the player 0.10 s behind, against 11.2 s with four scanners at the
-default cache; but a whole-file WAV scan dropped from about 61 to 22 MB/s, and the 6-channel WAV
-headroom from 18 times to 7 times real time. Memory at the floors is
-[#231](https://github.com/aclater/sacdfs/issues/231).
+- **Late reads.** On 2 E-cores and 256 MiB, stereo and 6-channel DST, DSF and WAV, with one or two
+  players and no other load, had no late reads with a 0.25 s buffer (rig A, rc.1). The second
+  player of a pair re-read a position the first test had read, so for that case only the second
+  player's reads are a first read.
+- **Headroom** (one player reading as fast as it can, default cache, no other load; page cache does
+  not change it, because a reader of that speed passes through far more data than the cache
+  holds):
+
+  | 6-channel | 2 cores, 256 MiB, rig A | 4 cores, 512 MiB, rig A | 4 cores, 512 MiB, rig B | 2 cores, 256 MiB, rig B |
+  |---|---|---|---|---|
+  | DSF | 11.8 times real time | 22.0 | 17.1 | 9.1 |
+  | WAV | 9.7 | 18.3 | 14.1 | 7.5 |
+
+  Rig A: rc.1, single runs. Rig B: rc.2, single runs.
+
+**Known limit.** On a fresh cache, whole-file WAV scans starve a 6-channel WAV player. "Scan" means
+a client that reads whole files, such as a library import that copies or fingerprints them; a scan
+that reads only the start, middle and end of each file does not (the player stayed within 0.2 s).
+It happens on 2 cores and on 4 cores, with the default cache of 32 MiB
+([#230](https://github.com/aclater/sacdfs/issues/230)). Speed relative to real time is the figure to
+read; "seconds behind" is capped by the 30 s test length. rc.3, a fresh container per condition, the
+scanners never reading the player's track, one 30 s read of a position not read before, medians
+and ranges of 3 rounds:
+
+| 6-channel WAV player | Cache | 2 cores, 256 MiB, rig A | 4 cores, 512 MiB, rig A | 4 cores, 512 MiB, rig B |
+|---|---|---|---|---|
+| 1 whole-file scanner | 32 (default) | 0.47 times real time (range 0.46 to 0.48) | 1.00 (0.96 to 1.00), 3.4 s behind | 0.66 (0.65 to 0.93) |
+| | 16 | 0.46 (0.46 to 0.52) | 0.99 (0.95 to 1.00), 2.8 s behind | 0.66 (0.65 to 0.66) |
+| | 8 | 1.00 (1.00 to 1.00) | 1.00, 0.0 s behind | 1.00 |
+| 4 whole-file scanners | 32 (default) | 0.28 (0.26 to 0.31) | 0.43 (0.39 to 0.45) | 0.38 (0.29 to 0.39) |
+| | 16 | 0.36 (0.29 to 0.80) | 0.94 (0.77 to 1.00) | 0.58 (0.56 to 0.59) |
+| | 8 | 0.97 (0.95 to 0.98), 1.3 s behind | 1.00, 0.1 s behind | 1.00, 0.1 s behind |
+
+A stereo DSF player with 4 whole-file scanners on 4 cores stayed at 1.01 times real time and at
+most 0.3 s behind at every cache size, on both rigs. Rig B's runs had a heavily loaded client
+(load average 40 to 135 on the client host), so the default-cache cells there carry more spread;
+the cache-8 cells at 1.00 do not depend on it. Out-of-memory kills: none. Rig B on 2 cores was not run on rc.3; on rc.2 at the default cache it
+was 0.45 times real time with one scanner and 0.28 with four, and other caches were not tried.
+
+A smaller cache removes the starvation in these runs: `SACDFS_CACHE_MB=8` (`--cache-mb 8`) kept the
+player at real time with 1 and with 4 scanners on 2 and on 4 cores, on both rigs. `16` is not
+enough on rig B or on 2 cores. It costs speed for everyone else. Measured on rc.3 on rig A, 3 rounds each, fresh container, medians
+(range within 2 for scans and 0.4 for headroom): with 4 cores, whole-file WAV scans run at 61 MB/s
+at cache 32 and 16 and 23 MB/s at cache 8, and a 6-channel WAV reader reading as fast as it can
+reaches 18.9 times real time at 32, 18.8 at 16 and 7.0 at 8. With 2 cores: scans 34, 33 and 14 MB/s;
+headroom 9.9, 9.9 and 4.3 times real time. Cache 16 therefore costs nothing measurable, but
+starvation is only partly cured by it (table above). On rc.1 the same figures were about 61 and 22
+MB/s and 18 and 7 times real time.
+Memory at the floors is [#231](https://github.com/aclater/sacdfs/issues/231). The earlier version of
+this section gave 0.31 s behind with one scanner and 11.2 s with four on 4 cores at the default
+cache; both were taken with a player re-reading a position it had read before, and the 0.31 s was
+wrong (see the table).
+
+Not re-run on rc.3: the no-load headroom table above (rc.1 and rc.2 figures), rig B's cost of cache 8, and the 128 MiB and 96 MiB memory floors.
 
 **Idle.** sacdfs used 0.007 % of a CPU and woke 1.5 times a second, and 5 minutes of `strace`
 showed no image reads and no metadata calls, so sacdfs itself does not keep a disk awake. Not

@@ -217,13 +217,24 @@ tracks. These are what was seen, not a prediction for yours.
 
 ### Documentation
 
+- **Install guides for ASUSTOR and TerraMaster, and results for Synology, QNAP and UGREEN's kernel.**
+  Checked on ADM 5.1.4, TOS 7.0.1422, DSM 7.4.1 and QuTScloud 5.2.9 in VMs, not on the vendors'
+  hardware. The release binary mounts and serves correctly on all of them but QuTScloud, which has
+  glibc 2.21 ([#244](https://github.com/aclater/sacdfs/issues/244)). The container ran on ADM with
+  Docker CE. The user guide's NFS section now says `--allow-other` is needed even when sacdfs runs
+  as root.
+- **Small NAS known limit re-measured on rc.3** (#230). With a fresh cache, the starvation of a
+  6-channel WAV player by whole-file scanners also reaches 4 cores; `SACDFS_CACHE_MB=8` kept the player
+  at real time in every cell tested. The earlier 4-core figures (0.31 s, 11.2 s) were taken with a
+  player re-reading a position and are replaced. Figures are given per rig, not as N100-class.
+
 - The TrueNAS SCALE guide is re-validated with the published 0.4.0 image, and notes the harmless
   `parse_dfs_path_strict ... is not ours` Samba lines, that `NFS_CLIENTS` takes one address, and
   that TrueNAS's "SMB share" app storage has no port field (#176).
 - The crates.io install (`cargo install --locked sacdfs`) is validated on 0.4.0: run in a clean
   `rust:1.99.1` container with no other packages, it installs a working `sacdfs` (#155).
-- **Docs: "Small NAS: sizing"** in the deployment guide: the container limits that worked (2 N100-class
-  cores and 256 MiB for about 2,000 images; 4 cores and 512 MiB for about 5,000), a sizing rule, where
+- **Docs: "Small NAS: sizing"** in the deployment guide: the container limits that worked (2 Gracemont E-cores and 256 MiB for about 2,000 images;
+  4 cores and 512 MiB for about 5,000), a sizing rule, where
   the limits break, idle behaviour and one known limit (#230, #231). Measured on 0.4.1-rc.1. Memory and
   idle-size claims elsewhere now say they hold for a small library.
 - **Docs: client notes for 0.4.1-rc.1** on Roon, Plex, Windows (Explorer, PowerShell, Robocopy, with
