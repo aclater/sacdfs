@@ -29,20 +29,19 @@ fn dsf_tag_walk_starts_no_read_ahead() {
 
 /// [`dsf_tag_walk_starts_no_read_ahead`] on real discs, where a player's read-ahead starts,
 /// and a scanner's read of a file's head (Roon: 768 KiB in 128 KiB reads, #78) starts none.
-/// `SACDFS_REAL_IMAGES=DIR cargo test --release --test dsf_header -- --ignored`.
+/// `scripts/real-discs.sh DIR` runs it ([docs/development.md](../docs/development.md#real-disc-tests)).
 #[test]
 #[ignore = "needs real disc images: set SACDFS_REAL_IMAGES"]
 fn real_discs_head_reads() {
-    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else {
-        common::skip!("needs real disc images: set SACDFS_REAL_IMAGES")
-    };
+    let (dir, images) = common::real_images_or_skip!();
     let tree = Tree::with_options(
-        SourceDir::scan(std::path::Path::new(&dir)).unwrap(),
+        SourceDir::scan(&dir).unwrap(),
         sacdfs::disc::Tuning::default(),
         Output::dsf_only(),
     );
     let (walked, continued) = walk(&tree);
     assert!(walked > 0 && continued > 0, "{walked} files, {continued} read ahead");
+    common::assert_every_image_served(&images, tree.all_files().iter().map(|(_, f)| f.disc.path.clone()));
     let engine = Engine::new(2, 0).unwrap();
     for (path, f) in tree.all_files() {
         let reader = Reader::new(f.clone());
