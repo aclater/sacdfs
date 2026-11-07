@@ -8,6 +8,7 @@
       "tests": [
         "export::directory_handles_survive_a_restart",
         "export::file_handles_survive_a_restart",
+        "export::handles_open_after_their_image_is_dropped",
         "export::sidecar_handles_survive_a_restart"
       ]
     },

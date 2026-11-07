@@ -1,0 +1,103 @@
+{
+ "created": "2026-11-05T00:00:00.000Z",
+ "count": 2,
+ "offset": 0,
+ "releases": [
+  {
+   "id": "0000001d-0000-4000-8000-00000000001d",
+   "score": 100,
+   "count": 1,
+   "title": "Title 17",
+   "status": "Official",
+   "artist-credit": [
+    {
+     "joinphrase": "; ",
+     "name": "Name 3",
+     "artist": {
+      "id": "00000002-0000-4000-8000-000000000002",
+      "name": "Name 2"
+     }
+    },
+    {
+     "name": "Name 4",
+     "artist": {
+      "id": "00000003-0000-4000-8000-000000000003",
+      "name": "Name 4"
+     }
+    }
+   ],
+   "release-group": {
+    "id": "0000001e-0000-4000-8000-00000000001e",
+    "title": "Title 17",
+    "primary-type": "Album"
+   },
+   "date": "2013-09",
+   "barcode": "0000000012345",
+   "label-info": [
+    {
+     "catalog-number": "TEST-1",
+     "label": {
+      "id": "00000001-0000-4000-8000-000000000001",
+      "name": "Name 1"
+     }
+    }
+   ],
+   "track-count": 12,
+   "media": [
+    {
+     "id": "0000001c-0000-4000-8000-00000000001c",
+     "format": "Hybrid SACD",
+     "track-count": 12
+    }
+   ]
+  },
+  {
+   "id": "0000001f-0000-4000-8000-00000000001f",
+   "score": 100,
+   "count": 1,
+   "title": "Title 17",
+   "status": "Official",
+   "artist-credit": [
+    {
+     "joinphrase": "; ",
+     "name": "Name 3",
+     "artist": {
+      "id": "00000002-0000-4000-8000-000000000002",
+      "name": "Name 2"
+     }
+    },
+    {
+     "name": "Name 4",
+     "artist": {
+      "id": "00000003-0000-4000-8000-000000000003",
+      "name": "Name 4"
+     }
+    }
+   ],
+   "release-group": {
+    "id": "0000001e-0000-4000-8000-00000000001e",
+    "title": "Title 17",
+    "primary-type": "Album"
+   },
+   "date": "2013-10-29",
+   "barcode": "0000000012345",
+   "label-info": [
+    {
+     "catalog-number": "TEST-1",
+     "label": {
+      "id": "00000001-0000-4000-8000-000000000001",
+      "name": "Name 1"
+     }
+    }
+   ],
+   "track-count": 12,
+   "media": [
+    {
+     "id": "0000002c-0000-4000-8000-00000000002c",
+     "format": "Digital Media",
+     "track-count": 12
+    }
+   ]
+  }
+ ]
+}

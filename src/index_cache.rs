@@ -400,6 +400,28 @@ impl IndexCache {
         }
     }
 
+    /// Lets go now of the discs dropped with nothing to save, rather than at the next flush
+    /// (#237): a scan that drops images as it goes opens many more between two flushes than
+    /// the bound on listed images allows, and each one here holds its TOC.
+    pub fn release_retired(&self) {
+        let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
+        let mut gone = Vec::new();
+        let kept = std::mem::take(&mut *live)
+            .into_iter()
+            .filter_map(|d| {
+                if d.retired.load(Ordering::Acquire) && !d.changed.load(Ordering::Relaxed) {
+                    gone.push(d);
+                    None
+                } else {
+                    Some(d)
+                }
+            })
+            .collect();
+        *live = kept;
+        drop(live);
+        drop(gone);
+    }
+
     /// Writes one entry atomically: a new temporary file, then a rename over the old one.
     pub fn store(&self, key: &ImageKey, shapes: &[AreaShape], areas: &[Saved]) -> io::Result<()> {
         let bytes = encode(key, shapes, areas);

@@ -220,6 +220,8 @@ pub struct Disc {
     readings: [AtomicU64; 2],
     /// Seek hints loaded from the persistent seek index, per area.
     loaded: Vec<usize>,
+    /// Used since the tree last looked, when it bounds what listed images hold (#237).
+    pub(crate) referenced: AtomicBool,
 }
 
 /// One audio area.
@@ -369,6 +371,7 @@ impl Disc {
             source,
             readings: [AtomicU64::new(0), AtomicU64::new(0)],
             loaded: loaded_hints,
+            referenced: AtomicBool::new(true),
         })
     }
 

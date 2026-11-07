@@ -257,6 +257,13 @@ fn main() {
         out.seed("tags_toml", text.as_bytes());
     }
 
+    let responses = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/musicbrainz");
+    let mut files: Vec<PathBuf> = fs::read_dir(&responses).unwrap().map(|e| e.unwrap().path()).collect();
+    files.sort();
+    for file in files.iter().filter(|f| f.extension().is_some_and(|e| e == "json")) {
+        out.seed("lookup_json", &fs::read(file).unwrap());
+    }
+
     for (list, name) in [
         ("jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/", "folder.jpg"),
         ("default,.cue,Covers/", "Covers"),

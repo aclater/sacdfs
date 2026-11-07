@@ -15,7 +15,10 @@ on() { case "${1,,}" in 1 | yes | true | on) return 0 ;; *) return 1 ;; esac; }
 # --- sacdfs options ---------------------------------------------------------------------
 SOURCE=${SACDFS_SOURCE:-/images}
 [ -e "$SOURCE" ] || die "SACDFS_SOURCE $SOURCE does not exist (mount the images there, read-only)"
-args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}" --cache-mb "${SACDFS_CACHE_MB:-32}")
+args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}")
+# Unset: sacdfs sizes the cache from the container's memory limit.
+[ -n "${SACDFS_CACHE_MB:-}" ] && args+=(--cache-mb "$SACDFS_CACHE_MB")
+[ -n "${SACDFS_LISTING_MB:-}" ] && args+=(--listing-mb "$SACDFS_LISTING_MB")
 [ -n "${SACDFS_THREADS:-}" ] && args+=(--threads "$SACDFS_THREADS")
 [ -n "${SACDFS_MAX_OPEN_IMAGES:-}" ] && args+=(--max-open-images "$SACDFS_MAX_OPEN_IMAGES")
 [ -n "${SACDFS_REQUEST_TIMEOUT:-}" ] && args+=(--request-timeout "$SACDFS_REQUEST_TIMEOUT")
@@ -93,7 +96,9 @@ write_smb_conf() {
    ea support = no
    store dos attributes = no
    map archive = no
-   map readonly = no
+   # Everything here is read-only, so say so: each file and folder gets the DOS read-only
+   # attribute, from its mode (no extra request to sacdfs). Clients then don't offer writes (#217).
+   map readonly = yes
    # Nothing can change on a read-only mount: no change notifications, no oplock breaks.
    kernel change notify = no
    ${SMB_EXTRA_GLOBAL:-}
@@ -110,6 +115,22 @@ CONF
 }
 
 # --- NFS settings -----------------------------------------------------------------------
+# Under a memory limit, NFS-Ganesha's cache of entries is kept to what an eighth of the limit holds,
+# at about 2 KiB each. Its default of 100,000 entries takes about 200 MiB of the limit when a client
+# goes through a large library, and sacdfs can't free any of that. No limit: its defaults.
+ganesha_cache_conf() {
+    local limit
+    limit=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo max)
+    { [[ $limit =~ ^[0-9]+$ ]] && [ "${#limit}" -lt 16 ]; } || return 0
+    local entries=$((limit / 8 / 2048))
+    [ "$entries" -lt 100000 ] || return 0
+    [ "$entries" -ge 1000 ] || entries=1000
+    log "NFS: at most $entries entries cached, for the memory limit" >&2
+    local chunks=$((entries / 128 + 1))
+    printf 'MDCACHE {\n    Entries_HWMark = %d;\n    Chunks_HWMark = %d;\n    Chunks_LWMark = %d;\n}\n' \
+        "$entries" "$chunks" $((chunks / 2))
+}
+
 write_ganesha_conf() {
     local clients=${NFS_CLIENTS:-*}
     [[ $clients =~ ^[][A-Za-z0-9.:/*,_-]+$ ]] || die "NFS_CLIENTS: a comma-separated list of hosts, networks (a.b.c.d/n) or *"
@@ -133,6 +154,7 @@ NFSV4 {
     Minor_Versions = 0, 1, 2;
 }
 NFS_KRB5 { Active_krb5 = false; }
+$(ganesha_cache_conf)
 EXPORT_DEFAULTS {
     Access_Type = None;
 }
@@ -148,7 +170,12 @@ EXPORT {
     Anonymous_Gid = 65534;
     # FUSE has no device number that stays the same: give the export a fixed one.
     Filesystem_Id = 101.1;
-    FSAL { Name = VFS; }
+    # What the clients see as the filesystem id is that one, but each file handle carries
+    # Ganesha's own id of the backing filesystem. FUSE reports none, so Ganesha uses the
+    # mount's device number, which changes when the kernel hands the next mount another one
+    # (Podman: nearly every restart), and every handle then goes stale (#218). Major64 keeps
+    # only the device's major number in the handle, always 0 for FUSE.
+    FSAL { Name = VFS; fsid_type = Major64; }
     CLIENT {
         Clients = $clients;
         Access_Type = RO;

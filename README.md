@@ -12,6 +12,10 @@ as DSF files, and as 24-bit WAV files next to them, decoded on demand. Players, 
 music servers see every track of every disc, with tags, without extracting anything: you
 keep the ISOs and can delete the extracted copies.
 
+A disc with little or no text can be looked up on MusicBrainz, on demand, with
+`sacdfs tags fetch`. That's the only part of sacdfs that uses the network, and a mount never does:
+see the [user guide](docs/user-guide.md#your-own-tags---tags).
+
 ## Quick start
 
 **On a NAS or any Linux host with Podman or Docker:** the container shares the mount over
@@ -24,7 +28,7 @@ sudo podman run -d --name sacdfs --restart unless-stopped \
   -p 445:445 -p 2049:2049 \
   -v /srv/music:/images:ro \
   -v sacdfs-cache:/cache \
-  ghcr.io/aclater/sacdfs:0.4.0
+  ghcr.io/aclater/sacdfs:0.4.1
 ```
 
 The [Docker and Podman guide](docs/install/docker-podman.md) explains each line and how to
