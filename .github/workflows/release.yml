@@ -259,6 +259,9 @@ jobs:
           export "CC_${TARGET//-/_}=musl-gcc"
           # Set only where needed: an empty value would reach jemalloc's configure.
           if [[ -n "$LG_PAGE" ]]; then export JEMALLOC_SYS_WITH_LG_PAGE="$LG_PAGE"; fi
+          # Ubuntu's gcc calls libgcc's outline atomics on aarch64, which musl-gcc doesn't
+          # link: jemalloc's configure then finds no atomics. Inline ones, as on x86_64.
+          if [[ "$ARCH" == aarch64 ]]; then export "CFLAGS_${TARGET//-/_}=-mno-outline-atomics"; fi
           cargo build --release --locked --bin sacdfs --target "$TARGET" --features jemalloc
           cargo test --release --locked --target "$TARGET" --features jemalloc
       - name: Static, stripped
