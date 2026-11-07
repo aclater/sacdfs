@@ -6,7 +6,7 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.4.1] - 2026-11-06
+## [0.4.1] - 2026-11-07
 
 Tested as three release candidates. On rc.1 the scripted servers (Jellyfin, Navidrome, Lyrion, MPD,
 MinimServer) were run against 0.4.0 side by side, and Roon, Plex, Windows (Explorer, PowerShell,
@@ -24,7 +24,12 @@ Fixed). The rc.2 gate, on 2026-11-06:
   mount was not measured on rc.2.
 - **Soak:** the 60-minute run passed (224,491 reads, 686 GB, 0 unexpected errors, 19 stalls, 11
   remounts, memory +1.4 MiB/h). The 2-hour soak on rc.2 failed on #238
-  (fixed in rc.3), so it is not counted as a pass. The 2-hour soak on rc.3: TBD-GATE.
+  (fixed in rc.3), so it is not counted as a pass. On rc.3, every soak had 0 unexpected errors, against
+  0 to 14 for rc.2 run beside it. Two hours passed on one machine; on another, two 2-hour runs failed
+  the memory trend check (+8.02 and +8.90 MiB/h, limit 4.4) on single steps of about 5 to 6.5 MiB. Longer
+  runs settled it: 6 hours on that machine passed at +0.08 MiB/h, and 8 hours on a third passed at +1.14
+  MiB/h, both flat, while rc.2 failed both on unexpected errors. What the steps are is not known, nor why
+  rc.3 sits a steady 4 to 5 MiB above rc.2 on the one machine (#247).
 - **Share paths:** SMB 3.1.1 and NFS 4.2 listings were correct; 10 files were byte-identical over
   both; writes were refused; SMB reconnected after a restart.
 - **Container:** `SACDFS_MOUNT_TIMEOUT` and the health check passed on the rc.2 image under Docker and
