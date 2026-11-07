@@ -360,6 +360,11 @@ them into each file's tag. Every file holds a copy of its cover, so an image of 
 more, and few images stay listed. Under a limit with `--tags`, sacdfs keeps blocks from 128 KiB up
 in mappings of their own, since the heap otherwise kept over 100 MiB of freed covers.
 
+**After a kill.** With `--restart=always` and a client listing without a pause, killing sacdfs in a container at 256 MiB
+with 5,000 images restarted it once. It served again about 2 s later, and stayed up through about 70 s more of the same
+listing, with no restart loop. The kill was a `kill -9` for the test, not one for lack of memory: at 40 MiB, with the startup warning
+saying it could be killed, 18 passes of a client listing the library (no reads) got no kill to test with.
+
 **Lower limits.** With 5,000 images, listing worked at 128 and 96 MiB. At 64 MiB, of three runs one worked,
 one stopped short with `ENOMEM` for its listings, and one was killed, as the startup warning says can
 happen at that size. Pressure from something else in the limit also works as described: with
