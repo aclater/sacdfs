@@ -1035,6 +1035,9 @@ Fedora 45, kernel 7.2) over loopback:
 - **What's left is per folder:** an open and a release, two reads of the listing, a name lookup for a folder
   that is checked for changes (every 2 s), and one `STATFS`. Samba makes that `STATFS` when it reopens a
   folder's path handle; no Samba setting was found that avoids it.
+- **Time:** on an idle machine, a local `ls -lR` of the same mount (the kernel, no Samba; 7 alternating
+  rounds, median) took 0.32 s instead of 0.40 s the first time, and 0.07 s instead of 0.12 s when repeated
+  after 3 s. Times through Samba were taken on a loaded machine only, so none is given here.
 - **The client's own requests don't change:** 3.5 SMB2 requests per entry for `ls -l` on the kernel client,
   on either version. What the client asks is up to the client.
 
