@@ -426,11 +426,16 @@ the [container](deployment.md) does this for you, with SMB as well.) Inode numbe
 what each entry is (its source path, or the image, area, track and format), not from the order
 sacdfs finds things, so they are the same on every mount, and clients keep working, open files
 included, after sacdfs restarts. `/etc/exports` needs an `fsid` (a FUSE mount has no device
-number of its own), and sacdfs `--allow-other` when it does not run as root:
+number of its own), and sacdfs `--allow-other`, even when sacdfs runs as root:
 
 ```
 /srv/sacd  192.0.2.0/24(ro,fsid=4242,no_subtree_check)
 ```
+
+Without `--allow-other` an NFS client cannot read the mount: with these export options (root
+squashing is the default), a sacdfs run as root and an NFS client mounting as root, listing the
+mount failed with "Permission denied"; with `--allow-other`, all files read correctly (TOS 7.0
+in a VM, NFSv3).
 
 - To restart sacdfs under an export, stop the NFS server first, then start it again after
   the new mount is up (`systemctl stop nfs-server`, restart sacdfs, `systemctl start

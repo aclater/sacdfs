@@ -22,9 +22,11 @@ nobody has run sacdfs there and reported back. Reports are welcome on
 | Any Linux host with Docker or Podman | [docker-podman.md](docker-podman.md) | Validated (Fedora 44, Podman) |
 | OpenMediaVault 8 | [openmediavault.md](openmediavault.md) | Validated (OMV 8.6 on Debian 13, Compose plugin) |
 | Unraid | [unraid.md](unraid.md) | Not validated |
-| Synology DSM | [synology.md](synology.md) | Not validated |
-| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Not validated |
-| UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated |
+| Synology DSM | [synology.md](synology.md) | Partly validated (DSM 7.4.1 in a VM; binary and NFS) |
+| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Not validated (the binary fails on QuTScloud 5.2.9, [#244](https://github.com/aclater/sacdfs/issues/244)) |
+| UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated (a kernel check only) |
+| ASUSTOR ADM | [asustor.md](asustor.md) | Validated in a VM (ADM 5.1.4; binary and Docker) |
+| TerraMaster TOS | [terramaster.md](terramaster.md) | Validated in a VM (TOS 7.0, binary route only) |
 
 Without a container, on any Linux host (x86_64; FUSE 3's `fusermount3`, package `fuse3`):
 a [release binary](binary.md#binaries), or, from 0.4.0, `cargo install --locked sacdfs`
