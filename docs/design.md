@@ -1728,16 +1728,19 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
 - **Static musl builds as well, with jemalloc (#244, draft, awaiting the owner's decision).**
   *Why:* a system with a glibc older than 2.28 (QNAP's QuTScloud 5.2.9 has 2.21) could not
   start the glibc build, and a static binary needs nothing from the system's C library. The
-  slowness above looks like musl's allocator: on a loaded machine (not a speed claim; the
-  timed comparison is pending), a real DST disc's stereo area read through a fresh mount
-  took about the same time with jemalloc or mimalloc as with the glibc build, against about
-  1.3 (DSF) and 1.5 (WAV) times longer with musl's malloc. Peak memory of the same reads
-  (VmHWM): glibc build 59 to 66 MiB, musl's malloc 57 to 64, mimalloc with its defaults 208
-  to 341, mimalloc with eager arena commit off 102 to 166, jemalloc with 4 arenas 83 to 105,
-  jemalloc with one arena and freed pages returned at once
-  (`narenas:1,dirty_decay_ms:0,muzzy_decay_ms:0`) 83 to 88. That last is used. *Trade-off,
-  if accepted:* a C allocator in the musl builds (built by musl-gcc), a peak about 20 to 25 MiB
-  above the glibc build's, glibc's tuning (`malloc_trim`, the arena limit) absent there, and two more builds
+  slowness above is musl's allocator. Timed (benchmark host, real discs' stereo areas,
+  fresh mounts, 6 alternating rounds, medians, ratio to the glibc build; peak VmHWM):
+
+  | | DST DSF | DST WAV | plain DSD WAV | plain DSD DSF | peak MiB |
+  |---|---|---|---|---|---|
+  | glibc 2.28 build | 8.52 s | 9.38 s | 7.74 s | 2.54 s | 43-59 |
+  | glibc 2.17 build (zig) | 0.99x | 1.00x | 1.03x | 0.91x | 43-59 |
+  | musl's malloc | 1.29x | 1.25x | 1.31x | 2.58x | 40-55 |
+  | musl + mimalloc | 1.00x | 1.00x | 0.95x | 0.93x | 161-273 |
+  | musl + jemalloc, 1 arena, decay 0 | 1.05x | 1.05x | 1.34x | 1.92x | 45-70 |
+
+  The jemalloc setting is in this draft but not yet good enough on plain DSD discs. *Trade-off,
+  if accepted:* a C allocator in the musl builds (built by musl-gcc), a higher peak (jemalloc) or a much higher one (mimalloc), glibc's tuning (`malloc_trim`, the arena limit) absent there, and two more builds
   in each release. The glibc builds stay the main ones. *Alternatives:* a glibc 2.17 build
   (zig as the linker, which links against 2.17's symbols; glibc's
   malloc and speed unchanged, but a new toolchain in the release and no build image from a

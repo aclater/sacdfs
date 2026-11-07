@@ -19,8 +19,7 @@ Running it is in the [user guide](../user-guide.md); the options are in
 
 - `sacdfs-<version>-x86_64-linux-musl.tar.gz` and `sacdfs-<version>-aarch64-linux-musl.tar.gz`
   (from the first release that has them, #244): static builds that use no C library of the
-  system, for systems whose glibc is older than 2.28, or that have none. They use about
-  20 to 25 MiB more memory at peak (design.md, "Release binaries"). Run as
+  system, for systems whose glibc is older than 2.28, or that have none. Their speed and memory against the glibc builds are in design.md, "Release binaries". Run as
   root, they mount without `fusermount3`; as another user, `fusermount3` is still needed.
 
 The two glibc builds need glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later). The
