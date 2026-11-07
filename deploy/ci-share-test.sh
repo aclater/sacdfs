@@ -45,7 +45,7 @@ endgroup
 group "Read the corpus over SMB and NFS"
 docker run --rm --network sacdfs-ci --privileged \
     -v "$PWD:/repo:ro" sacdfs-client:ci bash -euxc '
-      # The share has the size of the source filesystem, all of it used (#62).
+      # The share has the size of its images, all of it used, and is never 0 bytes (#62, #217).
       full() {
         read -r size avail < <(df -B1 --output=size,avail "$1" | tail -n 1)
         echo "$1: size $size, available $avail"
@@ -65,6 +65,8 @@ docker run --rm --network sacdfs-ci --privileged \
       mkdir -p /mnt/smb /mnt/nfs
       mount -t cifs //sacdfs/sacd /mnt/smb -o ro,guest,vers=3.1.1
       full /mnt/smb
+      # Files carry the read-only attribute (map readonly = yes, #217): no write bit.
+      [ -z "$(find /mnt/smb -type f -perm /222 -print -quit)" ]
       quiet /mnt/smb
       python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/smb --min 400 --wav
       umount /mnt/smb

@@ -1253,19 +1253,33 @@ Two kinds of probe are answered so that the kernel stops asking (#61):
     the CI share test runs `ls -lR` over SMB and NFS and `getfattr -R -d` over NFS, and fails
     on any error line.
 
-**Filesystem size (#62).** `statfs` reports the size of the filesystem holding SOURCE, all of
-it used (0 free, 0 available), the number of entries made so far as inodes, and 0 free
-inodes. `df` showed a 0-byte filesystem before, and SMB clients were told 0 bytes total and
-free, which some treat as a broken share. *Why the source's size, not the sum of the files'
-sizes:* the tree is made lazily, so the sum is known only for the folders listed so far; it
-would grow while a client browses and opening every image at mount to know it costs a TOC read
-per image. The source's size is one `statvfs`, is the same however much has been browsed, and
-says truthfully where the bytes live. *Why 0 free:* the mount is read-only; a full
-filesystem is what copy dialogs understand as "nothing can be written here". The size is read
-at mount (the source was just walked, so this does not wait) and again at most once a minute,
-on a request thread, so a stalled source never holds up a `statfs` reply: it gets the last
-size read. `statvfs` comes from `nix` (MIT, already a dependency of fuser, with the same
-`fs` feature), not `libc`: sacdfs keeps `unsafe` to its daemonising code.
+**Filesystem size (#62, #217).** `statfs` reports the total size of the image files found at mount,
+all of it used (0 free, 0 available), the number of entries made so far as inodes, and 0 free
+inodes. With no images (or none readable) it reports the size of the filesystem holding SOURCE,
+read again at most once a minute on a request thread, so a stalled source never holds up a `statfs`
+reply. *Why not 0:* `df` showed a 0-byte filesystem before #62, and SMB clients were told 0
+bytes total and free, which some treat as a broken share. *Why the images' total (#217):* it is
+what the share holds. It used to be the source filesystem's capacity, which said 45.9 TB against 3.12
+TB of listed files, and looked like a huge full disk. It takes one `stat` per image at mount, just
+after the scan has done the same. *Why not the sum of the files' sizes:* the tree is made lazily, so
+it is known only for the folders listed so far; it would grow while a client browses, and opening every
+image at mount to know it costs a TOC read per image. *Why 0 free, not the source's real free
+space:* the same as ISO 9660 and squashfs report; nothing can be written, and a non-zero value would
+say otherwise. Roon and Plex have run with 0 free since #62, and whether they care about a
+non-zero value hasn't been tested, so this keeps what has been run. Measured with the real free space:
+`df` showed 58 % used and clients a normal disk, and writes were refused all the same.
+*Trade-off:* images added later count from the next mount, because counting them would mean walking the
+source each time; and 100 % used remains, though it's the convention for read-only media. `statvfs`
+comes from `nix` (MIT, already a dependency of fuser, with the same `fs` feature), not `libc`: sacdfs
+keeps `unsafe` to its daemonising code.
+
+**Read-only attribute (#217).** The container's Samba has `map readonly = yes`, so each file and folder
+carries the DOS read-only attribute, worked out from its mode with no extra request to sacdfs. *Why:*
+the share is read-only and gvfs's `can-write` comes only from this attribute. The volume was already flagged
+`FILE_READ_ONLY_VOLUME` (from the read-only FUSE mount), which gvfs can't see, as libsmbclient doesn't pass it on.
+*Alternative:* `map readonly = permissions` asks the same of each open file, which costs more for the same
+result on a mount with no write bits. *Trade-off:* folders get it too, as Samba can't separate them; a
+plain `cp` on the Linux client keeps the missing write bit; and Windows and macOS haven't been tested.
 
 ## Concurrency
 

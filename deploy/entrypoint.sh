@@ -93,7 +93,9 @@ write_smb_conf() {
    ea support = no
    store dos attributes = no
    map archive = no
-   map readonly = no
+   # Everything here is read-only, so say so: each file and folder gets the DOS read-only
+   # attribute, from its mode (no extra request to sacdfs). Clients then don't offer writes (#217).
+   map readonly = yes
    # Nothing can change on a read-only mount: no change notifications, no oplock breaks.
    kernel change notify = no
    ${SMB_EXTRA_GLOBAL:-}

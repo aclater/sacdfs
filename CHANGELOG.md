@@ -7,6 +7,16 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ## [0.4.1] - 2026-11-07
+### Changed
+
+- **The share says it is read-only, and has the size of its images (#217).** Over SMB, files and
+  folders now carry the read-only attribute (`map readonly = yes`; gvfs's `can-write` is FALSE for
+  files, the Linux kernel client shows no write bit). `df` and clients now see the total size of the
+  images found at mount instead of the capacity of the disk they're on, still with 0 free, and
+  the source's size only when there are no images. Untested on Windows, macOS, Roon and Plex; to go back
+  on the attribute, `SMB_EXTRA_GLOBAL=map readonly = no`.
+
+## [0.4.1-rc.3] - 2026-11-06
 
 Tested as three release candidates. On rc.1 the scripted servers (Jellyfin, Navidrome, Lyrion, MPD,
 MinimServer) were run against 0.4.0 side by side, and Roon, Plex, Windows (Explorer, PowerShell,

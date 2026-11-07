@@ -239,8 +239,8 @@ pub struct SacdFs {
     /// [`SacdFs::serve`].
     meta: Workers,
     watchdog: Watchdog,
-    /// The source filesystem's size, and when it was read: see [`SacdFs::statfs`].
-    source_size: Arc<Mutex<SourceSize>>,
+    /// The size `statfs` reports, and when it was read: see [`SacdFs::statfs`].
+    size: Arc<Mutex<ShareSize>>,
 }
 
 /// What the request threads share with the filesystem.
@@ -290,23 +290,41 @@ fn read_plain(file: &std::fs::File, offset: u64, size: u32) -> io::Result<Vec<u8
     Ok(buf)
 }
 
-/// The size of the source filesystem, as `statfs` reports it.
+/// The share's size, as `statfs` reports it: see [`SacdFs::statfs`].
 #[derive(Debug, Clone, Copy)]
-struct SourceSize {
+struct ShareSize {
     blocks: u64,
     frsize: u32,
     read: Instant,
+    /// Read from the source's filesystem, for want of images: read again now and then.
+    refresh: bool,
     refreshing: bool,
 }
 
-impl SourceSize {
+impl ShareSize {
+    /// The images' total, in blocks of 64 KiB; with no images, what [`ShareSize::of_source`]
+    /// says, so that this is never a 0-byte filesystem (#62).
+    fn of_images(bytes: u64, source: &std::path::Path) -> ShareSize {
+        if bytes == 0 {
+            return ShareSize::of_source(source);
+        }
+        let frsize = 1 << 16;
+        ShareSize {
+            blocks: bytes.div_ceil(u64::from(frsize)),
+            frsize,
+            read: Instant::now(),
+            refresh: false,
+            refreshing: false,
+        }
+    }
+
     /// `statvfs` of `path`; 0 blocks if it fails.
-    fn of(path: &std::path::Path) -> SourceSize {
+    fn of_source(path: &std::path::Path) -> ShareSize {
         let (blocks, frsize) = statvfs(path).unwrap_or_else(|e| {
             log::debug!("{}: statvfs: {e}", path.display());
             (0, 1 << 16)
         });
-        SourceSize { blocks, frsize, read: Instant::now(), refreshing: false }
+        ShareSize { blocks, frsize, read: Instant::now(), refresh: true, refreshing: false }
     }
 }
 
@@ -354,8 +372,8 @@ impl SacdFs {
         let requests = Workers::new(request_threads, "sacdfs-read")?;
         // As many as fuser's own threads, whose waiting these take over.
         let meta = Workers::new(4, "sacdfs-meta")?;
-        // Read now, while the source has just been walked; refreshed in the background.
-        let source_size = Arc::new(Mutex::new(SourceSize::of(tree.source())));
+        // Read now, while the source has just been walked.
+        let size = Arc::new(Mutex::new(ShareSize::of_images(tree.image_bytes(), tree.source())));
         Ok(SacdFs {
             shared: Arc::new(Shared {
                 tree,
@@ -368,7 +386,7 @@ impl SacdFs {
             requests,
             meta,
             watchdog: Watchdog::new(Some(watchdog::DEFAULT_TIMEOUT))?,
-            source_size,
+            size,
         })
     }
 
@@ -875,17 +893,17 @@ impl Filesystem for SacdFs {
         }
     }
 
-    /// The source filesystem's size, all of it used: `df` and SMB clients see a filesystem
-    /// of that size, full (#62). Read at mount and again at most every minute, in the
-    /// background, so that a slow source never holds up this reply.
+    /// The total size of the images found at mount, all of it used, as read-only media report
+    /// (#217). With no images, the size of the source's filesystem, read at most every minute
+    /// in the background so that a slow source never holds up this reply: never 0 bytes (#62).
     fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
         let size = {
-            let mut s = self.source_size.lock().unwrap_or_else(|p| p.into_inner());
-            if !s.refreshing && s.read.elapsed() >= STATFS_REFRESH {
+            let mut s = self.size.lock().unwrap_or_else(|p| p.into_inner());
+            if s.refresh && !s.refreshing && s.read.elapsed() >= STATFS_REFRESH {
                 s.refreshing = true;
-                let (cell, path) = (self.source_size.clone(), self.shared.tree.source().to_owned());
+                let (cell, path) = (self.size.clone(), self.shared.tree.source().to_owned());
                 self.requests.spawn(move || {
-                    let new = SourceSize::of(&path);
+                    let new = ShareSize::of_source(&path);
                     *cell.lock().unwrap_or_else(|p| p.into_inner()) = new;
                 });
             }

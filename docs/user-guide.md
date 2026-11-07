@@ -481,9 +481,10 @@ in a VM, NFSv3).
   NFS clients keep working. The same source always shows the same folder times, across
   remounts. After upgrading to 0.2.0, an existing Roon library sees every album as modified
   once.
-- **`df` and free space.** The mount reports the size of the filesystem that holds SOURCE,
-  all of it used: `df` shows that size with 0 available, and SMB clients (Explorer, Finder)
-  see a full drive of that size. Nothing can be written to the mount anyway.
+- **`df` and free space.** The mount reports the total size of the images found at mount, all of
+  it used: `df` shows that size with 0 available, as for a read-only medium. Images added later
+  count from the next mount. With no images it reports the size of the filesystem holding
+  SOURCE instead, so it's never a 0-byte filesystem.
 - **Extended attributes.** There are none: `getfattr -d` and `listxattr` give an empty list,
   locally and over NFS. Asking for one by name (`getfattr -n user.x`) says "Operation not
   supported" locally (the kernel answers this itself after the first request). Over NFS
