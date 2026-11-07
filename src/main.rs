@@ -52,7 +52,7 @@ struct Args {
     /// and at least 2).
     #[arg(long, default_value_t = 0, value_name = "N")]
     threads: usize,
-    /// Size of the cache of decoded and converted frames, in MiB (default: 32, or 8 under a
+    /// Size of the cache of decoded and converted frames, in MiB (default: 32, or 16 under a
     /// memory limit up to 512 MiB).
     #[arg(long, value_name = "N")]
     cache_mb: Option<usize>,

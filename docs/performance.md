@@ -626,6 +626,55 @@ figure is not re-measured. The 1.4 GB base here is the same in both runs and com
 rig's repeated images, not from the TOC. The read path is untouched (an accessor replaces a
 field), and the DSF gate stays 93/93.
 
+## A player beside whole-file scans (#230)
+
+A 6-channel WAV player (real-time 128 KiB reads over SMB, 30 s, from 15 % into a track the
+scanners never read) with whole-file WAV scanners (1 MiB reads of other tracks over SMB), on a fresh
+container each time, so that no page cache answers the player. Container pinned to 2 or 4 E-cores of a
+mobile Core i9 (about 2.7 GHz), 256 or 512 MiB, default cache unless noted; images on a NAS's hard
+disks over NFS, evicted from the host's page cache before each run; client on the same host, on
+other cores. 3 runs each, medians; "behind" is the most the player fell behind, which the 30 s caps.
+Under the benchmark lock on an idle machine, 2026-11-06 and 07.
+
+| Scanners, cores | 0.4.0 | 0.4.1-rc.3 | rc.3, cache 8 | This change |
+|---|---|---|---|---|
+| 1, 2 | 0.61×, 11.9 s | 0.54×, 14.0 s | 1.00×, 0.35 s | 1.00×, 0.52 s |
+| 4, 2 | 0.36×, 19.4 s | 0.30×, 21.0 s | 0.96×, 1.46 s | 1.00×, 0.66 s |
+| 1, 4 | 1.00×, 0.15 s | 1.00×, 0.11 s | 1.00×, 0.04 s | 1.00×, 0.03 s |
+| 4, 4 | 0.76×, 7.2 s | 0.46×, 16.4 s | 1.00×, 0.09 s | 1.00×, 0.36 s |
+| Scan speed beside the player, 1 scanner, 2 / 4 cores (MB/s) | 29.9 / 55.5 | 30.6 / 56.7 | 13.2 / 22.0 | 33.2 / 58.3 |
+| Scan alone, 2 / 4 cores (MB/s) | 33.2 / 61.3 | 33.4 / 61.1 | 15.2 / 23.9 | 38.1 / 65.8 |
+
+- Stereo DSF with four scanners: 1.01× on every version; worst behind 1.39 s on rc.3 with 2 cores,
+  0.21 s with this change. A scanner reading the player's own track: 1.00×, 0.38 s behind.
+- With four scanners on 2 cores, 1 to 14 of about 700 reads per run were more than 0.5 s late, and
+  none more than 1 s. Where in the run they fell wasn't recorded; a reader counts as a player only
+  after 0.5 s.
+- Beside a player, a scanner's speed against the code before this change (#212 and #238 merged), same
+  rig: 35.0 → 33.2 and 36.8 → 32.1 MB/s on 2 cores (1 and 4 scanners), 61.2 → 58.3 and
+  68.8 → 63.9 on 4: 5 to 13 % slower, about as fast as rc.3 or faster.
+- Against the code before this change (#212 and #238 merged), on all 20 threads of the same machine,
+  balanced order, 4 rounds, a reader or four with no player: within -1.3 % to +2.2 % on all eight
+  cases (DST stereo and six channels, DSF and WAV), ranges overlapping; peak memory the same. A first
+  version that also slowed scanners with no player cost 6 to 16 % on a 32-thread Zen 5 machine and
+  was changed.
+- Bytes: 48 whole-file reads of 16 files (three readers at once, one paced for its first 3 s)
+  equal 0.4.0's.
+- Peak memory with four scanners on 4 cores: 73 MiB on rc.3, 81 MiB with this change (the longer
+  windows of #212).
+- Re-measured after merging main (0.4.1 and the 0.5.0 queue, with #240), same method, against the
+  0.4.1 image (whose container passes `--cache-mb 32`): player speed and most behind, 0.4.1 /
+  this change at 32 MiB / this change at 8 MiB: 1 scanner, 2 cores 0.52×, 14.3 s / 1.00×, 0.48 s /
+  1.00×, 0.07 s; 4 scanners, 2 cores 0.31×, 20.9 s / 1.00×, 0.29 s / 1.00×, 0.19 s; 1 scanner, 4
+  cores 1.00× throughout; 4 scanners, 4 cores 0.42×, 17.5 s / 1.00×, 0.45 s / 1.00×, 0.02 s. Scans
+  alone, 2 / 4 cores: 33.3 / 61.1, 39.5 / 67.8 and 28.5 / 55.6 MB/s. Stereo DSF with four scanners
+  1.01× at both sizes. Peak memory with four scanners on 4 cores: 73 MiB at 32, 55 at 8.
+- Cache 16, the default under a limit up to 512 MiB since this change, against 32, on P-cores of the
+  same machine (2 cores: one physical core with its SMT sibling; 4 cores: two), client on other cores,
+  alternating, 3 runs each: player 1.00× in every cell, at most 0.52 s behind at 16 and 0.95 s at 32;
+  scan alone 44.5 / 81.4 MB/s at 16 against 44.7 / 81.2 at 32 (2 / 4 cores); peak anonymous memory of
+  the container, scan alone, 38 / 42 MiB against 54 / 58.
+
 ## Cache size (#150)
 
 `--cache-mb` swept over 8 to 256 MiB on the five bench images, a fresh mount (`--no-index-cache`)
@@ -903,6 +952,7 @@ against its own "before", on the code of its day).
 | #155 | scarletbook and scarletbook-pcm 0.5.6 → 0.5.7, from crates.io (`=0.5.7`) | bytes unchanged; straight reads, 0.5.6 → 0.5.7: plain-DSD DSF 1.45 → 1.29 s, plain-DSD WAV 2.30 → 2.26 s, DST stereo DSF 4.93 → 4.65 s, DST 6 ch. DSF 13.33 → 13.13 s; import replay peak RSS 44 → 45 MiB (default 32 MiB cache). By version: 0.3.0 (256 MiB cache, [above](#cache-size-150)) 1.46 / 2.16 / 3.46 / 11.72 s and 134 MiB, 0.5.6 (main) and 0.5.7 as given; this run was on a busier machine than 0.3.0's (same-day main is 25-35 % slower on DST), so compare 0.5.6 with 0.5.7, not with 0.3.0 (means of 3, alternating, under the benchmark lock, generic build, 2026-11-02) |
 | #206 | scarletbook and scarletbook-pcm 0.5.7 → 0.5.8 (`=0.5.8`) | bytes unchanged (DSF and WAV hashes of the corpus and bench discs equal 0.4.0's); straight reads, 0.4.0 → this branch: DST stereo DSF 8.75 → 8.72 s, DST 6 ch. DSF 28.28 → 28.30 s, plain-DSD DSF 2.83 → 2.55 s (ranges overlap), DST stereo WAV 9.40 → 9.43 s; mount and first listing of the corpus 0.087 → 0.091 s (ranges overlap); no read more than 5 % slower. This host (Core i9-13900H) is slower than the machine of the rows above, so compare the two columns, not the seconds with older rows (medians of 11, alternating, under the benchmark lock, generic build, 2026-11-05) |
 | #243 | scarletbook and scarletbook-pcm 0.5.8 → 0.5.9 (`=0.5.9`), after 0.4.1 | bytes unchanged (DSF and WAV hashes of the corpus and bench discs equal 0.4.1-rc.3's, 0.5.8; the bench discs also equal 0.4.0's); straight reads, 0.5.8 → this branch (0.4.0 in brackets): DST stereo DSF 8.73 → 8.43 s (8.70), DST 6 ch. DSF 28.25 → 27.29 s (28.24), plain-DSD DSF 2.77 → 2.64 s (3.00; ranges overlap), DST stereo WAV 9.50 → 9.28 s (9.38); mount and first listing of the corpus 0.097 → 0.094 s (0.094; ranges overlap); nothing slower than 0.5.8 or 0.4.0. Same host as the #206 row (Core i9-13900H), so compare the columns (medians of 11, alternating three builds, under the benchmark lock, generic build, 2026-11-07; WAV runs of 0.4.0 and 0.5.8 saw 20 and 3 package thermal events, none on this branch) |
+| #230 | While someone plays, whole-file readers give up passed frames, share a quarter of the cache and read in slices | 6-channel WAV player, 2 cores, one whole-file scanner: 0.54× → 1.00× real time, 14.0 → 0.52 s behind; scan alone unchanged |
 | (#73) | One malloc arena; the frame cache reuses evicted frames' buffers within its cap | library-import replay, 60 images, peak memory at `--cache-mb` 256 / 16: 473 → 271 MiB, 125 → 58 MiB; after straight reads 965–1 066 → 327 MiB; 6-channel DST straight read DSF 11.11 → 11.55 s, WAV 13.52 → 13.98 s, plain DSD 1.69 → 1.59 s |
 | #192 | Names for discs without text (#185): a tag and name change only | whole library of 4,890 tracks, warm caches, 6 runs each against main: mount 1.36 → 0.68 s (within its noise), import-style scan 8.4 → 8.4 s, RSS 87 → 88 MiB (within noise) |
 | #212 | DST decoded in groups in long batches, demultiplexing overlaps decoding, longer window for fast readers, shared between them (#210) | one thread, 41 min stereo 44.78 → 33.09 s; all threads, 50 min stereo 3.98 → 3.18 s |

@@ -94,3 +94,21 @@ fn fast_readers_share_a_quarter_of_the_cache() {
     assert_eq!(f.read_ahead_frames(4, cache, 1), 150);
     assert_eq!(f.read_ahead_frames(32, cache, 0), f.read_ahead_frames(32, cache, 1));
 }
+
+/// While someone plays, readers for throughput share a quarter of the cache however few frames
+/// that is (#230): less for more readers, no more than alone, but never down to nothing.
+#[test]
+fn readers_share_less_while_someone_plays() {
+    let t = tree(Tuning::default());
+    let all = t.all_files();
+    let (_, f) = all
+        .iter()
+        .find(|(p, _)| p.extension().is_some_and(|e| e == "wav"))
+        .expect("a WAV file in the corpus");
+    let cache = 32usize << 20;
+    let one = f.shared_frames(cache, 1);
+    let four = f.shared_frames(cache, 4);
+    assert!(four < one && one <= f.read_ahead_frames(32, cache, 1), "{four} {one}");
+    assert_eq!(f.shared_frames(cache, 1000), 16);
+    assert_eq!(f.shared_frames(cache, 0), one);
+}

@@ -100,8 +100,9 @@ All notable changes to sacdfs are recorded here. The format follows
   limit): images not used lately are dropped and read again when next used, with the same names, inode
   numbers, sizes, times and bytes. 5,000 and 20,000 images now list at 256 MiB, where 0.4.0 and 0.4.1-rc.2
   were killed. A second pass over a library past its budget takes longer, as TOCs are read again.
-- **Defaults follow the limit.** Under a limit up to 512 MiB the cache defaults to 8 MiB, as a 6-channel WAV player then keeps real time
-  during whole-file scans, at the cost of scans 2.4 to 2.6 times slower (#230), and decoder
+- **Defaults follow the limit.** Under a limit up to 512 MiB the cache defaults to 16 MiB: with
+  the fix to #230 (Fixed, below) a 6-channel WAV player keeps real time beside whole-file scans there,
+  and a scan alone runs as fast as at 32 MiB, in about 16 MiB less memory. Decoder
   threads to at most one per 64 MiB of the limit (at least 2). The container no longer sets
   `SACDFS_CACHE_MB` by itself. With no limit, nothing changes.
 - **A warning at startup** when the library won't fit in memory as listed, naming the size that would.
@@ -160,6 +161,19 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- **A whole-file scan no longer starves a player (#230).** On small machines, a client reading whole
+  files (a copy, a checksum run, a full rescan) made a 6-channel WAV player fall behind: on 0.4.1-rc.3,
+  2 cores, the default cache and one scanner, it played at 0.54 times real time and was 14 s behind
+  after 30 s; with four scanners, 0.30 times on 2 cores and 0.46 times on 4. Now it plays at real time
+  in all four cases, at most 0.77 s behind. While someone plays, a reader that reads faster
+  than a player gives up the frames it has passed, shares a quarter of the cache, and reads ahead in
+  slices that let a player's work go first. Beside a player, a scanner runs 5 to 13 % slower than
+  without this change, which is still about as fast as on rc.3 (`SACDFS_CACHE_MB=8`, the earlier
+  workaround, cost 55 to 65 %). A scan with no player is as fast as before, and files keep their
+  bytes. A reader counts as a player from its first 0.5 s: with four scanners on 2 cores, the player
+  fell up to 0.77 s behind, and up to 14 of about 700 reads were more than 0.5 s late.
+  At 16 MiB, the default under a memory limit up to 512 MiB, the player held real time on 2 and 4
+  cores, at most 0.52 s behind, and a scan alone ran as fast as at 32 MiB (within 0.4 %).
 - **`cover.jpg` no longer disappears for about a second when a cover is replaced (#235).** In the
   `Stereo` and `Multichannel` folders, art whose source file had been replaced or removed failed to
   open (`ESTALE`, or `ENOENT` for `cover.jpg` when the file it stood for was removed) until the area

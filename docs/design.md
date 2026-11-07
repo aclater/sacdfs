@@ -213,23 +213,24 @@ the 2,000 that earlier versions documented as working there. The rest of the lim
 taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
 is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
 
-**The defaults from the limit** (#231). Cache 8 up to 512 MiB. The first choice was 16, which showed no
-cost to a single reader, but the fresh-container measurements of #230 changed it: with whole-file
-scanners running, a 6-channel WAV player held real time at 8 and didn't at 16. On this branch, on E-cores
-with a fresh container per condition, 3 rounds each, player speed relative to real time, cache 16 then 8:
+**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB. *Decision:* the coordinator
+set the rule after #230's fix: with the fix, 8 no longer buys a player's safety, so the default is 16 if
+16 holds the player (real time, under 1 s behind) and a scan alone stays within 5 % of 32, otherwise 32
+everywhere. Measured on P-cores of a mobile Core i9, a fresh container per run, 3 runs each, a 6-channel
+WAV player beside whole-file WAV scanners (speed relative to real time, most behind) and a scan alone:
 
-| | 2 cores, 256 MiB | 4 cores, 512 MiB |
+| | 2 cores, 256 MiB: cache 16 / 32 | 4 cores, 512 MiB: cache 16 / 32 |
 |---|---|---|
-| 1 whole-file scanner | 0.51, 1.00 | 0.96, 1.00 |
-| 4 whole-file scanners | 0.55, 0.98 | 0.77, 1.00 |
-| Whole-file WAV scan alone, MB/s | 34, 14.5 | 63, 24 |
-| Headroom of a reader alone, times real time | 9.9, 4.3 | 18.8, 7.1 |
+| 1 whole-file scanner | 1.00×, 0.36 s / 1.00×, 0.23 s | 1.00×, 0.01 s / 1.00×, 0.01 s |
+| 4 whole-file scanners | 1.00×, 0.50 s / 1.00×, 0.93 s | 1.00×, 0.09 s / 1.00×, 0.27 s |
+| Whole-file WAV scan alone, MB/s | 44.5 / 44.7 | 81.4 / 81.2 |
+| Peak anonymous memory, scan alone, MiB | 38 / 54 | 42 / 58 |
 
-The trade-off is that scans take 2.4 to 2.6 times as long and headroom falls by about as much, which still
-leaves over 4 times real time. On a small machine, playback that doesn't stop is worth more than a scan
-that ends sooner. The alternative of keeping 16 and waiting for the fix to #230 is open: if that fix holds
-real time at 16, this default should be measured again. Limits above 512 MiB keep 32; they weren't measured.
-Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
+Both conditions held, so 16. *Alternatives:* 32 everywhere (no faster alone, about 16 MiB more); 8, the
+earlier default (scans 18 to 28 % slower than 32 with the fix, 2.4 to 2.6 times slower before it, which
+it needed then: without the fix, a player held real time at 8 and fell to 0.34 to 0.96 at 16).
+*Trade-off:* beside a player, four scanners on 4 cores read 12 % less between them at 16 than at 32
+(71.5 against 81.3 MB/s). Limits above 512 MiB keep 32; they weren't measured. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
 defaults don't change.
 
 **What real clients and tags files added.** Three costs lay outside the budget, and running under real
@@ -1293,6 +1294,28 @@ decoding them twice.
   readers:* with it for every reader, four real-time players and a tagger saw reads of up to
   114 ms (target 50 ms), because players then convert in long bursts on the shared pool.
   Bounded in bytes, so that six-channel files at 352.8 kHz don't take 50 MB per reader.
+- **A player goes first (#230).** A reader that, since it last jumped, has read 4 MiB at more
+  than 1.5 times the file's byte rate reads for *throughput*; any other that has been reading
+  for 0.5 s is a *player*. While a player is active, readers for throughput give up the
+  frames they have passed (they go first from the cache, the oldest first, all but the last
+  1 MiB), share a quarter of the cache whatever that leaves them (at least 16 frames), and
+  read ahead in slices of 8 frames per decoder thread, waiting up to 50 ms before each for
+  players' decoding to finish. With no player they do none of it. *Why:* the cache is least
+  recently used, and a player's 2 s of read-ahead waits there for 1 to 2 s, while a scanner
+  at 30 MB/s replaces 32 MiB in a second. The player's frames were evicted before it read
+  them; it converted them again, 4 frames at a time, each behind a scanner's whole window on
+  the decoder threads, and fell 14 s behind in 30 s on 2 cores. A cache of 8 MiB helped,
+  oddly, because no read-ahead survived for anyone, so all readers' work came in small
+  pieces. *Why 0.5 s before a player counts:* every reader looks like a player for its first
+  4 MiB, so a scanner opening its next file made the others wait; on 32 threads, a scan alone
+  was 6 to 16 % slower. *Why a margin:* the kernel's requests arrive slightly out of order,
+  and a frame given up too soon is decoded twice and its stream located anew. *Why bounded
+  waits:* a player may be waiting for a stalled image. *Alternatives:* a cache of 8 MiB
+  (scans 55 to 65 % slower; [deployment](deployment.md)); giving up passed frames alone (in a
+  first run on a loaded machine it fixed one scanner on 2 cores, not four); a per-file decode queue with
+  priorities and a pace cap on scanners (not tried: the first is larger, the second slows a
+  scan with no player). *Trade-off:* beside a player a scanner runs 5 to 13 % slower, and a
+  player's first 0.5 s is not protected.
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
