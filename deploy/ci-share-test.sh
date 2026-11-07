@@ -3,8 +3,8 @@
 #
 # The container share test (CI): serve the corpus from an image of the Containerfile and read
 # it back over SMB and NFS from a client container with kernel mounts, checking every track's
-# hashes against the corpus manifest; keep reading open files across a server restart; then
-# user access, DSF only, flattened.
+# hashes against the corpus manifest; keep reading open files across a server restart, under
+# Docker and Podman (deploy/ci-restart-test.sh); then user access, DSF only, flattened.
 #
 #   deploy/ci-share-test.sh IMAGE
 #
@@ -45,7 +45,7 @@ endgroup
 group "Read the corpus over SMB and NFS"
 docker run --rm --network sacdfs-ci --privileged \
     -v "$PWD:/repo:ro" sacdfs-client:ci bash -euxc '
-      # The share has the size of the source filesystem, all of it used (#62).
+      # The share has the size of its images, all of it used, and is never 0 bytes (#62, #217).
       full() {
         read -r size avail < <(df -B1 --output=size,avail "$1" | tail -n 1)
         echo "$1: size $size, available $avail"
@@ -65,6 +65,8 @@ docker run --rm --network sacdfs-ci --privileged \
       mkdir -p /mnt/smb /mnt/nfs
       mount -t cifs //sacdfs/sacd /mnt/smb -o ro,guest,vers=3.1.1
       full /mnt/smb
+      # Files carry the read-only attribute (map readonly = yes, #217): no write bit.
+      [ -z "$(find /mnt/smb -type f -perm /222 -print -quit)" ]
       quiet /mnt/smb
       python3 /repo/deploy/check-share.py /repo/tests/corpus/manifest.json /mnt/smb --min 400 --wav
       umount /mnt/smb
@@ -75,36 +77,17 @@ docker run --rm --network sacdfs-ci --privileged \
       umount /mnt/nfs'
 endgroup
 
-# Clients keep files open across a server restart (a NAS reboot, an image update).
-# SMB reopens by path; NFS relies on sacdfs's persistent file identity (#18).
-group "Keep reading across a server restart"
-docker run -d --name client --network sacdfs-ci --privileged \
-    -v "$PWD:/repo:ro" sacdfs-client:ci sleep infinity
-docker exec client bash -euxc '
-    mkdir -p /mnt/smb /mnt/nfs /run/hold/smb /run/hold/nfs
-    mount -t cifs //sacdfs/sacd /mnt/smb -o ro,guest,vers=3.1.1
-    mount -t nfs4 sacdfs:/sacd /mnt/nfs -o ro,vers=4.2'
-f="dst-features-2ch-6ch/Stereo/$(docker exec client ls /mnt/nfs/dst-features-2ch-6ch/Stereo | grep -m1 '^01.*dsf$')"
-for p in smb nfs; do
-    docker exec -d client python3 /repo/deploy/ci-hold-read.py "/mnt/$p/$f" "/run/hold/$p"
-done
-for p in smb nfs; do
-    timeout 30 bash -c "until docker exec client test -e /run/hold/$p/half; do sleep 0.5; done"
-done
-docker restart -t 20 sacdfs
-"$here/ci-wait-healthy.sh" sacdfs
-docker exec client touch /run/hold/smb/go /run/hold/nfs/go
-status=0
-for p in smb nfs; do
-    timeout 120 bash -c "until docker exec client test -e /run/hold/$p/result; do sleep 0.5; done" || true
-    r=$(docker exec client cat "/run/hold/$p/result" 2>/dev/null || echo "no result")
-    echo "$p across a restart: $r"
-    [ "$r" = ok ] || status=1
-done
-docker exec client umount -l /mnt/smb /mnt/nfs || true
-docker rm -f client
+# Clients keep files open across a server restart (a NAS reboot, an image update), under both
+# runtimes the deployment guide covers. A failure here stops the script with the server's log.
+group "Keep reading across a server restart (Docker)"
+"$here/ci-restart-test.sh" docker "$image"
 endgroup
-[ "$status" = 0 ] || exit "$status"
+
+group "Keep reading across a server restart (Podman)"
+command -v podman >/dev/null || sudo apt-get install -y -q --no-install-recommends podman
+podman_image=$(docker save "$image" | sudo podman load -q | sed -n 's/^Loaded image[^:]*: //p' | head -n 1)
+RUNTIME="sudo podman" "$here/ci-restart-test.sh" "sudo podman" "$podman_image"
+endgroup
 
 group "User access, DSF only, flattened"
 docker rm -f sacdfs

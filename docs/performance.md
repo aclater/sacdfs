@@ -696,6 +696,104 @@ container's own SMB and NFS servers.
   of a 6-channel DST file waited about 6 hours while sacdfs used no CPU. It was not reproduced
   in 6 more reads of the same area or in the player rounds.
 
+## 0.4.1-rc.1 against 0.4.0 (release test, 2026-11-05)
+
+The release binaries (generic build), each read through a fresh mount with `--no-index-cache` and
+the default cache (32 MiB), 11 alternating rounds (the order swaps every round), medians in
+seconds with the range in brackets; one warm-up pass of each read is not counted. The discs are
+three of the five test discs: plain DSD stereo (3.1 GiB of DSF), DST stereo (2.0 GiB) and DST
+6 channels (5.9 GiB). Under the benchmark lock. **The two machines are separate tables and are
+not comparable to each other.**
+
+**A Zen 5 desktop (32 threads, the reference machine), quiet** (no other job; no thermal-throttle
+counters exist on this CPU, so none are reported):
+
+| Read | 0.4.0 | 0.4.1-rc.1 | rc.1 / 0.4.0 |
+|---|---|---|---|
+| Plain DSD stereo, DSF | 1.10 s (0.85 to 1.20) | 1.13 s (0.85 to 1.22) | 1.027 |
+| Plain DSD stereo, WAV | 1.96 s (1.93 to 2.01) | 1.96 s (1.91 to 2.00) | 0.998 |
+| DST stereo, DSF | 4.07 s (4.04 to 4.12) | 4.04 s (4.02 to 4.06) | 0.994 |
+| DST stereo, WAV | 4.29 s (4.28 to 4.31) | 4.29 s (4.25 to 4.33) | 1.002 |
+| DST 6 ch., DSF | 11.43 s (11.37 to 11.48) | 11.43 s (11.37 to 11.53) | 1.000 |
+| DST 6 ch., WAV | 13.40 s (13.24 to 16.71) | 13.46 s (13.26 to 16.97) | 1.004 |
+
+CPU time per read is equal for both builds (for example DST 6 ch. DSF: 259 s each). No read is
+more than 3 % slower; the largest ratio, plain DSD DSF at 1.027, is inside the range of both
+builds.
+
+**A 14-core laptop-class CPU (i9-13900H) on a shared test host, repeated on a quiet host** (the same
+reads, 11 alternating rounds, one run per read; the host also runs a VM that cannot be stopped, so
+the load average was 16.7 in the median, mostly sacdfs's own decoder threads; 3 of the 132 runs,
+all rc.1 DST 6 ch. WAV, saw the CPU's thermal-throttle counter move). A first pass the same
+evening, disturbed by two other jobs, is not used:
+
+| Read | 0.4.0 | 0.4.1-rc.1 | rc.1 / 0.4.0 |
+|---|---|---|---|
+| Plain DSD stereo, DSF | 2.75 s (2.36 to 2.99) | 2.88 s (2.62 to 3.37) | 1.046 |
+| Plain DSD stereo, WAV | 7.36 s (6.78 to 8.58) | 8.00 s (6.76 to 8.85) | 1.086 |
+| DST stereo, DSF | 8.78 s (8.69 to 8.89) | 8.80 s (8.70 to 8.90) | 1.003 |
+| DST stereo, WAV | 9.52 s (9.42 to 9.57) | 9.48 s (9.43 to 9.56) | 0.996 |
+| DST 6 ch., DSF | 28.41 s (28.22 to 28.45) | 28.40 s (28.29 to 28.57) | 1.000 |
+| DST 6 ch., WAV | 32.83 s (32.55 to 33.13) | 32.96 s (32.60 to 33.11) | 1.004 |
+
+No ratio is over 1.10. The two plain-DSD reads, the shortest (under 8 s) and the noisiest,
+are 4.6 % and 8.6 % slower on rc.1 here with overlapping ranges; on the quiet desktop above the
+same reads differ by 2.7 % and 0.2 %, and the DST reads, where the work is, are equal on both
+machines. The quiet desktop is the reference.
+
+**Whole library, 0.4.0 against 0.4.1-rc.1** (the 14-core host above; 414 images, 4,902 DSF files
+with `--format dsf`, the default cache, a fresh index cache for each run, warm caches; 6
+alternating pairs, the first pair not counted in the ranges because it ran while the host was
+busy; 0.4.0's mount times vary because the host was shared):
+
+| Measure | 0.4.0 | 0.4.1-rc.1 |
+|---|---|---|
+| Mount (`sacdfs` returns) | 3.9 to 7.8 s (median 4.4 s) | 0.64 to 0.69 s |
+| First listing (`find`) | 1.5 to 1.6 s | 1.3 to 1.5 s |
+| Import-style scan (64 KiB at the start and 4 KiB at the end of every file) | 10.2 to 11.2 s | 10.2 to 10.7 s |
+| Peak resident memory after the scan | 73 to 76 MiB | 95 to 98 MiB (**+30 %**) |
+| Import replay (Roon's reads) peak, 4,902 files | 78 MiB (2 runs) | 100 and 101 MiB (**+28 %**) |
+
+The mount is faster on rc.1 and listing and scanning are equal. **Memory is over 10 % higher on
+rc.1:** about 22 MiB more for 414 images. **Cause (found by bisecting main, then confirmed with
+`MALLOC_ARENA_MAX=1`, which gives 73 to 77 MiB):** the start-up walk added in 0.4.1 (hiding
+folders with no SACD, [#175](https://github.com/aclater/sacdfs/issues/175)) reads the top-level
+folders on 16 threads before sacdfs set its one-malloc-arena limit, so each thread made a glibc
+arena (31 of them) and kept what it freed; `malloc_trim` after the walk gave nothing back, and
+two arenas still held 79 to 85 MiB. Setting the limit before the walk brings memory back to
+0.4.0's (73.8 to 77.1 MiB on the quiet desktop, 73.9 to 76.8 MiB here) and the mount to 0.56 to
+1.9 s here (0.4.0: 2.8 to 9.3 s, rc.1: 0.5 s); see
+[PR #224](https://github.com/aclater/sacdfs/pull/224). It does not contradict the table of
+[synthetic bench discs](deployment.md#memory) (the same builds differ by 2 MiB there): that
+library is much smaller and has few folders to walk.
+
+**Four players and a tagger** (the scenario of [concurrency](#concurrency-and-memory), 30 s, one
+DST stereo area, a fresh mount, 3 rounds on the quiet desktop; worst read and 99th percentile over
+the players' reads, medians of the rounds): DSF, worst 13.7 ms (0.4.0) against 10.4 ms (rc.1), p99
+0.1 ms on both, tagger's worst file 4.0 against 7.5 ms; WAV, worst 58.1 against 52.5 ms, p99 0.2
+against 0.1 ms, tagger 5.4 against 4.5 ms; peak memory 48 and 72 MiB against 48 and 71 MiB. The
+WAV worst reads are just over the 50 ms target on both builds (one 0.4.0 round reached 214 ms).
+On the shared host (5 rounds) the DSF worst read was 23.3 ms and 27.9 ms and the WAV worst read
+116.8 and 97.6 ms, with the same p99 on both builds.
+
+**Other rc.1 measurements on the same host:**
+
+- *MPD first scan with `dsf,wav`*, 9 alternating pairs on a quiet host: 0.4.0 5.67 to 5.98 s,
+  rc.1 5.67 to 5.87 s (median 5.77 s on both).
+- *The same cause in the soak, 0.4.0 against rc.1 against the fix of PR #224* (three soaks of 1 hour
+  in parallel on the quiet desktop, same images and settings, source-built binaries; all PASS):
+  resident peak 176.1 MiB on 0.4.0 (second-half trend +0.54 MiB/h), 220.6 MiB on rc.1 (+8.59 MiB/h,
+  against an allowed 9.6), 177.9 MiB with the fix (-0.08 MiB/h); threads, open files and stall
+  recovery are equal.
+- *The 2-hour soak* (`scripts/soak.py`, 5 images, stalls every few minutes): **PASS**. 38 stalls
+  injected, 0 stall failures, 23 remounts, 0 remount failures, 263,201 reads (845 GB) of which
+  16,725 failed, as the churn and the stalls make them. Resident memory warm 181.5 MiB, peak
+  195.2 MiB, second-half trend +0.69 MiB/h (allowed 4.4); anonymous memory the same; threads 59
+  (peak 62, ceiling 75); open files 17 to 18; the cache directory 0.1 MiB. 0.4.0 was not soaked
+  for comparison.
+- *Jellyfin's LUFS task* (reads 40 GiB of the 22 GiB library): 478 s on 0.4.0 and 508 s on rc.1
+  (+6 %, one run each, quiet host); first scan 52.5 s on both.
+
 ## History
 
 What each improvement changed, one line each, with the pull request that measured it (each
@@ -717,10 +815,12 @@ against its own "before", on the code of its day).
 | #88 | Seeking moved to scarletbook 0.5.2, the locator removed | cold seek 4.44 → 3.06 calls (DST 4.8–5.5 → 3.0–3.4), 137 → 132 KiB; warm 1.06 → 1.00 calls, 110 → 84 KiB; NFS first-touch DST cold seek median 41 → 30 ms; through the mount within ±12 % locally |
 | #155 | scarletbook and scarletbook-pcm 0.5.6 → 0.5.7, from crates.io (`=0.5.7`) | bytes unchanged; straight reads, 0.5.6 → 0.5.7: plain-DSD DSF 1.45 → 1.29 s, plain-DSD WAV 2.30 → 2.26 s, DST stereo DSF 4.93 → 4.65 s, DST 6 ch. DSF 13.33 → 13.13 s; import replay peak RSS 44 → 45 MiB (default 32 MiB cache). By version: 0.3.0 (256 MiB cache, [above](#cache-size-150)) 1.46 / 2.16 / 3.46 / 11.72 s and 134 MiB, 0.5.6 (main) and 0.5.7 as given; this run was on a busier machine than 0.3.0's (same-day main is 25-35 % slower on DST), so compare 0.5.6 with 0.5.7, not with 0.3.0 (means of 3, alternating, under the benchmark lock, generic build, 2026-11-02) |
 | #206 | scarletbook and scarletbook-pcm 0.5.7 → 0.5.8 (`=0.5.8`) | bytes unchanged (DSF and WAV hashes of the corpus and bench discs equal 0.4.0's); straight reads, 0.4.0 → this branch: DST stereo DSF 8.75 → 8.72 s, DST 6 ch. DSF 28.28 → 28.30 s, plain-DSD DSF 2.83 → 2.55 s (ranges overlap), DST stereo WAV 9.40 → 9.43 s; mount and first listing of the corpus 0.087 → 0.091 s (ranges overlap); no read more than 5 % slower. mars is slower than the machine of the rows above, so compare the two columns, not the seconds with older rows (medians of 11, alternating, under the benchmark lock, generic build, 2026-11-05) |
+| #243 | scarletbook and scarletbook-pcm 0.5.8 → 0.5.9 (`=0.5.9`), after 0.4.1 | bytes unchanged (DSF and WAV hashes of the corpus and bench discs equal 0.4.1-rc.3's, 0.5.8; the bench discs also equal 0.4.0's); straight reads, 0.5.8 → this branch (0.4.0 in brackets): DST stereo DSF 8.73 → 8.43 s (8.70), DST 6 ch. DSF 28.25 → 27.29 s (28.24), plain-DSD DSF 2.77 → 2.64 s (3.00; ranges overlap), DST stereo WAV 9.50 → 9.28 s (9.38); mount and first listing of the corpus 0.097 → 0.094 s (0.094; ranges overlap); nothing slower than 0.5.8 or 0.4.0. Same host as the #206 row (mars), so compare the columns (medians of 11, alternating three builds, under the benchmark lock, generic build, 2026-11-07; WAV runs of 0.4.0 and 0.5.8 saw 20 and 3 package thermal events, none on this branch) |
 | (#73) | One malloc arena; the frame cache reuses evicted frames' buffers within its cap | library-import replay, 60 images, peak memory at `--cache-mb` 256 / 16: 473 → 271 MiB, 125 → 58 MiB; after straight reads 965–1 066 → 327 MiB; 6-channel DST straight read DSF 11.11 → 11.55 s, WAV 13.52 → 13.98 s, plain DSD 1.69 → 1.59 s |
 | #192 | Names for discs without text (#185): a tag and name change only | whole library of 4,890 tracks, warm caches, 6 runs each against main: mount 1.36 → 0.68 s (within its noise), import-style scan 8.4 → 8.4 s, RSS 87 → 88 MiB (within noise) |
 | #212 | DST decoded in groups in long batches, demultiplexing overlaps decoding, longer window for fast readers, shared between them (#210) | one thread, 41 min stereo 44.78 → 33.09 s; all threads, 50 min stereo 3.98 → 3.18 s |
 | (#78) | No read-ahead within a file's first 1 MiB (a scanner's head read) | library-import pattern, 12 decoder threads, per 6-channel DST file: CPU 141–177 → 42–44 ms, wall 17.4–21.6 → 10.3–11.1 ms; stereo DST CPU 60–84 → 46–50 ms |
+| #240 | Listings kept to a budget under a memory limit; only the last 16 covers kept | No limit, 1,600 images, fresh index cache, 11 alternating rounds under a lock, listing and stating every file, median (min to max): first pass 2.485 s (2.13 to 4.00) against 0.4.1-rc.3 built the same way 2.489 s (2.30 to 2.68), and 0.4.0 2.504 s; second pass 0.613 s (0.30 to 0.75) against 0.660 s (0.37 to 0.99) and 0.564 s; anonymous memory 81 MiB against 88 and 87: no cost beyond the spread. Under 256 MiB with tags and a 400 KiB cover per disc, 9 rounds, with the mapping of large blocks against without: WAV 3.69 s against 3.71, DSF 4.89 s against 4.89, 200 random reads 2.27 s against 2.23, listing 8 images 0.36 s against 0.27. With 40 images, the build without it failed new opens with `ENOMEM`. Memory under a limit: [deployment](deployment.md#under-a-memory-limit) |
 | #239 | WAV reads demultiplex on the request thread (#238) | bytes unchanged (109 WAV and 109 DSF files equal 0.4.0's and 0.4.1-rc.2's). Reads of healthy discs during a hang, 4 decoder threads, 30 s timeout, 8 clients on the hung image: rc.2 2 `EIO` of 6 reads, worst 60.9 s; this change 0 of 33,595, worst 152 ms. WAV straight reads and seeks, against rc.2: no difference beyond the noise (most medians within 3%, worst −4.9% on 6-channel DST with one reader, whose runs spread by more than that). Local: the hang figures are a single run of each case, the speed figures 5 rounds. Peak memory, 2 decoder threads, 2 images, 16 to 64 fast 6-channel WAV readers, 5 rounds: median 4 to 16 MiB above rc.2, worst 109 MiB against 94 MiB, nothing killed at 256 or 512 MiB. A long hang with retrying clients can still fill the read threads (#241) |
 
 ## The CI benchmark

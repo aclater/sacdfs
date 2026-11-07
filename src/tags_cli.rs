@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! `sacdfs tags` (#81): the disc key of an image, and `import`, which copies the tags of
-//! extracts that `sacdfs verify` matches into the tags directory, so that the extracts can be
-//! deleted without losing them (#82). Nothing but the tags directory is written.
+//! `sacdfs tags` (#81): the disc key of an image; `import`, which copies the tags of extracts
+//! that `sacdfs verify` matches into the tags directory, so that the extracts can be deleted
+//! without losing them (#82); and `fetch`, which looks a disc up on MusicBrainz, the only part of
+//! sacdfs that uses the network ([`crate::lookup`], #185). Nothing but the tags directory is
+//! written.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -16,6 +18,7 @@ use clap::{Parser, Subcommand};
 use scarletbook::Slot;
 
 use crate::disc::{Disc, Tuning};
+use crate::lookup;
 use crate::tags::{self, ART, Fields, Key, TagsFile};
 use crate::track::TrackFile;
 use crate::verify::{self, container, id3};
@@ -51,6 +54,33 @@ enum Cmd {
         #[command(flatten)]
         verify: verify::Args,
     },
+    /// Look discs up on MusicBrainz and write what matches to their tags files. This goes on
+    /// the network, at 1 request per second; nothing else in sacdfs does. By barcode or catalogue
+    /// number, confirmed by track count, durations and ISRCs. No match, or an ambiguous one,
+    /// writes nothing and says why. Values in a tags file and the disc's own text are kept.
+    Fetch {
+        /// The tags directory (created if missing).
+        #[arg(long, value_name = "DIR")]
+        tags: PathBuf,
+        /// If that finds nothing, search by album and artist, from the disc's text or the
+        /// image's path. Sends those names.
+        #[arg(long)]
+        lookup_name: bool,
+        /// If that finds nothing, ask by the tracks' start times (a disc of 4 tracks or more).
+        /// Sends the times.
+        #[arg(long)]
+        lookup_durations: bool,
+        /// Say what would be written, and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Don't add " (Multichannel)" to the album written for a multichannel area: use this
+        /// if your mount has --no-multichannel-album-suffix.
+        #[arg(long)]
+        no_multichannel_album_suffix: bool,
+        /// SACD image files.
+        #[arg(required = true)]
+        images: Vec<PathBuf>,
+    },
 }
 
 /// `sacdfs tags`: `args` starts with "tags".
@@ -58,7 +88,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     let cli = Cli::parse_from(args);
     let verbose = match &cli.cmd {
         Cmd::Import { verify, .. } => verify.verbose,
-        Cmd::Key { .. } => 0,
+        Cmd::Key { .. } | Cmd::Fetch { .. } => 0,
     };
     let level = ["warn", "info", "debug"].get(usize::from(verbose)).copied().unwrap_or("trace");
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).try_init();
@@ -68,6 +98,18 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
             eprint!("{}", s.render());
             s.all_handled()
         }),
+        Cmd::Fetch { tags, lookup_name, lookup_durations, dry_run, no_multichannel_album_suffix, images } => {
+            let options = lookup::Options {
+                by_name: lookup_name,
+                by_durations: lookup_durations,
+                dry_run,
+                no_suffix: no_multichannel_album_suffix,
+            };
+            let mut client = lookup::Client::new(lookup::Http::new());
+            let s = lookup::fetch(&tags, &images, options, &mut client, |line| println!("{line}"));
+            eprint!("{}", s.render());
+            Ok(s.all_handled())
+        }
     };
     match r {
         Ok(true) => ExitCode::SUCCESS,
@@ -153,7 +195,7 @@ impl ImportSummary {
 }
 
 /// One area's imported fields, by track number.
-type AreaFields = BTreeMap<u8, Fields>;
+pub(crate) type AreaFields = BTreeMap<u8, Fields>;
 
 /// Runs verify with `args`, then writes the tags of its matched extracts into `dir`.
 pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
@@ -317,7 +359,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
 /// The fields every track of `all` has with the same value, if `tracks` holds them all
 /// (two or more): an album-level value. *Why:* a genre on every track is the album's genre,
 /// and the tags file stays short.
-fn common(tracks: &AreaFields, all: &BTreeSet<u8>) -> Fields {
+pub(crate) fn common(tracks: &AreaFields, all: &BTreeSet<u8>) -> Fields {
     let have: BTreeSet<u8> = tracks.keys().copied().collect();
     if all.len() < 2 || !all.is_subset(&have) {
         return Fields::new();
@@ -334,7 +376,7 @@ fn common(tracks: &AreaFields, all: &BTreeSet<u8>) -> Fields {
 }
 
 /// Adds to `into` each key of `from` it lacks, level by level; the number added.
-fn merge(into: &mut TagsFile, from: &TagsFile) -> usize {
+pub(crate) fn merge(into: &mut TagsFile, from: &TagsFile) -> usize {
     fn level(into: &mut Fields, from: &Fields) -> usize {
         let mut n = 0;
         for (k, v) in from {
@@ -357,7 +399,7 @@ fn merge(into: &mut TagsFile, from: &TagsFile) -> usize {
 }
 
 /// Writes `bytes` to `path` through a temporary file in the same directory, renamed over it.
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("tmp~");
     fs::write(&tmp, bytes)?;
     fs::rename(&tmp, path)

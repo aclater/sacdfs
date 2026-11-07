@@ -407,6 +407,50 @@ fn directory_handles_survive_a_restart() {
     }
 }
 
+/// Under a bound on listed images (#237), a handle opens its file and its directory after the
+/// image was dropped, with the same bytes. The kernel still knows the number, so the requests come
+/// to sacdfs for a number no longer in its tree, as from a client coming back to an NFS export.
+#[test]
+fn handles_open_after_their_image_is_dropped() {
+    common::skip_without_fuse!();
+    let src = tempfile::tempdir().unwrap();
+    for i in 0..40 {
+        let folder = src.path().join(format!("A{i:02}"));
+        std::fs::create_dir(&folder).unwrap();
+        let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+        std::os::unix::fs::symlink(image, folder.join("x.iso")).unwrap();
+    }
+    let cache = tempfile::tempdir().unwrap();
+    let at = tempfile::tempdir().unwrap();
+    let m = Mount::new(src.path(), at.path(), cache.path(), &["--listing-mb", "1"]);
+    let dir = m.at.join("A00/x/Stereo");
+    let file = dir.read_dir().unwrap().next().unwrap().unwrap().path();
+    if !handles_available(&m.at, &file) {
+        common::skip!(NO_HANDLES);
+    }
+    let whole = std::fs::read(&file).unwrap();
+    let names = |p: &Path| {
+        let mut n: Vec<_> = std::fs::read_dir(p).unwrap().map(|e| e.unwrap().file_name()).collect();
+        n.sort();
+        n
+    };
+    let listed = names(&dir);
+    let (hf, hd) = (name_to_handle(&file).unwrap(), name_to_handle(&dir).unwrap());
+    // Going through the whole library drops this image, which nothing has open.
+    for round in 0..2 {
+        inodes(&m.at);
+        let open = open_by_handle(&m.at, &hf).unwrap_or_else(|e| panic!("file, round {round}: {e}"));
+        let mut got = vec![0; whole.len()];
+        open.read_exact_at(&mut got, 0).unwrap();
+        assert!(got == whole, "the bytes, round {round}");
+        drop(open);
+        let d = open_dir_by_handle(&m.at, &hd).unwrap_or_else(|e| panic!("directory, round {round}: {e}"));
+        let fd = PathBuf::from(format!("/proc/self/fd/{}", d.as_raw_fd()));
+        assert_eq!(names(&fd), listed, "round {round}");
+    }
+    m.stop();
+}
+
 #[test]
 fn a_busy_mount_is_detached_on_sigterm() {
     common::skip_without_fuse!();

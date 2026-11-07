@@ -12,9 +12,9 @@ may differ between releases.
 Reference: [deployment guide](../deployment.md#truenas-scale).
 
 TrueNAS's own SMB and NFS services hold ports 445 and 2049, so this app publishes sacdfs's
-shares on **10445** (SMB) and **12049** (NFS). Linux and macOS clients can use those ports;
-Windows can only use 445 (see the [deployment guide](../deployment.md#truenas-scale) for the
-other ways).
+shares on **10445** (SMB) and **12049** (NFS). Linux, macOS and Windows clients can use those ports
+(Windows: `net use ... /TCPPORT:10445`, one port per server name; see the
+[deployment guide](../deployment.md#truenas-scale), which also lists other ways).
 
 1. Note the path of the dataset that holds your SACD images, for example
    `/mnt/pool/music`.
@@ -55,7 +55,7 @@ other ways).
 
    - The images are mounted read-only; sacdfs never writes to them.
    - `sacdfs-cache` keeps the seek index across updates (a few MB).
-   - The default cache (`SACDFS_CACHE_MB`, 32) suits a NAS; leave it out.
+   - The default cache (`SACDFS_CACHE_MB`: 32 MiB, or 8 under a memory limit up to 512 MiB) suits a NAS; leave it out.
    - `NFS_CLIENTS` takes one address (`192.0.2.15`), a network (`192.0.2.0/24`), a
      comma-separated list of them, or `*`.
    - For Roon or MPD, add `SACDFS_FORMATS: dsf`; see your server's guide.

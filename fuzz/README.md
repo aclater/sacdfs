@@ -14,6 +14,7 @@ sacdfs's package or its build.
 | `headers` | a file shape and tag values | The ID3, DSF and WAV writers: tags and chunks are well formed for any text. A WAV header read in pieces is the header read whole |
 | `verify_container` | one or two DSF or DFF files | The `verify` readers: the audio stream has the length the header says, and a search of one stream in another ends |
 | `verify_id3` | one or two ID3v2 tags | The `verify` and `tags import` readers: no panic, and the report's form of what they find reads back |
+| `lookup_json` | a MusicBrainz response (`sacdfs tags fetch`) | No panic, whatever is malformed. Matched against a real disc's areas, what would be written reads back as the same tags |
 | `verify_report` | a line of a `verify` report | Any bytes survive a field's escaping, and a line read is written back the same |
 
 `verify` reads DSF and DFF files, not FLAC, so there is no FLAC target. The persistent seek

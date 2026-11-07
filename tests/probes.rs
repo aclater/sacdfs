@@ -192,22 +192,51 @@ fn probes_are_answered_once() {
     assert!(area.join("..").join("Stereo").is_dir());
 }
 
+/// `df -B1` of `p`: size and available bytes.
+fn df(p: &Path) -> (u64, u64) {
+    let out = Command::new("df").args(["-B1", "--output=size,avail"]).arg(p).output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    let mut v = text.lines().nth(1).unwrap().split_whitespace().map(|s| s.parse::<u64>().unwrap());
+    (v.next().unwrap(), v.next().unwrap())
+}
+
 #[test]
-fn df_shows_the_source_size_full() {
+fn df_shows_the_images_size_full() {
     common::skip_without_fuse!();
     let images = corpus().join("images");
+    let mut bytes = 0;
+    let mut todo = vec![images.clone()];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(d).unwrap() {
+            let path = e.unwrap().path();
+            let meta = std::fs::metadata(&path).unwrap();
+            if meta.is_dir() {
+                todo.push(path);
+            } else if path.extension().is_some_and(|x| x == "iso") {
+                bytes += meta.len();
+            }
+        }
+    }
     let mount = Mount::new(&images, &[]);
-    let df = |p: &Path| -> (u64, u64) {
-        let out = Command::new("df").args(["-B1", "--output=size,avail"]).arg(p).output().unwrap();
-        assert!(out.status.success());
-        let text = String::from_utf8(out.stdout).unwrap();
-        let mut v = text.lines().nth(1).unwrap().split_whitespace().map(|s| s.parse::<u64>().unwrap());
-        (v.next().unwrap(), v.next().unwrap())
-    };
     let (size, avail) = df(&mount.path());
-    assert!(size > 0, "a 0-byte filesystem");
     assert_eq!(avail, 0);
-    assert_eq!(size, df(&images).0, "not the source's size");
+    // In blocks of 64 KiB. Images that aren't SACD images aren't counted (the corpus has some),
+    // so at most that total.
+    assert!(size > 0, "a 0-byte filesystem");
+    assert!(size <= bytes.div_ceil(1 << 16) * (1 << 16), "{size} is over the images' {bytes}");
+    assert!(size >= bytes / 2, "{size} is far under the images' {bytes}");
+}
+
+/// No images is not a 0-byte filesystem either (#62): the source's filesystem says the size.
+#[test]
+fn df_of_no_images_shows_the_source_size_full() {
+    common::skip_without_fuse!();
+    let empty = tempfile::tempdir().unwrap();
+    let mount = Mount::new(empty.path(), &[]);
+    let (size, avail) = df(&mount.path());
+    assert_eq!(avail, 0);
+    assert_eq!(size, df(empty.path()).0, "not the source's size");
 }
 
 #[test]

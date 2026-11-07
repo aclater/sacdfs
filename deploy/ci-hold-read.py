@@ -31,6 +31,8 @@ try:
         time.sleep(0.2)
     errors = []
     try:
+        # From the server, not the client's page cache: that is what is being tested.
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
         second = b""
         while len(first) + len(second) < size:
             chunk = os.pread(fd, size - len(first) - len(second), len(first) + len(second))

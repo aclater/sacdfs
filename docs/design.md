@@ -46,7 +46,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.5.8, from crates.io (`=0.5.8`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.5.9, from crates.io (`=0.5.9`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -61,7 +61,7 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   tag is no longer needed; bytes unchanged, gated as above. 0.5.8 (#206): a seek-index
   fix (`AreaIndex::from_bytes` refuses a form of saved index the library never writes) and no
   speed change; *why:* the pin follows the newest release that passes the gates; bytes unchanged,
-  gated as above.
+  gated as above. 0.5.9 (after 0.4.1): faster DST decoding and a rewrite of the DSF partial-row code; *why:* same rule; bytes unchanged, gated as above; *trade-off:* a DSF read on damaged media can now fail because of a bad neighbouring position (library notes).
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -154,6 +154,104 @@ before. Two changes, each needed:
   an `Arc<Toc>` shared by `Disc` and the library: not possible without changing scarletbook,
   and the borrow from the library's disc costs nothing per read. *Trade-off:* the TOC is
   borrowed from the library's disc, so it lives as long as the `Disc`, as before.
+
+### Memory: a budget for listings (#237)
+
+A large library under a container memory limit got sacdfs killed while listing, which ended the
+service for every client. An allocation failure can't be relied on, because the kernel's
+out-of-memory killer acts first, so sacdfs has to stay under the limit by itself.
+
+**What the memory was.** About 57 KiB per image, measured with dhat-rs and glibc's own accounting at 395, 1,600
+and 5,000 images (`examples/listing_mem.rs`), at 24.8 files per image: 47% is built per file (header,
+tag bytes, the structs), 18% is the TOC and text, 19% the tree's nodes, entries and names, 2% the
+walk, and 13% the allocator's overhead. Over 90% of the bytes requested can be rebuilt from the image.
+
+**The decision.** The owner's direction was for running short of memory to make sacdfs slower rather
+than kill it, with re-reading the TOC as the accepted cost. So the unit dropped is the whole image:
+its disc, areas and files. *Why it stays correct:* numbers come from paths (see [`ident`](../src/ident.rs)),
+and a number not in the tree is already looked for along its path, for NFS handles kept across a
+restart. A dropped image goes through that same path, and its names, numbers and generations come
+back the same while the image is unchanged. If the image did change, it is what a remount would show.
+
+**Alternatives.**
+- *Drop only the TOC and text:* saves 18%, where 20,000 images at 256 MiB needs about 90%.
+- *A memory-mapped listing file per library,* the first proposal on #237: names, sizes and times are a
+  small part of the memory, so it moves little by itself, and it needs a key covering every image's
+  size and mtime, the tags and the output options, and a format. It also needs this path as its
+  fallback when the cache directory isn't writable. It could still help a warm start (#232); that's a
+  speed question, unmeasured, and the bound doesn't depend on it.
+- *Strict least-recently-used:* needs a lock on requests answered from memory. The clock order here
+  only sets a flag, and a scan that goes through everything once evicts in nearly the same order.
+
+**Trade-offs accepted.** Going back to a dropped image costs a TOC read. A file open keeps its whole
+image, so readers can hold more than the budget. Below the budget, nothing is dropped and nothing is
+added but a flag. The count of nodes in `statfs` falls as images are dropped.
+
+**Details that matter.**
+- A source directory opens its images in batches of 64 under a bound. One directory can hold more
+  images than the bound allows at once.
+- The persistent seek index holds each disc it has registered until the next flush, 30 s later. A scan
+  goes through thousands of images in that time, so it now lets go of dropped discs with nothing to
+  save as soon as a batch has been dropped.
+- A request that holds a directory's node while its image is dropped sees a mark on that node and asks
+  the tree again.
+- A closed image that can't be opened again fails the request and is not remembered, so it isn't
+  shown as empty to a scanner because of a passing error.
+
+**The memory watch.** Item 3 of the issue. What's counted is the cgroup's anonymous and shared memory
+rather than `memory.current`, which includes the page cache and sits at the limit on any machine that
+has been reading. The order is what costs least first: listings cost a disc read for whoever comes
+back; the cache and decoders cost a reader some decoding; refusing fails one request; a kill fails
+every client. The alternative of pressure stall information was left out: it reports that reclaim is
+already hurting, and doesn't say how close the kill is.
+
+**Why 3/8 of the limit.** A quarter dropped images from a library that already fitted: at 1,600 images
+under 256 MiB, a second pass read TOCs again. At 3/8, about 1,800 images stay in memory at 256 MiB, close to
+the 2,000 that earlier versions documented as working there. The rest of the limit is for the process, Samba and NFS.
+
+**A race found on CI.** A number looked for along its path could be made and dropped again before it was
+taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
+is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
+
+**The defaults from the limit** (#231). Cache 8 up to 512 MiB. The first choice was 16, which showed no
+cost to a single reader, but the fresh-container measurements of #230 changed it: with whole-file
+scanners running, a 6-channel WAV player held real time at 8 and didn't at 16. On this branch, on E-cores
+with a fresh container per condition, 3 rounds each, player speed relative to real time, cache 16 then 8:
+
+| | 2 cores, 256 MiB | 4 cores, 512 MiB |
+|---|---|---|
+| 1 whole-file scanner | 0.51, 1.00 | 0.96, 1.00 |
+| 4 whole-file scanners | 0.55, 0.98 | 0.77, 1.00 |
+| Whole-file WAV scan alone, MB/s | 34, 14.5 | 63, 24 |
+| Headroom of a reader alone, times real time | 9.9, 4.3 | 18.8, 7.1 |
+
+The trade-off is that scans take 2.4 to 2.6 times as long and headroom falls by about as much, which still
+leaves over 4 times real time. On a small machine, playback that doesn't stop is worth more than a scan
+that ends sooner. The alternative of keeping 16 and waiting for the fix to #230 is open: if that fix holds
+real time at 16, this default should be measured again. Limits above 512 MiB keep 32; they weren't measured.
+Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
+defaults don't change.
+
+**What real clients and tags files added.** Three costs lay outside the budget, and running under real
+NFS clients and `--tags` found them.
+
+- *NFS-Ganesha's cache of entries.* Its default of 100,000 entries reached about 180 MiB at 256 MiB, with
+  sacdfs down to 59 MiB and refusing for as long as that cache stayed full, as nothing sacdfs could give
+  up would help. The entrypoint now sets `Entries_HWMark` to what an eighth of the limit holds at about 2 KiB
+  each, and `Chunks_HWMark` to match. The alternative of having sacdfs refuse earlier would fail requests that
+  the memory could serve. The trade-off is that entries past the mark are looked up again from sacdfs.
+- *Covers kept by each disc's tags.* Tags kept each disc's picture for as long as the mount lasted, up to
+  a few GiB for a large library, with or without a bound. A tag copies its picture, so it's needed only
+  while a disc's files are made; only the last 16 read are kept now. This one applies with no limit too. The
+  alternative of counting them in the budget would keep them in memory without any use. The trade-off is
+  a read of the picture each time a disc is listed, and a cover image edited during a mount can show
+  then, without a new generation.
+- *Freed covers in the heap.* Blocks of hundreds of KiB, made and freed for each file, raise glibc's mapping
+  threshold, and then stay in the heap: over 100 MiB more than was in use. Under a limit with a tags directory,
+  the threshold is fixed at 128 KiB. Only then, as other mounts don't make such blocks while listing.
+  The budget also runs as each directory is listed now, since one image with covers can hold tens of MiB,
+  and the watch trims the heap at the Caches level, at most every 2 s, since a trim holds up every thread
+  that allocates.
 
 ### Memory: the default cache and the fixed overhead (#150)
 
@@ -454,7 +552,14 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
 For the server-side deployment (#17, #18): an NFS client keeps file handles, which hold the
 inode and generation numbers, across server restarts. Numbers handed out in walk order would
 change on every mount, and clients would get `ESTALE` on open files and cached directories
-after every NAS reboot or app update.
+after every NAS reboot or app update. In the container, NFS-Ganesha's handles must not depend
+on the mount's device number either (`fsid_type = Major64`, #218). *Why that setting:* FUSE
+reports no filesystem id, so Ganesha uses the device number, and a new mount can get another
+one. *Alternatives:* `Filesystem_Id` only sets what clients see, not what handles hold; `One64`
+and the others still include the varying minor number; a fixed device number can't be asked of the
+kernel for a FUSE mount, and the kernel NFS server needs a privileged container (see
+deployment.md). *Trade-off:* a handle can't tell two filesystems of one export apart, which an
+export of one FUSE mount doesn't have; and old clients go stale once on the upgrade.
 
 **Inode numbers** (`src/ident.rs`) are 64 bits:
 
@@ -1307,19 +1412,33 @@ Two kinds of probe are answered so that the kernel stops asking (#61):
     the CI share test runs `ls -lR` over SMB and NFS and `getfattr -R -d` over NFS, and fails
     on any error line.
 
-**Filesystem size (#62).** `statfs` reports the size of the filesystem holding SOURCE, all of
-it used (0 free, 0 available), the number of entries made so far as inodes, and 0 free
-inodes. `df` showed a 0-byte filesystem before, and SMB clients were told 0 bytes total and
-free, which some treat as a broken share. *Why the source's size, not the sum of the files'
-sizes:* the tree is made lazily, so the sum is known only for the folders listed so far; it
-would grow while a client browses and opening every image at mount to know it costs a TOC read
-per image. The source's size is one `statvfs`, is the same however much has been browsed, and
-says truthfully where the bytes live. *Why 0 free:* the mount is read-only; a full
-filesystem is what copy dialogs understand as "nothing can be written here". The size is read
-at mount (the source was just walked, so this does not wait) and again at most once a minute,
-on a request thread, so a stalled source never holds up a `statfs` reply: it gets the last
-size read. `statvfs` comes from `nix` (MIT, already a dependency of fuser, with the same
-`fs` feature), not `libc`: sacdfs keeps `unsafe` to its daemonising code.
+**Filesystem size (#62, #217).** `statfs` reports the total size of the image files found at mount,
+all of it used (0 free, 0 available), the number of entries made so far as inodes, and 0 free
+inodes. With no images (or none readable) it reports the size of the filesystem holding SOURCE,
+read again at most once a minute on a request thread, so a stalled source never holds up a `statfs`
+reply. *Why not 0:* `df` showed a 0-byte filesystem before #62, and SMB clients were told 0
+bytes total and free, which some treat as a broken share. *Why the images' total (#217):* it is
+what the share holds. It used to be the source filesystem's capacity, which said 45.9 TB against 3.12
+TB of listed files, and looked like a huge full disk. It takes one `stat` per image at mount, just
+after the scan has done the same. *Why not the sum of the files' sizes:* the tree is made lazily, so
+it is known only for the folders listed so far; it would grow while a client browses, and opening every
+image at mount to know it costs a TOC read per image. *Why 0 free, not the source's real free
+space:* the same as ISO 9660 and squashfs report; nothing can be written, and a non-zero value would
+say otherwise. Roon and Plex have run with 0 free since #62, and whether they care about a
+non-zero value hasn't been tested, so this keeps what has been run. Measured with the real free space:
+`df` showed 58 % used and clients a normal disk, and writes were refused all the same.
+*Trade-off:* images added later count from the next mount, because counting them would mean walking the
+source each time; and 100 % used remains, though it's the convention for read-only media. `statvfs`
+comes from `nix` (MIT, already a dependency of fuser, with the same `fs` feature), not `libc`: sacdfs
+keeps `unsafe` to its daemonising code.
+
+**Read-only attribute (#217).** The container's Samba has `map readonly = yes`, so each file and folder
+carries the DOS read-only attribute, worked out from its mode with no extra request to sacdfs. *Why:*
+the share is read-only and gvfs's `can-write` comes only from this attribute. The volume was already flagged
+`FILE_READ_ONLY_VOLUME` (from the read-only FUSE mount), which gvfs can't see, as libsmbclient doesn't pass it on.
+*Alternative:* `map readonly = permissions` asks the same of each open file, which costs more for the same
+result on a mount with no write bits. *Trade-off:* folders get it too, as Samba can't separate them; a
+plain `cp` on the Linux client keeps the missing write bit; and Windows and macOS haven't been tested.
 
 ## Concurrency
 
@@ -1814,7 +1933,8 @@ with no network and no stored state; the lookups of its later phases write tags 
   split by a guess on the others.
 - **File names stay the disc's.** A tags file changes tags, not names, as before (#81): a track
   given a title there keeps the name `NN - Track NN`. *Why:* a name that follows the tags file
-  would move a file when a tag is edited, and players would see a removal and an addition.
+  would move a file when a tag is edited, and players would see a removal and an addition. Lookups
+  keep to this ([Looking tags up](#looking-tags-up-185-phase-2)).
 - **Path safety.** What comes from the path goes only into tags, never into a path of the mount;
   a name that isn't valid UTF-8 or holds control characters gives nothing to the patterns, and
   the plain name goes through `names::sanitize`.
@@ -1835,9 +1955,110 @@ sidecars below stay. *Why:* as with tags files, only those files'
   is only a new name for the same number. `golden_dsf_corpus` hashes paths and header sizes, so
   its value moved without a version bump, this once; the audio was compared with 0.4.0's on the
   pull request.
-- **`verify` and `tags import`** compare an extract with the tag without the fill-in
+- **`verify` and `tags import`** compare an extract with the tag without the fill-in from the path
   (`TrackFile::stored_frames`). *Why:* text that happens to match the folder's name is still lost
   if the extract goes and the folder is later renamed, so `verify` reports it and `import` keeps it.
+  The generated `Track NN` title does count as served. *Why:* it depends only on the track number,
+  so nothing is lost with the extract, and an import storing it would look like a hand edit and
+  keep a lookup's title out. *Alternative:* a check in `import` alone, which would leave `verify`
+  reporting a loss that isn't one. *Trade-off:* a title set by hand to exactly `Track 03` on track 3
+  isn't imported, and is served the same anyway. `Track 3`, or `Track 03` on another track, is kept.
+
+### Looking tags up (#185, phase 2)
+
+`sacdfs tags fetch IMAGE...` looks a disc up on MusicBrainz and writes to its tags file
+(`src/lookup.rs`, `src/lookup/mb.rs`). It runs on demand: never in a mount or the FUSE path, and
+with no worker (phase 4). *Why a command first:* it keeps the server process simple until the
+fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or schedules it.
+
+- **The method is pysacd's, made stricter.** pysacd takes the best candidate, with a person
+  checking its output as the fallback. Here the result is served to players with nobody looking, and
+  a wrong match is worse than none, so:
+
+  | Point | pysacd | sacdfs |
+  |---|---|---|
+  | A search hit | a candidate | must carry the number or names searched for (a search matches on analysed words) |
+  | Tracks without a length | left out of the mean, so one length can confirm a disc | each must have a length, or its ISRC on the recording |
+  | One wrong track | hidden in a mean (30 s over 12 tracks is 2.5 s) | a limit per track too |
+  | ISRCs | hits can excuse durations | never; more disagreeing than agreeing refuses |
+  | Limits | 3 s mean for all | tighter as the way of finding it weakens |
+  | Several fit | the best | SACD media first, then the most ISRC hits, then the path's year; if text still differs, nothing |
+  | A later, weaker method | n/a | can't overrule a stronger one's ambiguity |
+
+  *Why each limit:* a number identifies the release, so durations guard against a wrong number
+  (5 s mean, 15 s per track). A name says less (3 s, 6 s). Durations alone say least, and the fuzzy
+  lookup returns near misses on purpose, so only the same master should fit (1 s, 2.5 s, 4 tracks at
+  least). *Measured:* on 60 real discs with their text hidden, of 100 media whose titles agreed with
+  the disc, 72 were within the first limits chosen (6 s, 3 s) and 90 within these; the worst track
+  was 10 to 20 s off on 15 and over 30 s on 4, and many were off by a similar 2 to 5 s on every track,
+  which is what a different split of pauses between tracks would give (the cause wasn't checked). Releases with other tracks were over 60 s off. Going from 6 s and 3 s to
+  15 s and 5 s took discs with at least one matched area from 35 to 44 of 60, every one right by hand; by
+  name, on 30 discs, 4 s and 2 s to 6 s and 3 s took them from 11 to 15, and wider gained none. *Not
+  measured:* the limits for durations alone, since the run ended before that step, on the service's
+  503s. *Trade-off:* a wrong release with the same number, the same track count and tracks within
+  15 s would pass; none was seen. Real discs still refused: 16 of 60, 8 with no release found, 5 on ISRCs
+  that disagree and 3 on durations.
+- **ISRCs that disagree still refuse, also by number.** The coordinator decided this under the owner's
+  delegation, after real discs. *Why:* a wrong tag written to a library costs more than a disc left
+  unmatched, and the sample is small. *Measured:* without the rule, 49 of 60 discs matched against 44, and
+  the 5 extra were right by hand. *Alternative:* no refusal at the number step, where the number and
+  durations already agree. *Trade-off:* those discs need tags by hand, and the command says so; a name
+  lookup found nothing for any of the 5.
+- **Recorded case: why text must agree.** A live query by durations for one hybrid disc returned the
+  disc, a digital release of it, and a box set holding it under another album title. Each has
+  fitting durations and the same track titles. Taking "the best" would make the album name a coin
+  toss, so that disc is refused. Another release listed two discs with the same durations, a stereo
+  mix and a 5.1 mix, whose titles differ: refused, unless the disc's set number names one.
+- **What several agreeing candidates leave out.** Text must be the same in all. IDs and the date
+  must be too or they are dropped, so that pressings of one album still give titles. A name or
+  durations never write a release ID or date: they find the album, not the pressing.
+- **One disc, one album.** An ambiguous area stops the whole disc, as do two areas matching different
+  albums. An area that doesn't fit the release its sibling matched is left alone and gets no second
+  lookup by a weaker way.
+- **Who wins.** A value anywhere in the tags file, in any spelling (`TIT2`, `title`) and empty ones
+  included, because hand edits win (#81); then the disc's text, since a label's own text may be
+  correct where a database romanises it; then the lookup. *Alternative:* the lookup replacing disc
+  text. *Trade-off:* a disc with bad text keeps it unless it is edited by hand. Values go at the
+  least specific level that says them, so a later edit at a more specific one wins as levels do.
+- **A title from a lookup doesn't rename the file.** *Choice:* the name stays `NN - Track NN` and the
+  title goes in the tag. *Why:* phase 1's rename already moved those files once, and players likely
+  key play history on paths; a second rename, on top of one per tag edit afterwards, would likely
+  lose it again (not tested with a player). Players show the tag; only file browsers show the
+  name. It also keeps third-party text out of paths, and listing a folder needs no tags file.
+  *Alternatives:* names that follow the tags file (a move per edit); renaming on lookups only (the
+  same move, and a mount that must know who wrote a value). *Trade-off accepted:* file names stay
+  generic on these discs, which shows in file browsers and players that list by name.
+- **`Track NN` already in a tags file gives way.** `tags import` from 0.4.1 stored it from an extract
+  of a mount. Fetch removes it where it has a title for that track. *Trade-off:* a title set by hand
+  to exactly that text is replaced; such a choice is improbable, and the file says the same thing
+  once a real title is wanted.
+- **Path-derived text an older import stored is still kept.** An extract of a 0.4.1 mount can hold
+  an album and artist from the path, and `import` keeps them on purpose (above), so a later fetch sees
+  an edit and leaves them. *Why left:* that rule protects text from a renamed folder, and telling
+  the two apart needs a path that may have changed.
+- **A busy service.** *Why it needs care:* on real discs the service answered 503 "currently busy",
+  with a `Retry-After` of 0, about once in 20 requests of an evening, so a large library meets it
+  in every run. `Retry-After` is obeyed in full up to an hour (it was cut to 60 s, which asked early); a
+  429 waits at least 60 s. A disc with no answer is followed by a wait of 1, 2, 4 and 8 minutes and
+  is asked about again at the end of the run; 5 in a row end it, about a quarter of an hour of outage.
+  A 403 or a request to wait over an hour ends the run at once. *Alternatives:* waiting without
+  limit (an unattended run could sit for days); 3 in a row and no second try (about 90 s of outage lost the
+  batch). *Trade-off:* a run in an outage takes longer to say so.
+- **The client.** HTTPS only, no redirects, one fixed host, 8 MiB per response, 60 s per request,
+  5 tries with growing waits on 429 and 5xx. Every try starts at least 1.1 s after the last, as in
+  pysacd; the limit is per process. Search
+  results list track counts, so a release that can't fit isn't read: a popular album's name search
+  would otherwise cost 25 requests. Responses are hostile input: control characters, overlong text,
+  placeholders and malformed ids are dropped, and an id reaches a URL only if it is a UUID. The
+  `lookup_json` fuzz target covers this. Its tests answer from recorded responses, so CI never
+  touches the network.
+- **ureq with rustls and bundled roots.** *Why:* a release binary that needs no OpenSSL or CA store,
+  including on the older systems the release supports (it isn't static, but links only glibc).
+  *Alternatives:* running `curl` (a run-time dependency, and an argument and exit-code interface);
+  native-tls (an OpenSSL dependency that the glibc-baseline build would then pin). *Trade-off:* about
+  3 MB of binary and 15 crates for one optional command, and root certificates that age with the
+  release; `deny.toml` now allows ISC (rustls's and ring's parts) and CDLA-Permissive-2.0
+  (webpki-roots's data), both compatible with GPL-3.0-or-later. Nothing here runs in the mount.
 
 ## Verifying extracts (`sacdfs verify`, #80)
 
