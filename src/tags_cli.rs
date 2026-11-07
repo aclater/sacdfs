@@ -104,6 +104,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
                 by_durations: lookup_durations,
                 dry_run,
                 no_suffix: no_multichannel_album_suffix,
+                only_wanting: false,
             };
             let mut client = lookup::Client::new(lookup::Http::new());
             let s = lookup::fetch(&tags, &images, options, &mut client, |line| println!("{line}"));

@@ -14,6 +14,9 @@ All notable changes to sacdfs are recorded here. The format follows
   crash of sacdfs, without a restart of its own; a file open during a restart fails once the runtime
   stops sacdfs. Rootless Podman can't share the mount this way. See
   [deployment](docs/deployment.md#players-on-the-same-host-no-smb-hop).
+  Measured against sacdfs's SMB share on the same NAS (0.4.1, 416 images, Navidrome): the import took
+  45 s instead of 62 s, sacdfs served 5.4 MB for it instead of 5.8 GB and used 3 instead of 223 CPU
+  seconds (Samba another 27), and files started in 0.5 to 2 ms instead of 12 to 26 ms.
 - **The container makes `/srv/sacd` itself** when a host directory is bound over `/srv`, so that
   directory can start empty. A dead mount left there by a killed sacdfs doesn't stop the start: sacdfs
   detaches it, as before. CI checks both on every pull request (`deploy/ci-same-host-test.sh`).
@@ -23,10 +26,25 @@ All notable changes to sacdfs are recorded here. The format follows
   directory. `--lookup-name` also searches by album and artist, and `--lookup-durations` by the
   tracks' start times. `--dry-run` shows what would be written. No match, or an ambiguous one,
   writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
-  own text stays. Nothing goes on the network unless you run this command: a mount never does. It
-  sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
+  own text stays. Nothing goes on the network unless you run this command, or turn on
+  `--musicbrainz` (below). It sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
   (docs/user-guide.md, "From MusicBrainz"). Run on 9 real discs by barcode or catalogue number: 7
   matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
+- **`--musicbrainz`: the mount looks up discs without text by itself, in the background** (#185,
+  MusicBrainz part of phase 4; `SACDFS_MUSICBRAINZ=1` in the container, with `SACDFS_LOOKUP_NAME` and
+  `SACDFS_LOOKUP_DURATIONS`). Off by default. A thread of its own goes through the images 30 s after
+  the mount and every hour after, and looks up only the discs with a track without a title, or
+  without album or artist, with the same code and limits as `tags fetch` (`--lookup-name` and
+  `--lookup-durations` add the same steps). It writes matches to the tags directory, which must then
+  be writable, and the mount serves them as any edit of a tags file: tags change and mtimes move, so
+  scanners read the files again. Each disc is asked about once: a match stays in its tags file, and
+  the rest is kept in the seek index cache directory; a disc without a match is asked again after
+  30 days. At most 1 request per second, and no listing or read waits for it. On a library sample of
+  395 real images, the first round took about 4 minutes and 111 requests: 23 discs lacked text, 19 of
+  them matched, every tags file byte for byte what `tags fetch` writes (checked by hand in phase 2),
+  and the other 372 were not asked about. A restart asked nothing. Listings and reads through the
+  mount kept the latency of a mount without the option while it ran
+  ([user guide](docs/user-guide.md#in-the-background---musicbrainz)).
 
 ### Changed
 
@@ -136,6 +154,17 @@ All notable changes to sacdfs are recorded here. The format follows
   ordinary user in a Fedora 45 container with FUSE 2.9.9's setuid `fusermount` and no `fusermount3`:
   0.4.1 logged "detaching: Operation not permitted" and stayed mounted; with the fix sacdfs unmounted
   and exited, and the files read the same SHA-256 through both. Root never needed a helper.
+- **Clients retrying through a long hang of one image no longer stall the other images (#241).** A
+  read that fails with `EIO` after the request timeout keeps its thread until the source answers, so
+  clients that kept retrying on a hung image took one more read thread each time. Once all 64 were
+  blocked, reads of healthy images failed too, in both formats, until the source answered: with 8
+  clients, 2 decoder threads and a 2 s timeout, that took about 24 s. Now, once 4 reads of an image
+  are still blocked past the timeout, its new reads fail with `EIO` at once, without taking a thread,
+  until one of the blocked reads finishes. With the same test the hung image held at most 8 read
+  threads over 60 s, and every healthy DSF and WAV read during the hang succeeded. Reads of an image
+  that is slow but answers within the timeout are not affected, however many there are. A client
+  retrying without a pause now gets its errors at once rather than once per timeout. Logged once
+  when an image starts failing its reads this way and once when it reads again.
 
 ### Documentation
 

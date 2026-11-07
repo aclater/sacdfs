@@ -1510,17 +1510,32 @@ everything:
 - The root's `getattr` starts a sweep of the source for changes (#123). It does not wait for
   a sweep already running (held up by a stalled source, say): it answers with the times
   known, and the running sweep moves them when it is done.
-- **What a long hang can still do ([#241](https://github.com/aclater/sacdfs/issues/241)).** A
-  stalled image does not hold up other images for good only while the read pool has threads
-  left. The watchdog replies `EIO` but can't free the thread, which stays blocked until the
-  source answers, so each retry by a client takes one more. They needn't be simultaneous. At 64
-  threads, a read of any image waits for a thread and the watchdog fails it. Measured on 2
-  decoder threads, with clients looping `read()` on the stalled image: 8 WAV clients at the
-  default 30 s timeout reached 64 threads in 362 s, and a healthy DSF read then got no answer
-  in 10 s (2 of 2); 8 clients at a 2 s timeout took 26 s, in either format; 1 WAV client at 2 s
-  took 142 s. Healthy reads recovered at once when the source came back, and spare threads
-  ended at about one per 10 s. DSF reads have always had this limit; demultiplexing on the
-  request thread (#239) did not add it.
+- **A hung image's reads are capped once they have failed
+  ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
+  free the thread, which stays blocked until the source answers, so each retry by a client took
+  one more, and they needn't be simultaneous. At 64 threads, a read of any image waited for a
+  thread and the watchdog failed it. Up to 0.4.1, on 2 decoder threads with clients looping
+  `read()` on the stalled image: 8 WAV clients at the default 30 s timeout reached 64 threads in
+  362 s, 8 clients at a 2 s timeout in 23 to 26 s in either format, and 1 WAV client at 2 s in
+  142 s; healthy reads then failed. Now each image's unfinished reads are counted
+  (`ImageReads` in `src/fs.rs`), with when each was asked for. Once 4 of them
+  (`HUNG_READS_PER_IMAGE`) are older than the request timeout, and so failed already, a new read
+  of that image is answered `EIO` on fuser's thread at once and takes no request thread. When a
+  blocked read finishes and fewer than 4 are left, the image is read again. *Why count only
+  reads past the timeout:* they are the ones the client was told have failed, so the cap never
+  fails a read that could still have been answered in time, however many readers a busy or slow
+  image has. *Why 4:* a few such reads can be one slow moment of a disk or a share, not a hang;
+  4 per hung image leave most of the 64 threads to the others. *Why at dispatch:* a read failed
+  there costs no thread, and a client retrying in a loop gets its answer without one more
+  blocked thread. *Alternatives:* a cap on all reads of an image, which would fail a busy healthy
+  image's parallel reads; cancellable or asynchronous source I/O, which a blocking read of a hung
+  share can't be, and which would rework the read path. *Trade-offs:* a client retrying without
+  a pause now gets errors at once, in a loop, until the source answers (about 170,000 a second
+  for 8 such clients on a local test, answered on fuser's threads); one with a pause just sees
+  the failure sooner. A read-ahead of the image is not counted, as a hang starts at most one per
+  reader. A hang of many images at once (a whole share) still takes 4 or more threads per image
+  and can reach 64; the images are all hung then, except any on another source. The metadata
+  pool (lookups, listings) has no such cap.
 
 **Not done, and why.** *A timeout on the source I/O itself:* a thread blocked in the kernel
 cannot be stopped from user space; only the request can be answered. *Moving the TOC loads
@@ -1958,9 +1973,10 @@ sidecars below stay. *Why:* as with tags files, only those files'
 ### Looking tags up (#185, phase 2)
 
 `sacdfs tags fetch IMAGE...` looks a disc up on MusicBrainz and writes to its tags file
-(`src/lookup.rs`, `src/lookup/mb.rs`). It runs on demand: never in a mount or the FUSE path, and
-with no worker (phase 4). *Why a command first:* it keeps the server process simple until the
-fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or schedules it.
+(`src/lookup.rs`, `src/lookup/mb.rs`). It runs on demand, never in the FUSE path; the mount's
+optional background lookup (below) calls the same code. *Why a command first:* it kept the server
+process simple while the matching was proven on real discs. *Trade-off:* a user runs it, or
+schedules it, or turns on `--musicbrainz`.
 
 - **The method is pysacd's, made stricter.** pysacd takes the best candidate, with a person
   checking its output as the fallback. Here the result is served to players with nobody looking, and
@@ -2049,7 +2065,49 @@ fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or sched
   native-tls (an OpenSSL dependency that the glibc-baseline build would then pin). *Trade-off:* about
   3 MB of binary and 15 crates for one optional command, and root certificates that age with the
   release; `deny.toml` now allows ISC (rustls's and ring's parts) and CDLA-Permissive-2.0
-  (webpki-roots's data), both compatible with GPL-3.0-or-later. Nothing here runs in the mount.
+  (webpki-roots's data), both compatible with GPL-3.0-or-later. In a mount it runs only with `--musicbrainz`.
+
+### Looking tags up in the background (#185, phase 4 for MusicBrainz)
+
+`--musicbrainz` runs the lookup above inside the mount (`src/lookup/worker.rs`): one thread goes
+through the mount's images and calls the same code as `tags fetch` for each disc that needs it.
+
+- **Why now, before the AcoustID phase.** The plan put the in-process worker after phase 3's soak
+  numbers; the coordinator scheduled its MusicBrainz part for 0.5.0. *Why:* that soak bounds
+  fingerprinting, which decodes audio for seconds of CPU per track. The MusicBrainz worker decodes
+  nothing: it reads TOCs and makes at most 1 request per second. *Alternative:* wait for phase 3.
+  *Trade-off:* the in-process AcoustID switch still waits for its soak, and the worker will gain it
+  only then.
+- **Never in the FUSE path.** The worker shares no lock with the serving side. It reads TOCs with
+  its own disc handles, without the seek index cache, and writes only the tags file, through the
+  same atomic rename as `tags fetch`; the mount then picks the file up as it does a hand edit
+  (#81: the files' tag and mtime change, their folders' mtimes move). Its thread runs at nice 19
+  and in the idle I/O class, where the kernel allows. *Alternative:* look discs up as their folders
+  are listed. *Trade-off:* a disc's tags change some time after it was first shown, so a scanner
+  sees it twice; the mtime move makes the second look happen.
+- **Which discs.** Only those with a track without a title, or without album or artist, on the disc
+  and in the tags file (`lookup::wants_lookup`). *Why:* the issue asks for those, and asking about
+  every disc of a large library would take hours of requests for IDs alone. *Trade-off:* discs with
+  full text get no MusicBrainz IDs from the mount; `tags fetch` still gives them.
+- **Once per disc, across restarts.** A match is in the tags file, as with `tags fetch`. The rest
+  (nothing missing, no confident match) goes to a file in the seek index cache directory, keyed by a
+  hash of the image's path with its size and mtime, so no path is stored. *Why there, not in the
+  tags directory:* it is the mount's state, not the user's tags, and a file written there after
+  every disc would move the directory the tag layer watches. *Trade-off:* with `--no-index-cache`,
+  each mount reads every TOC and asks again about the discs without a match. A disc without a match
+  is asked about again after 30 days, since MusicBrainz grows; *alternative:* never, which leaves a
+  disc unmatched for good once it was refused.
+- **When.** 30 s after the mount, then a round every hour, which costs one `stat` per image already
+  settled. *Why the delay:* a scanner's first look at a new mount reads every TOC, and the worker's
+  reads would compete with it for the source. Images added while mounted are picked up at the next
+  mount: the worker goes through the images of the mount's first scan.
+- **A busy service.** As `tags fetch`: retries and `Retry-After` per request, 1, 2, 4 and 8 minutes
+  after discs without an answer, and 5 in a row end the round until the next hour. A 403, or a
+  request to wait over an hour, stops lookups for a day. *Why not for good:* a mount runs for
+  months.
+- **Stopping.** The mount stops the worker at unmount and waits for a tags file being written, so
+  none is left half-written or as a temporary file. A request under way isn't waited for: it can
+  take a minute, and the unmount shouldn't.
 
 ## Verifying extracts (`sacdfs verify`, #80)
 

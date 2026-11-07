@@ -12,9 +12,10 @@ as DSF files, and as 24-bit WAV files next to them, decoded on demand. Players, 
 music servers see every track of every disc, with tags, without extracting anything: you
 keep the ISOs and can delete the extracted copies.
 
-A disc with little or no text can be looked up on MusicBrainz, on demand, with
-`sacdfs tags fetch`. That's the only part of sacdfs that uses the network, and a mount never does:
-see the [user guide](docs/user-guide.md#your-own-tags---tags).
+A disc with little or no text can be looked up on MusicBrainz, on demand with
+`sacdfs tags fetch`, or by the mount in the background with `--musicbrainz`. Both are off unless
+you ask for them; nothing else in sacdfs uses the network, and no read waits for it: see the
+[user guide](docs/user-guide.md#your-own-tags---tags).
 
 ## Quick start
 
