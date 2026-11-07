@@ -1465,17 +1465,32 @@ everything:
 - The root's `getattr` starts a sweep of the source for changes (#123). It does not wait for
   a sweep already running (held up by a stalled source, say): it answers with the times
   known, and the running sweep moves them when it is done.
-- **What a long hang can still do ([#241](https://github.com/aclater/sacdfs/issues/241)).** A
-  stalled image does not hold up other images for good only while the read pool has threads
-  left. The watchdog replies `EIO` but can't free the thread, which stays blocked until the
-  source answers, so each retry by a client takes one more. They needn't be simultaneous. At 64
-  threads, a read of any image waits for a thread and the watchdog fails it. Measured on 2
-  decoder threads, with clients looping `read()` on the stalled image: 8 WAV clients at the
-  default 30 s timeout reached 64 threads in 362 s, and a healthy DSF read then got no answer
-  in 10 s (2 of 2); 8 clients at a 2 s timeout took 26 s, in either format; 1 WAV client at 2 s
-  took 142 s. Healthy reads recovered at once when the source came back, and spare threads
-  ended at about one per 10 s. DSF reads have always had this limit; demultiplexing on the
-  request thread (#239) did not add it.
+- **A hung image's reads are capped once they have failed
+  ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
+  free the thread, which stays blocked until the source answers, so each retry by a client took
+  one more, and they needn't be simultaneous. At 64 threads, a read of any image waited for a
+  thread and the watchdog failed it. Up to 0.4.1, on 2 decoder threads with clients looping
+  `read()` on the stalled image: 8 WAV clients at the default 30 s timeout reached 64 threads in
+  362 s, 8 clients at a 2 s timeout in 23 to 26 s in either format, and 1 WAV client at 2 s in
+  142 s; healthy reads then failed. Now each image's unfinished reads are counted
+  (`ImageReads` in `src/fs.rs`), with when each was asked for. Once 4 of them
+  (`HUNG_READS_PER_IMAGE`) are older than the request timeout, and so failed already, a new read
+  of that image is answered `EIO` on fuser's thread at once and takes no request thread. When a
+  blocked read finishes and fewer than 4 are left, the image is read again. *Why count only
+  reads past the timeout:* they are the ones the client was told have failed, so the cap never
+  fails a read that could still have been answered in time, however many readers a busy or slow
+  image has. *Why 4:* a few such reads can be one slow moment of a disk or a share, not a hang;
+  4 per hung image leave most of the 64 threads to the others. *Why at dispatch:* a read failed
+  there costs no thread, and a client retrying in a loop gets its answer without one more
+  blocked thread. *Alternatives:* a cap on all reads of an image, which would fail a busy healthy
+  image's parallel reads; cancellable or asynchronous source I/O, which a blocking read of a hung
+  share can't be, and which would rework the read path. *Trade-offs:* a client retrying without
+  a pause now gets errors at once, in a loop, until the source answers (about 170,000 a second
+  for 8 such clients on a local test, answered on fuser's threads); one with a pause just sees
+  the failure sooner. A read-ahead of the image is not counted, as a hang starts at most one per
+  reader. A hang of many images at once (a whole share) still takes 4 or more threads per image
+  and can reach 64; the images are all hung then, except any on another source. The metadata
+  pool (lookups, listings) has no such cap.
 
 **Not done, and why.** *A timeout on the source I/O itself:* a thread blocked in the kernel
 cannot be stopped from user space; only the request can be answered. *Moving the TOC loads

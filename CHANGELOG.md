@@ -6,6 +6,20 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Clients retrying through a long hang of one image no longer stall the other images (#241).** A
+  read that fails with `EIO` after the request timeout keeps its thread until the source answers, so
+  clients that kept retrying on a hung image took one more read thread each time. Once all 64 were
+  blocked, reads of healthy images failed too, in both formats, until the source answered: with 8
+  clients, 2 decoder threads and a 2 s timeout, that took about 24 s. Now, once 4 reads of an image
+  are still blocked past the timeout, its new reads fail with `EIO` at once, without taking a thread,
+  until one of the blocked reads finishes. With the same test the hung image held at most 8 read
+  threads over 60 s, and every healthy DSF and WAV read during the hang succeeded. Reads of an image
+  that is slow but answers within the timeout are not affected, however many there are. A client
+  retrying without a pause now gets its errors at once rather than once per timeout. Logged once
+  when an image starts failing its reads this way and once when it reads again.
+
 ## [0.4.1] - 2026-11-07
 ### Changed
 ### Changed

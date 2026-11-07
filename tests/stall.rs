@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A stalled source (#63, #72): an image that stops answering must neither hang its
-//! requests for good nor hold up the requests of other images. (Clients that keep retrying
-//! through a long hang can still fill the read threads, which these tests do not do: #241.)
+//! requests for good nor hold up the requests of other images, even while clients keep
+//! retrying its reads through a long hang (#241).
 //!
 //! The stall is real: an image is reached through a symbolic link outside SOURCE, which is
 //! pointed at a FIFO once sacdfs is running. Opening a FIFO for reading blocks until a
@@ -277,6 +277,109 @@ fn stalled_wav_reads_hold_no_decoder_thread() {
     release(&fifo);
     for t in wedged {
         t.join().unwrap();
+    }
+    drop(m);
+}
+
+/// The request threads of the process `pid` (named `sacdfs-read-<i>`).
+fn read_threads(pid: u32) -> usize {
+    std::fs::read_dir(format!("/proc/{pid}/task"))
+        .map(|d| {
+            d.filter_map(|t| std::fs::read_to_string(t.ok()?.path().join("comm")).ok())
+                .filter(|c| c.starts_with("sacdfs-read"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// Clients that retry the reads of a stalled image after each `EIO` took one more read thread
+/// each time, as the blocked threads can't be freed, until all 64 were blocked and reads of
+/// every other image failed too (#241: 64 in about 24 s with these settings). An image with
+/// several reads blocked past the timeout now has its new reads failed at once, without a
+/// thread.
+#[test]
+fn retrying_clients_of_a_stalled_image_leave_threads_to_the_others() {
+    common::skip_without_fuse!();
+    use std::os::unix::fs::FileExt;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    const CLIENTS: usize = 8;
+    let corpus = common::corpus().join("images");
+    let base = tempfile::tempdir().unwrap();
+    let (src, links) = (base.path().join("src"), base.path().join("links"));
+    std::fs::create_dir_all(&links).unwrap();
+    for (dir, id) in [("Stalled", "dsd-stereo-mch-2048"), ("Other", "dst-features-2ch-6ch")] {
+        std::fs::create_dir_all(src.join(dir)).unwrap();
+        let outer = links.join(format!("{dir}.iso"));
+        std::os::unix::fs::symlink(corpus.join(format!("{id}.iso")), &outer).unwrap();
+        std::os::unix::fs::symlink(&outer, src.join(dir).join(format!("{id}.iso"))).unwrap();
+    }
+    let secs = TIMEOUT.as_secs().to_string();
+    let m = Mount::new(&src, &["--threads", "2", "--request-timeout", &secs, "--no-index-cache"]);
+    let pid = m.child.as_ref().unwrap().id();
+    let stalled = files_below(&m.path.join("Stalled"), "wav");
+    let mut other = files_below(&m.path.join("Other"), "dsf");
+    other.truncate(2);
+    other.extend(files_below(&m.path.join("Other"), "wav").into_iter().take(2));
+    assert!(!stalled.is_empty() && other.len() == 4);
+    let open: Vec<_> =
+        (0..CLIENTS).map(|i| std::fs::File::open(&stalled[i % stalled.len()]).unwrap()).collect();
+
+    let fifo = base.path().join("stalled.fifo");
+    stall(&links.join("Stalled.iso"), &fifo);
+    // The image's open handle is checked against its path at most once a second.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // Clients read the stalled image's files on, again at once after each error. (On, as a
+    // page read once comes from the kernel's cache.)
+    let stop = Arc::new(AtomicBool::new(false));
+    let fast_eio = Arc::new(AtomicUsize::new(0));
+    let clients: Vec<_> = open
+        .into_iter()
+        .map(|f| {
+            let (stop, fast_eio) = (stop.clone(), fast_eio.clone());
+            std::thread::spawn(move || {
+                let len = f.metadata().unwrap().len();
+                let mut buf = vec![0u8; 65536];
+                let mut at = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    let t = Instant::now();
+                    let r = f.read_at(&mut buf, at);
+                    at = (at + buf.len() as u64) % len;
+                    if r.is_err() && t.elapsed() < Duration::from_millis(500) {
+                        fast_eio.fetch_add(1, Ordering::Relaxed);
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+            })
+        })
+        .collect();
+    // Long enough for the clients to have taken more than half of the 64 threads, had nothing
+    // stopped them.
+    let mut most = 0;
+    let until = Instant::now() + 7 * TIMEOUT;
+    while Instant::now() < until {
+        most = most.max(read_threads(pid));
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // The 2 core threads, 4 reads blocked past the timeout, and at most one more per client.
+    assert!(most <= 2 + 4 + CLIENTS, "{most} read threads during the hang");
+    assert!(fast_eio.load(Ordering::Relaxed) > 0, "no read of the stalled image failed at once");
+
+    // The other image reads on, in both formats, while the clients keep retrying.
+    let start = Instant::now();
+    for f in other {
+        let shown = f.display().to_string();
+        let (r, took) = timed(TIMEOUT + SLACK, move || std::fs::read(f)).expect("a healthy read hangs");
+        assert!(r.is_ok_and(|d| d.len() > 92), "{shown}: a healthy read failed, after {took:?}");
+    }
+    assert!(start.elapsed() < TIMEOUT, "the other image waited: {:?}", start.elapsed());
+
+    stop.store(true, Ordering::Relaxed);
+    release(&fifo);
+    for c in clients {
+        c.join().unwrap();
     }
     drop(m);
 }
