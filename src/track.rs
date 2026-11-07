@@ -103,9 +103,9 @@ fn faster_than_a_player(read: u64, secs: f64, byte_rate: f64) -> bool {
 
 /// Who is reading, so that a whole-file reader doesn't starve someone playing (#230).
 ///
-/// A reader that, since it last jumped, has read [`FAST_AFTER`] bytes at more than
-/// [`PLAYER_FACTOR`] times the file's byte rate reads for *throughput*. Any other that has been
-/// reading for [`PLAYER_AFTER`] is a *player*. While a player is active, readers for throughput do
+/// A reader that, since it last jumped, has read 4 MiB (`FAST_AFTER`) at more than 1.5 times
+/// the file's byte rate (`PLAYER_FACTOR`) reads for *throughput*. Any other that has been reading
+/// for 0.5 s (`PLAYER_AFTER`) is a *player*. While a player is active, readers for throughput do
 /// three things differently:
 ///
 /// 1. **They give up the frames they have passed** ([`Engine::give_up`]). *Why this is the fix:*
