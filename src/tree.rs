@@ -1288,6 +1288,14 @@ impl Tree {
     /// `cover.jpg` stands for another file now). A client that asked in that second got `ESTALE`
     /// or `ENOENT` for a name that exists before and after. A file found changed makes the area
     /// read its art again now, and the name is answered from that.
+    /// Whether `node`, a child of `parent`, is art in an area that is watched (#235): its
+    /// entry is given a zero timeout, in a lookup and in a `readdirplus` listing alike.
+    pub fn is_area_art(&self, parent: u64, node: &Node) -> bool {
+        self.watching
+            && matches!(node, Node::Sidecar(_))
+            && matches!(self.get(parent).as_deref(), Some(Node::Dir(d)) if matches!(d.kind, DirKind::Area(..)))
+    }
+
     pub fn lookup_art(&self, parent: u64, name: &OsStr) -> (Option<u64>, bool) {
         let find =
             |t: &Tree| t.children(parent).and_then(|c| c.iter().find(|e| e.name == name).map(|e| e.ino));

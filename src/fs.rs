@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use fuser::{
     AccessFlags, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo,
     InitFlags, KernelConfig, LockOwner, OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory,
-    ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyXattr, Request,
+    ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyXattr, Request,
 };
 
 use crate::engine::Engine;
@@ -631,8 +631,11 @@ impl Shared {
             // A directory that is re-read when its source changes (#101), and what is in
             // it, is remembered for a short time only.
             Some((ino, node)) => {
-                let ttl = if volatile { Duration::ZERO } else { self.ttl(parent, ino) };
-                Ok((ttl, self.attr(ino, &node), Generation(self.tree.generation(&node))))
+                let mut entry = self.entry(parent, ino, &node);
+                if volatile {
+                    entry.0 = Duration::ZERO;
+                }
+                Ok(entry)
             }
             // A name missing from a directory stays missing (unless the directory is re-read,
             // #101), so the kernel may remember that it is: inode 0 is a negative entry,
@@ -641,6 +644,47 @@ impl Shared {
             None if negative => Ok((self.ttl(parent, parent), negative_attr(), Generation(0))),
             None => Err(Errno::ENOENT),
         }
+    }
+
+    /// The entry of `node`, numbered `ino`, in directory `parent`: how long the kernel may keep
+    /// it, its attributes and generation.
+    ///
+    /// A track file keeps the full [`TTL`] even in a folder that is re-read (#205): an area is
+    /// re-read for its folder art only, which never changes its tracks' names, numbers or
+    /// attributes, and a changed image is a new folder in its parent. Without this, every
+    /// track's name was looked up again 2 s after the last time, on every listing. With tags
+    /// (#81) a track's size and time follow its tags file, so they stay short.
+    fn entry(&self, parent: u64, ino: u64, node: &Node) -> (Duration, FileAttr, Generation) {
+        let ttl = match node {
+            // Art in an area is asked about again each time (#235), in a listing too.
+            Node::Sidecar(_) if self.tree.is_area_art(parent, node) => Duration::ZERO,
+            Node::File(_) if !crate::tags::installed() => TTL,
+            _ => self.ttl(parent, ino),
+        };
+        (ttl, self.attr(ino, node), Generation(self.tree.generation(node)))
+    }
+
+    /// The entries of directory `ino` from position `offset` on (`.` and `..` first), with
+    /// what [`Shared::entry`] gives for each, for `readdirplus` (#205). A name whose node has
+    /// just been let go of is left out (the next listing shows it again); `None` if `ino` is
+    /// not a directory (or, short of memory, cannot be listed now).
+    fn listing_plus(&self, ino: u64, offset: u64) -> Option<Vec<(u64, std::ffi::OsString, Entried)>> {
+        let children = self.tree.children(ino)?;
+        let parent = self.tree.parent_of(ino);
+        let dots = [(ino, OsStr::new(".")), (parent, OsStr::new(".."))];
+        let names = dots.into_iter().chain(children.iter().map(|e| (e.ino, e.name.as_os_str())));
+        let mut out = Vec::new();
+        for (i, (child, name)) in names.enumerate().skip(offset as usize) {
+            let Some(node) = self.tree.get(child) else {
+                if self.tree.refusing() {
+                    return None;
+                }
+                continue;
+            };
+            // `.` and `..` are not entries of `ino`: the kernel links neither, only lists them.
+            out.push((i as u64 + 1, name.to_owned(), self.entry(ino, child, &node)));
+        }
+        Some(out)
     }
 
     fn getattr(&self, ino: u64, node: Option<Arc<Node>>) -> Result<(Duration, FileAttr), Errno> {
@@ -697,6 +741,9 @@ impl Shared {
         }
     }
 }
+
+/// An entry's TTL, attributes and generation.
+type Entried = (Duration, FileAttr, Generation);
 
 fn reply_entry(reply: ReplyEntry, r: Result<(Duration, FileAttr, Generation), Errno>) {
     match r {
@@ -773,6 +820,12 @@ impl Filesystem for SacdFs {
         let _ = config.set_max_background(64);
         // Lets the kernel NFS server export the mount: it then looks up `.` and `..` of
         // inode numbers from file handles, which the tree finds again after a restart.
+        // Listings with attributes when the kernel sees lookups follow listings (#205).
+        if let Err(missing) =
+            config.add_capabilities(InitFlags::FUSE_DO_READDIRPLUS | InitFlags::FUSE_READDIRPLUS_AUTO)
+        {
+            log::info!("the kernel offers no readdirplus ({missing:?})");
+        }
         if let Err(missing) = config.add_capabilities(InitFlags::FUSE_EXPORT_SUPPORT) {
             log::info!("the kernel offers no FUSE export support ({missing:?}): no NFS export");
         }
@@ -994,6 +1047,40 @@ impl Filesystem for SacdFs {
                 }));
                 for (i, (ino, kind, name)) in entries.enumerate().skip(offset as usize) {
                     if reply.add(INodeNo(ino), i as u64 + 1, kind, name) {
+                        break;
+                    }
+                }
+                reply.ok();
+            },
+        );
+    }
+
+    /// A listing with each entry's attributes (#205), so that a server listing a folder and
+    /// then looking at each entry (Samba, NFS-Ganesha, `ls -l`) costs one request per page of
+    /// names instead of one more per name. The kernel asks for it when it sees lookups
+    /// follow a listing (`FUSE_READDIRPLUS_AUTO`), else for a plain `readdir`.
+    fn readdirplus(
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
+        reply: ReplyDirectoryPlus,
+    ) {
+        let tree = self.shared.tree.clone();
+        let refusing = move || tree.refusing();
+        self.serve(
+            What::new("readdirplus", Ino(ino.0)),
+            reply,
+            move |sh| sh.listing_plus(ino.0, offset),
+            move |reply: Option<ReplyDirectoryPlus>, found| {
+                let Some(mut reply) = reply else { return };
+                let Some(entries) = found else {
+                    reply.error(if refusing() { Errno::ENOMEM } else { Errno::ENOTDIR });
+                    return;
+                };
+                for (next, name, (ttl, attr, generation)) in &entries {
+                    if reply.add(attr.ino, *next, name, ttl, attr, *generation) {
                         break;
                     }
                 }
