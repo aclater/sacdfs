@@ -24,6 +24,9 @@ above it.
 | `--pcm-gain DB` | Gain of the conversion to PCM, from -60 to +24 dB (default `0`). Samples that would clip are clamped, and the log says so once per file. |
 | `--no-multichannel-album-suffix` | Do not add ` (Multichannel)` to the album tag of the multichannel area's DSF and WAV files. By default they get it, so players and servers keep a disc's Stereo and Multichannel copies apart. |
 | `--tags DIR` | Tags files (one per disc, named by its disc key) whose tags override and add to the TOC's in the DSF and WAV files: genres, MusicBrainz IDs, corrected names, embedded art. Discs without one are unchanged ([user guide](user-guide.md#your-own-tags---tags)). |
+| `--musicbrainz` | Look up, on MusicBrainz, the discs that lack a track title, the album or its artist, in the background, and write what matches to the `--tags` directory, which it needs and which must be writable. The same lookup as `sacdfs tags fetch`; off by default, and the only network use of a mount. At most 1 request per second, once per disc; no client request waits for it ([user guide](user-guide.md#in-the-background---musicbrainz)). |
+| `--lookup-name` | With `--musicbrainz`: if the barcode or catalogue number finds nothing, also search by album and artist, from the disc's text or the image's path. Sends those names. |
+| `--lookup-durations` | With `--musicbrainz`: if that finds nothing, also ask by the tracks' start times (a disc of 4 tracks or more). Sends the times. |
 | `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder ([Layout](layout.md)). Top-level folders of `SOURCE` are never collapsed. |
 | `--sidecars LIST` | Files passed through from `SOURCE`, byte for byte, next to the images: extensions, and folder names ending in `/` whose whole content passes. `default` (the default) is `jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/`; `default,cue` adds to it, `default,-webp` removes from it, `none` passes nothing ([Layout](layout.md)). |
 | `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
@@ -38,7 +41,7 @@ above it.
 
 `mount -t fuse.sacdfs` and fstab work too, with the options above as `-o` options, and `Type=notify` units are supported: see [Mounting at boot](user-guide.md#mounting-at-boot-fstab-and-systemd).
 
-Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
+Unmount with `fusermount3 -u MOUNTPOINT` (`fusermount -u` where only FUSE 2 is installed); SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
 still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
 each option does in detail, and the seek index cache, are in the
 [user guide](user-guide.md#options).

@@ -111,7 +111,7 @@ most when the images are on a network share, where each read is a round trip.
   Deleting the directory is always safe.
 - `--no-index-cache` starts every mount with an empty index (used for measurements).
 
-**Unmounting.** `fusermount3 -u MOUNTPOINT`, or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
+**Unmounting.** `fusermount3 -u MOUNTPOINT` (`fusermount -u` with FUSE 2), or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
 If files are still open, or an NFS server still exports the mount, the mount is detached
 instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
 stops when the last one is closed.
@@ -355,8 +355,9 @@ sacdfs tags fetch --tags ~/music/sacd-tags ~/music/sacd-images/disc.iso
 sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations ~/music/sacd-images/*.iso
 ```
 
-It's the only part of sacdfs that uses the network. A mount never looks anything up, and nothing is
-sent unless you run this command. Steps run in this order, and the first one that finds a match or
+It and the mount's `--musicbrainz` ([below](#in-the-background---musicbrainz)) are the only parts of
+sacdfs that use the network, and nothing is sent unless you run this command or turn that option
+on. Steps run in this order, and the first one that finds a match or
 an ambiguity ends the lookup:
 
 | Step | Needs | Sent to MusicBrainz | A track may be off by, and the mean over the disc |
@@ -413,6 +414,50 @@ Tested on real discs with their text hidden, which showed no wrong match: by num
 which 44 got tags for at least one area, and by name on 30, of which 15 did. 19 of 21 discs without
 text matched, and their folder names agreed. `--lookup-durations` alone matched only 2 real discs that
 were checked, both right, so its limits are still a judgement.
+
+### In the background: `--musicbrainz`
+
+With `--musicbrainz`, the mount does the same lookup by itself, for the discs that need it:
+
+```sh
+sacdfs --tags ~/music/sacd-tags --musicbrainz ~/music/sacd-images ~/music/sacd
+sacdfs --tags ~/music/sacd-tags --musicbrainz --lookup-name --lookup-durations ~/music/sacd-images ~/music/sacd
+```
+
+- **Which discs:** those with a track that has no title, or no album or artist, on the disc or in
+  its tags file. A disc with all of that is not asked about, so on most libraries only a few discs
+  are. The steps, the limits and what is written are those of `tags fetch` above;
+  `--lookup-name` and `--lookup-durations` add the same steps, and the multichannel album follows
+  the mount's `--no-multichannel-album-suffix`.
+- **When:** 30 s after the mount, one disc after another on a single thread, then once an hour for
+  what's left or new to it. At most 1 request per second, with the same waits and retries as
+  `tags fetch` when the service is busy; 5 discs in a row without an answer end that round until
+  the next, and a 403, or a request to wait over an hour, stops lookups for a day.
+- **No read waits for it.** Listings, reads and tags are served exactly as without it; the lookup
+  runs beside them, and reads only the TOCs of images at the lowest CPU and I/O priority.
+- **What you see:** a match is written to the disc's tags file, and the mount serves it as any edit
+  of that file: the files' tags change, and their modification time and their folders' move, so
+  scanners read them again (with a single image as `SOURCE`, at the next mount). File names stay
+  `NN - Track NN`, as with `tags fetch`.
+- **Once per disc:** a match stays in the tags file. Which discs had nothing missing or found no
+  match is kept in the seek index cache directory (`--index-cache`), so a restart doesn't ask again.
+  A disc without a match is asked about again after 30 days, since MusicBrainz grows; an image that
+  changes is looked at anew. With `--no-index-cache` this is kept only until the mount stops.
+- **Hand edits win,** as with `tags fetch`: a value in the tags file is never replaced.
+- **The tags directory must be writable,** or the mount refuses to start and says so.
+- **The log** has a line for each disc it asked about, with the match or the reason there is none,
+  and a summary after each round: `musicbrainz: pass done: ...` (at `-v`).
+- **What is sent:** the disc's catalogue numbers, and with the two options the album and artist
+  names or the tracks' start times, to musicbrainz.org over HTTPS, with the User-Agent above.
+  Nothing is sent without `--musicbrainz`.
+- **Don't run `tags fetch` on the same discs while it runs:** each keeps to 1 request per second on
+  its own, so the two together would exceed it.
+
+Tested on a sample of 395 real images: the first round took about 4 minutes and 111 requests. 23
+discs lacked text and were asked about; 19 matched, each tags file byte for byte what `tags fetch`
+writes for it, and the other 372 discs weren't asked about. After a restart, nothing was read or
+asked. Listings and reads through the mount, and a first walk of the whole tree, took as long as on
+a mount without the option while the lookups ran.
 
 As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
 to mount it.
@@ -781,7 +826,10 @@ the `mounted` line and warnings; add `-v` for more), or run it under systemd, wh
 goes to the journal: `journalctl -u sacdfs`.
 
 - **`fusermount3: command not found`, or `failed to open /dev/fuse`:** install FUSE 3
-  (package `fuse3`). In a container, pass `--device /dev/fuse --cap-add SYS_ADMIN`.
+  (package `fuse3`). In a container, pass `--device /dev/fuse --cap-add SYS_ADMIN`. Root mounts
+  without a helper. Where only FUSE 2 is installed (package `fuse`; Synology DSM, for one), sacdfs
+  mounts and, from 0.5.0, unmounts through its `fusermount` instead; 0.4.1 and earlier mounted that
+  way but couldn't unmount on SIGTERM and left the mount behind.
 - **`fusermount3: option allow_other only allowed if 'user_allow_other' is set in
   /etc/fuse.conf`:** add that line to `/etc/fuse.conf`, or drop `--allow-other`.
 - **`Transport endpoint is not connected`:** sacdfs was killed (or crashed) without

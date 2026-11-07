@@ -1564,17 +1564,32 @@ everything:
 - The root's `getattr` starts a sweep of the source for changes (#123). It does not wait for
   a sweep already running (held up by a stalled source, say): it answers with the times
   known, and the running sweep moves them when it is done.
-- **What a long hang can still do ([#241](https://github.com/aclater/sacdfs/issues/241)).** A
-  stalled image does not hold up other images for good only while the read pool has threads
-  left. The watchdog replies `EIO` but can't free the thread, which stays blocked until the
-  source answers, so each retry by a client takes one more. They needn't be simultaneous. At 64
-  threads, a read of any image waits for a thread and the watchdog fails it. Measured on 2
-  decoder threads, with clients looping `read()` on the stalled image: 8 WAV clients at the
-  default 30 s timeout reached 64 threads in 362 s, and a healthy DSF read then got no answer
-  in 10 s (2 of 2); 8 clients at a 2 s timeout took 26 s, in either format; 1 WAV client at 2 s
-  took 142 s. Healthy reads recovered at once when the source came back, and spare threads
-  ended at about one per 10 s. DSF reads have always had this limit; demultiplexing on the
-  request thread (#239) did not add it.
+- **A hung image's reads are capped once they have failed
+  ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
+  free the thread, which stays blocked until the source answers, so each retry by a client took
+  one more, and they needn't be simultaneous. At 64 threads, a read of any image waited for a
+  thread and the watchdog failed it. Up to 0.4.1, on 2 decoder threads with clients looping
+  `read()` on the stalled image: 8 WAV clients at the default 30 s timeout reached 64 threads in
+  362 s, 8 clients at a 2 s timeout in 23 to 26 s in either format, and 1 WAV client at 2 s in
+  142 s; healthy reads then failed. Now each image's unfinished reads are counted
+  (`ImageReads` in `src/fs.rs`), with when each was asked for. Once 4 of them
+  (`HUNG_READS_PER_IMAGE`) are older than the request timeout, and so failed already, a new read
+  of that image is answered `EIO` on fuser's thread at once and takes no request thread. When a
+  blocked read finishes and fewer than 4 are left, the image is read again. *Why count only
+  reads past the timeout:* they are the ones the client was told have failed, so the cap never
+  fails a read that could still have been answered in time, however many readers a busy or slow
+  image has. *Why 4:* a few such reads can be one slow moment of a disk or a share, not a hang;
+  4 per hung image leave most of the 64 threads to the others. *Why at dispatch:* a read failed
+  there costs no thread, and a client retrying in a loop gets its answer without one more
+  blocked thread. *Alternatives:* a cap on all reads of an image, which would fail a busy healthy
+  image's parallel reads; cancellable or asynchronous source I/O, which a blocking read of a hung
+  share can't be, and which would rework the read path. *Trade-offs:* a client retrying without
+  a pause now gets errors at once, in a loop, until the source answers (about 170,000 a second
+  for 8 such clients on a local test, answered on fuser's threads); one with a pause just sees
+  the failure sooner. A read-ahead of the image is not counted, as a hang starts at most one per
+  reader. A hang of many images at once (a whole share) still takes 4 or more threads per image
+  and can reach 64; the images are all hung then, except any on another source. The metadata
+  pool (lookups, listings) has no such cap.
 
 **Not done, and why.** *A timeout on the source I/O itself:* a thread blocked in the kernel
 cannot be stopped from user space; only the request can be answered. *Moving the TOC loads
@@ -1803,44 +1818,60 @@ decisions, each with its reason:
 everything but publish when run by hand or on a pull request that changes it (a dry run).
 The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its reason:
 
-- **glibc 2.28, not static musl.** A static musl binary was the first choice (it runs on
-  any Linux), and sacdfs builds so: fuser is used without libfuse, and no dependency
-  compiles C. It passed the DSF gate (93/93 on the real discs), but measured (3 fresh-mount
-  straight reads of a stereo area each, same compiler and flags, generic x86-64) it was much
-  slower:
+- **glibc 2.17 through zig (#244), not static musl, not container-only.** *Why:* the release
+  binary built on UBI 8 needed glibc 2.28, and QNAP's QuTScloud 5.2.9 has glibc 2.21: the binary
+  stopped at start (`symbol statx, version GLIBC_2.28 not defined`). The owner chose to build
+  against glibc 2.17's symbols, the oldest Rust's std supports, with
+  [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild): zig, as the linker, links
+  against the symbol versions of the glibc named in the target (`x86_64-unknown-linux-gnu.2.17`)
+  whatever the build system's glibc, so the build runs on the runner and no old build image is
+  needed (UBI 7 ships no gcc). zig (0.16.0, its archive checked by SHA-256) and cargo-zigbuild
+  (0.24.0, `--locked`) are pinned to exact versions. The binary still uses the system's glibc at
+  run time, with glibc's malloc and the tuning below (one arena, `malloc_trim`), and `statx` is
+  only a weak reference that Rust's std falls back from. CI fails the build if the binary needs a
+  newer glibc symbol than 2.17.
 
-  | Straight read, stereo area, s | glibc | musl | |
-  |---|---|---|---|
-  | DST disc, DSF files | 5.47 | 7.79 | 1.42x (median 1.34x) |
-  | DST disc, WAV files | 5.26 | 8.20 | 1.56x |
-  | plain DSD disc, WAV files | 2.47 | 3.73 | 1.51x |
+  Measured on the benchmark host (real discs, stereo area read straight through a fresh mount,
+  `--no-index-cache`, image warm in the page cache, 6 alternating rounds, medians, ratio to the
+  glibc 2.28 build of the same commit; peak = the sacdfs process's VmHWM). The served bytes were
+  identical across all builds:
 
-  A second round of 2 runs each, with the UBI 8 build added: WAV files of the DST disc 4.65 s
-  (glibc build on UBI 10), 4.66 s (UBI 8) and 7.24 s (musl, 1.56x); of the plain DSD disc
-  2.01, 2.01 and 3.31 s (1.65x). Building against the older glibc costs nothing: the binary
-  runs on the system's glibc. Most likely musl's allocator and memory copies, under many
-  decoder threads; not investigated further. Performance comes first for sacdfs, so the
-  release builds against glibc instead, on **UBI 8** (RHEL 8's glibc 2.28) so that one binary
-  covers RHEL 8 and later, Debian 10, Ubuntu 20.04 and Fedora 29 and later. CI fails the build
-  if the binary needs a newer glibc symbol. Older bases (glibc 2.17, CentOS 7) are out of
-  support and not Red Hat's current images. *Possible later:* musl with a faster allocator
-  (mimalloc), measured against this.
-- **Two builds: generic x86-64 and x86-64-v3,** `-C target-cpu` always explicit, since RHEL's
-  Rust defaults to x86-64-v3. Generic runs everywhere and already converts with AVX2 where
+  | | DST, DSF | DST, WAV | plain DSD, WAV | plain DSD, DSF | peak MiB |
+  |---|---|---|---|---|---|
+  | glibc 2.28 build | 8.52 s | 9.38 s | 7.74 s | 2.54 s | 43-59 |
+  | **glibc 2.17 build (zig)** | 0.99x | 1.00x | 1.03x | 0.91x | 43-59 |
+  | static musl, musl's malloc | 1.29x | 1.25x | 1.31x | 2.58x | 40-55 |
+  | static musl + mimalloc | 1.00x | 1.00x | 0.95x | 0.93x | 161-273 |
+  | static musl + jemalloc (1 arena, decay 0) | 1.05x | 1.05x | 1.34x | 1.92x | 45-70 |
+
+  *Alternatives:* **static musl** (runs on any Linux, with or without a C library): with musl's
+  malloc 1.25 to 2.6 times slower (an earlier round, on UBI 10 and UBI 8 builds, gave 1.3 to 1.65);
+  with mimalloc as fast, but 3.5 to 4.6 times the peak memory, too much under a NAS's memory
+  limit; with jemalloc set for low memory, 1.34 to 1.92 times slower on plain DSD discs; and in
+  every case a C allocator in the build and glibc's tuning gone. **Container only on such
+  systems:** no build change, but QuTScloud had no container runtime to test with, and a binary
+  is the simpler install on a NAS. *Trade-off accepted:* a third-party toolchain (zig and
+  cargo-zigbuild) in the release build instead of a vendor build image, and systems older than
+  glibc 2.17 stay unsupported. Kernels before 4.18 (RHEL 7's 3.10) are untested.
+- **Three builds: generic x86-64, x86-64-v3 and aarch64,** `-C target-cpu` always explicit on
+  x86_64, never a toolchain's default. Generic runs everywhere and already converts with AVX2 where
   the CPU has it (#23); v3 compiles the rest of sacdfs and scarletbook for AVX2 as well. The
   v3 build is tested on the runner only if its CPU is x86-64-v3, and the release stops
   otherwise.
-- **Rust from rustup** (the version the other workflows use), not RHEL's: RHEL 8's Rust is
-  older than sacdfs's MSRV, and the tested toolchain should be the shipped one.
-- **Each build is tested as built:** the whole suite, FUSE tests required, in the UBI 8
-  container with the release profile and the build's flags; then the packaged binary,
-  unpacked on the runner, mounts the corpus and every track is checked against the corpus
-  manifest (DSF hashes, WAV headers).
+- **Rust from rustup** (the version the other workflows use): the tested toolchain should be the
+  shipped one.
+- **Each build is tested as built:** on its native runner (aarch64 on an arm64 runner), the whole
+  suite, FUSE tests required, linked the same way (`cargo-zigbuild test`) with the release
+  profile and the build's flags; then the packaged binary, unpacked on the runner, mounts the
+  corpus and every track is checked against the corpus manifest (DSF hashes, WAV headers). On
+  x86_64 the packaged binary also mounts the corpus in a UBI 7 container (RHEL 7's glibc 2.17,
+  no `fusermount` installed: as root, sacdfs mounts with mount(2) itself), and every served
+  file must hash the same as on the runner.
 - **Stripped** (`CARGO_PROFILE_RELEASE_STRIP=symbols`, so Cargo.toml's release profile, which
   the measurements use, is unchanged), **build paths remapped**, and the tarballs
   **reproducible** (sorted, fixed owner, the commit's time, `gzip -n`).
 - **Integrity:** a `.sha256` per archive and `SHA256SUMS`; a GitHub build provenance
-  attestation (Sigstore) for both archives and for the image, the archives' bundle also on
+  attestation (Sigstore) for the archives and for the image, the archives' bundle also on
   the release as `.intoto.jsonl` for offline checks. The tag must equal `v` plus
   Cargo.toml's version (and Cargo.lock's), and the notes are the tag's CHANGELOG.md section
   (`.github/scripts/changelog-notes.py`); either missing stops the release before any build.
@@ -2012,9 +2043,10 @@ sidecars below stay. *Why:* as with tags files, only those files'
 ### Looking tags up (#185, phase 2)
 
 `sacdfs tags fetch IMAGE...` looks a disc up on MusicBrainz and writes to its tags file
-(`src/lookup.rs`, `src/lookup/mb.rs`). It runs on demand: never in a mount or the FUSE path, and
-with no worker (phase 4). *Why a command first:* it keeps the server process simple until the
-fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or schedules it.
+(`src/lookup.rs`, `src/lookup/mb.rs`). It runs on demand, never in the FUSE path; the mount's
+optional background lookup (below) calls the same code. *Why a command first:* it kept the server
+process simple while the matching was proven on real discs. *Trade-off:* a user runs it, or
+schedules it, or turns on `--musicbrainz`.
 
 - **The method is pysacd's, made stricter.** pysacd takes the best candidate, with a person
   checking its output as the fallback. Here the result is served to players with nobody looking, and
@@ -2103,7 +2135,49 @@ fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or sched
   native-tls (an OpenSSL dependency that the glibc-baseline build would then pin). *Trade-off:* about
   3 MB of binary and 15 crates for one optional command, and root certificates that age with the
   release; `deny.toml` now allows ISC (rustls's and ring's parts) and CDLA-Permissive-2.0
-  (webpki-roots's data), both compatible with GPL-3.0-or-later. Nothing here runs in the mount.
+  (webpki-roots's data), both compatible with GPL-3.0-or-later. In a mount it runs only with `--musicbrainz`.
+
+### Looking tags up in the background (#185, phase 4 for MusicBrainz)
+
+`--musicbrainz` runs the lookup above inside the mount (`src/lookup/worker.rs`): one thread goes
+through the mount's images and calls the same code as `tags fetch` for each disc that needs it.
+
+- **Why now, before the AcoustID phase.** The plan put the in-process worker after phase 3's soak
+  numbers; the coordinator scheduled its MusicBrainz part for 0.5.0. *Why:* that soak bounds
+  fingerprinting, which decodes audio for seconds of CPU per track. The MusicBrainz worker decodes
+  nothing: it reads TOCs and makes at most 1 request per second. *Alternative:* wait for phase 3.
+  *Trade-off:* the in-process AcoustID switch still waits for its soak, and the worker will gain it
+  only then.
+- **Never in the FUSE path.** The worker shares no lock with the serving side. It reads TOCs with
+  its own disc handles, without the seek index cache, and writes only the tags file, through the
+  same atomic rename as `tags fetch`; the mount then picks the file up as it does a hand edit
+  (#81: the files' tag and mtime change, their folders' mtimes move). Its thread runs at nice 19
+  and in the idle I/O class, where the kernel allows. *Alternative:* look discs up as their folders
+  are listed. *Trade-off:* a disc's tags change some time after it was first shown, so a scanner
+  sees it twice; the mtime move makes the second look happen.
+- **Which discs.** Only those with a track without a title, or without album or artist, on the disc
+  and in the tags file (`lookup::wants_lookup`). *Why:* the issue asks for those, and asking about
+  every disc of a large library would take hours of requests for IDs alone. *Trade-off:* discs with
+  full text get no MusicBrainz IDs from the mount; `tags fetch` still gives them.
+- **Once per disc, across restarts.** A match is in the tags file, as with `tags fetch`. The rest
+  (nothing missing, no confident match) goes to a file in the seek index cache directory, keyed by a
+  hash of the image's path with its size and mtime, so no path is stored. *Why there, not in the
+  tags directory:* it is the mount's state, not the user's tags, and a file written there after
+  every disc would move the directory the tag layer watches. *Trade-off:* with `--no-index-cache`,
+  each mount reads every TOC and asks again about the discs without a match. A disc without a match
+  is asked about again after 30 days, since MusicBrainz grows; *alternative:* never, which leaves a
+  disc unmatched for good once it was refused.
+- **When.** 30 s after the mount, then a round every hour, which costs one `stat` per image already
+  settled. *Why the delay:* a scanner's first look at a new mount reads every TOC, and the worker's
+  reads would compete with it for the source. Images added while mounted are picked up at the next
+  mount: the worker goes through the images of the mount's first scan.
+- **A busy service.** As `tags fetch`: retries and `Retry-After` per request, 1, 2, 4 and 8 minutes
+  after discs without an answer, and 5 in a row end the round until the next hour. A 403, or a
+  request to wait over an hour, stops lookups for a day. *Why not for good:* a mount runs for
+  months.
+- **Stopping.** The mount stops the worker at unmount and waits for a tags file being written, so
+  none is left half-written or as a temporary file. A request under way isn't waited for: it can
+  take a minute, and the unmount shouldn't.
 
 ## Verifying extracts (`sacdfs verify`, #80)
 

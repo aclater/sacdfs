@@ -87,6 +87,21 @@ struct Args {
     /// for a disc without a file, the files are as the TOC gives them.
     #[arg(long, value_name = "DIR")]
     tags: Option<PathBuf>,
+    /// Look up, on MusicBrainz, discs without a track title, album or artist, in the
+    /// background, and write what matches to the --tags directory (which must be writable),
+    /// as `sacdfs tags fetch` does: by barcode or catalogue number, confirmed by track count,
+    /// durations and ISRCs. Off by default; nothing else in a mount uses the network. At most
+    /// 1 request per second, once per disc; no client request waits for it.
+    #[arg(long, requires = "tags")]
+    musicbrainz: bool,
+    /// With --musicbrainz: if that finds nothing, also search by album and artist, from the
+    /// disc's text or the image's path. Sends those names.
+    #[arg(long, requires = "musicbrainz")]
+    lookup_name: bool,
+    /// With --musicbrainz: if that finds nothing, also ask by the tracks' start times (a disc
+    /// of 4 tracks or more). Sends the times.
+    #[arg(long, requires = "musicbrainz")]
+    lookup_durations: bool,
     /// Collapse each chain of folders below the top level that holds a single image into
     /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
     #[arg(long)]
@@ -248,6 +263,19 @@ fn send_ready(path: &std::ffi::OsStr) -> io::Result<()> {
     UnixDatagram::unbound()?.send_to_addr(b"READY=1", &addr).map(drop)
 }
 
+/// Whether this process may write in the directory `dir`.
+#[allow(unsafe_code)]
+fn writable(dir: &Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).map_err(io::Error::other)?;
+    // SAFETY: `c` is a valid NUL-terminated string for the duration of the call.
+    if unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 /// Opens `path` for appending, creating it with mode 0600 (it can hold file names).
 fn open_log_file(path: &Path) -> io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -273,6 +301,14 @@ fn run(args: Args) -> io::Result<()> {
                 io::ErrorKind::NotADirectory,
                 format!("--tags {}: not a directory", dir.display()),
             ));
+        }
+        if args.musicbrainz {
+            writable(&dir).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("--musicbrainz writes to --tags {}, which isn't writable: {e}", dir.display()),
+                )
+            })?;
         }
         sacdfs::tags::install(Some(sacdfs::tags::Store::new(&dir)));
     }
@@ -491,6 +527,33 @@ fn run(args: Args) -> io::Result<()> {
             }
         })?;
     }
+    // The background lookup (#185): after the mount is up, on a thread of its own.
+    let mut lookups = match args.tags.as_deref().filter(|_| args.musicbrainz) {
+        Some(dir) => {
+            let config = sacdfs::lookup::worker::Config {
+                tags: dir.canonicalize().map_err(|e| with_path(e, dir))?,
+                state: cache_dir.as_ref().map(|d| d.join("musicbrainz")),
+                options: sacdfs::lookup::Options {
+                    by_name: args.lookup_name,
+                    by_durations: args.lookup_durations,
+                    no_suffix: args.no_multichannel_album_suffix,
+                    ..sacdfs::lookup::Options::default()
+                },
+                first_delay: sacdfs::lookup::worker::FIRST_DELAY,
+                pass_every: sacdfs::lookup::worker::PASS_EVERY,
+            };
+            let client = sacdfs::lookup::Client::new(sacdfs::lookup::Http::new());
+            let tree = tags_tree.clone();
+            log::info!(
+                "musicbrainz: background lookups on, by number{}{}, from {} s after the mount",
+                if args.lookup_name { ", name" } else { "" },
+                if args.lookup_durations { ", durations" } else { "" },
+                config.first_delay.as_secs()
+            );
+            Some(sacdfs::lookup::worker::Worker::start(config, client, move || tree.images())?)
+        }
+        None => None,
+    };
     if let Some(n) = notify {
         n.ok();
     }
@@ -503,6 +566,9 @@ fn run(args: Args) -> io::Result<()> {
         // dead mount behind.
         log::warn!("session ended: {e}; detaching {}", mountpoint.display());
         let _ = lazy_unmount(&mountpoint);
+    }
+    if let Some(w) = lookups.as_mut() {
+        w.stop();
     }
     tags_tree.save_tag_watch();
     if let Some(cache) = index_cache::global() {
@@ -1010,8 +1076,9 @@ fn serve(session: Session<SacdFs>) -> io::Result<()> {
     guard.join().map_err(|_| io::Error::other("the FUSE session panicked"))?
 }
 
-/// Unmounts the file system at `at`: `umount`, or `fusermount3 -u -z` if not root (as fuser
-/// did; the setuid helper detaches, so a busy mount is not refused).
+/// Unmounts the file system at `at`: `umount`, or `fusermount3 -u -z` (`fusermount -u -z` where
+/// only FUSE 2's helper is installed) if not root (as fuser did; the setuid helper detaches, so a
+/// busy mount is not refused).
 #[allow(unsafe_code)]
 fn unmount(at: &std::path::Path) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
@@ -1025,8 +1092,31 @@ fn unmount(at: &std::path::Path) -> io::Result<()> {
     if e.raw_os_error() != Some(libc::EPERM) {
         return Err(e);
     }
-    let st = std::process::Command::new("fusermount3").args(["-u", "-z", "--"]).arg(at).status()?;
-    if st.success() { Ok(()) } else { Err(io::Error::other(format!("fusermount3 -u -z: {st}"))) }
+    helper_detach(at)
+}
+
+/// The setuid helpers that unmount for users other than root, in the order fuser mounts with
+/// them: FUSE 3's `fusermount3`, then FUSE 2's `fusermount`, which is all some systems have
+/// (Synology DSM, for one). `FUSERMOUNT_PATH`, which fuser mounts with when it is set, comes
+/// first.
+fn fusermount_helpers() -> Vec<std::ffi::OsString> {
+    let mut helpers: Vec<std::ffi::OsString> = std::env::var_os("FUSERMOUNT_PATH").into_iter().collect();
+    helpers.extend(["fusermount3", "fusermount"].map(Into::into));
+    helpers
+}
+
+/// Detaches the mount at `at` through the first setuid helper that exists (`-u -z`).
+fn helper_detach(at: &std::path::Path) -> io::Result<()> {
+    let mut last = io::Error::new(io::ErrorKind::NotFound, "neither fusermount3 nor fusermount found");
+    for helper in fusermount_helpers() {
+        match std::process::Command::new(&helper).args(["-u", "-z", "--"]).arg(at).status() {
+            Ok(st) if st.success() => return Ok(()),
+            Ok(st) => return Err(io::Error::other(format!("{} -u -z: {st}", helper.to_string_lossy()))),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => last = e,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last)
 }
 
 /// Detaches the mount at `at` (`umount -l`).
@@ -1041,11 +1131,7 @@ fn lazy_unmount(at: &std::path::Path) -> io::Result<()> {
     }
     let e = io::Error::last_os_error();
     // Not root: the setuid helper, lazily.
-    let st = std::process::Command::new("fusermount3").args(["-u", "-z", "--"]).arg(at).status();
-    match st {
-        Ok(s) if s.success() => Ok(()),
-        _ => Err(e),
-    }
+    helper_detach(at).map_err(|_| e)
 }
 
 #[allow(unsafe_code)]
