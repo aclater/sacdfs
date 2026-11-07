@@ -355,8 +355,9 @@ sacdfs tags fetch --tags ~/music/sacd-tags ~/music/sacd-images/disc.iso
 sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations ~/music/sacd-images/*.iso
 ```
 
-It's the only part of sacdfs that uses the network. A mount never looks anything up, and nothing is
-sent unless you run this command. Steps run in this order, and the first one that finds a match or
+It and the mount's `--musicbrainz` ([below](#in-the-background---musicbrainz)) are the only parts of
+sacdfs that use the network, and nothing is sent unless you run this command or turn that option
+on. Steps run in this order, and the first one that finds a match or
 an ambiguity ends the lookup:
 
 | Step | Needs | Sent to MusicBrainz | A track may be off by, and the mean over the disc |
@@ -413,6 +414,44 @@ Tested on real discs with their text hidden, which showed no wrong match: by num
 which 44 got tags for at least one area, and by name on 30, of which 15 did. 19 of 21 discs without
 text matched, and their folder names agreed. `--lookup-durations` alone matched only 2 real discs that
 were checked, both right, so its limits are still a judgement.
+
+### In the background: `--musicbrainz`
+
+With `--musicbrainz`, the mount does the same lookup by itself, for the discs that need it:
+
+```sh
+sacdfs --tags ~/music/sacd-tags --musicbrainz ~/music/sacd-images ~/music/sacd
+sacdfs --tags ~/music/sacd-tags --musicbrainz --lookup-name --lookup-durations ~/music/sacd-images ~/music/sacd
+```
+
+- **Which discs:** those with a track that has no title, or no album or artist, on the disc or in
+  its tags file. A disc with all of that is not asked about, so on most libraries only a few discs
+  are. The steps, the limits and what is written are those of `tags fetch` above;
+  `--lookup-name` and `--lookup-durations` add the same steps, and the multichannel album follows
+  the mount's `--no-multichannel-album-suffix`.
+- **When:** 30 s after the mount, one disc after another on a single thread, then once an hour for
+  what's left or new to it. At most 1 request per second, with the same waits and retries as
+  `tags fetch` when the service is busy; 5 discs in a row without an answer end that round until
+  the next, and a 403, or a request to wait over an hour, stops lookups for a day.
+- **No read waits for it.** Listings, reads and tags are served exactly as without it; the lookup
+  runs beside them, and reads only the TOCs of images at the lowest CPU and I/O priority.
+- **What you see:** a match is written to the disc's tags file, and the mount serves it as any edit
+  of that file: the files' tags change, and their modification time and their folders' move, so
+  scanners read them again (with a single image as `SOURCE`, at the next mount). File names stay
+  `NN - Track NN`, as with `tags fetch`.
+- **Once per disc:** a match stays in the tags file. Which discs had nothing missing or found no
+  match is kept in the seek index cache directory (`--index-cache`), so a restart doesn't ask again.
+  A disc without a match is asked about again after 30 days, since MusicBrainz grows; an image that
+  changes is looked at anew. With `--no-index-cache` this is kept only until the mount stops.
+- **Hand edits win,** as with `tags fetch`: a value in the tags file is never replaced.
+- **The tags directory must be writable,** or the mount refuses to start and says so.
+- **The log** has a line for each disc it asked about, with the match or the reason there is none,
+  and a summary after each round: `musicbrainz: pass done: ...` (at `-v`).
+- **What is sent:** the disc's catalogue numbers, and with the two options the album and artist
+  names or the tracks' start times, to musicbrainz.org over HTTPS, with the User-Agent above.
+  Nothing is sent without `--musicbrainz`.
+- **Don't run `tags fetch` on the same discs while it runs:** each keeps to 1 request per second on
+  its own, so the two together would exceed it.
 
 As with `verify`, a directory named `tags` in the current directory must be given as `./tags`
 to mount it.

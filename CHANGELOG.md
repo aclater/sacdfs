@@ -23,10 +23,25 @@ All notable changes to sacdfs are recorded here. The format follows
   directory. `--lookup-name` also searches by album and artist, and `--lookup-durations` by the
   tracks' start times. `--dry-run` shows what would be written. No match, or an ambiguous one,
   writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
-  own text stays. Nothing goes on the network unless you run this command: a mount never does. It
-  sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
+  own text stays. Nothing goes on the network unless you run this command, or turn on
+  `--musicbrainz` (below). It sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
   (docs/user-guide.md, "From MusicBrainz"). Run on 9 real discs by barcode or catalogue number: 7
   matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
+- **`--musicbrainz`: the mount looks up discs without text by itself, in the background** (#185,
+  MusicBrainz part of phase 4; `SACDFS_MUSICBRAINZ=1` in the container, with `SACDFS_LOOKUP_NAME` and
+  `SACDFS_LOOKUP_DURATIONS`). Off by default. A thread of its own goes through the images 30 s after
+  the mount and every hour after, and looks up only the discs with a track without a title, or
+  without album or artist, with the same code and limits as `tags fetch` (`--lookup-name` and
+  `--lookup-durations` add the same steps). It writes matches to the tags directory, which must then
+  be writable, and the mount serves them as any edit of a tags file: tags change and mtimes move, so
+  scanners read the files again. Each disc is asked about once: a match stays in its tags file, and
+  the rest is kept in the seek index cache directory; a disc without a match is asked again after
+  30 days. At most 1 request per second, and no listing or read waits for it. On a library sample of
+  395 real images, the first round took 4.4 minutes and 111 requests: 23 discs lacked text, 19 of
+  them matched, every tags file byte for byte what `tags fetch` writes (checked by hand in phase 2),
+  and the other 372 were not asked about. A restart asked nothing. Listings and reads through the
+  mount kept the latency of a mount without the option while it ran
+  ([user guide](docs/user-guide.md#in-the-background---musicbrainz)).
 
 ### Changed
 

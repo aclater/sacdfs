@@ -17,11 +17,14 @@
 //!   some of them share are left out.
 
 mod mb;
+pub mod worker;
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use scarletbook::output::TagItem;
 use scarletbook::{Slot, Toc};
@@ -586,6 +589,9 @@ pub struct Options {
     /// Don't add [`MC_ALBUM_SUFFIX`] to an album written for a multichannel area: for a mount
     /// with `--no-multichannel-album-suffix`.
     pub no_suffix: bool,
+    /// Ask only about discs that lack a track title, the album or its artist, on the disc and in
+    /// the tags file both ([`wants_lookup`]): the mount's background lookup (`--musicbrainz`).
+    pub only_wanting: bool,
 }
 
 /// What a run did.
@@ -597,6 +603,8 @@ pub struct Summary {
     pub refused: usize,
     /// Images already looked up: nothing was asked.
     pub done: usize,
+    /// Images with nothing missing, with [`Options::only_wanting`]: nothing was asked.
+    pub complete: usize,
     /// Images that failed: no read, no answer, or a tags file that doesn't parse.
     pub failed: usize,
     /// Images not tried, after failures in a row.
@@ -629,6 +637,65 @@ impl Summary {
     pub fn all_handled(&self) -> bool {
         self.refused == 0 && self.failed == 0 && self.not_tried == 0
     }
+}
+
+/// Held while a tags file is written, so that a mount stopping waits for a write under way
+/// rather than leave a temporary file behind ([`worker::Worker::stop`]).
+pub static WRITING: Mutex<()> = Mutex::new(());
+/// Set, under [`WRITING`], when the mount stops: no tags file is written after it.
+static STOPPING: AtomicBool = AtomicBool::new(false);
+
+/// What became of an image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// Every area matched (written, or nothing left to add).
+    Matched,
+    /// An area didn't: nothing fit, or more than one thing did.
+    Refused,
+    /// Already looked up: nothing was asked.
+    Done,
+    /// Nothing missing, with [`Options::only_wanting`]: nothing was asked.
+    Complete,
+}
+
+/// Looks the image `image` up, as [`fetch`] does one image, without its retries: for the mount's
+/// background lookup, which keeps its own pace between discs ([`worker`]).
+pub fn fetch_image<T: Transport>(
+    dir: &Path,
+    image: &Path,
+    options: Options,
+    client: &mut Client<T>,
+    mut say: impl FnMut(String),
+) -> Result<Outcome, Failure> {
+    let mut sum = Summary::default();
+    client.next_disc();
+    fetch_one(dir, image, options, client, &mut say, &mut sum)?;
+    Ok(if sum.done > 0 {
+        Outcome::Done
+    } else if sum.complete > 0 {
+        Outcome::Complete
+    } else if sum.matched > 0 {
+        Outcome::Matched
+    } else {
+        Outcome::Refused
+    })
+}
+
+/// Whether a lookup could add what a reader most misses: some track of an area has no title, no
+/// album or no artist (album artist or track artist), on the disc or in its tags file. A key in the
+/// tags file counts even when empty, as a hand edit a lookup wouldn't replace; a title that is
+/// only the generated `Track NN` doesn't (see [`plan`]).
+pub fn wants_lookup(facts: &DiscFacts, existing: Option<&TagsFile>) -> bool {
+    facts.areas.iter().any(|a| {
+        a.tracks.iter().any(|t| {
+            let have = existing.map(|f| f.fields_for(a.slot, t.number)).unwrap_or_default();
+            let generated = crate::names::fallback_title(t.number);
+            let has = |k: &str| {
+                t.on_disc.contains(k) || have.get(k).is_some_and(|v| k != "title" || *v != generated)
+            };
+            !has("title") || !has("album") || !(has("album_artist") || has("artist"))
+        })
+    })
 }
 
 /// `sacdfs tags fetch`: looks each of `images` up and writes the results in the tags directory
@@ -719,7 +786,9 @@ fn fetch_one<T: Transport>(
     say: &mut impl FnMut(String),
     sum: &mut Summary,
 ) -> Result<(), Failure> {
-    let disc = Disc::open(image, 0, Tuning::default()).map_err(|e| Failure::Local(e.to_string()))?;
+    // Without the seek index cache: in a mount, its seek indexes are the serving side's business.
+    let disc =
+        Disc::open_with(image, 0, Tuning::default(), None).map_err(|e| Failure::Local(e.to_string()))?;
     let toc = disc.toc();
     let key = tags::disc_key(toc);
     let path = dir.join(format!("{key}.toml"));
@@ -735,6 +804,10 @@ fn fetch_one<T: Transport>(
             "{shown}: already looked up ({key}): nothing asked. To ask again, remove `{GROUP_ID}` from its tags file"
         ));
         sum.done += 1;
+        return Ok(());
+    }
+    if options.only_wanting && !wants_lookup(&facts, existing.as_ref()) {
+        sum.complete += 1;
         return Ok(());
     }
     let pending: Vec<&AreaFacts> = facts.areas.iter().collect();
@@ -798,8 +871,14 @@ fn fetch_one<T: Transport>(
     let text = merged.to_text();
     TagsFile::parse(&text).map_err(|e| Failure::Local(format!("the merged tags file doesn't parse: {e}")))?;
     fs::create_dir_all(dir).map_err(|e| Failure::Local(format!("{}: {e}", dir.display())))?;
-    tags_cli::write_atomic(&path, text.as_bytes())
-        .map_err(|e| Failure::Local(format!("{}: {e}", path.display())))?;
+    {
+        let _writing = WRITING.lock().unwrap_or_else(|p| p.into_inner());
+        if STOPPING.load(Ordering::Relaxed) {
+            return Err(Failure::Local("the mount is stopping".to_owned()));
+        }
+        tags_cli::write_atomic(&path, text.as_bytes())
+            .map_err(|e| Failure::Local(format!("{}: {e}", path.display())))?;
+    }
     say(format!("{shown}: {added} keys added to {}", path.display()));
     sum.written += 1;
     sum.keys += added;

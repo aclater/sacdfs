@@ -178,7 +178,10 @@ All settings are environment variables.
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
 | `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |
-| `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there, read-only is enough); see the [user guide](user-guide.md#your-own-tags---tags) |
+| `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there; read-only is enough unless `SACDFS_MUSICBRAINZ` is on); see the [user guide](user-guide.md#your-own-tags---tags) |
+| `SACDFS_MUSICBRAINZ` | `0` | `1` for `--musicbrainz`: look up discs without track titles, album or artist on MusicBrainz in the background, and write what matches to `SACDFS_TAGS`, which must then be mounted read-write. The container needs outbound HTTPS to musicbrainz.org. Off by default; see the [user guide](user-guide.md#in-the-background---musicbrainz) for what is sent |
+| `SACDFS_LOOKUP_NAME` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-name` (also search by album and artist) |
+| `SACDFS_LOOKUP_DURATIONS` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-durations` (also ask by the tracks' start times) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | (32, or 8 under a limit up to 512 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
 | `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
