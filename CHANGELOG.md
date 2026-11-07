@@ -43,7 +43,11 @@ All notable changes to sacdfs are recorded here. The format follows
   readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads, and a fast reader's
   worst single read rises from 3 to 6 ms to about 12 ms. A player's reads are as before. Through SMB,
   `smbclient` copies 5.71 → 3.18 s (DST stereo) and 14.54 → 11.59 s (six channels), and four readers
-  over gvfs stay as fast as 0.4.0.
+  over gvfs stay as fast as 0.4.0. On a NAS-class CPU (12-thread i5-1235U) against scarletbook 0.5.9:
+  one thread, stereo -1 % from the library (0.4.1: +34 %), six channels +23 %; all threads, stereo
+  +15 % (0.4.1: +49 %), six channels +21 % (+32 %). Through kernel CIFS, NFS and `smbclient`, DSF reads
+  are 6 to 30 % faster; WAV is unchanged. On 2 or 4 cores under a 256 or 512 MiB limit, sacdfs peaks
+  at most 3 MiB higher with a player and a copy running.
 - **A memory limit no longer gets sacdfs killed while listing (#237, #231).** Under a cgroup limit, what
   listed images hold is kept to a budget (`--listing-mb`, `SACDFS_LISTING_MB`, default 3/8 of the
   limit): images not used lately are dropped and read again when next used, with the same names, inode

@@ -369,6 +369,72 @@ compare with the table above):
 | Decoding in groups in long batches | 4.28 | 3.35 | 10.86 | 0.99 |
 | Reply buffers kept | 4.18 | 3.37 | 10.79 | 0.96 |
 
+**On a NAS-class CPU** (a 12-thread Intel i5-1235U, 2 P-cores and 8 E-cores, in a container on the
+NAS, the image in its ZFS cache): `cp` of one real disc's DSF files out of a fresh mount against
+scarletbook 0.5.9's `bench dsf` (generic build), both to a RAM disk, wall seconds, medians of 3
+alternating rounds under the benchmark lock (6 channels on one thread: 2 rounds, no 0.4.1). This
+branch is built on main with scarletbook 0.5.9. Other services on the NAS were running but idle.
+
+| Area | Threads | Library | 0.4.1 | This branch | Over the library, 0.4.1 → this branch |
+|---|---|---|---|---|---|
+| DST stereo, 66 min | 1 | 139.7 | 186.7 | **138.2** | +34 % → -1 % |
+| DST stereo, 66 min | 12 | 20.20 | 30.05 | **23.25** | +49 % → +15 % |
+| DST 6 channels, 66 min | 1 | 416.3 | not run | **513.5** | **+23 %** |
+| DST 6 channels, 66 min | 12 | 67.66 | 89.36 | **81.80** | +32 % → +21 % |
+
+An earlier round on scarletbook 0.5.8 (against its own `bench dsf`, with 0.4.0 and 0.4.1-rc.3) gave the
+same picture: -2 %, +13 %, +21 % and +19 %, where 0.4.0 was +29 %, +45 %, +35 % and +25 %. Six
+channels on one thread stay over 20 % behind the library. Grouping shorter batches (from 4 frames per
+thread instead of 8) made no difference there (522 against 522 s), so the cause is still open.
+
+**Through shares** (Samba and NFS-Ganesha in the container, kernel clients on the same machine over
+loopback, in a 20-vCPU VM on a 20-thread Intel i9-13900H, default 32 MiB cache, all threads), `cat`
+of a whole area to `/dev/null`, fresh container per run, medians of 3 alternating rounds, seconds,
+0.4.0 / 0.4.1-rc.3 / this branch before 0.4.1 and scarletbook 0.5.9 were merged in (peak RSS of
+sacdfs, MiB, rc.3 → this branch):
+
+| Client | Area | 1 reader | 4 readers | Peak RSS, 1 / 4 readers |
+|---|---|---|---|---|
+| Kernel CIFS (SMB 3.1.1) | DST stereo DSF | 16.14 / 16.11 / **13.71** | 13.01 / 13.00 / **10.67** | 45 → 54 / 53 → 56 |
+| Kernel CIFS | DST 6 ch. DSF | 84.87 / 87.45 / **63.69** | 51.04 / 51.60 / **44.72** | 55 → 66 / 62 → 69 |
+| Kernel CIFS | DST stereo WAV | 18.65 / 20.93 / 20.99 | 19.90 / 19.85 / 20.03 | 62 → 69 / 80 → 88 |
+| Kernel CIFS | DST 6 ch. WAV | 92.38 / 105.91 / 106.83 | 78.08 / 72.78 / 76.12 | 72 → 83 / 90 → 102 |
+| Kernel NFS 4.2 | DST stereo DSF | 11.70 / 11.69 / **10.03** | 10.47 / 10.39 / **8.95** | 44 → 51 / 51 → 55 |
+| Kernel NFS 4.2 | DST 6 ch. DSF | 36.81 / 37.31 / **35.08** | 33.15 / 33.07 / **30.74** | 53 → 63 / 62 → 71 |
+| Kernel NFS 4.2 | DST stereo WAV | 12.72 / 12.82 / 12.88 | 13.44 / 12.80 / 13.31 | 58 → 63 / 71 → 74 |
+| Kernel NFS 4.2 | DST 6 ch. WAV | 43.62 / 43.70 / 44.36 | 47.97 / 42.39 / 44.28 | 65 → 66 / 78 → 79 |
+| `smbclient` | DST stereo DSF | 15.41 / 15.44 / **10.77** | 11.86 / 11.65 / **9.72** | 45 → 53 / 50 → 57 |
+| `smbclient` | DST stereo WAV | 13.62 / 13.93 / 13.96 | 14.30 / 13.96 / 14.20 | 60 → 67 / 81 → 85 |
+| `smbclient` | DST 6 ch. WAV | 47.52 / 47.81 / 48.91 | 48.60 / 48.05 / 49.97 | 71 → 81 / 92 → 103 |
+
+DSF gets 6 to 30 % faster through every client. WAV is unchanged within the rounds' spread (up to
++4.6 %), but its peak memory still rises by up to 11 MiB on 20 threads. Kernel CIFS's WAV row is
+12 to 15 % slower in rc.3 than in 0.4.0, and that comes before this branch: 0.4.1-rc.2 measures as
+0.4.0 does. gvfs was not measured reliably here: its FUSE daemon crashed at start in most runs in
+this VM.
+
+**A small machine with a player:** the container pinned to 2 E-cores with a 256 MiB hard limit, or 4
+E-cores with 512 MiB, decoder threads to match, on the same i9-13900H. A real-time player read one
+track over SMB for 40 s, alone or while a client copied another track of the same area as fast as it
+could. Main without this branch against main with it, 3 alternating rounds, the worst of the rounds:
+
+| Limit | Workload | Peak RSS of sacdfs (MiB) | Copy (MB/s) | Player's worst read (ms) | Player furthest behind (s) |
+|---|---|---|---|---|---|
+| 256 MiB, 2 cores | player alone, DST stereo | 17 → 17 | | 12 → 13 | none |
+| 256 MiB, 2 cores | player + copy, DST stereo DSF | 18 → 19 | 27 → **33** | 54 → 15 | none |
+| 256 MiB, 2 cores | player + copy, DST 6 ch. DSF | 20 → 22 | 24 → 25 | 311 → 309 | 4.1 → 3.6 |
+| 256 MiB, 2 cores | player + copy, DST 6 ch. WAV | 24 → 27 | 13 → 13 | 372 → 319 | 2.5 → 0.8 |
+| 512 MiB, 4 cores | player alone, DST stereo | 17 → 18 | | 11 → 10 | none |
+| 512 MiB, 4 cores | player + copy, DST stereo DSF | 19 → 20 | 52 → **63** | 16 → 15 | none |
+| 512 MiB, 4 cores | player + copy, DST 6 ch. DSF | 21 → 24 | 51 → 50 | 56 → **69** | none |
+| 512 MiB, 4 cores | player + copy, DST 6 ch. WAV | 27 → 30 | 22 → 22 | 179 → **209** | 0.1 → **0.8** |
+
+No run was killed and no read failed. On 2 or 4 threads the fast reader's window stays at its floor
+of 150 frames (32 frames per thread is less), so this branch adds at most 3 MiB here, from reading in
+groups. Six channels with a copy beside them are too much for 2 E-cores with or without it: the player
+falls behind by seconds. On 4 cores a six-channel WAV player beside a WAV copy fell up to 0.8 s behind
+with this branch against 0.1 s without it, in one of three rounds.
+
 **What a reader's read size changes:** the time of a straight read doesn't depend on it, since the
 kernel sends the mount 128 KiB at a time whatever the reader asks for. One 188 MB stereo DST file,
 all threads, local reads, medians of 3:
