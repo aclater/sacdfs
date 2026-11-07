@@ -1836,7 +1836,10 @@ impl Tree {
     /// Total size in bytes of the image files of the source: see [`SourceDir::image_bytes`].
     pub fn image_bytes(&self) -> u64 {
         match self.get(ROOT).as_deref() {
-            Some(Node::Dir(Dir { kind: DirKind::Source(root), .. })) => root.image_bytes(),
+            Some(Node::Dir(d)) => match &d.kind {
+                DirKind::Source(root) => root.image_bytes(),
+                _ => 0,
+            },
             _ => 0,
         }
     }
