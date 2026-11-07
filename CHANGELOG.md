@@ -5,17 +5,6 @@ All notable changes to sacdfs are recorded here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
-
-- **The soak's memory verdict no longer fails a run for one step ([#247](https://github.com/aclater/sacdfs/issues/247)).**
-  Memory in healthy runs moves in single steps of 3 to 6.5 MiB, up or down, and the line through the
-  second half of a 2-hour run read one as a climb of 8 to 9 MiB/h (limit 4.4). The trend is now the rate
-  left after the largest single step between six window medians is set aside, so a step followed by a
-  plateau passes and a steady climb still fails (10 MiB/h fails; a 2-hour run catches about 5 MiB/h and
-  up, a longer run less). Replayed over 21 recorded runs and 4 two-hour cuts of long ones (0.4.0, 0.4.1-rc.2, rc.3), the runs that failed on a step or
-  on a three-sample end level now pass and the others keep their verdict. `--trend-floor-mb` default 4 to 3. The thread check now lets a short spike pass the
-  `--thread-spike` line (up to twice it; failing only if three samples in a row, `--spike-hold`, stay above the first line), and its end level is the median of the last
-  sixth rather than of the last three samples. `scripts/test_soak.py` tests the verdict.
 
 ### Added
 
@@ -85,6 +74,15 @@ All notable changes to sacdfs are recorded here. The format follows
 - **`sacdfs tags fetch` on a busy service.** It obeys `Retry-After` in full, up to an hour, waits
   longer between discs that get no answer, tries those again at the end of the run, and ends at once
   on a 403 or a request to wait longer than an hour.
+- **The soak's memory verdict no longer fails a run for one step ([#247](https://github.com/aclater/sacdfs/issues/247)).**
+  Memory in healthy runs moves in single steps of 3 to 6.5 MiB, up or down, and the line through the
+  second half of a 2-hour run read one as a climb of 8 to 9 MiB/h (limit 4.4). The trend is now the rate
+  left after the largest single step between six window medians is set aside, so a step followed by a
+  plateau passes and a steady climb still fails (10 MiB/h fails; a 2-hour run catches about 5 MiB/h and
+  up, a longer run less). Replayed over 21 recorded runs and 4 two-hour cuts of long ones (0.4.0, 0.4.1-rc.2, rc.3), the runs that failed on a step or
+  on a three-sample end level now pass and the others keep their verdict. `--trend-floor-mb` default 4 to 3. The thread check now lets a short spike pass the
+  `--thread-spike` line (up to twice it; failing only if three samples in a row, `--spike-hold`, stay above the first line), and its end level is the median of the last
+  sixth rather than of the last three samples. `scripts/test_soak.py` tests the verdict.
 
 ### Fixed
 
