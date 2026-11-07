@@ -6,6 +6,20 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A whole-file scan no longer starves a player (#230).** On small machines, a client reading whole
+  files (a copy, a checksum run, a full rescan) made a 6-channel WAV player fall behind: on 0.4.1-rc.3,
+  2 cores, the default cache and one scanner, it played at 0.54 times real time and was 14 s behind
+  after 30 s; with four scanners, 0.30 times on 2 cores and 0.46 times on 4. Now it plays at real time
+  in all four cases, at most 0.77 s behind. While someone plays, a reader that reads faster
+  than a player gives up the frames it has passed, shares a quarter of the cache, and reads ahead in
+  slices that let a player's work go first. Beside a player, a scanner runs 5 to 13 % slower than
+  without this change, which is still about as fast as on rc.3 (`SACDFS_CACHE_MB=8`, the earlier
+  workaround, cost 55 to 65 %). A scan with no player is as fast as before, and files keep their
+  bytes. A reader counts as a player from its first 0.5 s: with four scanners on 2 cores, the player
+  fell up to 0.77 s behind, and up to 14 of about 700 reads were more than 0.5 s late.
+
 ### Changed
 
 - **Reading DST through the mount is faster** (#210), measured with `cp -r` of an area on a fresh

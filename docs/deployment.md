@@ -295,12 +295,25 @@ MiB at 1,600 images).
 players, had no late reads with a 0.25 s buffer. The headroom for 6-channel at cache 32 was 11.8
 times real time for DSF and 9.7 times for WAV.
 
-**Known limit.** A whole-file WAV scan starves a 6-channel WAV player on 2 cores: the player
-fell about 13 s behind
-([#230](https://github.com/aclater/sacdfs/issues/230)). A smaller cache helps, at a cost. On 4
-cores, `SACDFS_CACHE_MB=8` left the player 0.10 s behind, against 11.2 s with four scanners at the
-default cache; but a whole-file WAV scan dropped from about 61 to 22 MB/s, and the 6-channel WAV
-headroom from 18 times to 7 times real time. Memory at the floors is
+**Whole-file scans beside a player (#230).** On 0.4.1-rc.3 and earlier, a client reading whole files
+starved a 6-channel WAV player on 2 cores, and four such clients starved it on 4 cores, measured on a
+fresh cache. sacdfs now lets the player go first. 6-channel WAV player, whole-file WAV scanners, default
+cache, a fresh container each time, a track the scanners never read; 3 runs each, medians, on E-cores
+of a mobile Core i9, the images on a NAS's hard disks over NFS:
+
+| Scanners | Cores, memory | 0.4.1-rc.3: player speed, behind after 30 s | This version | Scan speed, rc.3 → this version |
+|---|---|---|---|---|
+| 1 | 2, 256 MiB | 0.54×, 14.0 s | 1.00×, 0.52 s | 30.6 → 33.2 MB/s |
+| 4 | 2, 256 MiB | 0.30×, 21.0 s | 1.00×, 0.66 s | 33.2 → 32.1 MB/s |
+| 1 | 4, 512 MiB | 1.00×, 0.11 s | 1.00×, 0.03 s | 56.7 → 58.3 MB/s |
+| 4 | 4, 512 MiB | 0.46×, 16.4 s | 1.00×, 0.36 s | 62.3 → 63.9 MB/s |
+
+Stereo DSF with four scanners held real time on both versions; at most 1.39 s behind on rc.3 with 2
+cores, 0.21 s now. `SACDFS_CACHE_MB=8` is no longer needed for this, and it cost scan speed: whole-file
+WAV scans with a player ran at 13 to 28 MB/s at cache 8 on rc.3, and 15 and 24 MB/s without one,
+against 38 and 66 MB/s at the default. A reader counts as a player only after 0.5 s: with four
+scanners on 2 cores, the player fell up to 0.77 s behind and up to 14 of about 700 reads were more
+than 0.5 s late, so a player with a buffer under 1 s may still hear a gap. Not tested: a client on another host, and a NAS's own CPU. Memory at the floors is
 [#231](https://github.com/aclater/sacdfs/issues/231).
 
 **Idle.** sacdfs used 0.007 % of a CPU and woke 1.5 times a second, and 5 minutes of `strace`

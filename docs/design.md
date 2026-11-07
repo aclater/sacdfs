@@ -1186,6 +1186,28 @@ decoding them twice.
   readers:* with it for every reader, four real-time players and a tagger saw reads of up to
   114 ms (target 50 ms), because players then convert in long bursts on the shared pool.
   Bounded in bytes, so that six-channel files at 352.8 kHz don't take 50 MB per reader.
+- **A player goes first (#230).** A reader that, since it last jumped, has read 4 MiB at more
+  than 1.5 times the file's byte rate reads for *throughput*; any other that has been reading
+  for 0.5 s is a *player*. While a player is active, readers for throughput give up the
+  frames they have passed (they go first from the cache, the oldest first, all but the last
+  1 MiB), share a quarter of the cache whatever that leaves them (at least 16 frames), and
+  read ahead in slices of 8 frames per decoder thread, waiting up to 50 ms before each for
+  players' decoding to finish. With no player they do none of it. *Why:* the cache is least
+  recently used, and a player's 2 s of read-ahead waits there for 1 to 2 s, while a scanner
+  at 30 MB/s replaces 32 MiB in a second. The player's frames were evicted before it read
+  them; it converted them again, 4 frames at a time, each behind a scanner's whole window on
+  the decoder threads, and fell 14 s behind in 30 s on 2 cores. A cache of 8 MiB helped,
+  oddly, because no read-ahead survived for anyone, so all readers' work came in small
+  pieces. *Why 0.5 s before a player counts:* every reader looks like a player for its first
+  4 MiB, so a scanner opening its next file made the others wait; on 32 threads, a scan alone
+  was 6 to 16 % slower. *Why a margin:* the kernel's requests arrive slightly out of order,
+  and a frame given up too soon is decoded twice and its stream located anew. *Why bounded
+  waits:* a player may be waiting for a stalled image. *Alternatives:* a cache of 8 MiB
+  (scans 55 to 65 % slower; [deployment](deployment.md)); giving up passed frames alone (in a
+  first run on a loaded machine it fixed one scanner on 2 cores, not four); a per-file decode queue with
+  priorities and a pace cap on scanners (not tried: the first is larger, the second slows a
+  scan with no player). *Trade-off:* beside a player a scanner runs 5 to 13 % slower, and a
+  player's first 0.5 s is not protected.
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
