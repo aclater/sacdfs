@@ -52,6 +52,24 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- **Reading DST through the mount is faster** (#210), measured with `cp -r` of an area on a fresh
+  mount against 0.4.0: one thread 44.78 → 33.09 s for 41 minutes of stereo, the library's own
+  33.29 s; all threads 3.98 → 3.18 s for 50 minutes of stereo and 11.37 → 10.18 s for 50 minutes
+  of six channels. Reads of plain DSD are about as before: most of what they spend is FUSE's own.
+  Frames are decoded in groups in long batches, demultiplexing overlaps decoding, and a fast
+  reader gets a longer read-ahead (32 frames per decoder thread, at most 1200 and a share of a quarter
+  of the cache, which fast readers divide between them) from 4 MiB on instead of 16. Files keep their bytes. Peak memory of an all-thread DST
+  read rises by up to 10 MiB at the default cache (45 → 55 MiB for DST stereo; WAV 66 → 73 MiB).
+  Cold seeks of six-channel DST (mean 0.98 → 1.05 ms) and of plain DSD (0.149 → 0.156 ms), and four
+  readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads, and a fast reader's
+  worst single read rises from 3 to 6 ms to about 12 ms. A player's reads are as before. Through SMB,
+  `smbclient` copies 5.71 → 3.18 s (DST stereo) and 14.54 → 11.59 s (six channels), and four readers
+  over gvfs stay as fast as 0.4.0. On a NAS-class CPU (12-thread i5-1235U) against scarletbook 0.5.9:
+  one thread, stereo -1 % from the library (0.4.1: +34 %), six channels +23 %; all threads, stereo
+  +15 % (0.4.1: +49 %), six channels +21 % (+32 %). Pinned to three P-cores, DSF reads of six channels
+  are 10 to 14 % faster than without this change; stereo and WAV with one reader are unchanged within the
+  spread. On 2 or 4 cores under a 256 or 512 MiB limit, sacdfs peaks
+  at most 3 MiB higher with a player and a copy running.
 - **The release binaries need glibc 2.17, not 2.28 (#244).** They now run on systems with an
   older glibc, such as QNAP's QuTScloud 5.2.9 (glibc 2.21), where 0.4.1 did not start. They are
   linked against glibc 2.17's symbols with zig (cargo-zigbuild) and run at the same speed as
@@ -82,8 +100,9 @@ All notable changes to sacdfs are recorded here. The format follows
   limit): images not used lately are dropped and read again when next used, with the same names, inode
   numbers, sizes, times and bytes. 5,000 and 20,000 images now list at 256 MiB, where 0.4.0 and 0.4.1-rc.2
   were killed. A second pass over a library past its budget takes longer, as TOCs are read again.
-- **Defaults follow the limit.** Under a limit up to 512 MiB the cache defaults to 8 MiB, as a 6-channel WAV player then keeps real time
-  during whole-file scans, at the cost of scans 2.4 to 2.6 times slower (#230), and decoder
+- **Defaults follow the limit.** Under a limit up to 512 MiB the cache defaults to 16 MiB: with
+  the fix to #230 (Fixed, below) a 6-channel WAV player keeps real time beside whole-file scans there,
+  and a scan alone runs as fast as at 32 MiB, in about 16 MiB less memory. Decoder
   threads to at most one per 64 MiB of the limit (at least 2). The container no longer sets
   `SACDFS_CACHE_MB` by itself. With no limit, nothing changes.
 - **A warning at startup** when the library won't fit in memory as listed, naming the size that would.
@@ -142,6 +161,19 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- **A whole-file scan no longer starves a player (#230).** On small machines, a client reading whole
+  files (a copy, a checksum run, a full rescan) made a 6-channel WAV player fall behind: on 0.4.1-rc.3,
+  2 cores, the default cache and one scanner, it played at 0.54 times real time and was 14 s behind
+  after 30 s; with four scanners, 0.30 times on 2 cores and 0.46 times on 4. Now it plays at real time
+  in all four cases, at most 0.77 s behind. While someone plays, a reader that reads faster
+  than a player gives up the frames it has passed, shares a quarter of the cache, and reads ahead in
+  slices that let a player's work go first. Beside a player, a scanner runs 5 to 13 % slower than
+  without this change, which is still about as fast as on rc.3 (`SACDFS_CACHE_MB=8`, the earlier
+  workaround, cost 55 to 65 %). A scan with no player is as fast as before, and files keep their
+  bytes. A reader counts as a player from its first 0.5 s: with four scanners on 2 cores, the player
+  fell up to 0.77 s behind, and up to 14 of about 700 reads were more than 0.5 s late.
+  At 16 MiB, the default under a memory limit up to 512 MiB, the player held real time on 2 and 4
+  cores, at most 0.52 s behind, and a scan alone ran as fast as at 32 MiB (within 0.4 %).
 - **`cover.jpg` no longer disappears for about a second when a cover is replaced (#235).** In the
   `Stereo` and `Multichannel` folders, art whose source file had been replaced or removed failed to
   open (`ESTALE`, or `ENOENT` for `cover.jpg` when the file it stood for was removed) until the area

@@ -12,7 +12,7 @@ Details: [clients](../clients.md#jellyfin).
 | `SACDFS_FORMATS` (`--format`) | `dsf` | Jellyfin's ffprobe reads about 7 MB of each WAV file, which sacdfs must convert: 648.5 MiB served for the first scan against 17.9 MiB with `dsf` |
 | `SACDFS_FLATTEN` (`--flatten`) | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
 
-Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32 MiB, or 8 under a memory limit up to 512 MiB; the 0.4.0-rc.2 tests ran with 32, the 0.3.0-rc.1 tests with 16).
+Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32 MiB, or 16 under a memory limit up to 512 MiB; the 0.4.0-rc.2 tests ran with 32, the 0.3.0-rc.1 tests with 16).
 
 ## Add the share
 

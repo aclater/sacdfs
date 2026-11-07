@@ -183,7 +183,7 @@ All settings are environment variables.
 | `SACDFS_LOOKUP_NAME` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-name` (also search by album and artist) |
 | `SACDFS_LOOKUP_DURATIONS` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-durations` (also ask by the tracks' start times) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
-| `SACDFS_CACHE_MB` | (32, or 8 under a limit up to 512 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
+| `SACDFS_CACHE_MB` | (32, or 16 under a limit up to 512 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
 | `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
 | `SACDFS_THREADS` | (one per CPU, at most one per 64 MiB of a limit) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
@@ -209,7 +209,7 @@ which is all a read-only share needs.
 
 ### Memory
 
-The default cache of 32 MiB (`SACDFS_CACHE_MB`, `--cache-mb`, since #150) suits a NAS, and is 8 MiB under a memory limit up to 512 MiB ([Under a memory limit](#under-a-memory-limit)). The cache holds
+The default cache of 32 MiB (`SACDFS_CACHE_MB`, `--cache-mb`, since #150) suits a NAS, and is 16 MiB under a memory limit up to 512 MiB ([Under a memory limit](#under-a-memory-limit)). The cache holds
 decoded frames so that a client re-reading the same part of a file does not decode it again;
 players read ahead, so a small cache costs little. 32 MiB is the smallest size that reads,
 seeks and scans within 5 % of a 256 MiB cache ([performance](performance.md#cache-size-150));
@@ -237,6 +237,10 @@ cache, a fresh mount, one run each, a 32-thread host), 0.4.0 against 0.4.1-rc.1 
 | Full read of the 14 stereo files of one DST disc as WAV (2.97 GiB), one reader | 64 MiB | 66 MiB |
 | the same, 4 readers | 76 MiB | 85 MiB |
 | Full read of the same files as DSF (1.98 GiB), 4 readers | 50 MiB | 54 MiB |
+
+The longer read-ahead and grouped decoding after 0.4.1 (#210) add 6 to 10 MiB to whole-file reads:
+on a real stereo DST disc of 14 files, DSF 45 → 55 MiB with one reader and 49 → 59 MiB with four,
+WAV 66 → 72 and 76 → 84 MiB. The planning figure below still holds.
 
 So on this small library a scan that only reads the ends of files stays under 50 MiB, but a scan that reads whole files,
 which a media server does when it re-analyses or upgrades its library, does not: more readers at
@@ -270,7 +274,7 @@ limit, none of this applies.
 
 | What | With a limit |
 |---|---|
-| Cache of frames (`--cache-mb`) | 8 MiB up to 512 MiB, else 32 |
+| Cache of frames (`--cache-mb`) | 16 MiB up to 512 MiB, else 32 |
 | Decoder threads (`--threads`) | one per CPU, at most one per 64 MiB of the limit, and at least 2 |
 | Memory for what listed images hold (`--listing-mb`) | 3/8 of the limit, at least 8 MiB |
 | Memory watch | see below |
@@ -459,7 +463,7 @@ WAV), so the difference is the CPU, not the release.
 
   Rig A: rc.1, single runs. Rig B: rc.2, single runs.
 
-**Known limit.** On a fresh cache, whole-file WAV scans starve a 6-channel WAV player. "Scan" means
+**Whole-file scans, 0.4.1-rc.3 and earlier (#230).** On a fresh cache, whole-file WAV scans starved a 6-channel WAV player; the section after this one has the fix. "Scan" means
 a client that reads whole files, such as a library import that copies or fingerprints them; a scan
 that reads only the start, middle and end of each file does not (the player stayed within 0.2 s).
 It happens on 2 cores and on 4 cores, with the default cache of 32 MiB
@@ -483,7 +487,7 @@ most 0.3 s behind at every cache size, on both rigs. Rig B's runs had a heavily 
 the cache-8 cells at 1.00 do not depend on it. Out-of-memory kills: none. Rig B on 2 cores was not run on rc.3; on rc.2 at the default cache it
 was 0.45 times real time with one scanner and 0.28 with four, and other caches were not tried.
 
-A smaller cache removes the starvation in these runs: `SACDFS_CACHE_MB=8` (`--cache-mb 8`) kept the
+On those versions, a smaller cache removed the starvation in these runs: `SACDFS_CACHE_MB=8` (`--cache-mb 8`) kept the
 player at real time with 1 and with 4 scanners on 2 and on 4 cores, on both rigs. `16` is not
 enough on rig B or on 2 cores. It costs speed for everyone else. Measured on rc.3 on rig A, 3 rounds each, fresh container, medians
 (range within 2 for scans and 0.4 for headroom): with 4 cores, whole-file WAV scans run at 61 MB/s
@@ -492,12 +496,54 @@ reaches 18.9 times real time at 32, 18.8 at 16 and 7.0 at 8. With 2 cores: scans
 headroom 9.9, 9.9 and 4.3 times real time. Cache 16 therefore costs nothing measurable, but
 starvation is only partly cured by it (table above). On rc.1 the same figures were about 61 and 22
 MB/s and 18 and 7 times real time.
-Memory at the floors is [#231](https://github.com/aclater/sacdfs/issues/231). The earlier version of
+The earlier version of
 this section gave 0.31 s behind with one scanner and 11.2 s with four on 4 cores at the default
 cache; both were taken with a player re-reading a position it had read before, and the 0.31 s was
 wrong (see the table).
 
 Not re-run on rc.3: the no-load headroom table above (rc.1 and rc.2 figures), rig B's cost of cache 8, and the 128 MiB and 96 MiB memory floors.
+
+**Whole-file scans beside a player, fixed (#230).** sacdfs now lets the player go first. Measured on
+another rig than A and B above, so compare within this table: 6-channel WAV player, whole-file WAV
+scanners, a fresh container each time, a track the scanners never read; 3 runs each, medians, on E-cores
+of a mobile Core i9, the images on a NAS's hard disks over NFS. Player speed relative to real time, and
+the most it fell behind in 30 s:
+
+| Scanners | Cores, memory | 0.4.1, cache 32 MiB | This version, cache 32 MiB | This version, cache 8 MiB |
+|---|---|---|---|---|
+| 1 | 2, 256 MiB | 0.52×, 14.3 s | 1.00×, 0.48 s | 1.00×, 0.07 s |
+| 4 | 2, 256 MiB | 0.31×, 20.9 s | 1.00×, 0.29 s | 1.00×, 0.19 s |
+| 1 | 4, 512 MiB | 1.00×, 0.13 s | 1.00×, 0.02 s | 1.00×, 0.00 s |
+| 4 | 4, 512 MiB | 0.42×, 17.5 s | 1.00×, 0.45 s | 1.00×, 0.02 s |
+| Scan alone, 2 / 4 cores | | 33.3 / 61.1 MB/s | 39.5 / 67.8 MB/s | 28.5 / 55.6 MB/s |
+| Scan beside the player, 1 scanner, 2 / 4 cores | | 30.7 / 56.8 MB/s | 34.6 / 60.3 MB/s | 25.8 / 49.9 MB/s |
+
+The 0.4.1 container passes `--cache-mb 32` unless `SACDFS_CACHE_MB` is set, so it used 32 MiB under
+these limits. At 8 MiB the player holds real time too, but scans run 18 to 28 % slower than at 32 (on
+0.4.1-rc.3 they ran at 15.2 and 23.9 MB/s).
+
+**The default under a memory limit up to 512 MiB is 16 MiB.** It holds the player as 32 does, and a
+scan alone runs as fast, in about 16 MiB less. Measured on the same machine's P-cores (2 cores: one
+physical core with its SMT sibling; 4 cores: two), client on other cores, same method, 3 runs each:
+
+| Scanners | Cores, memory | Cache 16 MiB | Cache 32 MiB |
+|---|---|---|---|
+| 1 | 2, 256 MiB | 1.00×, 0.36 s | 1.00×, 0.23 s |
+| 4 | 2, 256 MiB | 1.00×, 0.50 s | 1.00×, 0.93 s |
+| 1 | 4, 512 MiB | 1.00×, 0.01 s | 1.00×, 0.01 s |
+| 4 | 4, 512 MiB | 1.00×, 0.09 s | 1.00×, 0.27 s |
+| Scan alone, 2 / 4 cores | | 44.5 / 81.4 MB/s | 44.7 / 81.2 MB/s |
+| Peak anonymous memory of the container (sacdfs and Samba), scan alone, 2 / 4 cores | | 38 / 42 MiB | 54 / 58 MiB |
+
+Beside a player, four scanners on 4 cores read 71.5 MB/s between them at 16 against 81.3 at 32; with
+one scanner, 71.2 against 72.7. With four scanners on 2 cores, 2 of about 2,100 player reads were more
+than 0.5 s late at 16, and 47 at 32; none more than 1 s.
+
+Stereo DSF with four scanners held real time on every version and cache here. At 32 MiB, a reader
+counts as a player only after 0.5 s: with four scanners on 2 cores the player fell up to 0.72 s behind
+and up to 15 of about 700 reads were more than 0.5 s late, so a player with a buffer under 1 s may
+still hear a gap; at 8 and 16 MiB almost none were (above). Not tested: a client on another host,
+and a NAS's own CPU. Memory at the floors is [#231](https://github.com/aclater/sacdfs/issues/231).
 
 **Idle.** sacdfs used 0.007 % of a CPU and woke 1.5 times a second, and 5 minutes of `strace`
 showed no image reads and no metadata calls, so sacdfs itself does not keep a disk awake. Not
@@ -621,7 +667,7 @@ The names of screens and fields may differ between releases.
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
-   - `SACDFS_CACHE_MB` is left out: the default, 32 MiB (8 under a memory limit up to 512 MiB, [Under a memory limit](#under-a-memory-limit)), keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
+   - `SACDFS_CACHE_MB` is left out: the default, 32 MiB (16 under a memory limit up to 512 MiB, [Under a memory limit](#under-a-memory-limit)), keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and

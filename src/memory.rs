@@ -20,12 +20,12 @@ const MIB: u64 = 1 << 20;
 /// Cache size without a limit, or with a roomy one, in MiB.
 pub const CACHE_MB: usize = 32;
 
-/// Cache size under a limit up to [`SMALL_LIMIT`], in MiB. *Why 8, not 16:* with whole-file scanners
-/// running, a 6-channel WAV player held real time at 8 (0.97 to 1.00), and fell to 0.34 to 0.96 at
-/// 16, on 2 cores at 256 MiB and 4 cores at 512 MiB (#230). The price is whole-file WAV scans 2.4 to
-/// 2.6 times slower, and headroom of 4.3 and 7 times real time, down from 9.9 and 18.8. A player
-/// that keeps up matters more on a small machine than a scan that ends sooner.
-pub const CACHE_MB_SMALL: usize = 8;
+/// Cache size under a limit up to [`SMALL_LIMIT`], in MiB. *Why 16:* since #230's fix a 6-channel WAV
+/// player holds real time beside whole-file scanners at 8, 16 and 32, on 2 and 4 cores; at 16 a scan
+/// alone runs as fast as at 32 (44.5 against 44.7 MB/s on 2 cores, 81.4 against 81.2 on 4), in about
+/// 16 MiB less. *Why not 8 any more:* it held the player only by keeping every reader's read-ahead
+/// small, and scans ran 18 to 28 % slower than at 32 (2.4 to 2.6 times slower before the fix).
+pub const CACHE_MB_SMALL: usize = 16;
 
 /// Limits up to this are small, for the cache's default.
 pub const SMALL_LIMIT: u64 = 512 * MIB;
@@ -387,8 +387,8 @@ mod tests {
 
     #[test]
     fn defaults_follow_the_limit() {
-        assert_eq!(default_cache_mb(Some(256 * MIB)), 8);
-        assert_eq!(default_cache_mb(Some(512 * MIB)), 8);
+        assert_eq!(default_cache_mb(Some(256 * MIB)), 16);
+        assert_eq!(default_cache_mb(Some(512 * MIB)), 16);
         assert_eq!(default_cache_mb(Some(513 * MIB)), 32);
         assert_eq!(default_threads(24, Some(256 * MIB)), 4);
         assert_eq!(default_threads(2, Some(256 * MIB)), 2);

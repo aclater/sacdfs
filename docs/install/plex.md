@@ -9,7 +9,7 @@ same NAS: 406 of 406 tracks found on sacdfs 0.1.1, and the whole 291-image tree 
 | Setting | Value | Why |
 |---|---|---|
 | `SACDFS_FLATTEN` | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
-| `SACDFS_CACHE_MB` | default (32 MiB, or 8 under a memory limit up to 512 MiB) | the Plex tests ran with 16; the 0.4.0 default of 32 is close and was measured at 48 MiB peak for a Plex-like scan |
+| `SACDFS_CACHE_MB` | default (32 MiB, or 16 under a memory limit up to 512 MiB) | the Plex tests ran with 16; the 0.4.0 default of 32 is close and was measured at 48 MiB peak for a Plex-like scan |
 
 ## Add the share
 
