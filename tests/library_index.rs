@@ -259,29 +259,20 @@ fn provisional_readings_that_differ_are_refuted() {
     assert!(all_refuted && refuted >= differ, "{differ} differing, {refuted} refuted, not all of them");
 }
 
-/// The same checks on real discs, run locally: `SACDFS_REAL_IMAGES=DIR cargo test --release
-/// --test library_index real_discs -- --ignored --nocapture`. Each area is read straight
+/// The same checks on real discs, run by `scripts/real-discs.sh DIR`
+/// ([docs/development.md](../docs/development.md#real-disc-tests)). Each area is read straight
 /// by sacdfs and compared with a straight library read; 300 random ranges per area located
 /// by sacdfs (default search) equal reads through a complete library index (interval 64,
-/// the library's default).
+/// the library's default). An image that doesn't open, or has no area to compare, fails the
+/// test: `check_image` returns 0 for both, which the corpus tests want for hostile images (#220).
 #[test]
 #[ignore = "needs real disc images: set SACDFS_REAL_IMAGES"]
 fn real_discs() {
-    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else {
-        common::skip!("needs real disc images: set SACDFS_REAL_IMAGES")
-    };
-    let mut paths: Vec<_> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("iso")))
-        .collect();
-    paths.sort();
-    let mut total = 0;
-    for path in paths {
+    let (_, paths) = common::real_images_or_skip!();
+    for (i, path) in paths.iter().enumerate() {
         let t = std::time::Instant::now();
-        let n = check_image(&path, Tuning::default(), 64, false, 300);
-        eprintln!("image {total}: {n} random-range positions equal ({:.1} s)", t.elapsed().as_secs_f64());
-        total += 1;
+        let n = check_image(path, Tuning::default(), 64, false, 300);
+        eprintln!("image {i}: {n} random-range positions equal ({:.1} s)", t.elapsed().as_secs_f64());
+        assert!(n > 0, "image {i} of {}: nothing compared (does it open, and hold an area?)", paths.len());
     }
-    assert!(total > 0);
 }

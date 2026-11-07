@@ -2183,7 +2183,7 @@ the owner's NAS already used.
   ranges of every corpus case read through sacdfs equal reads through a complete library index
   and a straight library read; provisional library readings on an image made for it (late audio
   sectors written again near an area's start) differ from the exact ones and are all refuted;
-  an ignored test, `real_discs`, does the same on local real discs (`SACDFS_REAL_IMAGES`).
+  an ignored test, `real_discs`, does the same on local real discs (`scripts/real-discs.sh DIR`).
 - **DSF header reads:** `tests/dsf_header.rs` reads every DSF file of the corpus as the
   kernel does for a tagger (128 KiB at 0, 128 KiB at 128 KiB, the tag's page): none of the
   reads starts read-ahead, and a player reading on starts it exactly at 256 KiB.
@@ -2211,7 +2211,7 @@ the owner's NAS already used.
   reads no audio sector and fills no cache; a sequential read makes about as many calls to the
   image as the DSF file's. `tests/mount.rs` reads every WAV file through the kernel and
   compares it with the library, and checks `--format` and `--pcm-*`. An ignored test,
-  `real_discs`, runs the stream check on local real discs (`SACDFS_REAL_IMAGES`).
+  `real_discs`, runs the stream check on local real discs (`scripts/real-discs.sh DIR`).
 - **The converter:** `tests/pcm.rs` and the unit tests of `src/pcm.rs` (quality against the
   targets, silence, determinism, pinned hashes), black-box on scarletbook-pcm; see
   [pcm-quality.md](pcm-quality.md).
