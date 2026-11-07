@@ -37,7 +37,7 @@ All notable changes to sacdfs are recorded here. The format follows
   scanners read the files again. Each disc is asked about once: a match stays in its tags file, and
   the rest is kept in the seek index cache directory; a disc without a match is asked again after
   30 days. At most 1 request per second, and no listing or read waits for it. On a library sample of
-  395 real images, the first round took 4.4 minutes and 111 requests: 23 discs lacked text, 19 of
+  395 real images, the first round took about 4 minutes and 111 requests: 23 discs lacked text, 19 of
   them matched, every tags file byte for byte what `tags fetch` writes (checked by hand in phase 2),
   and the other 372 were not asked about. A restart asked nothing. Listings and reads through the
   mount kept the latency of a mount without the option while it ran
