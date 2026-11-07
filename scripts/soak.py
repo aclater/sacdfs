@@ -30,8 +30,10 @@ errno and area), and any other read error fails the run, with a few paths if `--
 
 PASS if, after `--warmup`, the resident and anonymous memory stay within the cache cap plus
 `--noise-mb` of their level at the end of the warm-up, their trend over the second half is
-at most `--max-slope` MiB per hour (or adds under `--trend-floor-mb` over that half), threads (by their median and end level, with a hard ceiling for a spike) and open files do not climb, and the cache
-directory plateaus. Exit status 0 on PASS, 1 on FAIL.
+at most `--max-slope` MiB per hour (or adds under `--trend-floor-mb` over that half) once the
+largest single step is set aside (see `step_trend`), threads (by their median and end level; a
+short spike may pass `--thread-spike`, never twice that) and open files do not climb, and the
+cache directory plateaus. Exit status 0 on PASS, 1 on FAIL.
 
 `--wrap 'heaptrack -o OUT'` (or valgrind massif) runs the main sacdfs under a profiler.
 """
@@ -419,6 +421,46 @@ def slope_per_hour(rows, key):
     return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den if den else 0.0
 
 
+def step_trend(rows, key, windows=6):
+    """Growth rate of `key` (units per hour) with the largest single step set aside.
+
+    The rows are cut into `windows` runs of equal length and each run is reduced to its median,
+    so one odd sample counts for nothing and a step (a level that changes once and stays) shows
+    in exactly one difference between neighbouring medians. The largest difference, up or down,
+    is dropped with the time it spans, and what is left is the rate at which the level kept
+    moving: a steady leak shows in every difference and stays, a step followed by a plateau does
+    not. (A step down is set aside too, or it would hide a leak that goes on beside it.) Returns (rate per hour, growth left, hours it spans, the step set aside, signed),
+    or None when the rows are too few for three windows of three samples.
+    """
+    k = min(windows, len(rows) // 3)
+    if k < 3:
+        return None
+    size = len(rows) // k
+    cuts = [rows[i * size:(i + 1) * size if i < k - 1 else len(rows)] for i in range(k)]
+    level = [statistics.median(r[key] for r in c) for c in cuts]
+    when = [statistics.median(r["t"] for r in c) / 3600 for c in cuts]
+    rises = [level[i + 1] - level[i] for i in range(k - 1)]
+    gaps = [when[i + 1] - when[i] for i in range(k - 1)]
+    big = max(range(k - 1), key=lambda i: abs(rises[i]))
+    left = sum(r for i, r in enumerate(rises) if i != big)
+    hours = sum(g for i, g in enumerate(gaps) if i != big)
+    step = rises[big]
+    return (left / hours if hours else 0.0), left, hours, step
+
+
+def spike_hold(rows, soft):
+    """Longest stretch (seconds, first to last sample) of consecutive samples above `soft`."""
+    best, start = 0, None
+    for r in rows:
+        if r["threads"] > soft:
+            if start is None:
+                start = r["t"]
+            best = max(best, r["t"] - start)
+        else:
+            start = None
+    return best
+
+
 def verdict(rows, args):
     after = [r for r in rows if r["t"] >= args.warmup]
     if len(after) < 6:
@@ -429,29 +471,44 @@ def verdict(rows, args):
         base = statistics.median(r[key] for r in after[:3])
         peak = max(r[key] for r in after)
         allowed = (args.cache_mb + args.noise_mb) * 1024
-        slope = slope_per_hour(late, key) / 1024
-        # A short second half makes the slope noisy: a trend whose growth over that half stays
-        # under --trend-floor-mb passes too (a 2-hour run: about 5 MiB/h).
-        late_h = (late[-1]["t"] - late[0]["t"]) / 3600
-        limit = max(args.max_slope, args.trend_floor_mb / late_h if late_h else args.max_slope)
+        # Memory moves in steps of a few MiB, both ways, that nothing in the run explains
+        # (#247). A line through the second half takes a step in it for a climb, so the trend
+        # is the rate left after the largest single step is set aside. A short second half
+        # makes even that noisy: growth under --trend-floor-mb passes too (a 2-hour run: a
+        # little under 5 MiB/h).
+        trend = step_trend(late, key)
+        if trend is None:
+            slope = slope_per_hour(late, key) / 1024
+            hours, step = (late[-1]["t"] - late[0]["t"]) / 3600, 0.0
+        else:
+            slope, hours, step = trend[0] / 1024, trend[2], trend[3] / 1024
+        limit = max(args.max_slope, args.trend_floor_mb / hours if hours else args.max_slope)
         good = peak - base <= allowed and slope <= limit
         ok &= good
         lines.append(f"{key}: warm {base / 1024:.1f} MiB, peak {peak / 1024:.1f} MiB (+{(peak - base) / 1024:.1f}, "
                      f"allowed {allowed / 1024:.0f}), second-half trend {slope:+.2f} MiB/h "
-                     f"(allowed {limit:.1f}) {'ok' if good else 'FAIL'}")
+                     f"(allowed {limit:.1f}; largest step set aside {step:+.1f} MiB) {'ok' if good else 'FAIL'}")
     # Threads are judged by level, not by the maximum of a half: the staller makes sacdfs spawn
     # spare threads on purpose (#167/#168) and one sample can land in a stall. A run fails if the
     # median or the end level of the second half is above the first half's median by more than
-    # 4 threads (threads that accumulate), or if any sample passes the hard ceiling of
-    # --thread-spike above that median (a spike that large is not a stall's spare threads).
+    # 4 threads (threads that accumulate; the end level is the median of the last sixth of the
+    # half, at least 5 samples: three samples sat at 5 above in a healthy 2-hour cut of a 6-hour
+    # run). Spare threads end 10 s after their work and a stall
+    # lasts well under a minute, so a sample above --thread-spike over that median is allowed
+    # when it is short: the run fails if the samples above it span --spike-hold seconds, or if
+    # one passes twice --thread-spike. Sampled once a minute, the peak of a healthy run has
+    # reached the old single ceiling on some rigs (#247), where one more thread failed it.
     base = statistics.median(r["threads"] for r in after[: len(after) // 2])
     mid = statistics.median(r["threads"] for r in late)
-    end = statistics.median(r["threads"] for r in late[-3:])
+    end = statistics.median(r["threads"] for r in late[-max(5, len(late) // 6):])
     top = max(r["threads"] for r in after)
-    good = mid <= base + 4 and end <= base + 4 and top <= base + args.thread_spike
+    soft, hard = base + args.thread_spike, base + 2 * args.thread_spike
+    held = spike_hold(after, soft)
+    good = mid <= base + 4 and end <= base + 4 and top <= hard and held < args.spike_hold
     ok &= good
     lines.append(f"threads: first-half median {base:g}, second-half median {mid:g}, end {end:g}, "
-                 f"peak {top} (ceiling {base + args.thread_spike:g}) {'ok' if good else 'FAIL'}")
+                 f"peak {top} (spike line {soft:g}, held {held} s of {args.spike_hold:g} allowed; "
+                 f"hard ceiling {hard:g}) {'ok' if good else 'FAIL'}")
     early = max(r["fds"] for r in after[: len(after) // 2])
     top = max(r["fds"] for r in late)
     good = top <= early + 8
@@ -508,10 +565,13 @@ def main():
     ap.add_argument("--remount-every", type=float, default=300)
     ap.add_argument("--noise-mb", type=float, default=32)
     ap.add_argument("--max-slope", type=float, default=4, help="MiB per hour")
-    ap.add_argument("--trend-floor-mb", type=float, default=4,
-                    help="second-half growth (by the trend) that passes whatever the slope")
+    ap.add_argument("--trend-floor-mb", type=float, default=3,
+                    help="second-half growth (by the trend, a step set aside) that passes whatever the slope")
     ap.add_argument("--thread-spike", type=int, default=16,
-                    help="hard ceiling for the thread count, above the first half's median")
+                    help="threads above the first half's median that a short spike may reach; "
+                         "twice that is the hard ceiling")
+    ap.add_argument("--spike-hold", type=float, default=120,
+                    help="seconds the thread count may stay above the spike line (consecutive samples)")
     ap.add_argument("--sample-paths", action="store_true",
                     help="print the paths of unexpected read errors (off: only their top folder; "
                          "leave it off for a library whose names must not be published)")
