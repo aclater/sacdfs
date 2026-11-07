@@ -101,6 +101,10 @@ pub const MULTICHANNEL: &str = "Multichannel";
 /// remembers the names of such a directory (#101).
 pub const REFRESH: Duration = Duration::from_secs(2);
 
+/// How long an art file of an area counts as told to the kernel (#235): well beyond a lookup
+/// followed by its open.
+const ART_TOLD: Duration = Duration::from_secs(10);
+
 /// Threads that read the top-level directories of the source at mount (#175).
 const SCAN_THREADS: usize = 16;
 
@@ -889,6 +893,8 @@ pub struct Tree {
     /// Moves on when a folder's art file is found changed or gone behind a listing's back
     /// (#235): every art is then read again, at its next look, whatever its directory's time.
     art_epoch: AtomicU64,
+    /// Art files of areas the kernel was told of lately, with when (#235).
+    art_told: Mutex<HashMap<u64, Instant>>,
 }
 
 /// The images that hold their discs and files in memory, under a bound (#237), each looked at in
@@ -989,6 +995,7 @@ impl Tree {
             held: Mutex::new(Held::default()),
             released: AtomicUsize::new(0),
             art_epoch: AtomicU64::new(0),
+            art_told: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1290,11 +1297,31 @@ impl Tree {
         let Some(first) = ino.filter(|_| area) else { return (ino, false) };
         let Some(node) = self.get(first) else { return (ino, false) };
         let Node::Sidecar(sc) = &*node else { return (ino, false) };
-        if self.sidecar_current(sc) {
-            return (ino, true);
+        let ino = if self.sidecar_current(sc) {
+            ino
+        } else {
+            self.art_changed();
+            find(self).or(ino)
+        };
+        if let Some(i) = ino {
+            let mut told = self.art_telling();
+            if told.len() > 256 {
+                told.retain(|_, t| t.elapsed() < ART_TOLD);
+            }
+            told.insert(i, Instant::now());
         }
-        self.art_changed();
-        (find(self).or(ino), true)
+        (ino, true)
+    }
+
+    fn art_telling(&self) -> MutexGuard<'_, HashMap<u64, Instant>> {
+        self.art_told.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Whether the kernel was told lately that `ino` is an art file of an area. Such a file
+    /// gone between that lookup and its open is `ESTALE`, not `ENOENT`: the kernel then looks the
+    /// name up again, and finds what the area shows now (#235).
+    pub fn art_told_lately(&self, ino: u64) -> bool {
+        self.art_telling().get(&ino).is_some_and(|t| t.elapsed() < ART_TOLD)
     }
 
     /// Whether the source file of `sc` is as it was listed.

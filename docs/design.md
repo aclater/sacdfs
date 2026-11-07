@@ -1316,7 +1316,8 @@ Art in an area is the exception to the long cache (#235). A listing is made agai
 refresh interval, so for up to that long it can name a file that was replaced or removed, and
 `cover.jpg` (an alias of whichever image is picked, #148) can stand for a file that has just gone.
 A lookup of such a name therefore compares the source file with what was listed (one `fstatat`); if
-it changed, or an open finds it changed or gone, a counter moves and every area reads its art again
+it changed, or an open finds it changed or gone (a file gone since the kernel was told of it is
+`ESTALE`, so the kernel looks the name up again), a counter moves and every area reads its art again
 at its next look, whatever its directory's time. Replies for these names carry a zero timeout, so the
 kernel asks again each time and never keeps a number whose file is gone. *Why not keep the old
 inode for `cover.jpg`:* the alias is the same node as the image's other name (the same inode, #148),

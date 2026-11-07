@@ -548,7 +548,12 @@ impl Shared {
                 Ok(f) => Open::Sidecar(Arc::new(f), s.clone()),
                 Err(e) => {
                     log::info!("sidecar {}: open: {e}", s.target.display());
-                    return Err(Errno::from_i32(e.raw_os_error().unwrap_or(libc::EIO)));
+                    let errno = e.raw_os_error().unwrap_or(libc::EIO);
+                    // Gone since the kernel was told of it (#235): it asks again, then.
+                    if errno == libc::ENOENT && self.tree.art_told_lately(ino) {
+                        return Err(Errno::ESTALE);
+                    }
+                    return Err(Errno::from_i32(errno));
                 }
             },
             Node::Dir(_) => return Err(Errno::EISDIR),
