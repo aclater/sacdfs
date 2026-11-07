@@ -45,8 +45,11 @@ shares. The clients tested so far, with the settings that worked for each, are i
   the container, and Samba and NFS-Ganesha share that mount, read-only.
 - **Why the servers are inside the container:** an appliance NAS's own SMB and NFS services
   share only its own datasets, and a FUSE mount inside an app container is not visible to
-  them (mount propagation to the host is not supported on TrueNAS). Serving from inside the
-  container depends on nothing in the host but Docker or Podman.
+  them by default. Serving from inside the container depends on nothing in the host but
+  Docker or Podman. The mount can be made visible on the host and to other containers with
+  shared mount propagation (it works on TrueNAS SCALE 25.10), which is how players on the
+  same host read it without SMB: see [Players on the same host](#players-on-the-same-host-no-smb-hop).
+  Sharing it through the NAS's own SMB or NFS service that way was not tested.
 - Everything logs to standard output (`docker logs sacdfs`).
 - A health check (`/usr/local/bin/healthcheck.sh`) passes while the mount answers and every
   server is running and listening. If sacdfs, smbd or NFS-Ganesha stops, the container stops
@@ -721,6 +724,159 @@ host networking, on the same NAS as sacdfs.
   Expect a burst of CPU load after adding a large library, or set the analysis speed lower in
   Roon's settings.
 
+### Players on the same host (no SMB hop)
+
+A player that runs on the same host as sacdfs's container (Jellyfin, Navidrome, Lyrion, MPD as
+containers, or as TrueNAS apps) can read sacdfs's mount directly, with no SMB or NFS in between
+([#186](https://github.com/aclater/sacdfs/issues/186)). The mount is shared through a directory on
+the host:
+
+```
+ host directory /mnt/pool/apps/sacdfs-mnt
+   sacdfs container:  bound over /srv, rshared   -> sacdfs mounts /srv/sacd, which appears on the host
+   player container:  bound at /music, ro,rslave -> the player reads /music/sacd
+```
+
+- **sacdfs's container** binds an empty host directory over `/srv` with `rshared` propagation.
+  sacdfs mounts at `/srv/sacd` as always, and the mount appears in the host directory as `sacd`.
+  From 0.5.0 the container makes `sacd` there itself. With 0.4.1 and earlier images, make it first
+  (`mkdir /mnt/pool/apps/sacdfs-mnt/sacd`), or the container stops with an error.
+- **The player** binds the **same directory** (the parent of `sacd`), read-only, with `rslave`
+  propagation, and its library is `/music/sacd`. Each new mount of sacdfs (after a restart, an
+  update, a crash) then shows up in the player by itself.
+- **Don't bind `sacd` itself, nor the directory without `rslave`.** Either way the player keeps the
+  mount it saw when it started. When sacdfs restarts, that mount is dead in the player
+  (`Transport endpoint is not connected`, or files not found) until the player is restarted. It also
+  holds the old sacdfs up: its stop then waits for the runtime's stop timeout (10 s), so every
+  restart of sacdfs takes that long. Tested with a container on TrueNAS bound like a catalog app's
+  host path (Docker's default propagation) and on Podman.
+- **SMB and NFS still work** from the same container, for other clients; turn them off with
+  `SMB=0` and `NFS=0` if only same-host players read it.
+- **Permissions.** The container's sacdfs runs with `--allow-other`, and every file is
+  `r--r--r--` and every folder `r-xr-xr-x`, so a player running as any user can read them: tested
+  as root, uid 1000 and TrueNAS's apps user (568).
+- **Rootful only.** The host directory must be on a mount with shared propagation (`findmnt -o
+  TARGET,PROPAGATION /home` shows `shared` on Fedora; a TrueNAS dataset under `/mnt` worked).
+  Under rootless Podman the mount reached neither the host nor another rootless container of the
+  same user, so this needs rootful Docker or Podman (`sudo podman`), as on a NAS.
+
+With Docker or Podman (on SELinux hosts add `--security-opt label=disable` to both). These options
+were run with `sudo podman run` on Fedora 45, with Jellyfin as the player; Docker was run through the
+Compose file below, on TrueNAS:
+
+```sh
+mkdir -p /srv/sacdfs-mnt
+docker run -d --name sacdfs --restart unless-stopped \
+  --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
+  --security-opt apparmor=unconfined \
+  -e SACDFS_FORMATS=dsf -e SACDFS_FLATTEN=1 \
+  -v /path/to/images:/images:ro -v sacdfs-cache:/cache \
+  -v /srv/sacdfs-mnt:/srv:rshared \
+  sacdfs
+docker run -d --name jellyfin ... -v /srv/sacdfs-mnt:/music:ro,rslave jellyfin/jellyfin
+# library folder in the player: /music/sacd
+```
+
+**Start sacdfs before the player.** A player started first sees an empty `sacd` folder (or none,
+before sacdfs's first start), and some players act on that (below). In one Compose file, make the
+player wait for sacdfs's health check:
+
+```yaml
+services:
+  sacdfs:
+    image: ghcr.io/aclater/sacdfs:0.4.1
+    # 0.4.1 and earlier only (0.5.0 makes /srv/sacd itself); or make sacd in the host directory first
+    entrypoint: ["bash", "-c", "mkdir -p /srv/sacd 2>/dev/null; exec /usr/local/bin/entrypoint.sh"]
+    restart: unless-stopped
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - /mnt/pool/music:/images:ro
+      - sacdfs-cache:/cache
+      - /mnt/pool/apps/sacdfs-mnt:/srv:rshared
+    environment:
+      SACDFS_FORMATS: dsf
+      SACDFS_FLATTEN: "1"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      start_interval: 2s
+  navidrome:
+    image: deluan/navidrome:latest
+    restart: unless-stopped
+    depends_on:
+      sacdfs:
+        condition: service_healthy
+    ports:
+      - "4533:4533"
+    volumes:
+      - /mnt/pool/apps/sacdfs-mnt:/music:ro,rslave
+      - nd-data:/data
+    environment:
+      ND_MUSICFOLDER: /music/sacd
+      ND_DATAFOLDER: /data
+      ND_SCANSCHEDULE: "0"         # no periodic scans: see below
+volumes:
+  sacdfs-cache:
+  nd-data:
+```
+
+`start_interval` makes the health check run every 2 s while sacdfs starts, so the player starts a few
+seconds after the mount instead of after the first 30 s interval. This file, with a small test library
+(8 images, 230 DSF files), was installed on TrueNAS SCALE
+25.10.7 as one custom app (the API call behind "Install via YAML") with the 0.4.1 image: sacdfs
+mounted, Navidrome was ready 4 s later, and its first scan found all 230 files. After the app was
+stopped and started, its first scan found all 230 again. On TrueNAS, changing sacdfs's image in that app recreated both containers.
+
+**Two separate TrueNAS apps** work the same way (tested: a sacdfs app and a player app binding the
+same dataset), but TrueNAS doesn't order separate apps at boot. TrueNAS's catalog apps (Plex,
+Jellyfin, Navidrome from Discover Apps) have no propagation setting for host paths (read from their
+catalog schemas on 25.10.7), so they bind as Docker's default does: they need a restart after each
+restart of sacdfs, as above. Install the player as a custom app with `ro,rslave` instead. Put the
+host directory in a dataset of its own (for example `pool/apps/sacdfs-mnt`), not one that TrueNAS
+shares. Roon and Plex were not tested this way.
+
+**When sacdfs restarts.** What a player bound with `ro,rslave` saw, on TrueNAS SCALE 25.10.7
+(Docker, the 0.4.1 image, and 0.4.0 for the downgrade) and on Fedora 45 (rootful Podman 6.1, this
+release's entry point):
+
+| What happened to sacdfs | What the player saw | Without the tree | Player restart |
+|---|---|---|---|
+| Restart, recreate, or a new image (`podman restart`; TrueNAS redeploy, image change 0.4.1 to 0.4.0 and back) | an empty `sacd` folder, then the tree | 0.3 s (Podman); 2.2 to 2.5 s (TrueNAS) | not needed |
+| Stopped, then started (TrueNAS app stop and start) | an empty folder while stopped | while stopped (7 s) | not needed |
+| Killed (`SIGKILL` to sacdfs; the restart policy started the container again) | `Transport endpoint is not connected`, then the tree; sacdfs detached the dead mount at start | 0.4 to 2 s (Podman, 3 rounds); 2.7 s (TrueNAS) | not needed |
+| Restart while a file is open (a stream playing) | the open file reads on until the runtime's stop timeout (10 s) kills sacdfs, then fails with an I/O error; the folder is empty meanwhile | 10.3 s (Podman); 12.2 s (TrueNAS) | not needed, but the track stops and must be started again |
+
+So the tree comes back by itself every time, but an open file doesn't survive a restart: over the
+direct mount, an update while something plays cuts that track, where the
+[Linux SMB and NFS clients](#smb-and-restarts) read on. A Navidrome stream (raw DSF) was cut that way,
+and a stream started after the restart was byte-identical to one from before. If the container is
+removed by a kill and not started again, a dead mount stays in the host directory until sacdfs
+starts there again, or `umount -l` removes it.
+
+**What players did while sacdfs was away:**
+
+- **Navidrome 0.64.2** (TrueNAS): a scan while the folder was empty removed every track and album
+  from its lists. The next scan with sacdfs back brought all 230 back with the same ids, and a star
+  and a play count set before were kept. A scan while the mount was dead failed (`transport endpoint is
+  not connected`) and left the library as it was. Keep periodic scans off, or rare, and start
+  Navidrome after sacdfs.
+- **Jellyfin 12.4** (rootful Podman, as uid 1000): a library scan while the folder was empty kept
+  all 93 tracks and 7 albums, and so did scans after a restart. Jellyfin refuses to add a library
+  folder that doesn't exist (`400 Bad Request`); started before sacdfs's first start, it needs `sacd`
+  made in the host directory first. Started first with an empty `sacd`, it found all 93 tracks once
+  sacdfs ran and the library was scanned again.
+
+Not measured yet: import and playback times through the direct mount against SMB on the same NAS
+(#186).
+
 ### Multichannel copies and music servers
 
 Navidrome, Lyrion (LMS), MPD and MinimServer all showed a disc's Stereo and Multichannel
@@ -798,7 +954,8 @@ propagation, so the new mount shows up inside the container (tested with rootles
 podman run -v /srv/sacd:/media:ro,rslave ...
 ```
 
-In Compose: `- /srv/sacd:/media:ro,rslave`.
+In Compose: `- /srv/sacd:/media:ro,rslave`. With sacdfs in its own container on the same host,
+see [Players on the same host](#players-on-the-same-host-no-smb-hop).
 
 ### macOS
 
@@ -1007,4 +1164,8 @@ user access (guests refused), `SACDFS_FORMATS=dsf` and `SACDFS_FLATTEN=1`. In be
 Docker and then Podman (`deploy/ci-restart-test.sh`), a client opens a file over SMB and over
 NFS 4.2, reads half of it, and reads the rest through the same open file after the container
 restarts, and stats and lists the same paths. A second round per runtime takes the mount's device
-number away first, so the test doesn't depend on the number happening to stay the same.
+number away first, so the test doesn't depend on the number happening to stay the same. Then
+(`deploy/ci-same-host-test.sh`, Docker) the container shares its mount through an empty host directory
+bound over `/srv` with `rshared`, and a reader container, as uid 1000, binds that directory with `rslave`
+and checks every DSF track of the corpus: at start, after a restart, and after sacdfs in the container
+is killed and the restart policy starts it again, without the reader being restarted.

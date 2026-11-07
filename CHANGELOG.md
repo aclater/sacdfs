@@ -6,47 +6,29 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- **A whole-file scan no longer starves a player (#230).** On small machines, a client reading whole
-  files (a copy, a checksum run, a full rescan) made a 6-channel WAV player fall behind: on 0.4.1-rc.3,
-  2 cores, the default cache and one scanner, it played at 0.54 times real time and was 14 s behind
-  after 30 s; with four scanners, 0.30 times on 2 cores and 0.46 times on 4. Now it plays at real time
-  in all four cases, at most 0.77 s behind. While someone plays, a reader that reads faster
-  than a player gives up the frames it has passed, shares a quarter of the cache, and reads ahead in
-  slices that let a player's work go first. Beside a player, a scanner runs 5 to 13 % slower than
-  without this change, which is still about as fast as on rc.3 (`SACDFS_CACHE_MB=8`, the earlier
-  workaround, cost 55 to 65 %). A scan with no player is as fast as before, and files keep their
-  bytes. A reader counts as a player from its first 0.5 s: with four scanners on 2 cores, the player
-  fell up to 0.77 s behind, and up to 14 of about 700 reads were more than 0.5 s late.
+- **Players on the same host read the mount directly, with no SMB hop (#186).** The container's mount
+  can be shared through a host directory bound over `/srv` with `rshared`, and a player container
+  binds that directory with `ro,rslave`. Validated on TrueNAS SCALE 25.10 (Docker, Navidrome) and on
+  rootful Podman (Jellyfin): the player sees the tree again by itself after a restart, an update or a
+  crash of sacdfs, without a restart of its own; a file open during a restart fails once the runtime
+  stops sacdfs. Rootless Podman can't share the mount this way. See
+  [deployment](docs/deployment.md#players-on-the-same-host-no-smb-hop).
+- **The container makes `/srv/sacd` itself** when a host directory is bound over `/srv`, so that
+  directory can start empty. A dead mount left there by a killed sacdfs doesn't stop the start: sacdfs
+  detaches it, as before. CI checks both on every pull request (`deploy/ci-same-host-test.sh`).
+- **`sacdfs tags fetch IMAGE...`: tags from MusicBrainz, on demand** (#185, phase 2). It finds the
+  disc's release by barcode or catalogue number, confirms it by track count, durations and ISRCs,
+  and writes titles, artists, album, date and MusicBrainz IDs to the disc's file in the tags
+  directory. `--lookup-name` also searches by album and artist, and `--lookup-durations` by the
+  tracks' start times. `--dry-run` shows what would be written. No match, or an ambiguous one,
+  writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
+  own text stays. Nothing goes on the network unless you run this command: a mount never does. It
+  sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
+  (docs/user-guide.md, "From MusicBrainz"). Run on 9 real discs by barcode or catalogue number: 7
+  matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
 
-### Changed
-
-- **The soak's memory verdict no longer fails a run for one step ([#247](https://github.com/aclater/sacdfs/issues/247)).**
-  Memory in healthy runs moves in single steps of 3 to 6.5 MiB, up or down, and the line through the
-  second half of a 2-hour run read one as a climb of 8 to 9 MiB/h (limit 4.4). The trend is now the rate
-  left after the largest single step between six window medians is set aside, so a step followed by a
-  plateau passes and a steady climb still fails (10 MiB/h fails; a 2-hour run catches about 5 MiB/h and
-  up, a longer run less). Replayed over 21 recorded runs and 4 two-hour cuts of long ones (0.4.0, 0.4.1-rc.2, rc.3), the runs that failed on a step or
-  on a three-sample end level now pass and the others keep their verdict. `--trend-floor-mb` default 4 to 3. The thread check now lets a short spike pass the
-  `--thread-spike` line (up to twice it; failing only if three samples in a row, `--spike-hold`, stay above the first line), and its end level is the median of the last
-  sixth rather than of the last three samples. `scripts/test_soak.py` tests the verdict.
-- **Reading DST through the mount is faster** (#210), measured with `cp -r` of an area on a fresh
-  mount against 0.4.0: one thread 44.78 → 33.09 s for 41 minutes of stereo, the library's own
-  33.29 s; all threads 3.98 → 3.18 s for 50 minutes of stereo and 11.37 → 10.18 s for 50 minutes
-  of six channels. Reads of plain DSD are about as before: most of what they spend is FUSE's own.
-  Frames are decoded in groups in long batches, demultiplexing overlaps decoding, and a fast
-  reader gets a longer read-ahead (32 frames per decoder thread, at most 1200 and a share of a quarter
-  of the cache, which fast readers divide between them) from 4 MiB on instead of 16. Files keep their bytes. Peak memory of an all-thread DST
-  read rises by up to 10 MiB at the default cache (45 → 55 MiB for DST stereo; WAV 66 → 73 MiB).
-  Cold seeks of six-channel DST (mean 0.98 → 1.05 ms) and of plain DSD (0.149 → 0.156 ms), and four
-  readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads, and a fast reader's
-  worst single read rises from 3 to 6 ms to about 12 ms. A player's reads are as before. Through SMB,
-  `smbclient` copies 5.71 → 3.18 s (DST stereo) and 14.54 → 11.59 s (six channels), and four readers
-  over gvfs stay as fast as 0.4.0.
-
-## [0.4.1] - 2026-11-07
-### Changed
 ### Changed
 
 - **A memory limit no longer gets sacdfs killed while listing (#237, #231).** Under a cgroup limit, what
@@ -71,18 +53,13 @@ All notable changes to sacdfs are recorded here. The format follows
   as long as the mount lasts. A disc listed again reads its cover again, so a cover image edited during a
   mount can show then, with no new generation for its files.
 - File nodes are smaller, by about 4.4 KiB per image at about 25 files per image, for every library.
-
-## [0.4.1-rc.3] - 2026-11-06
-
 - **The share says it is read-only, and has the size of its images (#217).** Over SMB, files and
   folders now carry the read-only attribute (`map readonly = yes`; gvfs's `can-write` is FALSE for
   files, the Linux kernel client shows no write bit). `df` and clients now see the total size of the
   images found at mount instead of the capacity of the disk they're on, still with 0 free, and
   the source's size only when there are no images. Untested on Windows, macOS, Roon and Plex; to go back
   on the attribute, `SMB_EXTRA_GLOBAL=map readonly = no`.
-### Changed
-
-- **scarletbook and scarletbook-pcm 0.5.8 -> 0.5.9** (not part of 0.4.1; for the release after it). 0.5.9 makes
+- **scarletbook and scarletbook-pcm 0.5.8 -> 0.5.9**. 0.5.9 makes
   DST decoding faster (about 1 to 14 % in scarletbook's own figures, on Zen 2 only), changes the DSF
   partial-row code, and adds nothing sacdfs can use to delete code of its own: the new
   `with_dst_lanes` is a setting to measure with, and the per-track DSF writer recipe is documentation
@@ -92,34 +69,6 @@ All notable changes to sacdfs are recorded here. The format follows
   library's notes warn that a DSF read of part of a row now asks for all of that row's positions, so on
   damaged media a read that used to succeed can return an I/O error. The extra work the library reports for DST reads under 4 KiB was not measured
   through the mount.
-### Fixed
-
-- **NFS clients keep their handles when the container restarts, under any runtime (#218).** Under
-  Podman, nearly every restart gave `Stale file handle` on open files, `stat` and `ls`, until a
-  remount; under Docker it could happen too. NFS-Ganesha's handles no longer hold the FUSE mount's
-  device number. Clients of an earlier release go stale once, when the first fixed container
-  starts: remount. CI now restarts the container under Docker and Podman, also with the device number
-  changed on purpose (`deploy/ci-restart-test.sh`).
-### Documentation
-
-- `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
-  needs a remount; the durable-handle message in Samba's log is expected, and no setting tried
-  makes those handles survive a restart (#204).
-### Added
-
-- **`sacdfs tags fetch IMAGE...`: tags from MusicBrainz, on demand** (#185, phase 2). It finds the
-  disc's release by barcode or catalogue number, confirms it by track count, durations and ISRCs,
-  and writes titles, artists, album, date and MusicBrainz IDs to the disc's file in the tags
-  directory. `--lookup-name` also searches by album and artist, and `--lookup-durations` by the
-  tracks' start times. `--dry-run` shows what would be written. No match, or an ambiguous one,
-  writes nothing and says why, and the exit status is 2. Values in a tags file win, and the disc's
-  own text stays. Nothing goes on the network unless you run this command: a mount never does. It
-  sends the numbers, names or times to MusicBrainz, at no more than 1 request per second
-  (docs/user-guide.md, "From MusicBrainz"). Run on 9 real discs by barcode or catalogue number: 7
-  matched the right release (checked by hand), and 2 are not on MusicBrainz and were refused.
-
-### Changed
-
 - **A tags file's title still doesn't rename a file** (#185, phase 2, now decided for lookups): a
   track given a title by `sacdfs tags fetch` stays `NN - Track NN.dsf`, with the title in its tag.
 - **`sacdfs tags import` leaves out a generated `Track NN` title, and `sacdfs verify` doesn't report
@@ -135,8 +84,56 @@ All notable changes to sacdfs are recorded here. The format follows
 - **`sacdfs tags fetch` on a busy service.** It obeys `Retry-After` in full, up to an hour, waits
   longer between discs that get no answer, tries those again at the end of the run, and ends at once
   on a 403 or a request to wait longer than an hour.
+- **The soak's memory verdict no longer fails a run for one step ([#247](https://github.com/aclater/sacdfs/issues/247)).**
+  Memory in healthy runs moves in single steps of 3 to 6.5 MiB, up or down, and the line through the
+  second half of a 2-hour run read one as a climb of 8 to 9 MiB/h (limit 4.4). The trend is now the rate
+  left after the largest single step between six window medians is set aside, so a step followed by a
+  plateau passes and a steady climb still fails (10 MiB/h fails; a 2-hour run catches about 5 MiB/h and
+  up, a longer run less). Replayed over 21 recorded runs and 4 two-hour cuts of long ones (0.4.0, 0.4.1-rc.2, rc.3), the runs that failed on a step or
+  on a three-sample end level now pass and the others keep their verdict. `--trend-floor-mb` default 4 to 3. The thread check now lets a short spike pass the
+  `--thread-spike` line (up to twice it; failing only if three samples in a row, `--spike-hold`, stay above the first line), and its end level is the median of the last
+  sixth rather than of the last three samples. `scripts/test_soak.py` tests the verdict.
+- **Reading DST through the mount is faster** (#210), measured with `cp -r` of an area on a fresh
+  mount against 0.4.0: one thread 44.78 → 33.09 s for 41 minutes of stereo, the library's own
+  33.29 s; all threads 3.98 → 3.18 s for 50 minutes of stereo and 11.37 → 10.18 s for 50 minutes
+  of six channels. Reads of plain DSD are about as before: most of what they spend is FUSE's own.
+  Frames are decoded in groups in long batches, demultiplexing overlaps decoding, and a fast
+  reader gets a longer read-ahead (32 frames per decoder thread, at most 1200 and a share of a quarter
+  of the cache, which fast readers divide between them) from 4 MiB on instead of 16. Files keep their bytes. Peak memory of an all-thread DST
+  read rises by up to 10 MiB at the default cache (45 → 55 MiB for DST stereo; WAV 66 → 73 MiB).
+  Cold seeks of six-channel DST (mean 0.98 → 1.05 ms) and of plain DSD (0.149 → 0.156 ms), and four
+  readers of one image (2.43 → 2.53 s), are 4 to 7 % slower on all threads, and a fast reader's
+  worst single read rises from 3 to 6 ms to about 12 ms. A player's reads are as before. Through SMB,
+  `smbclient` copies 5.71 → 3.18 s (DST stereo) and 14.54 → 11.59 s (six channels), and four readers
+  over gvfs stay as fast as 0.4.0.
 
-## [0.4.1-rc.3] - 2026-11-06
+### Fixed
+
+- **A whole-file scan no longer starves a player (#230).** On small machines, a client reading whole
+  files (a copy, a checksum run, a full rescan) made a 6-channel WAV player fall behind: on 0.4.1-rc.3,
+  2 cores, the default cache and one scanner, it played at 0.54 times real time and was 14 s behind
+  after 30 s; with four scanners, 0.30 times on 2 cores and 0.46 times on 4. Now it plays at real time
+  in all four cases, at most 0.77 s behind. While someone plays, a reader that reads faster
+  than a player gives up the frames it has passed, shares a quarter of the cache, and reads ahead in
+  slices that let a player's work go first. Beside a player, a scanner runs 5 to 13 % slower than
+  without this change, which is still about as fast as on rc.3 (`SACDFS_CACHE_MB=8`, the earlier
+  workaround, cost 55 to 65 %). A scan with no player is as fast as before, and files keep their
+  bytes. A reader counts as a player from its first 0.5 s: with four scanners on 2 cores, the player
+  fell up to 0.77 s behind, and up to 14 of about 700 reads were more than 0.5 s late.
+- **NFS clients keep their handles when the container restarts, under any runtime (#218).** Under
+  Podman, nearly every restart gave `Stale file handle` on open files, `stat` and `ls`, until a
+  remount; under Docker it could happen too. NFS-Ganesha's handles no longer hold the FUSE mount's
+  device number. Clients of an earlier release go stale once, when the first fixed container
+  starts: remount. CI now restarts the container under Docker and Podman, also with the device number
+  changed on purpose (`deploy/ci-restart-test.sh`).
+
+### Documentation
+
+- `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
+  needs a remount; the durable-handle message in Samba's log is expected, and no setting tried
+  makes those handles survive a restart (#204).
+
+## [0.4.1] - 2026-11-07
 
 Tested as three release candidates. On rc.1 the scripted servers (Jellyfin, Navidrome, Lyrion, MPD,
 MinimServer) were run against 0.4.0 side by side, and Roon, Plex, Windows (Explorer, PowerShell,
