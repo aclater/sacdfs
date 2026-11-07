@@ -14,6 +14,9 @@ All notable changes to sacdfs are recorded here. The format follows
   crash of sacdfs, without a restart of its own; a file open during a restart fails once the runtime
   stops sacdfs. Rootless Podman can't share the mount this way. See
   [deployment](docs/deployment.md#players-on-the-same-host-no-smb-hop).
+  Measured against sacdfs's SMB share on the same NAS (0.4.1, 416 images, Navidrome): the import took
+  45 s instead of 62 s, sacdfs served 5.4 MB for it instead of 5.8 GB and used 3 instead of 223 CPU
+  seconds (Samba another 27), and files started in 0.5 to 2 ms instead of 12 to 26 ms.
 - **The container makes `/srv/sacd` itself** when a host directory is bound over `/srv`, so that
   directory can start empty. A dead mount left there by a killed sacdfs doesn't stop the start: sacdfs
   detaches it, as before. CI checks both on every pull request (`deploy/ci-same-host-test.sh`).
@@ -144,6 +147,17 @@ All notable changes to sacdfs are recorded here. The format follows
   device number. Clients of an earlier release go stale once, when the first fixed container
   starts: remount. CI now restarts the container under Docker and Podman, also with the device number
   changed on purpose (`deploy/ci-restart-test.sh`).
+- **Clients retrying through a long hang of one image no longer stall the other images (#241).** A
+  read that fails with `EIO` after the request timeout keeps its thread until the source answers, so
+  clients that kept retrying on a hung image took one more read thread each time. Once all 64 were
+  blocked, reads of healthy images failed too, in both formats, until the source answered: with 8
+  clients, 2 decoder threads and a 2 s timeout, that took about 24 s. Now, once 4 reads of an image
+  are still blocked past the timeout, its new reads fail with `EIO` at once, without taking a thread,
+  until one of the blocked reads finishes. With the same test the hung image held at most 8 read
+  threads over 60 s, and every healthy DSF and WAV read during the hang succeeded. Reads of an image
+  that is slow but answers within the timeout are not affected, however many there are. A client
+  retrying without a pause now gets its errors at once rather than once per timeout. Logged once
+  when an image starts failing its reads this way and once when it reads again.
 
 ### Documentation
 
