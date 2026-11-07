@@ -180,6 +180,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- `docs/clients.md`, Windows Robocopy speed (#225): the two speeds of a Robocopy from a Windows VM
+  came from the VM's emulated e1000e network card with receive-side scaling on, not from sacdfs, Samba or
+  Robocopy; a plain Samba share showed the same split. With RSS off or a virtio-net card no run was slow
+  (one DST disc in 80-89 s). `docs/test-plan.md` says to time Windows copies that way.
 - `docs/deployment.md`, "Players on the same host": the host directory must be on a shared mount, which
   Synology DSM 7.4 and ASUSTOR ADM 5.1 don't give it (checked in VMs), with a workaround
   (`mount --bind DIR DIR; mount --make-rshared DIR`) run on ADM in a VM, and how to check it.

@@ -353,7 +353,31 @@ authentication, sacdfs 0.2.0-rc.1, `dsf,wav`, `--flatten`, 93 DSF + 93 WAV (54.9
 
 Not checked: Explorer's large-icon view in a real window, a real audio output, Japanese, Chinese or Korean names, library changes, an output-version change.
 
-**Robocopy speed.** A Robocopy of one DST disc (61 files, 19.8 GB) by Windows 11 25H2 took 132-141 s (pipelined reads, 160-165 MB/s) or 441-469 s (one read at a time, 40-50 MB/s) in 12 runs between two VMs on one host's virtual bridge. 0.4.1-rc.1 and 0.4.0 both appear in both groups (4 and 2 of 6, 2 and 4 of 6), with the same container CPU and read sizes. What makes Windows pick a mode isn't known. Not run on a physical Windows client or network. Over QEMU's user-mode network, runs of both versions also stalled for minutes at about 3 MB/s with the server idle; avoid that network when timing copies.
+**Robocopy speed ([#225](https://github.com/aclater/sacdfs/issues/225)).** Robocopy from a Windows VM ran at one of two speeds, 3 to 4.5 times apart. The test VM's emulated network card caused it, not sacdfs, Samba, Robocopy or the sacdfs version. Windows 11 25H2 ran in a VM (4 vCPUs configured, of which Windows used 2; 8 GB) and the container in a Fedora 44 VM (8 vCPUs) on one host's libvirt bridge. Each run copied one DST disc (61 files, 19.8 GiB) with `robocopy /MIR /MT:1` from a fresh container over a new SMB connection:
+
+| Windows VM network card | Runs | Robocopy time | Slow runs |
+|---|---|---|---|
+| e1000e (QEMU's emulated Intel 82574L), receive-side scaling (RSS) on, the Windows default | 29 (3 with other Robocopy flags, below) | 94-152 s or 349-483 s | 15 of 29 |
+| e1000e with RSS off (`Disable-NetAdapterRss`) | 6 | 83-87 s | none |
+| virtio-net (Red Hat NetKVM driver, virtio-win 0.1.285) | 6 | 80-89 s | none |
+
+The same comparison on a quiet host, the versions alternated and the order flipped each round, 3 rounds (seconds per run):
+
+| Windows VM network card | 0.4.0 | 0.4.1 |
+|---|---|---|
+| e1000e, RSS on | 406, 93, 92 | 405, 407, 92 |
+| e1000e, RSS off | 85, 85, 85 | 84, 85, 84 |
+| virtio-net | 81, 81, 81 | 80, 80, 80 |
+
+Both versions land in both groups on the e1000e card with RSS on, and they match within 1 s on the other two cards. The container used 513 to 554 CPU seconds a run with either version.
+
+- **The Windows client never went serial.** In fast and slow runs alike, Windows kept 7 of 8 reads of 1 MiB outstanding (the SMB client's queue length), with no credit stalls, a read-write-handle lease on the audio files and one channel. The earlier "one read at a time" was inferred from the order of sacdfs's reads, not seen on the wire.
+- **In a slow run the server was waiting for the network.** The server's TCP connection was sending 99% of the time with about 2 MB queued. Samba had 0.1 to 0.2 reads waiting on sacdfs on average (about 2 in a fast run), and sacdfs used 1.0 to 1.8 decoder threads because the requests came slowly. Windows's first CPU spent 75-93% of its time in network receive (deferred procedure calls, DPCs) in both kinds of run, but moved about 5 times less data in a slow one.
+- **sacdfs isn't involved.** A plain Samba share of 20 files (6.3 GB, in the server's page cache) on the same server VM showed the same split: 22-26 s or 132-136 s, 8 of 20 runs slow.
+- **Robocopy flags don't change it.** `/J` (unbuffered), no `/MT` and `/MT:8` sent the same pipelined 1 MiB reads, and a slow run stayed at about 60 MB/s with `/MT:8` and 60 reads outstanding. Host load didn't decide it either: slow runs happened with the host's load average under 4 and over 40.
+- **With RSS off or a virtio-net card, no run was slow**, and sacdfs's DST decoding became the limit (about 5.5 decoder threads busy, 238-267 MB/s). The plain share took 36-42 s on the e1000e card with RSS off and 8-9 s over virtio-net.
+
+The runs point to the RSS queue that a new TCP connection lands on as what sets the speed: turning RSS off removed the slow runs, and in slow runs of the plain share Windows's second CPU ran about 90 DPCs a second against 450-490 in fast ones. The emulator's queue handling wasn't traced further. **Recommendation for timing Windows copies in a VM:** give the VM a virtio-net card with the NetKVM driver, or turn RSS off on an emulated e1000e card. Nothing needs to change in sacdfs, Samba or Robocopy. Not run on a physical Windows client or network, so whether a physical card shows anything like it is unknown. Over QEMU's user-mode network, runs of both versions also stalled for minutes at about 3 MB/s with the server idle; avoid that network when timing copies.
 
 **Recommended setup.** Set `SMB_USER` and `SMB_PASSWORD`: Windows 11 24H2 and later refuse
 guest access. See [Windows](deployment.md#windows) and

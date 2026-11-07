@@ -151,7 +151,10 @@ rslave bind into a container.
 - Case and character handling in names: long names, non-ASCII, names illegal on Windows and macOS.
 - macOS-specific: `._` files, `.DS_Store`, Spotlight indexing and Quick Look must not fail or cause
   a read storm.
-- Windows-specific: a second Robocopy pass skips everything; file times survive.
+- Windows-specific: a second Robocopy pass skips everything; file times survive. A Windows VM that
+  times copies uses a virtio-net card (NetKVM driver) or turns receive-side scaling off on an emulated
+  e1000e card: with RSS on, e1000e copies run at one of two speeds per connection, 3 to 4.5 times apart
+  ([#225](https://github.com/aclater/sacdfs/issues/225), [client notes](clients.md#windows-explorer-powershell-and-robocopy)).
 - Stable identity: inodes and mtimes hold across a restart, and NFS handles stay valid.
 - **RF64:** a real file over 4 GiB reads, seeks and hashes correctly through every path, and
   FFmpeg, sox and at least one server read it. Clients that can't are named in the docs.
