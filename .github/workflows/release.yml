@@ -5,6 +5,8 @@
 #     sacdfs-<version>-x86_64-linux.tar.gz (generic x86-64) and
 #     sacdfs-<version>-x86_64-v3-linux.tar.gz (x86-64-v3: AVX2 CPUs), each with COPYING,
 #     README.md and CHANGELOG.md, a .sha256 checksum and a build provenance attestation;
+#     and two static musl binaries (#244), for systems with an older glibc or none,
+#     sacdfs-<version>-x86_64-linux-musl.tar.gz and sacdfs-<version>-aarch64-linux-musl.tar.gz;
 #   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
 #     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
 #   - the crate on crates.io (#155), for final versions only (no hyphen: not 0.4.0-rc.1),
@@ -103,10 +105,9 @@ jobs:
           retention-days: 7
 
   # Linux binaries, linked against glibc 2.28: built on UBI 8 (RHEL 8's glibc), so they run
-  # on RHEL 8 and later, Debian 10, Ubuntu 20.04, Fedora 29 and later. Not static musl,
-  # although sacdfs could build so (fuser here is pure Rust, no dependency builds C code):
-  # measured, musl made WAV reads 1.5 to 1.65 times slower and DSF reads of a DST disc about
-  # 1.3 times slower (docs/design.md, "Release binaries"). Rust comes
+  # on RHEL 8 and later, Debian 10, Ubuntu 20.04, Fedora 29 and later. The static musl
+  # binaries (binaries-musl, below) cover older systems; these stay the main builds, with
+  # glibc's malloc and its tuning (docs/design.md, "Release binaries"). Rust comes
   # from rustup, the toolchain the rest of CI tests with: RHEL 8's Rust is older than sacdfs's
   # MSRV. Each build is tested in that container (the whole test suite, FUSE included,
   # against that very build), and the packaged binary is then checked on the corpus on the
@@ -206,6 +207,117 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Static musl binaries (#244), for systems whose glibc is older than 2.28 (QNAP's QuTScloud
+  # 5.2.9 has 2.21) or that have none: sacdfs-<version>-<arch>-linux-musl.tar.gz, for x86_64
+  # (generic x86-64) and aarch64, each built and tested on a native runner. With jemalloc as
+  # the allocator (the `jemalloc` feature): musl's own malloc made reads 1.3 to 1.65 times
+  # slower (docs/design.md, "Release binaries"). jemalloc is C, so musl-gcc (musl-tools)
+  # compiles it, with its settings fixed at build time: one arena and freed pages returned at
+  # once, like the glibc builds' one malloc arena, which kept the peak memory lowest. The whole test suite, FUSE included, runs against this very build; the
+  # packaged binary then serves the corpus on the runner, and the x86_64 one also in a
+  # UBI 7 container (glibc 2.17, no fusermount: root mounts directly), which must serve the
+  # same bytes.
+  binaries-musl:
+    name: binary (${{ matrix.name }})
+    needs: preflight
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # lg_page: jemalloc's page size is fixed at build time. aarch64 kernels run with 4, 16
+          # or 64 KiB pages, and a build for 64 KiB (2^16) works on all three.
+          - {name: x86_64-musl, arch: x86_64, runner: ubuntu-latest, rustflags: "-C target-cpu=x86-64", lg_page: ""}
+          - {name: aarch64-musl, arch: aarch64, runner: ubuntu-24.04-arm, rustflags: "", lg_page: "16"}
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      NAME: ${{ matrix.name }}
+      ARCH: ${{ matrix.arch }}
+      TARGET: ${{ matrix.arch }}-unknown-linux-musl
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      JEMALLOC_SYS_WITH_MALLOC_CONF: "narenas:1,background_thread:false,dirty_decay_ms:0,muzzy_decay_ms:0"
+      LG_PAGE: ${{ matrix.lg_page }}
+      # registry.access.redhat.com/ubi7/ubi, pinned by digest: glibc 2.17 (x86_64 only).
+      UBI7: registry.access.redhat.com/ubi7/ubi@sha256:046e525722f14702c360dc6092324af7c21656e76b0c254b067871f1d4d3df68
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust, musl target, musl-gcc and fusermount3
+        run: |
+          rustup toolchain install "$RUST_STABLE" --profile minimal --target "$TARGET"
+          rustup default "$RUST_STABLE"
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends musl-tools fuse3
+          ls -l /dev/fuse
+      - name: Build and test (FUSE tests required)
+        env:
+          SACDFS_FUSE_TESTS: "1"
+        run: |
+          export "CC_${TARGET//-/_}=musl-gcc"
+          # Set only where needed: an empty value would reach jemalloc's configure.
+          if [[ -n "$LG_PAGE" ]]; then export JEMALLOC_SYS_WITH_LG_PAGE="$LG_PAGE"; fi
+          cargo build --release --locked --bin sacdfs --target "$TARGET" --features jemalloc
+          cargo test --release --locked --target "$TARGET" --features jemalloc
+      - name: Static, stripped
+        run: |
+          bin="target/$TARGET/release/sacdfs"
+          file "$bin"
+          if readelf -d "$bin" | grep -q NEEDED; then
+            echo "::error::the musl binary links a shared library"; readelf -d "$bin"; exit 1
+          fi
+          if readelf -S "$bin" | grep -q '\.symtab'; then
+            echo "::error::the binary is not stripped"; exit 1
+          fi
+      - name: Package
+        run: |
+          pkg="sacdfs-$VERSION-$ARCH-linux-musl"
+          mkdir -p "dist/$pkg"
+          install -m 0755 "target/$TARGET/release/sacdfs" "dist/$pkg/sacdfs"
+          install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
+          mtime=$(git log -1 --format=%ct)
+          tar -C dist --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$mtime" \
+            -cf - "$pkg" | gzip -n -9 > "dist/$pkg.tar.gz"
+          (cd dist && sha256sum "$pkg.tar.gz" > "$pkg.tar.gz.sha256" && cat "$pkg.tar.gz.sha256")
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+      - name: The packaged binary serves the corpus
+        run: |
+          mkdir -p /tmp/check /tmp/mnt
+          tar -C /tmp/check -xzf "dist/$PKG.tar.gz"
+          bin="/tmp/check/$PKG/sacdfs"
+          "$bin" --version
+          "$bin" tests/corpus/images /tmp/mnt 2> /tmp/serve.log
+          status=0
+          python3 -I deploy/check-share.py tests/corpus/manifest.json /tmp/mnt --min 400 --wav || status=$?
+          (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /tmp/host.sha256
+          fusermount3 -u /tmp/mnt
+          exit $status
+      - name: The same bytes on glibc 2.17, mounted without fusermount (UBI 7)
+        if: matrix.arch == 'x86_64'
+        run: |
+          docker run --rm --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+            -v "/tmp/check/$PKG:/d:ro" -v "$PWD/tests/corpus/images:/images:ro" -v /tmp:/out \
+            "$UBI7" bash -euc '
+              rpm -q glibc
+              ! command -v fusermount3 && ! command -v fusermount
+              /d/sacdfs --version
+              mkdir -p /mnt/s
+              /d/sacdfs /images /mnt/s 2> /out/ubi7.log
+              (cd /mnt/s && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /out/ubi7.sha256
+              umount /mnt/s'
+          wc -l /tmp/host.sha256 /tmp/ubi7.sha256
+          cmp /tmp/host.sha256 /tmp/ubi7.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: bin-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   # The image is built and tested here without any write permission; publishing it (below,
   # on a tag) loads the very image tested.
   image:
@@ -254,7 +366,7 @@ jobs:
   dry-run:
     name: dry run summary
     if: github.ref_type != 'tag'
-    needs: [preflight, binaries, image]
+    needs: [preflight, binaries, binaries-musl, image]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -283,7 +395,7 @@ jobs:
   release:
     name: GitHub release
     if: github.ref_type == 'tag'
-    needs: [preflight, binaries, image]
+    needs: [preflight, binaries, binaries-musl, image]
     runs-on: ubuntu-latest
     permissions:
       # Creating the release and uploading its assets.
@@ -339,6 +451,8 @@ jobs:
             echo
             echo "- \`sacdfs-$VERSION-x86_64-linux.tar.gz\`: generic x86-64, for any x86_64 CPU."
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
+            echo
+            echo "Static Linux binaries (musl: they use no C library of the system, for systems with a glibc older than 2.28): \`sacdfs-$VERSION-x86_64-linux-musl.tar.gz\` (generic x86-64) and \`sacdfs-$VERSION-aarch64-linux-musl.tar.gz\`. Run as root, they mount without \`fusermount3\`."
             echo
             echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic CPU; amd64 and arm64)."
             echo

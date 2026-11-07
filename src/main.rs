@@ -27,6 +27,12 @@ use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
 use sacdfs::sidecar::Sidecars;
 use sacdfs::tree::{Output, SourceDir, Tree};
 
+/// jemalloc instead of the C library's malloc, for the static musl binaries (#244): musl's
+/// malloc is much slower under the decoder threads (docs/design.md, "Release binaries").
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// Show the audio of SACD disc images as DSF and WAV files, decoded on demand.
 ///
 /// SOURCE is an image file or a directory searched recursively for *.iso files. Each image
