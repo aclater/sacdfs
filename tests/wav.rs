@@ -473,11 +473,7 @@ fn real_discs() {
         _ => PcmRate::R176400,
     };
     let cfg = config(rate);
-    let tree = Tree::with_options(
-        SourceDir::scan(&dir).unwrap(),
-        Tuning::default(),
-        output(rate, false),
-    );
+    let tree = Tree::with_options(SourceDir::scan(&dir).unwrap(), Tuning::default(), output(rate, false));
     let engine = Engine::with_pcm(0, 256 << 20, cfg).unwrap();
     let files = wav_files(&tree);
     common::assert_every_image_served(&images, files.iter().map(|(_, f)| f.disc.path.clone()));
