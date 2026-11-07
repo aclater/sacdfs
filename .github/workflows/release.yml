@@ -1,9 +1,10 @@
 # The release (#44). On a version tag (v0.1.0, ...; tags are immutable by ruleset): check
 # that the tag matches Cargo.toml and has a CHANGELOG.md section, build and test the Linux
 # binaries and the container image, then publish:
-#   - a GitHub release with the notes from CHANGELOG.md and two Linux binaries (glibc 2.28+),
-#     sacdfs-<version>-x86_64-linux.tar.gz (generic x86-64) and
-#     sacdfs-<version>-x86_64-v3-linux.tar.gz (x86-64-v3: AVX2 CPUs), each with COPYING,
+#   - a GitHub release with the notes from CHANGELOG.md and three Linux binaries (glibc 2.17+,
+#     #244), sacdfs-<version>-x86_64-linux.tar.gz (generic x86-64),
+#     sacdfs-<version>-x86_64-v3-linux.tar.gz (x86-64-v3: AVX2 CPUs) and
+#     sacdfs-<version>-aarch64-linux.tar.gz, each with COPYING,
 #     README.md and CHANGELOG.md, a .sha256 checksum and a build provenance attestation;
 #   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
 #     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
@@ -102,64 +103,86 @@ jobs:
           path: notes.md
           retention-days: 7
 
-  # Linux binaries, linked against glibc 2.28: built on UBI 8 (RHEL 8's glibc), so they run
-  # on RHEL 8 and later, Debian 10, Ubuntu 20.04, Fedora 29 and later. Not static musl,
-  # although sacdfs could build so (fuser here is pure Rust, no dependency builds C code):
-  # measured, musl made WAV reads 1.5 to 1.65 times slower and DSF reads of a DST disc about
-  # 1.3 times slower (docs/design.md, "Release binaries"). Rust comes
-  # from rustup, the toolchain the rest of CI tests with: RHEL 8's Rust is older than sacdfs's
-  # MSRV. Each build is tested in that container (the whole test suite, FUSE included,
-  # against that very build), and the packaged binary is then checked on the corpus on the
-  # runner's newer system.
+  # Linux binaries linked against glibc 2.17's symbols (#244), so that they run on RHEL 7 era
+  # systems and on NAS systems with an old glibc (QNAP's QuTScloud 5.2.9 has 2.21), with
+  # glibc's malloc and the binary's speed unchanged. Built with cargo-zigbuild: zig links
+  # against the symbol versions of the glibc named in the target (x86_64-unknown-linux-gnu.2.17),
+  # whatever the build system's glibc. zig and cargo-zigbuild are pinned to exact versions,
+  # the zig archive by its SHA-256. Rust's own std supports glibc 2.17 and later. Not static
+  # musl: measured, musl's malloc made reads 1.25 to 2.6 times slower, and the faster
+  # allocators cost speed on plain DSD discs (jemalloc) or 3.5 to 4.6 times the peak memory
+  # (mimalloc) (docs/design.md, "Release binaries"). Rust comes from rustup, the toolchain the
+  # rest of CI tests with. Each build is tested on its native runner (the whole test suite,
+  # FUSE included, linked the same way), checked for its newest glibc symbol, then the
+  # packaged binary is checked on the corpus on the runner and, on x86_64, in a UBI 7
+  # container (RHEL 7's glibc 2.17, no fusermount: as root, sacdfs mounts directly), which
+  # must serve the same bytes.
   binaries:
     name: binary (${{ matrix.name }})
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {name: x86_64, cpu: x86-64}
-          - {name: x86_64-v3, cpu: x86-64-v3}
+          # target-cpu is always set on x86_64, never left to a toolchain's default.
+          - {name: x86_64, arch: x86_64, runner: ubuntu-latest, rustflags: "-C target-cpu=x86-64",
+             zig_sha256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00}
+          - {name: x86_64-v3, arch: x86_64, runner: ubuntu-latest, rustflags: "-C target-cpu=x86-64-v3",
+             zig_sha256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00}
+          - {name: aarch64, arch: aarch64, runner: ubuntu-24.04-arm, rustflags: "",
+             zig_sha256: ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17}
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
       NAME: ${{ matrix.name }}
-      # registry.access.redhat.com/ubi8/ubi, pinned by digest: glibc 2.28.
-      UBI8: registry.access.redhat.com/ubi8/ubi@sha256:c322aa68f2d630b36b9faab64094357f62720be2f56f7099376ca2d6c4fe389b
-      GLIBC_MAX: "2.28"
-      # target-cpu is always set, never left to a toolchain's default (RHEL's Rust defaults
-      # to x86-64-v3). Paths of the build container are left out of the binary.
-      RUSTFLAGS: -C target-cpu=${{ matrix.cpu }} --remap-path-prefix=/root/.cargo=/cargo --remap-path-prefix=/src=/sacdfs
+      ARCH: ${{ matrix.arch }}
+      TARGET: ${{ matrix.arch }}-unknown-linux-gnu
+      GLIBC_MAX: "2.17"
+      ZIG_VERSION: 0.16.0
+      ZIG_SHA256: ${{ matrix.zig_sha256 }}
+      CARGO_ZIGBUILD_VERSION: 0.24.0
+      MATRIX_RUSTFLAGS: ${{ matrix.rustflags }}
       CARGO_PROFILE_RELEASE_STRIP: symbols
+      # registry.access.redhat.com/ubi7/ubi, pinned by digest: glibc 2.17 (x86_64 only).
+      UBI7: registry.access.redhat.com/ubi7/ubi@sha256:046e525722f14702c360dc6092324af7c21656e76b0c254b067871f1d4d3df68
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: The runner can run an x86-64-v3 build
-        if: matrix.cpu == 'x86-64-v3'
+        if: matrix.name == 'x86_64-v3'
         run: |
           # The v3 binary is published only if it passed its tests on this runner.
           for f in avx2 bmi1 bmi2 fma movbe; do
             grep -qw "$f" /proc/cpuinfo || { echo "::error::runner CPU has no $f: the x86-64-v3 build cannot be tested"; exit 1; }
           done
-      - name: Build and test on UBI 8 (FUSE tests required)
+      - name: Rust, zig, cargo-zigbuild and fusermount3
         run: |
-          docker run --rm --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
-            -e RUSTFLAGS -e CARGO_PROFILE_RELEASE_STRIP -e RUST_STABLE -e CARGO_TERM_COLOR \
-            -e SACDFS_FUSE_TESTS=1 -v "$PWD:/src" -w /src "$UBI8" bash -euxc '
-              rpm -q glibc
-              dnf -y -q --setopt=install_weak_deps=False install gcc fuse3
-              curl -sSfL --proto =https --tlsv1.2 -o /tmp/rustup-init \
-                https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
-              chmod +x /tmp/rustup-init
-              /tmp/rustup-init -y -q --no-modify-path --profile minimal --default-toolchain "$RUST_STABLE"
-              export PATH=/root/.cargo/bin:$PATH
-              cargo build --release --locked --bin sacdfs
-              cargo test --release --locked'
-      - name: glibc 2.28 or later, stripped
+          rustup toolchain install "$RUST_STABLE" --profile minimal --target "$TARGET"
+          rustup default "$RUST_STABLE"
+          zig="zig-$ARCH-linux-$ZIG_VERSION"
+          curl -sSfL --proto =https --tlsv1.2 -o "$RUNNER_TEMP/$zig.tar.xz" \
+            "https://ziglang.org/download/$ZIG_VERSION/$zig.tar.xz"
+          echo "$ZIG_SHA256  $RUNNER_TEMP/$zig.tar.xz" | sha256sum -c
+          tar -C "$RUNNER_TEMP" -xJf "$RUNNER_TEMP/$zig.tar.xz"
+          echo "$RUNNER_TEMP/$zig" >> "$GITHUB_PATH"
+          cargo install --locked cargo-zigbuild --version "$CARGO_ZIGBUILD_VERSION"
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+          ls -l /dev/fuse
+          # The runner's paths are left out of the binary.
+          echo "RUSTFLAGS=$MATRIX_RUSTFLAGS --remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$GITHUB_WORKSPACE=/sacdfs" >> "$GITHUB_ENV"
+      - name: Build and test, linked against glibc 2.17 (FUSE tests required)
+        env:
+          SACDFS_FUSE_TESTS: "1"
         run: |
-          bin=target/release/sacdfs
+          zig version
+          cargo zigbuild --release --locked --bin sacdfs --target "$TARGET.$GLIBC_MAX"
+          cargo-zigbuild test --release --locked --target "$TARGET.$GLIBC_MAX"
+      - name: glibc 2.17 or later, stripped
+        run: |
+          bin="target/$TARGET/release/sacdfs"
           file "$bin"
           readelf -d "$bin" | grep NEEDED
           max=$(objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)
@@ -174,7 +197,7 @@ jobs:
         run: |
           pkg="sacdfs-$VERSION-$NAME-linux"
           mkdir -p "dist/$pkg"
-          install -m 0755 target/release/sacdfs "dist/$pkg/sacdfs"
+          install -m 0755 "target/$TARGET/release/sacdfs" "dist/$pkg/sacdfs"
           install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
           # Reproducible: fixed order, owner and times (the commit's), no gzip timestamp.
           mtime=$(git log -1 --format=%ct)
@@ -182,21 +205,33 @@ jobs:
             -cf - "$pkg" | gzip -n -9 > "dist/$pkg.tar.gz"
           (cd dist && sha256sum "$pkg.tar.gz" > "$pkg.tar.gz.sha256" && cat "$pkg.tar.gz.sha256")
           echo "PKG=$pkg" >> "$GITHUB_ENV"
-      - name: Install fusermount3
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends fuse3
       - name: The packaged binary serves the corpus
         run: |
           mkdir -p /tmp/check /tmp/mnt
           tar -C /tmp/check -xzf "dist/$PKG.tar.gz"
           bin="/tmp/check/$PKG/sacdfs"
           "$bin" --version
-          "$bin" tests/corpus/images /tmp/mnt
+          "$bin" tests/corpus/images /tmp/mnt 2> /tmp/serve.log
           status=0
           python3 -I deploy/check-share.py tests/corpus/manifest.json /tmp/mnt --min 400 --wav || status=$?
+          (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /tmp/host.sha256
           fusermount3 -u /tmp/mnt
           exit $status
+      - name: The same bytes on glibc 2.17, mounted without fusermount (UBI 7)
+        if: matrix.arch == 'x86_64'
+        run: |
+          docker run --rm --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+            -v "/tmp/check/$PKG:/d:ro" -v "$PWD/tests/corpus/images:/images:ro" -v /tmp:/out \
+            "$UBI7" bash -euc '
+              rpm -q glibc
+              ! command -v fusermount3 && ! command -v fusermount
+              /d/sacdfs --version
+              mkdir -p /mnt/s
+              /d/sacdfs /images /mnt/s 2> /out/ubi7.log
+              (cd /mnt/s && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /out/ubi7.sha256
+              umount /mnt/s'
+          wc -l /tmp/host.sha256 /tmp/ubi7.sha256
+          cmp /tmp/host.sha256 /tmp/ubi7.sha256
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: bin-${{ matrix.name }}
@@ -335,10 +370,11 @@ jobs:
             echo
             echo "## Downloads"
             echo
-            echo "Linux binaries for x86_64, glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, Fedora 29 and later), needing FUSE and \`fusermount3\` (package fuse3):"
+            echo "Linux binaries, glibc 2.17 or later (RHEL 7 era and later), needing FUSE and, as a user other than root, FUSE 3's \`fusermount3\` (package fuse3) or FUSE 2's \`fusermount\`; root needs neither:"
             echo
             echo "- \`sacdfs-$VERSION-x86_64-linux.tar.gz\`: generic x86-64, for any x86_64 CPU."
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
+            echo "- \`sacdfs-$VERSION-aarch64-linux.tar.gz\`: aarch64 (64-bit ARM)."
             echo
             echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic CPU; amd64 and arm64)."
             echo
