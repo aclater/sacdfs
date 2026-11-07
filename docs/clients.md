@@ -447,7 +447,7 @@ files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network
   the NFS and SMB lines of [the Linux client guide](install/linux-client.md) (with `port=` for
   SMB) mounted, were mounted after a reboot with the server up, the boot finished in 56 s with
   the server down, and the SMB automount worked once it was back.
-- **Restart of the container:** [NFS and restarts](deployment.md#nfs-and-restarts).
+- **Restart of the container:** [NFS and restarts](deployment.md#nfs-and-restarts) and, including macOS, which needs a remount, [SMB and restarts](deployment.md#smb-and-restarts).
 - **Container channels:** see [the Docker and Podman guide](install/docker-podman.md).
 
 Cold-seek and read-latency figures for NFS and SMB, server-side and client-side, are in

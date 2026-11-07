@@ -35,6 +35,11 @@ All notable changes to sacdfs are recorded here. The format follows
   device number. Clients of an earlier release go stale once, when the first fixed container
   starts: remount. CI now restarts the container under Docker and Podman, also with the device number
   changed on purpose (`deploy/ci-restart-test.sh`).
+### Documentation
+
+- `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
+  needs a remount; the durable-handle message in Samba's log is expected, and no setting tried
+  makes those handles survive a restart (#204).
 
 ## [0.4.1-rc.3] - 2026-11-06
 
