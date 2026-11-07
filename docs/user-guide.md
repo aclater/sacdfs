@@ -111,7 +111,7 @@ most when the images are on a network share, where each read is a round trip.
   Deleting the directory is always safe.
 - `--no-index-cache` starts every mount with an empty index (used for measurements).
 
-**Unmounting.** `fusermount3 -u MOUNTPOINT`, or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
+**Unmounting.** `fusermount3 -u MOUNTPOINT` (`fusermount -u` with FUSE 2), or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
 If files are still open, or an NFS server still exports the mount, the mount is detached
 instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
 stops when the last one is closed.
@@ -826,7 +826,10 @@ the `mounted` line and warnings; add `-v` for more), or run it under systemd, wh
 goes to the journal: `journalctl -u sacdfs`.
 
 - **`fusermount3: command not found`, or `failed to open /dev/fuse`:** install FUSE 3
-  (package `fuse3`). In a container, pass `--device /dev/fuse --cap-add SYS_ADMIN`.
+  (package `fuse3`). In a container, pass `--device /dev/fuse --cap-add SYS_ADMIN`. Root mounts
+  without a helper. Where only FUSE 2 is installed (package `fuse`; Synology DSM, for one), sacdfs
+  mounts and, from 0.5.0, unmounts through its `fusermount` instead; 0.4.1 and earlier mounted that
+  way but couldn't unmount on SIGTERM and left the mount behind.
 - **`fusermount3: option allow_other only allowed if 'user_allow_other' is set in
   /etc/fuse.conf`:** add that line to `/etc/fuse.conf`, or drop `--allow-other`.
 - **`Transport endpoint is not connected`:** sacdfs was killed (or crashed) without

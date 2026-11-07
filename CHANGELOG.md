@@ -147,6 +147,13 @@ All notable changes to sacdfs are recorded here. The format follows
   device number. Clients of an earlier release go stale once, when the first fixed container
   starts: remount. CI now restarts the container under Docker and Podman, also with the device number
   changed on purpose (`deploy/ci-restart-test.sh`).
+- **A user other than root can stop sacdfs where only FUSE 2 is installed.** Mounting already worked
+  through FUSE 2's `fusermount` when there is no `fusermount3` (Synology DSM, for one), but unmounting
+  on SIGINT, SIGTERM or SIGHUP called `fusermount3` only: sacdfs kept running and the mount stayed.
+  It now falls back to `fusermount -u -z` (after `FUSERMOUNT_PATH`, then `fusermount3`). Tested as an
+  ordinary user in a Fedora 45 container with FUSE 2.9.9's setuid `fusermount` and no `fusermount3`:
+  0.4.1 logged "detaching: Operation not permitted" and stayed mounted; with the fix sacdfs unmounted
+  and exited, and the files read the same SHA-256 through both. Root never needed a helper.
 - **Clients retrying through a long hang of one image no longer stall the other images (#241).** A
   read that fails with `EIO` after the request timeout keeps its thread until the source answers, so
   clients that kept retrying on a hung image took one more read thread each time. Once all 64 were
@@ -160,6 +167,12 @@ All notable changes to sacdfs are recorded here. The format follows
   when an image starts failing its reads this way and once when it reads again.
 
 ### Documentation
+
+- `docs/deployment.md`, "Players on the same host": the Compose example's `start_interval` is
+  commented out, because Compose 2.17 and 2.19 (the Docker 20.10 and 24.0 CLI images) refuse a file
+  that has it; uncomment it with Docker Engine 25 or later. The install docs, the README and the user
+  guide now say that root needs no FUSE helper, and that FUSE 2's `fusermount` serves where there is no
+  `fusermount3`.
 
 - `docs/deployment.md`, "SMB and restarts": what each client does when the container restarts. macOS
   needs a remount; the durable-handle message in Samba's log is expected, and no setting tried

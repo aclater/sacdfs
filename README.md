@@ -36,7 +36,9 @@ The [Docker and Podman guide](docs/install/docker-podman.md) explains each line 
 check it works.
 
 **Directly on Linux:** build it (Rust 1.85 or later; the [binary guide](docs/install/binary.md)
-has release downloads), then mount. You need `fusermount3` (package `fuse3`).
+has release downloads), then mount. As a user other than root you need FUSE's setuid helper:
+`fusermount3` (package `fuse3`), or FUSE 2's `fusermount` where that is all there is (from 0.5.0).
+Root mounts without either.
 
 ```sh
 cargo build --release

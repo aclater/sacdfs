@@ -41,7 +41,7 @@ above it.
 
 `mount -t fuse.sacdfs` and fstab work too, with the options above as `-o` options, and `Type=notify` units are supported: see [Mounting at boot](user-guide.md#mounting-at-boot-fstab-and-systemd).
 
-Unmount with `fusermount3 -u MOUNTPOINT`; SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
+Unmount with `fusermount3 -u MOUNTPOINT` (`fusermount -u` where only FUSE 2 is installed); SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
 still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
 each option does in detail, and the seek index cache, are in the
 [user guide](user-guide.md#options).
