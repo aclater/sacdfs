@@ -743,6 +743,8 @@ struct ArtState {
     watch: Vec<(PathBuf, Option<SystemTime>)>,
     checked: Instant,
     version: u64,
+    /// The tree's `art_epoch` when this was last read (#235).
+    epoch: u64,
 }
 
 impl Art {
@@ -761,17 +763,25 @@ impl Art {
                 watch,
                 checked: Instant::now(),
                 version: 0,
+                epoch: 0,
             }),
         })
     }
 
     /// The art now, and its version. Compares modification times at most once per
     /// `refresh`; `watching` is false for a mount that never re-reads.
+    ///
+    /// Read again at once, whatever the interval and the directories' times, when the tree's
+    /// `art_epoch` moved since the last read (#235): a file was found changed or gone below an
+    /// area, which a write in place does not show in its directory's time.
     fn current(&self, tree: &Tree) -> (Arc<Vec<Sidecar>>, u64) {
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if tree.watching && st.checked.elapsed() >= tree.refresh {
+        let epoch = tree.art_epoch.load(Ordering::Acquire);
+        let nudged = tree.watching && st.epoch != epoch;
+        if tree.watching && (nudged || st.checked.elapsed() >= tree.refresh) {
             st.checked = Instant::now();
-            if st.watch.iter().any(|(p, m)| mtime_of(p) != *m) {
+            st.epoch = epoch;
+            if nudged || st.watch.iter().any(|(p, m)| mtime_of(p) != *m) {
                 let watch: Vec<_> = self.dirs.iter().map(|d| (d.clone(), mtime_of(d))).collect();
                 let exclude = tree.exclude_abs();
                 let mut items = Vec::new();
@@ -876,6 +886,9 @@ pub struct Tree {
     held: Mutex<Held>,
     /// Images let go of since the persistent seek index last let go of its own.
     released: AtomicUsize,
+    /// Moves on when a folder's art file is found changed or gone behind a listing's back
+    /// (#235): every art is then read again, at its next look, whatever its directory's time.
+    art_epoch: AtomicU64,
 }
 
 /// The images that hold their discs and files in memory, under a bound (#237), each looked at in
@@ -975,6 +988,7 @@ impl Tree {
             refusing: AtomicBool::new(false),
             held: Mutex::new(Held::default()),
             released: AtomicUsize::new(0),
+            art_epoch: AtomicU64::new(0),
         }
     }
 
@@ -1235,11 +1249,59 @@ impl Tree {
     /// since it was listed: its attributes, already shown, would no longer match its bytes.
     pub fn open_sidecar(&self, f: &SidecarFile) -> io::Result<fs::File> {
         let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(libc::EIO))?;
-        let (file, now) = sidecar::open_file(root, &f.target)?;
+        let (file, now) = match sidecar::open_file(root, &f.target) {
+            Ok(opened) => opened,
+            Err(e) => {
+                if e.kind() == io::ErrorKind::NotFound {
+                    self.art_changed();
+                }
+                return Err(e);
+            }
+        };
         if now.size != f.meta.size || now.mtime != f.meta.mtime {
+            self.art_changed();
             return Err(io::Error::from_raw_os_error(libc::ESTALE));
         }
         Ok(file)
+    }
+
+    /// Notes that a folder's art file was found changed or gone: the art of every area is read
+    /// again at its next look (#235).
+    fn art_changed(&self) {
+        self.art_epoch.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Looks up `name` in directory `parent` for the kernel's `LOOKUP`: as [`Tree::lookup`], and
+    /// whether the answer is a folder's art file shown in an area, which the kernel must ask
+    /// about again each time (#235).
+    ///
+    /// An art file in an area is compared with its source file first. *Why:* the area is
+    /// re-read at most once per refresh interval, so until then it lists a file that was
+    /// replaced (its bytes, size and time are no longer those it shows) or removed (the name
+    /// `cover.jpg` stands for another file now). A client that asked in that second got `ESTALE`
+    /// or `ENOENT` for a name that exists before and after. A file found changed makes the area
+    /// read its art again now, and the name is answered from that.
+    pub fn lookup_art(&self, parent: u64, name: &OsStr) -> (Option<u64>, bool) {
+        let find =
+            |t: &Tree| t.children(parent).and_then(|c| c.iter().find(|e| e.name == name).map(|e| e.ino));
+        let ino = find(self);
+        let area = self.watching
+            && matches!(self.get(parent).as_deref(), Some(Node::Dir(d)) if matches!(d.kind, DirKind::Area(..)));
+        let Some(first) = ino.filter(|_| area) else { return (ino, false) };
+        let Some(node) = self.get(first) else { return (ino, false) };
+        let Node::Sidecar(sc) = &*node else { return (ino, false) };
+        if self.sidecar_current(sc) {
+            return (ino, true);
+        }
+        self.art_changed();
+        (find(self).or(ino), true)
+    }
+
+    /// Whether the source file of `sc` is as it was listed.
+    fn sidecar_current(&self, sc: &SidecarFile) -> bool {
+        self.root_fd()
+            .and_then(|root| sidecar::stat_file(root, &sc.target).ok())
+            .is_some_and(|now| now.size == sc.meta.size && now.mtime == sc.meta.mtime)
     }
 
     /// The same tree, its WAV files converted with `pcm` (whose rate must be the one of the

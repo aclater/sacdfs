@@ -1312,6 +1312,18 @@ opened with `keep_cache`, and the kernel's page cache serves repeated reads. Rea
 shows), and up to 64 background requests are allowed. The filesystem is mounted `ro`,
 `nodev`, `nosuid`, `noexec`.
 
+Art in an area is the exception to the long cache (#235). A listing is made again at most once per
+refresh interval, so for up to that long it can name a file that was replaced or removed, and
+`cover.jpg` (an alias of whichever image is picked, #148) can stand for a file that has just gone.
+A lookup of such a name therefore compares the source file with what was listed (one `fstatat`); if
+it changed, or an open finds it changed or gone, a counter moves and every area reads its art again
+at its next look, whatever its directory's time. Replies for these names carry a zero timeout, so the
+kernel asks again each time and never keeps a number whose file is gone. *Why not keep the old
+inode for `cover.jpg`:* the alias is the same node as the image's other name (the same inode, #148),
+and a second, stable inode would break that. *Why not serve the old bytes:* once a file is replaced
+there is nothing to read them from, and the sizes the kernel holds would clip the new bytes.
+*Cost:* one extra `LOOKUP` and `fstatat` per access to an art file in an area.
+
 Two kinds of probe are answered so that the kernel stops asking (#61):
 
 - **Missing names** get a negative entry (inode 0, cached for the same 24 hours) instead of
