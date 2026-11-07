@@ -30,6 +30,13 @@ on "${SACDFS_FLATTEN:-0}" && args+=(--flatten)
 on "${SACDFS_MC_ALBUM_SUFFIX:-1}" || args+=(--no-multichannel-album-suffix)
 [ -n "${SACDFS_SIDECARS:-}" ] && args+=(--sidecars "$SACDFS_SIDECARS")
 [ -n "${SACDFS_TAGS:-}" ] && args+=(--tags "$SACDFS_TAGS")
+# Background lookups on MusicBrainz (#185): off unless asked; they need SACDFS_TAGS, writable.
+if on "${SACDFS_MUSICBRAINZ:-0}"; then
+    [ -n "${SACDFS_TAGS:-}" ] || die "SACDFS_MUSICBRAINZ=1 needs SACDFS_TAGS (a writable tags directory)"
+    args+=(--musicbrainz)
+    on "${SACDFS_LOOKUP_NAME:-0}" && args+=(--lookup-name)
+    on "${SACDFS_LOOKUP_DURATIONS:-0}" && args+=(--lookup-durations)
+fi
 case "${SACDFS_INDEX_CACHE:-/cache}" in
     "" | off | none | 0) args+=(--no-index-cache) ;;
     *) args+=(--index-cache "${SACDFS_INDEX_CACHE:-/cache}") ;;

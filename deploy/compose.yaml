@@ -36,6 +36,7 @@ services:
       # SACDFS_LISTING_MB: "64"       # default: no bound, or 3/8 of the memory limit
       SACDFS_FLATTEN: "0"
       # SACDFS_TAGS: /tags              # user tags (#81); add a volume, e.g. ./tags:/tags:ro
+      # SACDFS_MUSICBRAINZ: "1"         # look up discs without text (#185); the tags volume must be rw
       # SACDFS_MC_ALBUM_SUFFIX: "0"   # no " (Multichannel)" on the multichannel files' album tag
       # SACDFS_PCM_RATE: "176400"
       # SACDFS_PCM_CUTOFF: "40"

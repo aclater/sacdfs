@@ -1973,9 +1973,10 @@ sidecars below stay. *Why:* as with tags files, only those files'
 ### Looking tags up (#185, phase 2)
 
 `sacdfs tags fetch IMAGE...` looks a disc up on MusicBrainz and writes to its tags file
-(`src/lookup.rs`, `src/lookup/mb.rs`). It runs on demand: never in a mount or the FUSE path, and
-with no worker (phase 4). *Why a command first:* it keeps the server process simple until the
-fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or schedules it.
+(`src/lookup.rs`, `src/lookup/mb.rs`). It runs on demand, never in the FUSE path; the mount's
+optional background lookup (below) calls the same code. *Why a command first:* it kept the server
+process simple while the matching was proven on real discs. *Trade-off:* a user runs it, or
+schedules it, or turns on `--musicbrainz`.
 
 - **The method is pysacd's, made stricter.** pysacd takes the best candidate, with a person
   checking its output as the fallback. Here the result is served to players with nobody looking, and
@@ -2064,7 +2065,49 @@ fingerprinting phase's soak numbers exist. *Trade-off:* a user runs it, or sched
   native-tls (an OpenSSL dependency that the glibc-baseline build would then pin). *Trade-off:* about
   3 MB of binary and 15 crates for one optional command, and root certificates that age with the
   release; `deny.toml` now allows ISC (rustls's and ring's parts) and CDLA-Permissive-2.0
-  (webpki-roots's data), both compatible with GPL-3.0-or-later. Nothing here runs in the mount.
+  (webpki-roots's data), both compatible with GPL-3.0-or-later. In a mount it runs only with `--musicbrainz`.
+
+### Looking tags up in the background (#185, phase 4 for MusicBrainz)
+
+`--musicbrainz` runs the lookup above inside the mount (`src/lookup/worker.rs`): one thread goes
+through the mount's images and calls the same code as `tags fetch` for each disc that needs it.
+
+- **Why now, before the AcoustID phase.** The plan put the in-process worker after phase 3's soak
+  numbers; the coordinator scheduled its MusicBrainz part for 0.5.0. *Why:* that soak bounds
+  fingerprinting, which decodes audio for seconds of CPU per track. The MusicBrainz worker decodes
+  nothing: it reads TOCs and makes at most 1 request per second. *Alternative:* wait for phase 3.
+  *Trade-off:* the in-process AcoustID switch still waits for its soak, and the worker will gain it
+  only then.
+- **Never in the FUSE path.** The worker shares no lock with the serving side. It reads TOCs with
+  its own disc handles, without the seek index cache, and writes only the tags file, through the
+  same atomic rename as `tags fetch`; the mount then picks the file up as it does a hand edit
+  (#81: the files' tag and mtime change, their folders' mtimes move). Its thread runs at nice 19
+  and in the idle I/O class, where the kernel allows. *Alternative:* look discs up as their folders
+  are listed. *Trade-off:* a disc's tags change some time after it was first shown, so a scanner
+  sees it twice; the mtime move makes the second look happen.
+- **Which discs.** Only those with a track without a title, or without album or artist, on the disc
+  and in the tags file (`lookup::wants_lookup`). *Why:* the issue asks for those, and asking about
+  every disc of a large library would take hours of requests for IDs alone. *Trade-off:* discs with
+  full text get no MusicBrainz IDs from the mount; `tags fetch` still gives them.
+- **Once per disc, across restarts.** A match is in the tags file, as with `tags fetch`. The rest
+  (nothing missing, no confident match) goes to a file in the seek index cache directory, keyed by a
+  hash of the image's path with its size and mtime, so no path is stored. *Why there, not in the
+  tags directory:* it is the mount's state, not the user's tags, and a file written there after
+  every disc would move the directory the tag layer watches. *Trade-off:* with `--no-index-cache`,
+  each mount reads every TOC and asks again about the discs without a match. A disc without a match
+  is asked about again after 30 days, since MusicBrainz grows; *alternative:* never, which leaves a
+  disc unmatched for good once it was refused.
+- **When.** 30 s after the mount, then a round every hour, which costs one `stat` per image already
+  settled. *Why the delay:* a scanner's first look at a new mount reads every TOC, and the worker's
+  reads would compete with it for the source. Images added while mounted are picked up at the next
+  mount: the worker goes through the images of the mount's first scan.
+- **A busy service.** As `tags fetch`: retries and `Retry-After` per request, 1, 2, 4 and 8 minutes
+  after discs without an answer, and 5 in a row end the round until the next hour. A 403, or a
+  request to wait over an hour, stops lookups for a day. *Why not for good:* a mount runs for
+  months.
+- **Stopping.** The mount stops the worker at unmount and waits for a tags file being written, so
+  none is left half-written or as a temporary file. A request under way isn't waited for: it can
+  take a minute, and the unmount shouldn't.
 
 ## Verifying extracts (`sacdfs verify`, #80)
 
