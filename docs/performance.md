@@ -575,6 +575,13 @@ Under the benchmark lock on an idle machine, 2026-11-06 and 07.
   equal 0.4.0's.
 - Peak memory with four scanners on 4 cores: 73 MiB on rc.3, 81 MiB with this change (the longer
   windows of #212).
+- Re-measured after merging main (0.4.1 and the 0.5.0 queue, with #240), same method, against the
+  0.4.1 image (whose container passes `--cache-mb 32`): player speed and most behind, 0.4.1 /
+  this change at 32 MiB / this change at 8 MiB: 1 scanner, 2 cores 0.52×, 14.3 s / 1.00×, 0.48 s /
+  1.00×, 0.07 s; 4 scanners, 2 cores 0.31×, 20.9 s / 1.00×, 0.29 s / 1.00×, 0.19 s; 1 scanner, 4
+  cores 1.00× throughout; 4 scanners, 4 cores 0.42×, 17.5 s / 1.00×, 0.45 s / 1.00×, 0.02 s. Scans
+  alone, 2 / 4 cores: 33.3 / 61.1, 39.5 / 67.8 and 28.5 / 55.6 MB/s. Stereo DSF with four scanners
+  1.01× at both sizes. Peak memory with four scanners on 4 cores: 73 MiB at 32, 55 at 8.
 
 ## Cache size (#150)
 

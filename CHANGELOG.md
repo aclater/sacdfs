@@ -120,6 +120,8 @@ All notable changes to sacdfs are recorded here. The format follows
   workaround, cost 55 to 65 %). A scan with no player is as fast as before, and files keep their
   bytes. A reader counts as a player from its first 0.5 s: with four scanners on 2 cores, the player
   fell up to 0.77 s behind, and up to 14 of about 700 reads were more than 0.5 s late.
+  At 8 MiB, the default under a memory limit up to 512 MiB (#240), the player held real time with no
+  read more than 0.5 s late, and whole-file scans ran 18 to 28 % slower than at 32 MiB.
 - **NFS clients keep their handles when the container restarts, under any runtime (#218).** Under
   Podman, nearly every restart gave `Stale file handle` on open files, `stat` and `ls`, until a
   remount; under Docker it could happen too. NFS-Ganesha's handles no longer hold the FUSE mount's

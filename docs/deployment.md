@@ -500,25 +500,31 @@ wrong (see the table).
 
 Not re-run on rc.3: the no-load headroom table above (rc.1 and rc.2 figures), rig B's cost of cache 8, and the 128 MiB and 96 MiB memory floors.
 
-**Whole-file scans beside a player, fixed (#230).** sacdfs now lets the player go first, at the
-default cache. Measured on another rig than A and B above, so compare within this table: 6-channel WAV player, whole-file WAV scanners, default
-cache, a fresh container each time, a track the scanners never read; 3 runs each, medians, on E-cores
-of a mobile Core i9, the images on a NAS's hard disks over NFS:
+**Whole-file scans beside a player, fixed (#230).** sacdfs now lets the player go first. Measured on
+another rig than A and B above, so compare within this table: 6-channel WAV player, whole-file WAV
+scanners, a fresh container each time, a track the scanners never read; 3 runs each, medians, on E-cores
+of a mobile Core i9, the images on a NAS's hard disks over NFS. Player speed relative to real time, and
+the most it fell behind in 30 s:
 
-| Scanners | Cores, memory | 0.4.1-rc.3: player speed, behind after 30 s | This version | Scan speed, rc.3 → this version |
+| Scanners | Cores, memory | 0.4.1, cache 32 MiB | This version, cache 32 MiB | This version, cache 8 MiB |
 |---|---|---|---|---|
-| 1 | 2, 256 MiB | 0.54×, 14.0 s | 1.00×, 0.52 s | 30.6 → 33.2 MB/s |
-| 4 | 2, 256 MiB | 0.30×, 21.0 s | 1.00×, 0.66 s | 33.2 → 32.1 MB/s |
-| 1 | 4, 512 MiB | 1.00×, 0.11 s | 1.00×, 0.03 s | 56.7 → 58.3 MB/s |
-| 4 | 4, 512 MiB | 0.46×, 16.4 s | 1.00×, 0.36 s | 62.3 → 63.9 MB/s |
+| 1 | 2, 256 MiB | 0.52×, 14.3 s | 1.00×, 0.48 s | 1.00×, 0.07 s |
+| 4 | 2, 256 MiB | 0.31×, 20.9 s | 1.00×, 0.29 s | 1.00×, 0.19 s |
+| 1 | 4, 512 MiB | 1.00×, 0.13 s | 1.00×, 0.02 s | 1.00×, 0.00 s |
+| 4 | 4, 512 MiB | 0.42×, 17.5 s | 1.00×, 0.45 s | 1.00×, 0.02 s |
+| Scan alone, 2 / 4 cores | | 33.3 / 61.1 MB/s | 39.5 / 67.8 MB/s | 28.5 / 55.6 MB/s |
+| Scan beside the player, 1 scanner, 2 / 4 cores | | 30.7 / 56.8 MB/s | 34.6 / 60.3 MB/s | 25.8 / 49.9 MB/s |
 
-Stereo DSF with four scanners held real time on both versions; at most 1.39 s behind on rc.3 with 2
-cores, 0.21 s now. `SACDFS_CACHE_MB=8` is no longer needed for this; on this rig it cost scan speed: whole-file
-WAV scans with a player ran at 13 to 28 MB/s at cache 8 on rc.3, and 15 and 24 MB/s without one,
-against 38 and 66 MB/s at the default. A reader counts as a player only after 0.5 s: with four
-scanners on 2 cores, the player fell up to 0.77 s behind and up to 14 of about 700 reads were more
-than 0.5 s late, so a player with a buffer under 1 s may still hear a gap. Not tested: a client on another host, and a NAS's own CPU. Memory at the floors is
-[#231](https://github.com/aclater/sacdfs/issues/231).
+The 0.4.1 container passes `--cache-mb 32` unless `SACDFS_CACHE_MB` is set, so it used 32 MiB under
+these limits. Under a limit up to 512 MiB, this version defaults to 8 MiB (#240): the player holds real
+time at either size, and 8 MiB saves about 24 MiB of memory against scans 18 to 28 % slower than at 32.
+On 0.4.1-rc.3, cache 8 cost far more: scans alone ran at 15.2 and 23.9 MB/s.
+
+Stereo DSF with four scanners held real time on every version and cache here. At 32 MiB, a reader
+counts as a player only after 0.5 s: with four scanners on 2 cores the player fell up to 0.72 s behind
+and up to 15 of about 700 reads were more than 0.5 s late, so a player with a buffer under 1 s may
+still hear a gap; at 8 MiB no read was more than 0.5 s late. Not tested: a client on another host,
+and a NAS's own CPU. Memory at the floors is [#231](https://github.com/aclater/sacdfs/issues/231).
 
 **Idle.** sacdfs used 0.007 % of a CPU and woke 1.5 times a second, and 5 minutes of `strace`
 showed no image reads and no metadata calls, so sacdfs itself does not keep a disk awake. Not
