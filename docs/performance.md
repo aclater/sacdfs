@@ -382,13 +382,34 @@ branch is built on main with scarletbook 0.5.9. Other services on the NAS were r
 | DST 6 channels, 66 min | 1 | 416.3 | not run | **513.5** | **+23 %** |
 | DST 6 channels, 66 min | 12 | 67.66 | 89.36 | **81.80** | +32 % → +21 % |
 
+Six channels on one thread, main without and with this branch, 2 alternating rounds: library 411.7 s,
+main 543.4 s (+32 %), this branch **510.4 s** (+24 %). The gap was there before this branch, which
+narrows it.
+
 An earlier round on scarletbook 0.5.8 (against its own `bench dsf`, with 0.4.0 and 0.4.1-rc.3) gave the
 same picture: -2 %, +13 %, +21 % and +19 %, where 0.4.0 was +29 %, +45 %, +35 % and +25 %. Six
 channels on one thread stay over 20 % behind the library. Grouping shorter batches (from 4 frames per
 thread instead of 8) made no difference there (522 against 522 s), so the cause is still open.
 
+**Pinned to P-cores** (sacdfs and the readers on 6 logical CPUs of 3 P-cores of an Intel i9-13900H,
+`taskset -c 2-7`, so all threads means 6 here), `cat` of a whole area out of a fresh local mount to
+`/dev/null`, main without and with this branch, medians of 5 alternating rounds, seconds (range):
+
+| Area | Readers | Main | This branch | Change | Peak RSS (MiB) |
+|---|---|---|---|---|---|
+| DST stereo DSF | 1 | 28.29 (28.02-31.29) | 29.66 (27.91-29.96) | +4.8 %, ranges overlap | 41 → 43 |
+| DST stereo DSF | 4 | 28.69 (26.91-29.25) | **26.30** (25.94-26.62) | -8.3 % | 48 → 51 |
+| DST 6 ch. DSF | 1 | 97.36 (91.35-99.77) | **88.15** (85.06-90.66) | -9.5 % | 47 → 51 |
+| DST 6 ch. DSF | 4 | 95.77 (88.92-101.98) | **82.73** (81.99-88.56) | -13.6 % | 53 → 61 |
+| DST stereo WAV | 1 | 33.38 (31.35-33.98) | 34.81 (32.40-35.64) | +4.3 %, ranges overlap | 50 → 52 |
+| DST 6 ch. WAV | 1 | 106.27 (106.09-114.63) | 107.64 (104.98-117.21) | +1.3 %, ranges overlap | 54 → 59 |
+
+The machine's other cores were busy during these rounds (load 10 to 23), so the spread is wider than
+on an idle machine.
+
 **Through shares** (Samba and NFS-Ganesha in the container, kernel clients on the same machine over
-loopback, in a 20-vCPU VM on a 20-thread Intel i9-13900H, default 32 MiB cache, all threads), `cat`
+loopback, in a 20-vCPU VM on a 20-thread Intel i9-13900H, default 32 MiB cache, all threads, **not
+pinned**, so these figures compare builds but make no speed claim of their own), `cat`
 of a whole area to `/dev/null`, fresh container per run, medians of 3 alternating rounds, seconds,
 0.4.0 / 0.4.1-rc.3 / this branch before 0.4.1 and scarletbook 0.5.9 were merged in (peak RSS of
 sacdfs, MiB, rc.3 → this branch):

@@ -44,8 +44,9 @@ All notable changes to sacdfs are recorded here. The format follows
   `smbclient` copies 5.71 → 3.18 s (DST stereo) and 14.54 → 11.59 s (six channels), and four readers
   over gvfs stay as fast as 0.4.0. On a NAS-class CPU (12-thread i5-1235U) against scarletbook 0.5.9:
   one thread, stereo -1 % from the library (0.4.1: +34 %), six channels +23 %; all threads, stereo
-  +15 % (0.4.1: +49 %), six channels +21 % (+32 %). Through kernel CIFS, NFS and `smbclient`, DSF reads
-  are 6 to 30 % faster; WAV is unchanged. On 2 or 4 cores under a 256 or 512 MiB limit, sacdfs peaks
+  +15 % (0.4.1: +49 %), six channels +21 % (+32 %). Pinned to three P-cores, DSF reads of six channels
+  are 10 to 14 % faster than without this change; stereo and WAV with one reader are unchanged within the
+  spread. On 2 or 4 cores under a 256 or 512 MiB limit, sacdfs peaks
   at most 3 MiB higher with a player and a copy running.
 - **A listing over SMB asks sacdfs about a quarter as often (#205).** A first `ls -lR` through the container's
   Samba took 1,765 requests to sacdfs for 2,412 entries, down from 6,897; repeated 30 s later, 1,555, down from
