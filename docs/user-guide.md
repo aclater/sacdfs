@@ -452,8 +452,12 @@ player, once as the extract and once as sacdfs's file.
   is also listed as `cover.jpg` (or `cover.png`, `cover.webp`; `folder.*` is preferred, then
   `front.*`, then the first by name), because MPD looks only for that name (#148). It is the
   same file with a second name: the same inode
-  number, so a server that walks both sees one image. No audio file changes, only the art is
-  added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
+  number, so a server that walks both sees one image. While a cover is replaced (a new file
+  moved over the old one, one written in place, or one added and another removed), the art in
+  the areas, `cover.jpg` included, goes on answering and shows the new file as soon as it is
+  there (#235): the art is compared with its source file on each lookup, and the kernel is not
+  allowed to remember it, so there is no second in which the name is missing. No audio file
+  changes, only the art is added to the listing. It follows `--sidecars`: an extension you remove (`default,-webp`)
   is not shown in either place, and `none` shows no art at all. A name that a track file
   already has gets ` (2)`.
 - With `--flatten`, the sidecar files of every folder of a collapsed chain show in the folder

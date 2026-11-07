@@ -53,7 +53,7 @@ from pathlib import Path
 
 STOP = threading.Event()
 LOCK = threading.Lock()
-COUNTS = {"bytes": 0, "reads": 0, "read_errors": 0, "err_churn": 0, "err_stall": 0, "err_tags": 0, "err_sidecar": 0, "err_cover": 0,
+COUNTS = {"bytes": 0, "reads": 0, "read_errors": 0, "err_churn": 0, "err_stall": 0, "err_tags": 0, "err_sidecar": 0,
           "err_unexpected": 0, "churn": 0, "stalls": 0, "stall_fails": 0,
           "remounts": 0, "remount_fails": 0}
 
@@ -71,7 +71,7 @@ SAMPLES = []
 # or toggled the art folder, and the stall window (monotonic seconds; 0: none yet).
 # What the churner removed, with the time: cover files and churn albums by name.
 REMOVED = {}
-TIMES = {"listed": 0.0, "tags_edit": 0.0, "cover_edit": 0.0, "art_edit": 0.0, "stall_from": 0.0, "stall_until": 0.0}
+TIMES = {"listed": 0.0, "tags_edit": 0.0, "art_edit": 0.0, "stall_from": 0.0, "stall_until": 0.0}
 
 
 def classify(path, err, mnt):
@@ -91,11 +91,6 @@ def classify(path, err, mnt):
       lists the file until it has re-read the folder, which takes seconds on real discs, and
       the file is gone), or on a file under Artwork/ less than 60 s after the churner toggled
       that folder;
-    - cover: ENOENT on a `cover.jpg` within 5 s of a cover replacement. sacdfs 0.4.1 shows the
-      cover of an album's folder as `cover.jpg` and, after a cover file is replaced, the name is
-      gone for about a second while it re-reads (measured: 8 gaps of 1.0 s or less in 12
-      replacements; 0.4.0 has no such name). The soak counts it apart and reports it, because it
-      is a name that exists before and after the change.
     Everything else is unexpected, whatever its errno, and fails the soak.
     """
     try:
@@ -116,8 +111,6 @@ def classify(path, err, mnt):
     if (e == errno.ENOENT and rel and rel[-1].endswith(".dsf")
             and (TIMES["tags_edit"] > TIMES["listed"] or now - TIMES["tags_edit"] <= 60)):
         return "tags"
-    if e == errno.ENOENT and rel and rel[-1] == "cover.jpg" and now - TIMES["cover_edit"] <= 5:
-        return "cover"
     if e == errno.ENOENT and rel and (("file:" + rel[-1]) in removed
                                       or ("Artwork" in rel[:-1] and now - TIMES["art_edit"] <= 60)):
         return "sidecar"
@@ -297,7 +290,6 @@ def churner(args, images, keys):
                 d.mkdir(parents=True)
                 (d / "disc.iso").symlink_to(img)
             elif act == 1:  # sidecars come and go
-                TIMES["cover_edit"] = time.monotonic()
                 (lib / "a0" / f"cover-{n}.jpg").write_bytes(b"\xff\xd8\xff\xe0 soak" * rnd.randrange(1, 64))
                 for old in sorted((lib / "a0").glob("cover-*.jpg"))[:-2]:
                     with LOCK:  # noted first: a reader may fail the moment the file is gone
@@ -526,7 +518,7 @@ def verdict(rows, args):
     # read error, on a stable file, is a failure of its own.
     lines.append(f"read errors: {c['read_errors']} of {c['reads'] + c['read_errors']} reads: "
                  f"{c['err_churn']} churned away, {c['err_stall']} in a stall, {c['err_tags']} renamed track, "
-                 f"{c['err_sidecar']} replaced sidecar, {c['err_cover']} cover.jpg re-read, "
+                 f"{c['err_sidecar']} replaced sidecar, "
                  f"{c['err_unexpected']} unexpected")
     with LOCK:
         for (cls, name, area), n in sorted(ERRORS.items()):
