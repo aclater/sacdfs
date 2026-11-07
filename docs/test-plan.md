@@ -174,6 +174,22 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 | [#175](https://github.com/aclater/sacdfs/issues/175) | Folders with no SACD below them are hidden | rc.1: on a real library 649 entries disappeared (4 top-level folders among them) and no DSF file. Carried over from rc.1 |
 | `verify` | A file it can't check gives an ERROR row and a non-zero exit, and an interrupted run leaves nothing that reads as a finished report. Users delete extracts on its word | Tested against the fix on its pull request branch and in CI; not run on a published 0.4.1 candidate |
 
+## Real-disc tests
+
+Real images can't go into CI, so three `#[ignore]`d tests (`dsf_header::real_discs_head_reads`,
+`library_index::real_discs`, `wav::real_discs`) run by hand. Before each release candidate the
+coordinator runs, on a build of the candidate commit:
+
+```sh
+scripts/real-discs.sh DIR
+```
+
+`DIR` is the Small library's images ([Test libraries](#test-libraries)) or larger, SACDs only. The
+release report records the counts (images, tests passed of 3, skipped) and the exit status, never
+disc titles. Exit 0 passes. Exit 77 (no images given) is a skip and is reported as one: the gate
+was not run, which [the exit criteria](#exit-criteria) do not count as passed. Details:
+[development.md](development.md#real-disc-tests).
+
 ## Install channels
 
 Run on the release they describe, following the docs as written, in a clean environment.
@@ -216,7 +232,12 @@ comparable. Every timed run is under the benchmark lock. Other jobs on the same 
 - NAS: SMB and NFS throughput on the NAS itself.
 - Memory: import replay and the default cache's peak.
 - **Soak:** two hours with induced stalls (`scripts/soak.py`), passing its memory, thread, file and
-  cache checks. Whether a candidate needs one is decided by [When a soak is needed](#when-a-soak-is-needed).
+  cache checks. Pass criteria ([development.md](development.md#the-soak)): memory within the cache cap
+  plus noise, and a trend of at most 4 MiB/h once the largest single step in the second half is set
+  aside ([#247](https://github.com/aclater/sacdfs/issues/247): healthy runs step by 3 to 6.5 MiB, and a
+  steady climb of 10 MiB/h still fails, a 2-hour run catching about 5 MiB/h and up); threads at the
+  first half's median + 4 at the median and end, with a spike above median + 16 allowed for under two
+  minutes and never above median + 32; open files and cache directory level. Whether a candidate needs one is decided by [When a soak is needed](#when-a-soak-is-needed).
   It does not cover a long hang with retrying clients ([#241](https://github.com/aclater/sacdfs/issues/241)).
 - Weekly leak checks and fuzzing are green on the release commit. For 0.4.1 the fuzz workflow was
   green on the rc.1 tag commit. The `leaks` workflow's first run was on this release and it failed
@@ -343,6 +364,7 @@ A final tag needs all of:
   failure is filed and in the docs;
 - no regression in the [table above](#regressions-that-must-stay-fixed);
 - audio identical, or the change declared;
+- the [real-disc tests](#real-disc-tests) pass on the last candidate (exit 0), or are reported as not run;
 - no unexplained performance regression over 10 %;
 - the soak passes on the last candidate, or the [soak rule](#when-a-soak-is-needed) shows none is
   needed (the final carries only the version change on top of a candidate that passed);

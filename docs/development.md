@@ -1,4 +1,4 @@
-# Development: leak hunting, memory profiling and skipped tests
+# Development: leak hunting, memory profiling, skipped tests and real-disc tests
 
 sacdfs runs for days on a NAS, so memory it keeps alive by mistake adds up. A map that only
 grows, nodes kept after a re-read, or the buffers of abandoned requests all count. In Rust,
@@ -87,13 +87,29 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
 
 - resident and anonymous memory stay within the cache cap (`--cache-mb`, default 64) plus
   32 MiB of noise above their level at the end of the warm-up;
-- their least-squares trend over the second half is at most 4 MiB/h, or adds less than 4 MiB
-  over that half (`--trend-floor-mb`), so that a short run's noise does not fail it;
-- threads do not climb: the median and the end level (the last three samples) of the second
-  half are at most 4 above the first half's median, and no sample passes `--thread-spike`
-  (default 16) above it. The staller makes sacdfs spawn spare threads on purpose (#167, #168),
-  so one sample taken during a stall may be several threads high; that does not fail a run,
-  while threads that accumulate still do;
+- their trend over the second half is at most 4 MiB/h, or adds less than 3 MiB over the part of
+  it that is judged (`--trend-floor-mb`), so that a short run's noise does not fail it. The
+  trend is taken with the largest single step set aside: the second half is cut into six equal
+  runs of samples, each reduced to its median, and the largest change between neighbouring
+  medians (up or down) is dropped with the time it spans. What is left, as a rate, is the
+  trend. *Why:* the memory of a healthy run moves in steps of 3 to 6.5 MiB, both ways and
+  unexplained ([#247](https://github.com/aclater/sacdfs/issues/247)), and a line through the
+  second half of a 2-hour run counted such a step as a climb of 8 to 9 MiB/h. A step shows in
+  one change between medians, a leak in all of them; a step down is dropped too, or it would
+  hide a leak beside it. *Limit:* in a 2-hour run (about 0.6 h is left after the step) this
+  fails a steady climb of about 5 MiB/h or more; a slower one needs a longer run (an 8-hour run
+  fails at 4 MiB/h). Two steps in the same direction count as a climb, one of them is not
+  set aside;
+- threads do not climb: the median and the end level (the median of the last sixth of the
+  second half, at least five samples) are at most 4 above the first half's median. The staller
+  makes sacdfs spawn spare threads on purpose (#167, #168), and a spare thread ends 10 s after
+  its work, so a sample taken during a stall may be well above the median: a sample over
+  `--thread-spike` (default 16) above the first half's median is allowed, up to twice that, as
+  long as the samples above the first line don't span `--spike-hold` (default 120 s, so three
+  in a row at the default interval). One sample past twice `--thread-spike` fails, and threads
+  that accumulate fail. *Why:* the peak of healthy 2-hour runs reached the single line of
+  first-half median + 16 on one rig (80 of 80 on 0.4.1-rc.3; 79 of 80 on 0.4.0), so one more
+  thread would have failed a run that did nothing different;
 - open files do not climb: the second half's maximum is at most 8 above the first half's;
 - the cache directory plateaus;
 - no read error is unexpected. Reads fail on purpose in some places, and the soak sorts every
@@ -204,11 +220,45 @@ python3 -I scripts/check_skips.py --job tests target/test-output.txt
 
 As a normal user with FUSE, this gives the `tests` job's result. On a machine without FUSE, leave
 out `SACDFS_FUSE_TESTS=1` to see which tests skip; the check then reports each as unexpected.
-`python3 -I scripts/test_check_skips.py` tests the script itself.
+`python3 -I scripts/test_check_skips.py` tests the script itself. `python3 -I scripts/test_soak.py`
+tests the soak's verdict on built series (a step, a leak, a thread spike).
 
 *Why it reads cargo's output rather than a report file, as pysacd does:* the reasons of `#[ignore]`
 tests are only there, and the output needs nothing passed through `sudo` (the `nfs export` job) or
 into a container. The release workflow's tests in its UBI 8 container don't run this check yet.
+
+## Real-disc tests
+
+Three tests run on real discs, which no CI job has: images can't go into a public repository
+(copyright), and the corpus is synthetic. They are `#[ignore]`d, so a plain `cargo test` lists them
+as ignored. They check that
+
+- `dsf_header::real_discs_head_reads`: a tagger's and a player's reads of every DSF file start
+  read-ahead only where they should (#78);
+- `library_index::real_discs`: 300 random ranges per area, located by sacdfs, equal reads through
+  a complete library index and a straight read;
+- `wav::real_discs`: every WAV file's audio equals its track's positions of the area stream, and
+  random ranges equal the straight read.
+
+Run them with:
+
+```sh
+scripts/real-discs.sh DIR
+```
+
+`DIR` holds `.iso` images of SACDs only, at least one, searched recursively (links to files are
+followed). `SACDFS_PCM_RATE=88200` or `352800` picks the WAV rate (default 176400); `CARGO_FLAGS`
+adds cargo options. The script runs `cargo test --release` with `SACDFS_REAL_TESTS=1`, and exits
+0 only when all three tests ran and passed. Without a directory it prints `SKIPPED` and exits 77,
+which is a skip and not a pass. The same holds under plain cargo: with `SACDFS_REAL_IMAGES` unset,
+the tests print `SKIPPED` (counted by `check_skips.py`), and with `SACDFS_REAL_TESTS=1` they fail.
+
+A run that looked at nothing fails: a directory that doesn't exist or holds no image, and an image
+that doesn't open, has no area, or serves no file, each fail the run, because the tree and
+`check_image` drop such images silently. So don't put non-SACD images in `DIR`. The WAV test dominates the time: 6 images (about 8.6 GB) took 12 min and 2 images (1.5 GB) 3 min on a
+busy 32-core host (load over 50, so not a speed figure).
+
+The release checklist runs this before every release candidate ([test plan](test-plan.md#real-disc-tests)).
 
 ## Fuzzing
 
