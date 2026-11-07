@@ -46,7 +46,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.5.8, from crates.io (`=0.5.8`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.5.9, from crates.io (`=0.5.9`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -61,7 +61,7 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   tag is no longer needed; bytes unchanged, gated as above. 0.5.8 (#206): a seek-index
   fix (`AreaIndex::from_bytes` refuses a form of saved index the library never writes) and no
   speed change; *why:* the pin follows the newest release that passes the gates; bytes unchanged,
-  gated as above.
+  gated as above. 0.5.9 (after 0.4.1): faster DST decoding and a rewrite of the DSF partial-row code; *why:* same rule; bytes unchanged, gated as above; *trade-off:* a DSF read on damaged media can now fail because of a bad neighbouring position (library notes).
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact

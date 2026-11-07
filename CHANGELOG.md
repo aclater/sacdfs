@@ -15,6 +15,18 @@ All notable changes to sacdfs are recorded here. The format follows
   images found at mount instead of the capacity of the disk they're on, still with 0 free, and
   the source's size only when there are no images. Untested on Windows, macOS, Roon and Plex; to go back
   on the attribute, `SMB_EXTRA_GLOBAL=map readonly = no`.
+### Changed
+
+- **scarletbook and scarletbook-pcm 0.5.8 -> 0.5.9** (not part of 0.4.1; for the release after it). 0.5.9 makes
+  DST decoding faster (about 1 to 14 % in scarletbook's own figures, on Zen 2 only), changes the DSF
+  partial-row code, and adds nothing sacdfs can use to delete code of its own: the new
+  `with_dst_lanes` is a setting to measure with, and the per-track DSF writer recipe is documentation
+  (the writer is planned for 0.6.0, scarletbook-rs#202). Audio bytes are unchanged: every DSF and WAV file
+  served from the 136-image corpus (914 files) and from the five bench discs (186 files) has the same
+  SHA-256 as with the 0.4.1-rc.3 build (0.5.8), and the bench-disc hashes equal 0.4.0's. The
+  library's notes warn that a DSF read of part of a row now asks for all of that row's positions, so on
+  damaged media a read that used to succeed can return an I/O error. The extra work the library reports for DST reads under 4 KiB was not measured
+  through the mount.
 
 ## [0.4.1-rc.3] - 2026-11-06
 
