@@ -61,8 +61,64 @@ macro_rules! skip_without_fuse {
     };
 }
 
+/// The reason the real-disc tests give when they skip.
+pub const NO_REAL_IMAGES: &str = "needs real disc images: set SACDFS_REAL_IMAGES";
+
+/// The `.iso` images (any case, searched recursively, links to files followed) in the directory
+/// `SACDFS_REAL_IMAGES` names, sorted; `None` if it isn't set, so the test skips. A real-disc run
+/// must not pass for having looked at nothing (#220): `SACDFS_REAL_TESTS=1`, as
+/// `scripts/real-discs.sh` sets, makes an unset variable fail instead of skip, and a directory
+/// that is missing or holds no image fails in any case.
+pub fn real_images() -> Option<(PathBuf, Vec<PathBuf>)> {
+    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else {
+        assert!(
+            !std::env::var_os("SACDFS_REAL_TESTS").is_some_and(|v| v == "1"),
+            "SACDFS_REAL_TESTS=1 but SACDFS_REAL_IMAGES is not set"
+        );
+        return None;
+    };
+    let dir = PathBuf::from(dir);
+    assert!(dir.is_dir(), "SACDFS_REAL_IMAGES is not a directory");
+    let mut images = Vec::new();
+    let mut stack = vec![dir.clone()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() && !p.is_symlink() {
+                stack.push(p);
+            } else if p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("iso")) {
+                images.push(p);
+            }
+        }
+    }
+    images.sort();
+    assert!(!images.is_empty(), "SACDFS_REAL_IMAGES holds no .iso image");
+    Some((dir, images))
+}
+
+/// Fails unless every image in `images` is the source of at least one of `served` (the disc paths
+/// of a tree's files). The tree drops an image that doesn't open without a word, so a run over a
+/// directory of broken images would otherwise check less than it says. The directory must hold
+/// SACD images only.
+pub fn assert_every_image_served(images: &[PathBuf], served: impl IntoIterator<Item = PathBuf>) {
+    let served: std::collections::BTreeSet<PathBuf> = served.into_iter().collect();
+    let missing = images.iter().filter(|i| !served.contains(*i)).count();
+    assert!(missing == 0, "{missing} of {} images served no file", images.len());
+}
+
+/// Skips the enclosing test unless `SACDFS_REAL_IMAGES` names a directory of images; gives
+/// that directory and its images.
+macro_rules! real_images_or_skip {
+    () => {
+        match $crate::common::real_images() {
+            Some(found) => found,
+            None => $crate::common::skip!($crate::common::NO_REAL_IMAGES),
+        }
+    };
+}
+
 #[allow(unused_imports)] // not every test file uses each of them
-pub(crate) use {skip, skip_without_fuse, test_name};
+pub(crate) use {real_images_or_skip, skip, skip_without_fuse, test_name};
 
 /// Unmounts the FUSE mount at `mountpoint` with `fusermount3 -u`, retrying for up to
 /// 20 s. Right after files on the mount are closed, the kernel can hold it busy for a
