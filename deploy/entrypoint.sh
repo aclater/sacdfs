@@ -101,6 +101,9 @@ write_smb_conf() {
    map readonly = yes
    # Nothing can change on a read-only mount: no change notifications, no oplock breaks.
    kernel change notify = no
+   # The size and free space don't change while mounted: ask sacdfs once a minute, not for
+   # every client's volume query (#205).
+   dfree cache time = 60
    ${SMB_EXTRA_GLOBAL:-}
 
 [$SHARE]

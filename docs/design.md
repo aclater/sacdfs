@@ -538,6 +538,8 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   source folder of its own. *Kernel caches:* the 24-hour `TTL` and cached listings would
   hide all of this, so for a folder that is re-read (and for the names looked up in it)
   entries are remembered for the refresh interval only, and its `readdir` is not cached.
+  An area is re-read too, for its folder art (#95), but its track files keep the 24 hours
+  (#205; with `--tags` their size and time follow the tags file, so they don't).
   Everything else (the audio, the images' own areas) keeps the 24 hours, and a mount that
   does not watch (a single image as SOURCE) is as before. *Why not inotify or
   `inval_entry` notifications:* inotify does not see changes made by other clients of a
@@ -1311,6 +1313,35 @@ opened with `keep_cache`, and the kernel's page cache serves repeated reads. Rea
 1 MiB (the kernel grants at most its own default, typically 128 KiB, as fuser's `INIT` log
 shows), and up to 64 background requests are allowed. The filesystem is mounted `ro`,
 `nodev`, `nosuid`, `noexec`.
+
+**Requests per listing (#205).** Samba serves the share from the mount, and up to 0.4.1 a listing
+through it cost about three requests per entry: an `ACCESS` for nearly every SMB request (Samba
+changes directory each time), a `LOOKUP` per entry, and the same again 2 s later. Three changes:
+
+- **`default_permissions`:** the kernel checks access from the modes (0555 folders, 0444 files, a
+  read-only mount) instead of sending `ACCESS`. The answers are the ones `access` gave: read for
+  everyone, no write (`EROFS`), no execute on files. *Trade-off:* none found; `access` is kept for a
+  mount made without the option.
+- **`readdirplus`** (`FUSE_DO_READDIRPLUS` with `FUSE_READDIRPLUS_AUTO`): a listing carries each
+  entry's attributes and TTL, the same as its `lookup` would, so a server that lists a folder and
+  then looks at each entry sends no `LOOKUP` per entry. With `AUTO` the kernel asks for it only
+  when lookups follow listings, as libfuse does by default. A name whose node was just let go of
+  (#237) is left out of that page of the listing, and shows again in the next; short of memory the
+  listing fails with `ENOMEM`, as `readdir` does.
+- **Track files keep the 24-hour TTL in an area** even though the area is re-read for its art: the
+  art never changes a track's name, number or attributes. Since #95 every area holding an image has
+  an art watch, so every track's name was looked up again on any listing more than 2 s after the
+  last, which nothing else needed.
+
+*Measured* with the kernel's `fuse:fuse_request_send` tracepoint through the container's Samba 4.24.7
+and the Linux kernel client, 95 images, 2,412 entries: a first `ls -lR` 6,897 requests on 0.4.1 and
+1,765 after, a repeat 30 s later 6,469 and 1,555 ([deployment](deployment.md#what-a-listing-costs-over-smb)).
+*Left:* per folder, an `OPENDIR`/`RELEASEDIR` pair, two listing reads, a `STATFS` from Samba's reopening
+of the folder's path handle, and a `LOOKUP` for a folder that is re-read. *Not done:* answering
+`OPENDIR` with `ENOSYS` (the kernel then stops sending `OPENDIR` and `RELEASEDIR` for the mount),
+because the kernel then caches every listing, including those of folders that are re-read, which
+would rely on their mtime moving for every change, and an area's does not move when its art does.
+Test: `tests/probes.rs` `a_listing_repeated_later_asks_for_no_track_again`.
 
 Two kinds of probe are answered so that the kernel stops asking (#61):
 
