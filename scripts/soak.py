@@ -24,6 +24,10 @@ Each `--interval` seconds it writes one row to the TSV: the main sacdfs's reside
 its anonymous memory (the malloc heap plus thread stacks), threads, open files, the size of
 the cache directory, and the work done. At the end:
 
+Read errors are sorted into classes by path and errno (see `classify`): the ones the churner and
+the staller cause are counted apart (columns `err_*` of the TSV, and `<out>.errors.tsv` by class,
+errno and area), and any other read error fails the run, with a few paths if `--sample-paths`.
+
 PASS if, after `--warmup`, the resident and anonymous memory stay within the cache cap plus
 `--noise-mb` of their level at the end of the warm-up, their trend over the second half is
 at most `--max-slope` MiB per hour (or adds under `--trend-floor-mb` over that half), threads (by their median and end level, with a hard ceiling for a spike) and open files do not climb, and the cache
@@ -32,6 +36,8 @@ directory plateaus. Exit status 0 on PASS, 1 on FAIL.
 `--wrap 'heaptrack -o OUT'` (or valgrind massif) runs the main sacdfs under a profiler.
 """
 import argparse
+import collections
+import errno
 import os
 import random
 import shlex
@@ -45,13 +51,88 @@ from pathlib import Path
 
 STOP = threading.Event()
 LOCK = threading.Lock()
-COUNTS = {"bytes": 0, "reads": 0, "read_errors": 0, "churn": 0, "stalls": 0, "stall_fails": 0,
+COUNTS = {"bytes": 0, "reads": 0, "read_errors": 0, "err_churn": 0, "err_stall": 0, "err_tags": 0, "err_sidecar": 0, "err_cover": 0,
+          "err_unexpected": 0, "churn": 0, "stalls": 0, "stall_fails": 0,
           "remounts": 0, "remount_fails": 0}
 
 
 def count(key, n=1):
     with LOCK:
         COUNTS[key] += n
+
+
+# Read errors by (class, errno name), and a few paths of the unexpected ones.
+ERRORS = collections.Counter()
+FAILED_PATHS = collections.defaultdict(set)  # class -> the distinct paths that failed
+SAMPLES = []
+# When the reader's file list was taken, and when the churner last edited a tags file or sidecar
+# or toggled the art folder, and the stall window (monotonic seconds; 0: none yet).
+# What the churner removed, with the time: cover files and churn albums by name.
+REMOVED = {}
+TIMES = {"listed": 0.0, "tags_edit": 0.0, "cover_edit": 0.0, "art_edit": 0.0, "stall_from": 0.0, "stall_until": 0.0}
+
+
+def classify(path, err, mnt):
+    """Expected or not, for a failed read of `path` (under the mount `mnt`) with `err`.
+
+    Expected, and only these:
+    - churn: a path under the churn folders, in an album the churner has removed: ENOENT or
+      ENOTDIR (at any time: the album is gone), or EIO within 30 s of the removal (a request
+      that was in flight when the image's link went away);
+    - stall: a path under the stall folder, from the staller's link change until the stuck
+      requests are released and a few watchdog timeouts have passed, with EIO, ETIMEDOUT,
+      ENOENT or EINTR (the watchdog fails the request, #141);
+    - tags: ENOENT on a .dsf when the churner edited a tags file after the reader's list was
+      taken, or less than 60 s ago (a tags edit can rename a track's file, so the listed name
+      is gone);
+    - sidecar: ENOENT on a cover-*.jpg the churner has removed (by name, at any time: sacdfs
+      lists the file until it has re-read the folder, which takes seconds on real discs, and
+      the file is gone), or on a file under Artwork/ less than 60 s after the churner toggled
+      that folder;
+    - cover: ENOENT on a `cover.jpg` within 5 s of a cover replacement. sacdfs 0.4.1 shows the
+      cover of an album's folder as `cover.jpg` and, after a cover file is replaced, the name is
+      gone for about a second while it re-reads (measured: 8 gaps of 1.0 s or less in 12
+      replacements; 0.4.0 has no such name). The soak counts it apart and reports it, because it
+      is a name that exists before and after the change.
+    Everything else is unexpected, whatever its errno, and fails the soak.
+    """
+    try:
+        rel = Path(path).relative_to(mnt).parts
+    except ValueError:
+        rel = ()
+    now = time.monotonic()
+    e = err.errno
+    with LOCK:
+        removed = dict(REMOVED)
+    if rel[:2] and rel[0] == "churn":
+        gone = removed.get("album:" + rel[1] if len(rel) > 1 else "")
+        if gone is not None and (e in (errno.ENOENT, errno.ENOTDIR) or (e == errno.EIO and now - gone <= 30)):
+            return "churn"
+    if (rel[:1] == ("stall",) and TIMES["stall_from"] <= now <= TIMES["stall_until"]
+            and e in (errno.EIO, errno.ETIMEDOUT, errno.ENOENT, errno.EINTR)):
+        return "stall"
+    if (e == errno.ENOENT and rel and rel[-1].endswith(".dsf")
+            and (TIMES["tags_edit"] > TIMES["listed"] or now - TIMES["tags_edit"] <= 60)):
+        return "tags"
+    if e == errno.ENOENT and rel and rel[-1] == "cover.jpg" and now - TIMES["cover_edit"] <= 5:
+        return "cover"
+    if e == errno.ENOENT and rel and (("file:" + rel[-1]) in removed
+                                      or ("Artwork" in rel[:-1] and now - TIMES["art_edit"] <= 60)):
+        return "sidecar"
+    return "unexpected"
+
+
+def record_error(path, err, args):
+    cls = classify(path, err, args.work / "mnt")
+    name = errno.errorcode.get(err.errno, str(err.errno))
+    top = Path(path).relative_to(args.work / "mnt").parts[0] if Path(path).is_relative_to(args.work / "mnt") else "?"
+    with LOCK:
+        COUNTS["read_errors"] += 1
+        COUNTS["err_" + cls] += 1
+        FAILED_PATHS[cls].add(str(path))
+        ERRORS[(cls, name, "churn" if top == "churn" else "stall" if top == "stall" else "other")] += 1
+        if cls == "unexpected" and len(SAMPLES) < 10:
+            SAMPLES.append((name, str(path) if args.sample_paths else f"<{top}>"))
 
 
 def log(msg):
@@ -103,7 +184,17 @@ class Mount:
                                      stderr=open(args.work / f"{logname}.stderr", "ab"))
         wait(lambda: is_mounted(mp) or self.proc.poll() is not None, 120, f"the mount on {mp}")
         if self.proc.poll() is not None:
-            raise RuntimeError(f"sacdfs exited with {self.proc.returncode}")
+            # Say why: sacdfs's own words are in its stderr and log, in the work directory
+            # (which a CI runner throws away).
+            why = ""
+            for name in (f"{logname}.stderr", logname):
+                try:
+                    text = (args.work / name).read_text(errors="replace").strip()
+                except OSError:
+                    continue
+                if text:
+                    why += f"\n--- {name} ---\n{text[-4000:]}"
+            raise RuntimeError(f"sacdfs exited with {self.proc.returncode} (mount on {mp}){why}")
         self.pid = find_sacdfs(self.proc.pid)
 
     def stop(self, secs=60):
@@ -158,14 +249,15 @@ def reader(seed, args, state):
                         f.seek(off)
                         count("bytes", len(f.read(n)))
             count("reads")
-        except OSError:
-            count("read_errors")  # churned away, or stalled: expected
+        except OSError as e:
+            record_error(p, e, args)
         time.sleep(args.read_pause)
 
 
 def refresher(args, state):
     while not STOP.is_set():
         try:
+            TIMES["listed"] = time.monotonic()
             state["files"] = files_under(args.work / "mnt")
         except OSError:
             pass
@@ -203,12 +295,17 @@ def churner(args, images, keys):
                 d.mkdir(parents=True)
                 (d / "disc.iso").symlink_to(img)
             elif act == 1:  # sidecars come and go
+                TIMES["cover_edit"] = time.monotonic()
                 (lib / "a0" / f"cover-{n}.jpg").write_bytes(b"\xff\xd8\xff\xe0 soak" * rnd.randrange(1, 64))
                 for old in sorted((lib / "a0").glob("cover-*.jpg"))[:-2]:
+                    with LOCK:  # noted first: a reader may fail the moment the file is gone
+                        REMOVED["file:" + old.name] = time.monotonic()
                     old.unlink()
             elif act == 2:  # a tags file is edited
+                TIMES["tags_edit"] = time.monotonic()
                 write_tags(args, rnd.choice(keys), n)
             elif act == 3:  # an art folder comes and goes
+                TIMES["art_edit"] = time.monotonic()
                 art = lib / "a1" / "Artwork"
                 if art.exists():
                     for f in art.iterdir():
@@ -220,6 +317,8 @@ def churner(args, images, keys):
             else:  # the oldest added albums go
                 keep = 1 if args.churn_slots else 3
                 for d in sorted(churn.glob("album-*"), key=lambda p: p.stat().st_mtime)[:-keep]:
+                    with LOCK:
+                        REMOVED["album:" + d.name] = time.monotonic()
                     (d / "disc.iso").unlink()
                     d.rmdir()
             count("churn")
@@ -237,6 +336,8 @@ def staller(args, image):
             if not names:
                 continue
             tmp = link.with_name("disc.tmp")
+            TIMES["stall_from"] = time.monotonic()
+            TIMES["stall_until"] = float("inf")
             tmp.symlink_to(fifo)
             os.replace(tmp, link)
             # sacdfs's open handle of the image may still be good: closed when idle or when the
@@ -264,6 +365,8 @@ def staller(args, image):
                 time.sleep(0.05)
             tmp.symlink_to(image)
             os.replace(tmp, link)
+            # abandoned requests may still fail for a few timeouts
+            TIMES["stall_until"] = time.monotonic() + 3 * args.request_timeout
         except OSError as e:
             log(f"stall: {e}")
 
@@ -362,6 +465,24 @@ def verdict(rows, args):
     with LOCK:
         c = dict(COUNTS)
     lines.append("work: " + ", ".join(f"{k} {v}" for k, v in c.items()))
+    # Read errors: expected ones come from the churner and the staller (see classify); any other
+    # read error, on a stable file, is a failure of its own.
+    lines.append(f"read errors: {c['read_errors']} of {c['reads'] + c['read_errors']} reads: "
+                 f"{c['err_churn']} churned away, {c['err_stall']} in a stall, {c['err_tags']} renamed track, "
+                 f"{c['err_sidecar']} replaced sidecar, {c['err_cover']} cover.jpg re-read, "
+                 f"{c['err_unexpected']} unexpected")
+    with LOCK:
+        for (cls, name, area), n in sorted(ERRORS.items()):
+            lines.append(f"  read errors {cls} {name} ({area}): {n}")
+        # A failed read returns at once and the reader tries again after --read-pause, so the
+        # counts above are attempts; these are how many different files failed.
+        lines.append("  distinct files that failed, by class: "
+                     + ", ".join(f"{k} {len(v)}" for k, v in sorted(FAILED_PATHS.items())))
+        for name, where in SAMPLES:
+            lines.append(f"  unexpected sample: {name} {where}")
+    if c["err_unexpected"]:
+        ok = False
+        lines.append("FAIL: unexpected read errors")
     if c["stall_fails"] or c["remount_fails"]:
         lines.append("note: some stalls were not failed by the watchdog, or some remounts failed")
     return ok, lines
@@ -391,6 +512,9 @@ def main():
                     help="second-half growth (by the trend) that passes whatever the slope")
     ap.add_argument("--thread-spike", type=int, default=16,
                     help="hard ceiling for the thread count, above the first half's median")
+    ap.add_argument("--sample-paths", action="store_true",
+                    help="print the paths of unexpected read errors (off: only their top folder; "
+                         "leave it off for a library whose names must not be published)")
     ap.add_argument("--wrap", default="", help="command line to run the main sacdfs under")
     args = ap.parse_args()
     args.sacdfs = str(Path(args.sacdfs).resolve())
@@ -420,6 +544,7 @@ def main():
         signal.signal(sig, lambda *_: STOP.set())
     log(f"work directory {args.work}; {len(images)} images; {args.hours} h")
     main_mount = Mount(args, lib, args.work / "mnt", "main.log", args.wrap)
+    TIMES["listed"] = time.monotonic()
     state = {"files": files_under(args.work / "mnt")}
     threads = [threading.Thread(target=reader, args=(i, args, state), daemon=True) for i in range(args.readers)]
     threads += [threading.Thread(target=f, args=a, daemon=True) for f, a in (
@@ -445,6 +570,10 @@ def main():
         lines.append("the main sacdfs exited before the end")
     for line in lines:
         log(line)
+    with LOCK, open(args.out.with_suffix(".errors.tsv"), "w") as f:
+        f.write("class\terrno\tarea\tcount\n")
+        for (cls, name, area), n in sorted(ERRORS.items()):
+            f.write(f"{cls}\t{name}\t{area}\t{n}\n")
     log("PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)
 

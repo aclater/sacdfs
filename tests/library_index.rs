@@ -267,7 +267,9 @@ fn provisional_readings_that_differ_are_refuted() {
 #[test]
 #[ignore = "needs real disc images: set SACDFS_REAL_IMAGES"]
 fn real_discs() {
-    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else { return };
+    let Some(dir) = std::env::var_os("SACDFS_REAL_IMAGES") else {
+        common::skip!("needs real disc images: set SACDFS_REAL_IMAGES")
+    };
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .unwrap()
         .map(|e| e.unwrap().path())

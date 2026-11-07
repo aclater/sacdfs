@@ -45,7 +45,11 @@ jobs:
       # as the NFS server has: run the file handle tests as root.
       - name: File handles across a restart (as root)
         timeout-minutes: 5
-        run: sudo --preserve-env=HOME,PATH,CARGO_TERM_COLOR env SACDFS_FUSE_TESTS=1 SACDFS_EXPORT_TESTS=1 cargo test --locked --test export
+        run: |
+          set -o pipefail
+          sudo --preserve-env=HOME,PATH,CARGO_TERM_COLOR env SACDFS_FUSE_TESTS=1 SACDFS_EXPORT_TESTS=1 cargo test --locked --test export 2>&1 | tee "$RUNNER_TEMP/test-output.txt"
+      - name: Only the expected tests skipped
+        run: python3 -I scripts/check_skips.py --job nfs "$RUNNER_TEMP/test-output.txt"
       - name: NFS export over loopback
         timeout-minutes: 10
         run: |

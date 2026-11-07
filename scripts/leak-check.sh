@@ -16,7 +16,8 @@
 #                       sites still live at the end, and the growth between the first
 #                       snapshot after the warm-up and the last.
 #
-# Output goes to $OUT (default target/leak-check).
+# Output goes to $OUT (default target/leak-check). ONLY=REGEX (memcheck) runs only the test
+# binaries whose path matches, for example ONLY='/(mount|stall)-'.
 set -euo pipefail
 
 OUT=${OUT:-target/leak-check}
@@ -31,14 +32,24 @@ memcheck() {
 for l in sys.stdin:
     m = json.loads(l)
     if m.get("reason") == "compiler-artifact" and m.get("executable") and m["profile"]["test"]:
-        print(m["executable"])' | grep -v '/no_growth-' >"$OUT/tests.txt"
+        print(m["executable"])' | grep -v '/no_growth-' | grep -E "${ONLY:-.}" >"$OUT/tests.txt"
     # tests/no_growth.rs is left out: dhat replaces the allocator there (memcheck would see
     # nothing), and its in-process mount hangs under valgrind.
+    # The system tools the tests run (mkfifo, ls, df, awk) are not followed: on the CI runner
+    # they are uutils coreutils, which leaks at exit (43 KiB from mkfifo alone) and is not ours.
+    # The skip is by path, so it would also skip a sacdfs installed in /usr/bin or /bin
+    # (/usr/local/bin is fine). The tests run the sacdfs that cargo builds under target/, never
+    # an installed one; the check below refuses a build directory under those two, where the
+    # test binaries and sacdfs would be skipped and the run would pass without looking.
+    if grep -qE '^/(usr/)?bin/' "$OUT/tests.txt"; then
+        echo "memcheck: the test binaries are under /usr/bin or /bin, which valgrind is told to skip" >&2
+        return 2
+    fi
     # No --error-exitcode: it would change the exit status of the sacdfs processes the tests
     # start and check. The verdict comes from the logs instead.
     local vg=(valgrind --leak-check=full --show-leak-kinds=definite,indirect
         --errors-for-leak-kinds=definite,indirect --trace-children=yes
-        "--trace-children-skip=*fusermount3,*/kill,*/sh,*/bash,*/python3"
+        "--trace-children-skip=*fusermount3,*/kill,*/sh,*/bash,*/python3,/usr/bin/*,/bin/*"
         --suppressions=scripts/leak-check.supp --num-callers=30)
     local fail=0
     while read -r bin; do
