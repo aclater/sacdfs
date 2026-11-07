@@ -46,11 +46,12 @@ with Docker 29 on Debian 13: healthy in 8 s, both shares mounted. Reference:
 
 ```sh
 sudo podman inspect -f '{{.State.Health.Status}}' sacdfs     # healthy, within a minute (needs the --health-* options)
-sudo podman logs sacdfs 2>&1 | grep -E 'cache-mb|image files|mounted|NFS SERVER INITIALIZED'
+sudo podman logs sacdfs 2>&1 | grep -E 'memory limit|image files|mounted|NFS SERVER INITIALIZED'
 ```
 
-The log shows `--cache-mb 32` (the default), the number of image files, `mounted`, and the
-SMB and NFS servers starting. Then mount it from a client:
+The log shows the number of image files, `mounted`, and the SMB and NFS servers starting. With
+`--memory` set, it also shows what sacdfs set from the limit: cache, decoder threads and listings
+([Under a memory limit](../deployment.md#under-a-memory-limit)). Then mount it from a client:
 [linux-client.md](linux-client.md).
 
 Rootless Podman, SMB only (`-e NFS=0`; the `--health-*` options as above), was run with the

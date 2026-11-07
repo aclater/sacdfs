@@ -18,6 +18,7 @@ pub mod handles;
 pub mod ident;
 pub mod index_cache;
 pub mod lookup;
+pub mod memory;
 pub mod names;
 pub mod pcm;
 pub mod sidecar;

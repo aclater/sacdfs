@@ -28,11 +28,11 @@
 //! An empty value removes the item. Levels apply in the order album, area album, track, area
 //! track; a later one wins.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::SystemTime;
 
 use scarletbook::output::{MAX_TAG_BYTES, TagItem, TagSet};
@@ -85,6 +85,9 @@ impl Levels {
 
 /// A picture: its MIME type and bytes.
 pub type Picture = (&'static str, Arc<Vec<u8>>);
+
+/// A picture read before: its MIME type, and its bytes while anything holds them.
+type KnownPicture = (&'static str, Weak<Vec<u8>>);
 
 /// A tags file as cached: its mtime and size when read, and its tags.
 type Cached = (SystemTime, u64, Option<Arc<DiscTags>>);
@@ -364,8 +367,9 @@ pub struct DiscTags {
     pub file: TagsFile,
     /// Its modification time.
     pub mtime: SystemTime,
-    /// Pictures named by it, by name, read once: `None` if unusable (logged).
-    art: Mutex<HashMap<String, Option<Picture>>>,
+    /// Pictures named by it, by name: `None` if unusable (logged once). Held only as long as
+    /// [`RECENT_PICTURES`] or a caller holds them: see there.
+    art: Mutex<HashMap<String, Option<KnownPicture>>>,
     dir: PathBuf,
 }
 
@@ -404,15 +408,38 @@ impl DiscTags {
 
     fn picture(&self, name: &str) -> Option<Picture> {
         let mut m = self.art.lock().unwrap_or_else(|p| p.into_inner());
-        m.entry(name.to_owned())
-            .or_insert_with(|| {
-                read_picture(&self.dir, name)
-                    .inspect_err(|e| log::warn!("tags: art {name:?}: {e}; not embedded"))
-                    .ok()
-            })
-            .clone()
+        match m.get(name) {
+            Some(None) => return None,
+            Some(Some((mime, weak))) => {
+                if let Some(data) = weak.upgrade() {
+                    return Some((mime, data));
+                }
+            }
+            None => {}
+        }
+        let read = read_picture(&self.dir, name)
+            .inspect_err(|e| log::warn!("tags: art {name:?}: {e}; not embedded"))
+            .ok();
+        m.insert(name.to_owned(), read.as_ref().map(|(mime, data)| (*mime, Arc::downgrade(data))));
+        if let Some((_, data)) = &read {
+            let mut recent = RECENT_PICTURES.lock().unwrap_or_else(|p| p.into_inner());
+            if recent.len() == KEPT_PICTURES {
+                recent.pop_front();
+            }
+            recent.push_back(data.clone());
+        }
+        read
     }
 }
+
+/// Pictures read last, the only ones kept (#237). *Why not all:* a tag copies its picture, so the
+/// picture is needed only while a disc's files are being made, one after another, and each disc's
+/// own cover kept for good would add a few GiB to a large library, outside the bound on listings.
+/// A disc listed again reads its picture again.
+static RECENT_PICTURES: Mutex<VecDeque<Arc<Vec<u8>>>> = Mutex::new(VecDeque::new());
+
+/// How many pictures [`RECENT_PICTURES`] keeps: more than the discs listed at once, in practice.
+const KEPT_PICTURES: usize = 16;
 
 /// Reads the picture `name` (a file name in `dir`, not a path; no link): its MIME type, from
 /// its first bytes, and its bytes.
@@ -968,5 +995,26 @@ TIT2 = "Three (stereo)"
         // A file that is not a watch file is as none.
         fs::write(&file, "something else\n").unwrap();
         assert!(Watch::load(Some(file), images()).images.is_empty());
+    }
+
+    /// A cover isn't kept for good by the disc it belongs to (#237): once other discs' pictures
+    /// have been read, a disc's is read again.
+    #[test]
+    fn only_the_last_pictures_stay_in_memory() {
+        let d = tempfile::tempdir().unwrap();
+        let png = b"\x89PNG\r\n\x1a\nxx";
+        fs::write(d.path().join("a.png"), png).unwrap();
+        fs::write(d.path().join("b.png"), png).unwrap();
+        let tags = || {
+            let file = TagsFile::parse("[album]\nart = \"a.png\"\n").unwrap();
+            DiscTags::new(file, SystemTime::UNIX_EPOCH, d.path())
+        };
+        let disc = tags();
+        assert!(disc.picture("a.png").is_some());
+        for _ in 0..KEPT_PICTURES {
+            assert!(tags().picture("b.png").is_some());
+        }
+        fs::remove_file(d.path().join("a.png")).unwrap();
+        assert!(disc.picture("a.png").is_none());
     }
 }

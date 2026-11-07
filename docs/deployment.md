@@ -177,8 +177,9 @@ All settings are environment variables.
 | `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |
 | `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there, read-only is enough); see the [user guide](user-guide.md#your-own-tags---tags) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
-| `SACDFS_CACHE_MB` | `32` | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
-| `SACDFS_THREADS` | (one per CPU) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
+| `SACDFS_CACHE_MB` | (32, or 8 under a limit up to 512 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
+| `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
+| `SACDFS_THREADS` | (one per CPU, at most one per 64 MiB of a limit) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
 | `SACDFS_REQUEST_TIMEOUT` | (30) | `--request-timeout` in seconds: a read, lookup or listing that waits longer for the images (a stalled disk or share) fails with an I/O error, and is logged, instead of hanging the SMB or NFS client; `0` waits for good. See [Troubleshooting](#troubleshooting) |
 | `SACDFS_MOUNT_TIMEOUT` | `300` | seconds the container waits for sacdfs to mount (it lists every image first, so a large library on a slow disk takes longer) before it exits with an error; a whole number from 1 to 86400. Keep the health check's start period (300 s in the image, the compose file and the commands in this guide) at least as long if you raise it. See [Troubleshooting](#troubleshooting) |
@@ -202,7 +203,7 @@ which is all a read-only share needs.
 
 ### Memory
 
-The default `SACDFS_CACHE_MB=32` (`--cache-mb 32`, since #150) suits a NAS. The cache holds
+The default cache of 32 MiB (`SACDFS_CACHE_MB`, `--cache-mb`, since #150) suits a NAS, and is 8 MiB under a memory limit up to 512 MiB ([Under a memory limit](#under-a-memory-limit)). The cache holds
 decoded frames so that a client re-reading the same part of a file does not decode it again;
 players read ahead, so a small cache costs little. 32 MiB is the smallest size that reads,
 seeks and scans within 5 % of a 256 MiB cache ([performance](performance.md#cache-size-150));
@@ -250,14 +251,153 @@ The cache's memory is its limit (its frames live in their own memory mappings, w
 image listed (its TOC, text and track lists) and for each frame decoded at once. After 60 s
 without reads sacdfs gives the cache and its decoders back: about 11 MiB idle on a small
 library like the bench discs (see
-[design](design.md#memory-the-default-cache-and-the-fixed-overhead-150)). What the listing
-holds is not given back, so the idle size grows with the library: 39 MiB at 10 minutes idle on a
-395-image library (0.4.1-rc.1). Limiting open images
+[design](design.md#memory-the-default-cache-and-the-fixed-overhead-150)). With no memory limit,
+what the listing holds is not given back, so the idle size grows with the library: 39 MiB at 10
+minutes idle on a 395-image library (0.4.1-rc.1). Limiting open images
 (`SACDFS_MAX_OPEN_IMAGES`) makes no measurable difference: an open image costs about 30 KB.
+
+### Under a memory limit
+
+sacdfs reads the limit of its cgroup at startup: a container's `--memory`, or a systemd unit's
+`MemoryMax=` or `MemoryHigh=`. It sets four things from it, and the container a fifth. With no
+limit, none of this applies.
+
+| What | With a limit |
+|---|---|
+| Cache of frames (`--cache-mb`) | 8 MiB up to 512 MiB, else 32 |
+| Decoder threads (`--threads`) | one per CPU, at most one per 64 MiB of the limit, and at least 2 |
+| Memory for what listed images hold (`--listing-mb`) | 3/8 of the limit, at least 8 MiB |
+| Memory watch | see below |
+| NFS-Ganesha's cache of entries, in the container | what an eighth of the limit holds at about 2 KiB each: 16,384 entries at 256 MiB, against its default of 100,000. From about 1.5 GiB, its default |
+
+An option you set yourself always wins.
+
+**Listings.** A listed image holds its TOC and text, and for each of its files a header, tag and
+node: about 56 KiB per image with DSF and WAV shown. Past the budget, the images not used lately
+are dropped. sacdfs keeps only their names, about 3.5 KiB per image, and reads the TOC again the
+next time anything of the image is asked for. A client sees the same names, inode numbers, sizes
+and times, and the same bytes. An image with a file open stays. So a smaller budget makes going
+back over the library slower; it doesn't change what's served. See the
+[design](design.md#memory-a-budget-for-listings-237) for why.
+
+**At startup**, if the whole library listed in memory wouldn't fit, sacdfs says so in the log,
+with the size that would fit:
+
+```text
+memory limit 256 MiB: listing all 5000 images in memory would take about 317 MiB, so 96 MiB of listings are kept and images not used lately are read again when next used; going through the whole library again will be slower; to avoid that, raise the limit to about 396 MiB
+```
+
+**The memory watch.** sacdfs reads the cgroup's anonymous and shared memory once a second, and
+four times a second above half the limit. That read wakes no disk. It counts everything in the
+limit, including Samba and NFS, and acts on what it finds:
+
+| In use | What sacdfs does |
+|---|---|
+| over 75% | keeps listings to a quarter of their budget, until use falls below 75% |
+| over 85% | also gives up the cache of frames and the decoders not in use; a reader decodes again |
+| over 93% | also refuses new listings and opens with `ENOMEM`, logged as a warning at most once a minute. Files already open go on being read, and what is already listed stays listed |
+
+A client that gets `ENOMEM` can try again; it isn't told that anything is missing, and the error
+isn't remembered once memory is back. This is the last step before an out-of-memory kill, which
+would end the service for every client.
+
+**The memory watch has a limit.** It frees only what sacdfs holds. Something else in the same limit
+that goes on taking whatever is freed can still get something killed: a test process that kept
+refilling the limit to 94% was killed first, and in one run of two the servers were too, and the
+container stopped.
+
+**What was measured, sacdfs mounted directly.** sacdfs under a memory limit, with its client in the
+same limit, listing and stating every file while a paced reader played a 6-channel WAV. Synthetic
+libraries of links to real discs, about 25 files per image; single runs on busy machines, so the
+times only show scale. Peak is sacdfs's anonymous memory. The 0.4.0 and 0.4.1-rc.2 columns were
+measured on another machine than the other two.
+
+| Limit | Images | 0.4.0 | 0.4.1-rc.2 | 0.4.1-rc.3 | With the budget |
+|---:|---:|---|---|---|---|
+| 256 MiB | 1,600 | 128 MiB | 125 MiB | 110 MiB | 93 MiB |
+| 256 MiB | 5,000 | killed after about 91,000 of 123,974 files | killed after about 90,000 | killed | 119 MiB |
+| 256 MiB | 20,000 | killed after about 83,000 of 495,874 files | killed after about 80,000 | killed after about 84,000 | 171 MiB |
+| 512 MiB | 5,000 | 310 MiB | 314 MiB | 316 MiB | 203 MiB |
+
+The player had no late read in the runs with the budget, and nothing was refused. Starting again and
+listing 5,000 images at 256 MiB with the seek index kept between runs worked 3 times out of 3, and
+was killed 4 times out of 4 on 0.4.1-rc.2.
+
+Over a library past its budget, a second pass reads TOCs again, so it takes longer: at 5,000 images
+and 512 MiB, 3.0 s against 2.8 s on 0.4.1-rc.3. Those TOCs were in the page cache. On a slow disk with
+nothing cached a second pass could take about as long as the first; that hasn't been measured. A
+library that fits its budget isn't affected: at 1,600 images and 256 MiB, second passes took 0.2 s,
+and 0.4 s on 0.4.1-rc.3.
+
+**The container, 256 MiB, default settings.** With a client in user space over SMB and a paced
+6-channel WAV reader over SMB, NFS on but not in use, on a busy machine:
+
+| Images | Files listed | Errors | Peak of the whole limit | Time | Player's worst read |
+|---:|---:|---:|---:|---:|---:|
+| 5,000 | 123,974 | 0 | 146 MiB | about 3 min | 141 ms |
+| 20,000 | 495,874 | 0 | 195 MiB | about 11 min | 56 ms |
+
+With the same client, the 0.4.1-rc.3 image at 5,000 images was killed after about 61,000 files.
+
+**Fast readers.** 16 or 64 unpaced readers of 6-channel WAVs during a listing, with the readers' own
+memory outside the limit, sacdfs mounted directly at 256 MiB, 3 rounds each. Peak of the whole limit:
+
+| Images | 16 readers | 64 readers |
+|---:|---:|---:|
+| 5,000 | 146 to 148 MiB | 159 to 162 MiB |
+| 20,000 | 193 to 197 MiB | 193 to 197 MiB |
+
+No errors and no kills. Reading a WAV on its request thread (0.4.1-rc.3) made no difference beyond the
+spread here, measured at a cache of 16 MiB. The 20,000-image runs passed 75% once, and listings shrank. With the readers' own memory
+inside the limit, which took about 150 MiB, new listings failed with `ENOMEM` for a while, and nothing
+was killed.
+
+**`--tags`.** With a text tags file for each of 382 discs and 5,000 images at 256 MiB, the tree, numbers,
+sizes and times, and a file's bytes read after its image was dropped, were the same as with no bound. With
+a 400 KiB cover in every disc's tags as well, listing worked with no errors, at a peak of 218 MiB, but took about 68 s
+a pass against about 3 s without tags, on a busy machine: dropped images read their covers again and copy
+them into each file's tag. Every file holds a copy of its cover, so an image of 25 files holds about 10 MiB
+more, and few images stay listed. Under a limit with `--tags`, sacdfs keeps blocks from 128 KiB up
+in mappings of their own, since the heap otherwise kept over 100 MiB of freed covers.
+
+**After a kill.** With `--restart=always` and a client listing without a pause, killing sacdfs in a container at 256 MiB
+with 5,000 images restarted it once. It served again about 2 s later, and stayed up through about 70 s more of the same
+listing, with no restart loop. The kill was a `kill -9` for the test, not one for lack of memory: at 40 MiB, with the startup warning
+saying it could be killed, 18 passes of a client listing the library (no reads) got no kill to test with.
+
+**Lower limits.** With 5,000 images, listing worked at 128 and 96 MiB. At 64 MiB, of three runs one worked,
+one stopped short with `ENOMEM` for its listings, and one was killed, as the startup warning says can
+happen at that size. Pressure from something else in the limit also works as described: with
+another process holding 205 MiB of a 256 MiB limit, new listings failed with `ENOMEM`, sacdfs and the
+player carried on, and once that process ended every file listed again.
+
+**Real SMB and NFS clients at once.** Linux kernel clients, SMB 3.1.1 and NFS 4.2 mounted on the container's host, each
+listing and stating the whole library at the same time at 256 MiB, with a paced 6-channel WAV reader over NFS. The libraries
+were links to 5 discs, about 37 files per image; single runs on a busy machine.
+
+| Images | Files per client | Errors | Peak of the whole limit | sacdfs / NFS-Ganesha / Samba | Player's worst read |
+|---:|---:|---:|---:|---|---:|
+| 5,000 (2 passes) | 186,000 | 0 | 180 MiB | 122 / 51 / 13 MiB | 63 ms |
+| 20,000 | 744,000 | 0 | 193 MiB | 135 / 51 / 13 MiB | 63 ms |
+
+Nothing was killed, the player had no late read, and a file read the same on both clients after its image had been dropped,
+through a new open and through an NFS handle kept open.
+
+**What a client sees when a request is refused.** `ENOMEM` reaches a local client as is. Samba and NFS-Ganesha pass it on as a
+server error, and the Linux clients report `Remote I/O error` (`EREMOTEIO`), at once and with no retry. With something else holding
+the limit above 93%, a listing of an image not yet listed failed that way on both clients, as did a new open over SMB. A new open over NFS still
+worked, as NFS-Ganesha kept the file open already. In the run where the servers stayed up, a read of a file open before the shortage went on working
+on both clients, and every request worked again once the memory was back. Other clients weren't tested.
+
+**Many fast readers on real clients: a known limit.** Unpaced readers of 6-channel WAVs, half over each kernel client, at
+256 MiB, 90 s, 3 rounds. 4 readers peaked at 120 MiB and 8 at 166 MiB, with no errors. With 16, the kernel killed Samba's process for
+the client in every round: Samba held over 100 MiB of reads, which sacdfs can't free. Readers got errors, and the container stayed
+up. The 0.4.1-rc.3 image at the same 16 readers stopped within seconds, 2 runs of 2. For that many fast readers, raise the limit. Many fast
+SMB readers in a user-space client, up to 16, didn't show this.
 
 ### Small NAS: sizing
 
-What a small NAS needs for the container, measured on 0.4.1-rc.1 (single runs). The container
+What a small NAS needs for the container, measured on 0.4.1-rc.1 (single runs), before listings had a budget; the container runs of the budget are in [Under a memory limit](#under-a-memory-limit), and CPU limits weren't re-run for it. The container
 was limited to 2 or 4 CPUs of Gracemont E-cores (rig A below, about 2.7 GHz under load) and
 to the memory below; SMB was over loopback, and the library was on network-attached disks. The
 figures are container limits, not whole-box RAM: a NAS's own services need their share, and
@@ -267,22 +407,24 @@ images at 274 MiB against 275), but the limits below were not re-run on it.
 
 | | CPUs | Limit for sacdfs plus Samba | Library |
 |---|---|---|---|
-| Minimum | 2 E-cores (rig A below) | 256 MiB | up to about 2,000 images at the default settings |
-| Recommended | 4 cores | 512 MiB | up to about 5,000 images (about 312 MiB used) |
+| Minimum | 2 E-cores (rig A below) | 256 MiB | up to about 1,800 images in memory; larger libraries work, and read TOCs again ([Under a memory limit](#under-a-memory-limit)) |
+| Recommended | 4 cores | 512 MiB | up to about 3,600 images in memory, and larger libraries the same way |
 
-Add about 40 MiB if NFS is on (`NFS=1`, the default). To set such a limit,
+Add about 40 MiB if NFS is on (`NFS=1`, the default); under a limit, NFS-Ganesha peaked at 51 MiB with a client going through 20,000 images. To set such a limit,
 for example `podman run --cpus 2 --memory 256m ...` (or `docker run`, with the same options).
 
-**Sizing rule.** 100 MiB (the peak while scanning, up to about 400 images, with the default
+**Sizing rule, with no bound on listings.** 100 MiB (the peak while scanning, up to about 400 images, with the default
 cache of 32), plus 53 KiB for every image beyond those, plus 30 MiB if four scanners run at once.
 The rule is an upper estimate: it came out 10 to 35 MiB above the measured sizes at 2,000, 3,500
 and 5,000 images. `SACDFS_FORMATS=dsf` cuts the memory of the listing by about a third (89 to 61
 MiB at 1,600 images).
 
 **Where a limit breaks.**
-- At 256 MiB with the default cache: 2,000 images worked (151 MiB), 3,500 worked near the limit
-  (231 MiB), and 5,000 were killed for lack of memory during the listing. An out-of-memory kill
-  takes down the whole service (sacdfs, Samba and NFS), and the runtime restarts the container.
+- Through 0.4.1, at 256 MiB with the default cache: 2,000 images worked (151 MiB), 3,500 worked
+  near the limit (231 MiB), and 5,000 were killed for lack of memory during the listing. An
+  out-of-memory kill takes down the whole service (sacdfs, Samba and NFS), and the runtime restarts
+  the container. From 0.5.0 listings are kept to a budget: see
+  [Under a memory limit](#under-a-memory-limit).
 - Floors, with 395 images on 2 E-cores: 128 MiB survived every scan (118 MiB at cache 32, 90 at
   cache 8). 96 MiB played, but a whole-file scan killed it. 64 MiB was killed during playback.
   Do not size a container to these floors.
@@ -354,8 +496,8 @@ Not re-run on rc.3: the no-load headroom table above (rc.1 and rc.2 figures), ri
 **Idle.** sacdfs used 0.007 % of a CPU and woke 1.5 times a second, and 5 minutes of `strace`
 showed no image reads and no metadata calls, so sacdfs itself does not keep a disk awake. Not
 tested: a connected client that polls listings, and `--tags`. The cache and decoder memory is
-given back after 60 to 75 s of idle; the memory of the listing is not (39 MiB idle at 10
-minutes on a 395-image library).
+given back after 60 to 75 s of idle; the memory of the listing is not, beyond its budget under a
+limit (39 MiB idle at 10 minutes on a 395-image library).
 
 **Mount time.** On an emulated single disk (one request at a time, 15 ms per seek, 120 MB/s)
 with nothing cached, mounting a library of 122,676 files took 194 s. That is a model, not a real
@@ -460,7 +602,6 @@ The names of screens and fields may differ between releases.
        environment:
          SACDFS_FORMATS: dsf,wav
          SACDFS_FLATTEN: "1"
-         SACDFS_CACHE_MB: "16"
          SMB_USER: music
          SMB_PASSWORD: change-me
          NFS_CLIENTS: 192.0.2.0/24
@@ -474,7 +615,7 @@ The names of screens and fields may differ between releases.
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
-   - `SACDFS_CACHE_MB: "32"`, the default, keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
+   - `SACDFS_CACHE_MB` is left out: the default, 32 MiB (8 under a memory limit up to 512 MiB, [Under a memory limit](#under-a-memory-limit)), keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and

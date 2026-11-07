@@ -62,7 +62,7 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   default) is one per CPU. On a machine that has other work to do, fewer threads keep sacdfs
   from crowding it out while a file is read quickly (`cp`); a player reading in real time
   needs a small part of one core.
-- `--cache-mb N` (default 32) bounds the cache of decoded DSD frames and converted PCM
+- `--cache-mb N` (default 32, or 8 under a memory limit up to 512 MiB) bounds the cache of decoded DSD frames and converted PCM
   frames, which DSF and WAV reads share. It is sacdfs's main use of memory, whatever the
   number of open files: about 45 to 70 MiB in all with the default during scans and straight
   reads of a small library, and about 11 MiB once a small library has been idle for 60 s, when
@@ -284,6 +284,11 @@ The mount stays read-only; the files are edited out of band.
   so players that skip unchanged folders (Roon) find the edit on their next scan. Edits made
   while sacdfs is stopped show after the mount the same way (sacdfs keeps which disc each image
   is in its cache directory). With a single image as SOURCE, remount after editing.
+
+Each file holds its own copy of a cover. Under a [memory limit](deployment.md#under-a-memory-limit), that
+means few images stay listed, and going through the library takes longer. A disc listed again reads its
+cover again, so a cover edited during a mount can show then; edit the tags file too, or remount, to
+make sure players see the change.
 
 ```toml
 [album]                         # every file of the disc

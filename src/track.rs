@@ -50,6 +50,10 @@ pub const KERNEL_FIRST_WINDOW: u64 = 256 << 10;
 /// file, and held the decoder threads while the scanner went on to the next file.
 pub const HEAD_WINDOW: u64 = 1 << 20;
 
+/// What a file's node holds without its trailer, in bytes: the struct, the layout or header, the
+/// name and entry, the node and its place in the map, with the allocator's overhead on them.
+const FILE_HELD: usize = 1200;
+
 /// The file format of a track file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
@@ -228,6 +232,12 @@ impl TrackFile {
             warned: AtomicBool::new(false),
             warned_clips: AtomicBool::new(false),
         })
+    }
+
+    /// About what this file's node holds on the heap, for the bound on listed images (#237):
+    /// its tag and trailer, which a tags file can make large, and the rest as measured.
+    pub(crate) fn held_bytes(&self) -> usize {
+        FILE_HELD + self.trailer.capacity() * if self.dsf.is_some() { 2 } else { 1 }
     }
 
     /// Frames read ahead of a fast sequential reader. For a WAV file, about 8 MiB of PCM: a

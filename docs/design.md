@@ -155,6 +155,104 @@ before. Two changes, each needed:
   and the borrow from the library's disc costs nothing per read. *Trade-off:* the TOC is
   borrowed from the library's disc, so it lives as long as the `Disc`, as before.
 
+### Memory: a budget for listings (#237)
+
+A large library under a container memory limit got sacdfs killed while listing, which ended the
+service for every client. An allocation failure can't be relied on, because the kernel's
+out-of-memory killer acts first, so sacdfs has to stay under the limit by itself.
+
+**What the memory was.** About 57 KiB per image, measured with dhat-rs and glibc's own accounting at 395, 1,600
+and 5,000 images (`examples/listing_mem.rs`), at 24.8 files per image: 47% is built per file (header,
+tag bytes, the structs), 18% is the TOC and text, 19% the tree's nodes, entries and names, 2% the
+walk, and 13% the allocator's overhead. Over 90% of the bytes requested can be rebuilt from the image.
+
+**The decision.** The owner's direction was for running short of memory to make sacdfs slower rather
+than kill it, with re-reading the TOC as the accepted cost. So the unit dropped is the whole image:
+its disc, areas and files. *Why it stays correct:* numbers come from paths (see [`ident`](../src/ident.rs)),
+and a number not in the tree is already looked for along its path, for NFS handles kept across a
+restart. A dropped image goes through that same path, and its names, numbers and generations come
+back the same while the image is unchanged. If the image did change, it is what a remount would show.
+
+**Alternatives.**
+- *Drop only the TOC and text:* saves 18%, where 20,000 images at 256 MiB needs about 90%.
+- *A memory-mapped listing file per library,* the first proposal on #237: names, sizes and times are a
+  small part of the memory, so it moves little by itself, and it needs a key covering every image's
+  size and mtime, the tags and the output options, and a format. It also needs this path as its
+  fallback when the cache directory isn't writable. It could still help a warm start (#232); that's a
+  speed question, unmeasured, and the bound doesn't depend on it.
+- *Strict least-recently-used:* needs a lock on requests answered from memory. The clock order here
+  only sets a flag, and a scan that goes through everything once evicts in nearly the same order.
+
+**Trade-offs accepted.** Going back to a dropped image costs a TOC read. A file open keeps its whole
+image, so readers can hold more than the budget. Below the budget, nothing is dropped and nothing is
+added but a flag. The count of nodes in `statfs` falls as images are dropped.
+
+**Details that matter.**
+- A source directory opens its images in batches of 64 under a bound. One directory can hold more
+  images than the bound allows at once.
+- The persistent seek index holds each disc it has registered until the next flush, 30 s later. A scan
+  goes through thousands of images in that time, so it now lets go of dropped discs with nothing to
+  save as soon as a batch has been dropped.
+- A request that holds a directory's node while its image is dropped sees a mark on that node and asks
+  the tree again.
+- A closed image that can't be opened again fails the request and is not remembered, so it isn't
+  shown as empty to a scanner because of a passing error.
+
+**The memory watch.** Item 3 of the issue. What's counted is the cgroup's anonymous and shared memory
+rather than `memory.current`, which includes the page cache and sits at the limit on any machine that
+has been reading. The order is what costs least first: listings cost a disc read for whoever comes
+back; the cache and decoders cost a reader some decoding; refusing fails one request; a kill fails
+every client. The alternative of pressure stall information was left out: it reports that reclaim is
+already hurting, and doesn't say how close the kill is.
+
+**Why 3/8 of the limit.** A quarter dropped images from a library that already fitted: at 1,600 images
+under 256 MiB, a second pass read TOCs again. At 3/8, about 1,800 images stay in memory at 256 MiB, close to
+the 2,000 that earlier versions documented as working there. The rest of the limit is for the process, Samba and NFS.
+
+**A race found on CI.** A number looked for along its path could be made and dropped again before it was
+taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
+is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
+
+**The defaults from the limit** (#231). Cache 8 up to 512 MiB. The first choice was 16, which showed no
+cost to a single reader, but the fresh-container measurements of #230 changed it: with whole-file
+scanners running, a 6-channel WAV player held real time at 8 and didn't at 16. On this branch, on E-cores
+with a fresh container per condition, 3 rounds each, player speed relative to real time, cache 16 then 8:
+
+| | 2 cores, 256 MiB | 4 cores, 512 MiB |
+|---|---|---|
+| 1 whole-file scanner | 0.51, 1.00 | 0.96, 1.00 |
+| 4 whole-file scanners | 0.55, 0.98 | 0.77, 1.00 |
+| Whole-file WAV scan alone, MB/s | 34, 14.5 | 63, 24 |
+| Headroom of a reader alone, times real time | 9.9, 4.3 | 18.8, 7.1 |
+
+The trade-off is that scans take 2.4 to 2.6 times as long and headroom falls by about as much, which still
+leaves over 4 times real time. On a small machine, playback that doesn't stop is worth more than a scan
+that ends sooner. The alternative of keeping 16 and waiting for the fix to #230 is open: if that fix holds
+real time at 16, this default should be measured again. Limits above 512 MiB keep 32; they weren't measured.
+Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
+defaults don't change.
+
+**What real clients and tags files added.** Three costs lay outside the budget, and running under real
+NFS clients and `--tags` found them.
+
+- *NFS-Ganesha's cache of entries.* Its default of 100,000 entries reached about 180 MiB at 256 MiB, with
+  sacdfs down to 59 MiB and refusing for as long as that cache stayed full, as nothing sacdfs could give
+  up would help. The entrypoint now sets `Entries_HWMark` to what an eighth of the limit holds at about 2 KiB
+  each, and `Chunks_HWMark` to match. The alternative of having sacdfs refuse earlier would fail requests that
+  the memory could serve. The trade-off is that entries past the mark are looked up again from sacdfs.
+- *Covers kept by each disc's tags.* Tags kept each disc's picture for as long as the mount lasted, up to
+  a few GiB for a large library, with or without a bound. A tag copies its picture, so it's needed only
+  while a disc's files are made; only the last 16 read are kept now. This one applies with no limit too. The
+  alternative of counting them in the budget would keep them in memory without any use. The trade-off is
+  a read of the picture each time a disc is listed, and a cover image edited during a mount can show
+  then, without a new generation.
+- *Freed covers in the heap.* Blocks of hundreds of KiB, made and freed for each file, raise glibc's mapping
+  threshold, and then stay in the heap: over 100 MiB more than was in use. Under a limit with a tags directory,
+  the threshold is fixed at 128 KiB. Only then, as other mounts don't make such blocks while listing.
+  The budget also runs as each directory is listed now, since one image with covers can hold tens of MiB,
+  and the watch trims the heap at the Caches level, at most every 2 s, since a trim holds up every thread
+  that allocates.
+
 ### Memory: the default cache and the fixed overhead (#150)
 
 The owner asked for lower memory use after 0.3.0: peak RSS under 100 MiB at the default cache and
