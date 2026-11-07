@@ -669,6 +669,11 @@ Under the benchmark lock on an idle machine, 2026-11-06 and 07.
   cores 1.00× throughout; 4 scanners, 4 cores 0.42×, 17.5 s / 1.00×, 0.45 s / 1.00×, 0.02 s. Scans
   alone, 2 / 4 cores: 33.3 / 61.1, 39.5 / 67.8 and 28.5 / 55.6 MB/s. Stereo DSF with four scanners
   1.01× at both sizes. Peak memory with four scanners on 4 cores: 73 MiB at 32, 55 at 8.
+- Cache 16, the default under a limit up to 512 MiB since this change, against 32, on P-cores of the
+  same machine (2 cores: one physical core with its SMT sibling; 4 cores: two), client on other cores,
+  alternating, 3 runs each: player 1.00× in every cell, at most 0.52 s behind at 16 and 0.95 s at 32;
+  scan alone 44.5 / 81.4 MB/s at 16 against 44.7 / 81.2 at 32 (2 / 4 cores); peak anonymous memory of
+  the container, scan alone, 38 / 42 MiB against 54 / 58.
 
 ## Cache size (#150)
 
