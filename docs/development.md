@@ -103,8 +103,8 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   (ENOENT on a `.dsf` after a tags edit since the file list was taken, or within 60 s of it),
   `sidecar` (ENOENT on a `cover-*.jpg` the churner has removed, or under `Artwork/` within
   60 s of the churner toggling it; sacdfs lists a removed file until it has re-read the
-  folder, which takes seconds on real discs) and `cover` (ENOENT on `cover.jpg` within 5 s of
-  a cover replacement: 0.4.1 re-reads the cover and the name is gone for about a second).
+  folder, which takes seconds on real discs). A `cover.jpg` that fails to read is not expected
+  (#235: it used to be counted apart, as `cover`, for the second after a cover was replaced).
   Any other error, such as EIO on a stable disc, fails the run, with no tolerance. The counts
   per class are columns of the TSV, and `<out>.errors.tsv` has class, errno and area. The summary lists up to ten unexpected paths only with `--sample-paths`: leave it off
   on a real library, whose names must not be published. A failed read returns at once and is
