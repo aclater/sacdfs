@@ -14,6 +14,9 @@ All notable changes to sacdfs are recorded here. The format follows
   crash of sacdfs, without a restart of its own; a file open during a restart fails once the runtime
   stops sacdfs. Rootless Podman can't share the mount this way. See
   [deployment](docs/deployment.md#players-on-the-same-host-no-smb-hop).
+  Measured against sacdfs's SMB share on the same NAS (0.4.1, 416 images, Navidrome): the import took
+  45 s instead of 62 s, sacdfs served 5.4 MB for it instead of 5.8 GB and used 3 instead of 223 CPU
+  seconds (Samba another 27), and files started in 0.5 to 2 ms instead of 12 to 26 ms.
 - **The container makes `/srv/sacd` itself** when a host directory is bound over `/srv`, so that
   directory can start empty. A dead mount left there by a killed sacdfs doesn't stop the start: sacdfs
   detaches it, as before. CI checks both on every pull request (`deploy/ci-same-host-test.sh`).
