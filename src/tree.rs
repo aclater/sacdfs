@@ -850,12 +850,21 @@ pub struct SidecarFile {
     pub generation: u64,
 }
 
+/// The next [`Disc::id`], for every tree of the process.
+///
+/// *Why the process's, not each tree's:* the id keys the engine's frame cache, and a cache
+/// can serve more than one tree (a program or test that scans the source again with the same
+/// engine). Ids counted per tree began at 1 in each, so a second tree could give an image the
+/// id an image of the first had, and be served that image's cached audio (#272).
+static NEXT_DISC: AtomicU32 = AtomicU32::new(1);
+
 /// The tree: every node made so far, by inode number.
 #[derive(Debug)]
 pub struct Tree {
     nodes: RwLock<HashMap<u64, Arc<Node>>>,
     ids: Ids,
-    next_disc: AtomicU32,
+    /// Images this tree opened: their ids come from [`NEXT_DISC`].
+    opened_discs: AtomicU32,
     tuning: Tuning,
     output: Output,
     flatten: bool,
@@ -975,7 +984,7 @@ impl Tree {
         Tree {
             nodes: RwLock::new(HashMap::from([(ROOT, Arc::new(node))])),
             ids,
-            next_disc: AtomicU32::new(1),
+            opened_discs: AtomicU32::new(0),
             tuning,
             output,
             flatten: false,
@@ -1806,6 +1815,12 @@ impl Tree {
         self.tagged.lock().unwrap_or_else(|p| p.into_inner()).save();
     }
 
+    /// An id for an image this tree is about to open, unique in the process ([`NEXT_DISC`]).
+    fn disc_id(&self) -> u32 {
+        self.opened_discs.fetch_add(1, Ordering::Relaxed);
+        NEXT_DISC.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Notes `disc`, just opened, for the tag layer (#81): its tags file is looked at by
     /// [`Tree::sweep`], and if it has one, the image's directories and every directory above
     /// show an mtime no older than it (its files' are, see [`ident::mtime`]).
@@ -2041,7 +2056,7 @@ impl Tree {
                     let opened: Vec<(&PathBuf, Disc)> = images
                         .par_iter()
                         .filter_map(|&p| {
-                            let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
+                            let id = self.disc_id();
                             match Disc::open(p, id, self.tuning) {
                                 Ok(d) => Some((p, d)),
                                 Err(e) => {
@@ -2109,7 +2124,7 @@ impl Tree {
                 self.list_sidecars(list, parent, &mut dedup, &mut out);
             }
             DirKind::Closed(image) => {
-                let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
+                let id = self.disc_id();
                 match Disc::open(image, id, self.tuning) {
                     // Listed as when it was first opened; its areas hold the disc from here on.
                     Ok(disc) => {
@@ -2187,7 +2202,7 @@ impl Tree {
                         cx.head = p.head;
                     }
                     _ => {
-                        let id = self.next_disc.fetch_add(1, Ordering::Relaxed);
+                        let id = self.disc_id();
                         match Disc::open(image, id, self.tuning) {
                             // Listed exactly as the image's own directory would be, then the
                             // sidecars of the chain.
@@ -2824,9 +2839,9 @@ mod tests {
         let dir = source(&["Artist/A/Rip/x.iso", "Artist/B/y.iso"]);
         let t = tree(dir.path(), true);
         assert_eq!(names(&t, "Artist"), ["A", "B"]);
-        assert_eq!(t.next_disc.load(Ordering::Relaxed), 1, "listing opened an image");
+        assert_eq!(t.opened_discs.load(Ordering::Relaxed), 0, "listing opened an image");
         assert_eq!(names(&t, "Artist/A"), ["Stereo", "Multichannel"]);
-        assert_eq!(t.next_disc.load(Ordering::Relaxed), 2);
+        assert_eq!(t.opened_discs.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -2908,9 +2923,9 @@ mod tests {
                 let t = tree(dir.path(), flatten);
                 let node = t.get(*ino).unwrap_or_else(|| panic!("{path} ({ino:#x}) not found"));
                 // Only the images of the directories on the way are opened (as a lookup of
-                // the path would): never all five, at most y, a and b (next_disc starts at 1).
+                // the path would): never all five, at most y, a and b.
                 if !path.starts_with("Other") {
-                    assert!(t.next_disc.load(Ordering::Relaxed) <= 4, "{path}");
+                    assert!(t.opened_discs.load(Ordering::Relaxed) <= 3, "{path}");
                 }
                 assert_eq!(t.resolve(Path::new(path)), Some(*ino));
                 let is_dir = matches!(&*node, Node::Dir(_));
