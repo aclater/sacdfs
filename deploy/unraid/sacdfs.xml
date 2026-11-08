@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- sacdfs as an Unraid Community Applications template. How to use it today, before any
+     store listing: docs/install/store-apps.md. -->
+<Container version="2">
+  <Name>sacdfs</Name>
+  <Repository>ghcr.io/aclater/sacdfs:0.5.0</Repository>
+  <Registry>https://github.com/aclater/sacdfs/pkgs/container/sacdfs</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/aclater/sacdfs/issues</Support>
+  <Project>https://github.com/aclater/sacdfs</Project>
+  <Overview>sacdfs serves SACD disc images (ISO files) as DSF and WAV files over SMB and NFS, so music servers and players can read them like ordinary albums. The images are mounted read-only and stay untouched.&#xD;
+&#xD;
+Unraid's own SMB and NFS services hold ports 445 and 2049, so this container publishes 10445 (SMB) and 12049 (NFS). Without a user name and password the share is open, read-only, to everyone on your network.&#xD;
+&#xD;
+Needs the FUSE device and two capabilities (SYS_ADMIN to mount, DAC_READ_SEARCH for NFS), set in Extra Parameters; the container is not privileged. See https://github.com/aclater/sacdfs/blob/main/docs/install/store-apps.md</Overview>
+  <Category>MediaServer:Music Tools:</Category>
+  <WebUI/>
+  <TemplateURL>https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/unraid/sacdfs.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/icon.png</Icon>
+  <ExtraParams>--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined --stop-timeout=20 --health-cmd=/usr/local/bin/healthcheck.sh --health-interval=30s --health-timeout=10s --health-start-period=300s --health-retries=3</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="SACD images" Target="/images" Default="/mnt/user/music" Mode="ro" Description="The share that holds your SACD images (ISO files). Mounted read-only." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/music</Config>
+  <Config Name="Index cache" Target="/cache" Default="/mnt/user/appdata/sacdfs" Mode="rw" Description="sacdfs's index cache: restarts then skip re-reading every image." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sacdfs</Config>
+  <Config Name="SMB port" Target="445" Default="10445" Mode="tcp" Description="SMB share. Not 445: Unraid's own SMB service holds that." Type="Port" Display="always" Required="true" Mask="false">10445</Config>
+  <Config Name="NFS port" Target="2049" Default="12049" Mode="tcp" Description="NFS export. Not 2049: Unraid's own NFS service holds that." Type="Port" Display="always" Required="true" Mask="false">12049</Config>
+  <Config Name="Formats" Target="SACDFS_FORMATS" Default="dsf,wav" Mode="" Description="dsf,wav, dsf or wav. DSF alone for Roon or MPD." Type="Variable" Display="always" Required="true" Mask="false">dsf,wav</Config>
+  <Config Name="One folder per disc" Target="SACDFS_FLATTEN" Default="0" Mode="" Description="1: one folder per disc instead of one per area (stereo, multichannel)." Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+  <Config Name="SMB user" Target="SMB_USER" Default="" Mode="" Description="User name for the SMB share. Leave empty (with no password) for open, read-only guest access." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="SMB password" Target="SMB_PASSWORD" Default="" Mode="" Description="Password for the SMB user." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="NFS clients" Target="NFS_CLIENTS" Default="" Mode="" Description="Who may mount over NFS: hosts or networks, comma-separated (192.168.1.0/24). NFS has no passwords; empty allows everyone." Type="Variable" Display="always" Required="false" Mask="false"/>
+</Container>
