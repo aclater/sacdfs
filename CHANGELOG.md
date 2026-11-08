@@ -6,7 +6,47 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.5.0-rc.1] - 2026-11-07
+## [0.5.0] - 2026-11-0X
+
+Tested as release candidate 0.5.0-rc.1 (2026-11-07). The final version carries only the version
+change on top of the rc.1 code and a test-only fix (#272). The results are in docs/clients.md and
+docs/test-plan.md: the scripted servers (Jellyfin, Navidrome, Lyrion, MPD, MinimServer) and the Linux
+NFS and SMB clients were run against 0.4.1, and the release binaries were run on the oldest glibc
+they target.
+
+TODO(coordinator): one-paragraph summary of the real-disc and soak results once they are in.
+
+### Upgrade notes
+
+What to do, or what you may see, after the move from 0.4.1 to 0.5.0.
+
+- **NFS clients of the container: remount once.** The first 0.5.0 container to start changes the
+  handles NFS-Ganesha gives out (#218), so a client that still holds handles from 0.4.1 or earlier
+  gets `Stale file handle` until it unmounts and mounts again. After that, a restart of the container
+  no longer breaks them, under Docker or Podman.
+- **Memory limit: the cache default is lower, and listings are bounded.** Under a memory limit of
+  512 MiB or less the cache defaults to 16 MiB (it was 32 MiB because the container set it), and the
+  decoder threads are capped by the limit. Under any cgroup limit, listings are kept to
+  `--listing-mb` (default 3/8 of the limit) and idle images are read again when used, so a second
+  pass over a library past its budget takes longer. Nothing changes without a limit. If you set
+  `SACDFS_CACHE_MB` yourself, your value is used.
+- **Your own Samba:** the container's Samba settings changed for fewer requests (#205). If you share
+  the mount with your own Samba, see the settings in
+  [deployment](docs/deployment.md#what-a-listing-costs-over-smb). Over SMB, files and folders now carry
+  the read-only attribute (#217); `SMB_EXTRA_GLOBAL=map readonly = no` goes back. This was not tried
+  on Windows, macOS, Roon or Plex.
+- **Reading a hung image:** once 4 reads of an image are blocked past the timeout, its new reads fail
+  with `EIO` at once (#241), where they used to fail one timeout each. A client that retries without a
+  pause sees the errors faster.
+- **Binaries:** the release binaries now need glibc 2.17 or later (they needed 2.28), and an aarch64
+  binary is published. The binary is about 3 MB larger.
+- **FUSE 2 only (no `fusermount3`):** a user other than root can now stop sacdfs and unmount it.
+- **Players on the same host:** reading the mount directly needs a host directory shared with
+  `rshared`, and a player container that binds it with `ro,rslave` (#186). Optional; SMB and NFS
+  work as before. The container makes `/srv/sacd` itself, so the `mkdir` workaround in the Compose
+  example is no longer needed.
+- **Optional features off by default:** `--musicbrainz` and `sacdfs tags fetch` send data to
+  MusicBrainz only when you run or enable them.
 
 ### Added
 
@@ -924,8 +964,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.5.0-rc.1...HEAD
-[0.5.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0-rc.1
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0

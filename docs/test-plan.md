@@ -91,25 +91,25 @@ report for discs that have arrived since the last release.
 **Tier 2 is reported** and filed but does not block. **Tier 3** is tested when someone can, and
 otherwise stated as untested.
 
-| Client | Tier | Connection | How it runs | Last result recorded in [clients.md](clients.md) | 0.4.1-rc.2 |
-|---|---|---|---|---|---|
-| Roon | 1 | SMB, same NAS | Long-running NAS install | 0.4.1-rc.1: Roon 2.74, whole library, Force Rescan sent no extended-attribute requests | Upgraded from rc.1 on the NAS app: names and counts identical, no re-read seen for 12 minutes. FUSE request counts per kind not obtained |
-| Plex | 1 | SMB, same NAS; and rslave bind | Long-running NAS install, API checks. The scripted-server harness does not cover Plex | 0.4.1-rc.1: upgrade and rollback fine, 3 albums still blank | Upgraded from rc.1 on the NAS app: names and counts identical, no re-read seen for 12 minutes. Request counts not obtained |
-| Jellyfin | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| Navidrome | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| Lyrion (LMS) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| MPD (so moOde, Volumio) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| MinimServer | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| Windows 11 Explorer, PowerShell, Robocopy | 1 | SMB 3 | Unattended VM, not a physical client | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| Linux NFS and SMB mounts (Fedora, RHEL, Debian, Ubuntu) | 1 | NFSv4, SMB 3 | VMs and containers | 0.4.1-rc.1 on seven distributions | SMB 3.1.1 and NFS 4.2 listings correct, 10 files byte-identical over both, writes refused, SMB reconnects after a restart. Which distributions: not recorded |
-| beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | CI on main green (2026-11-05); import run on the rc.2 mount: pass, see [results](#results-041-rc2-gate-2026-11-06). Run on 0.4.0 too, same result |
-| FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| foobar2000 | 2 | SMB 3 | Windows VM | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) |
-| Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** | Never run |
-| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; no macOS results are in clients.md; Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/aclater/sacdfs/issues/204) and [#205](https://github.com/aclater/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks |
-| Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Never run |
-| Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Never run |
+| Client | Tier | Connection | How it runs | Last result recorded in [clients.md](clients.md) | 0.4.1-rc.2 | 0.5.0-rc.1 |
+|---|---|---|---|---|---|---|
+| Roon | 1 | SMB, same NAS | Long-running NAS install | 0.4.1-rc.1: Roon 2.74, whole library, Force Rescan sent no extended-attribute requests | Upgraded from rc.1 on the NAS app: names and counts identical, no re-read seen for 12 minutes. FUSE request counts per kind not obtained | Not run at scale on 0.5.0 |
+| Plex | 1 | SMB, same NAS; and rslave bind | Long-running NAS install, API checks. The scripted-server harness does not cover Plex | 0.4.1-rc.1: upgrade and rollback fine, 3 albums still blank | Upgraded from rc.1 on the NAS app: names and counts identical, no re-read seen for 12 minutes. Request counts not obtained | Not run at scale on 0.5.0 |
+| Jellyfin | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Same tracks, albums, art and bytes as 0.4.1 ([results](#results-050-gate)) |
+| Navidrome | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Same tracks, albums, art and bytes as 0.4.1 ([results](#results-050-gate)) |
+| Lyrion (LMS) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Same tracks, albums, art and bytes as 0.4.1 ([results](#results-050-gate)) |
+| MPD (so moOde, Volumio) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Same tracks, albums, art and bytes as 0.4.1 ([results](#results-050-gate)) |
+| MinimServer | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Same tracks, albums, art and bytes as 0.4.1 ([results](#results-050-gate)) |
+| Windows 11 Explorer, PowerShell, Robocopy | 1 | SMB 3 | Unattended VM, not a physical client | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0; the 0.4.1-rc.1 result stands |
+| Linux NFS and SMB mounts (Fedora, RHEL, Debian, Ubuntu) | 1 | NFSv4, SMB 3 | VMs and containers | 0.4.1-rc.1 on seven distributions | SMB 3.1.1 and NFS 4.2 listings correct, 10 files byte-identical over both, writes refused, SMB reconnects after a restart. Which distributions: not recorded | 22 of 22 on six distributions, 21 of 22 on Ubuntu 24.04 (known), as on 0.4.1 ([results](#results-050-gate)) |
+| beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | CI on main green (2026-11-05); import run on the rc.2 mount: pass, see [results](#results-041-rc2-gate-2026-11-06). Run on 0.4.0 too, same result | TODO(coordinator): result not recorded here |
+| FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
+| foobar2000 | 2 | SMB 3 | Windows VM | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
+| JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
+| Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** | Never run | Not run on 0.5.0 |
+| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; no macOS results are in clients.md; Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/aclater/sacdfs/issues/204) and [#205](https://github.com/aclater/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks | Not run on 0.5.0 |
+| Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Never run | Not run on 0.5.0 |
+| Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Never run | Not run on 0.5.0 |
 
 Client versions are recorded each run. Tier 1 images are refreshed to current at each candidate;
 a result that changes after a client update is reported as such.
@@ -360,6 +360,35 @@ sacdfs; rc.1 is its last result); Windows, macOS, foobar2000, JRiver and MinimSe
 rc.1, or rc.2 where stated above); playback in Roon and Plex (their test deployments moved to the rc.3
 image and the share lists the library, but no player was driven); the arm64 image at run time; a
 cold-cache mount.
+
+## Results: 0.5.0 gate
+
+What was run on 0.5.0-rc.1 so far, and what was not. Anything missing here is untested on 0.5.0.
+The final 0.5.0 tag carries only the version change on top of rc.1 and a test-only fix (#272).
+
+**Clients (Tier 1),** on main at 826fa50, the same code as rc.1 apart from the version and that
+fix; 0.4.1 was the baseline. Details in [clients.md](clients.md#050-rc1-checks).
+
+- Jellyfin 12.4.0, Navidrome 0.64.2, Lyrion 9.1.1, MPD 0.24.15 and MinimServer 2.2: the same tracks,
+  albums, art and bytes as on 0.4.1.
+- Linux NFS 4.2 and SMB 3.1.1: 22 of 22 checks on Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12
+  and Ubuntu 26.04. Ubuntu 24.04 passes 21 of 22 (the known `linux-modules-extra` non-ASCII SMB `stat`
+  problem), as on 0.4.1.
+- FUSE requests per scan fell 2 to 20 % against 0.4.1 for the scripted servers. Over SMB a first
+  `ls -lR` takes 226 requests, against 722 on 0.4.1.
+
+**Release binaries.** The x86_64 build targets glibc 2.17. In a UBI 7 container the mount and byte
+identity match a host mount, and the corpus check passes 457 of 457. The aarch64 build targets glibc
+2.17 and its tests run natively in CI.
+
+**Real-disc tests:** TODO(coordinator): result of `scripts/real-discs.sh` on the last candidate, with
+the number of images.
+
+**Soak:** TODO(coordinator): soak results on 0.5.0-rc.1 (hosts, lengths, verdicts, unexpected errors,
+memory trend), or the reason none is needed under the [soak rule](#when-a-soak-is-needed).
+
+**Not run on 0.5.0:** Windows 11 (the 0.4.1-rc.1 result stands), macOS, Roon and Plex at scale,
+foobar2000, JRiver, and the Tier 2 tools.
 
 ## Exit criteria
 

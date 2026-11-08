@@ -20,16 +20,38 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 |---|---|---|---|---|---|
 | [Roon](#roon) | Roon 2.x (Roon Server official image); 2.74 build 1719 on 0.4.1-rc.1 | 0.1.1, 0.2.0-rc.1 to rc.4, 0.2.0 final, 0.4.1-rc.1 | SMB, same NAS | Works (0.4.1-rc.1: no regression, no extended-attribute requests in a Force Rescan) | Use `dsf` only; needs the SMB-mount rights; art and playlists work; picks up upgrades by itself; multichannel areas are separate albums |
 | [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4, 0.4.1-rc.1 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 0.4.1-rc.1: healthy, upgrade and rollback from 0.4.0 fine, 279 untitled tracks named, 3 albums (26 tracks) still blank in Plex (cause unknown); 0.1.1: 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used ([#95](https://github.com/aclater/sacdfs/issues/95)) |
-| [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.4.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
-| [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
-| [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
-| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
-| [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
+| [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.4.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
+| [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
+| [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
+| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
+| [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
 | [Windows Explorer, PowerShell, Robocopy](#windows-explorer-and-robocopy) | Windows 11 build 26200 | 0.2.0-rc.1, 0.4.1-rc.1 | SMB 3, SMB 3.1.1, same host | Works | 0.4.1-rc.1: 186 of 186 audio copies byte-identical, a second Robocopy pass skips all 196 files; RF64 reads and seeks past 4 GiB; another SMB port works (`/TCPPORT`) |
 | [foobar2000](#foobar2000) | 2.26.2 (portable), foo_input_sacd 2.0.27 | 0.2.0-rc.1, 0.4.1-rc.1 | SMB 3, SMB 3.1.1 | Works (0.4.1-rc.1) | 186 files found with tags and length; stereo, 5ch, 6ch start in under 0.4 s; seek to 60 % works; audio not heard |
 | [JRiver Media Center](#jriver-media-center) | 36.0.38 (trial) | 0.4.1-rc.1 | SMB 3.1.1 | Partial | 186 files, 7 albums, tags, art for 3 of 5 artists; plays; seek, multichannel and rescan not checked |
-| [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | Fedora 44, RHEL 10.1 and 9.7, Debian 13 and 12, Ubuntu 26.04 and 24.04 kernels | 0.4.1-rc.1 | NFSv4.2, SMB 3.1.1 | Works | All checks pass; Ubuntu 24.04 cloud image needs `linux-modules-extra` for non-ASCII names over SMB; after a Podman container restart NFS needs a remount |
+| [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | Fedora 44, RHEL 10.1 and 9.7, Debian 13 and 12, Ubuntu 26.04 and 24.04 kernels | 0.4.1-rc.1, 0.5.0-rc.1 | NFSv4.2, SMB 3.1.1 | Works | All checks pass; Ubuntu 24.04 cloud image needs `linux-modules-extra` for non-ASCII names over SMB; after a Podman container restart NFS needs a remount |
 | [FFmpeg, sox, mediainfo, ExifTool, mpv, VLC](#ffmpeg-sox-mediainfo-exiftool-mpv-and-vlc) | 7.1.5, 14.4.2, 25.04, 13.25, 0.40.0, VLC 3 | 0.4.1-rc.1 | Mount | Works | sox and ExifTool do not read DSF; this VLC cannot decode DSD (also true of a plain copy) |
+
+## 0.5.0-rc.1 checks
+
+Run on main at commit 826fa50, which is the 0.5.0-rc.1 code apart from the version and a test-only
+fix (#272). These are the Tier 1 results for 0.5.0; 0.4.1 was the baseline, side by side. The table
+above keeps each client's last full run.
+
+- **Scripted servers,** the same images as for 0.4.1 (Jellyfin 12.4.0, Navidrome 0.64.2, Lyrion
+  9.1.1, MPD 0.24.15, MinimServer 2.2): the same tracks, albums, art and bytes as 0.4.1.
+- **Linux NFS 4.2 and SMB 3.1.1 mounts,** 22 checks per client: Fedora 44, RHEL 10.1, RHEL 9.7,
+  Debian 13, Debian 12 and Ubuntu 26.04 pass all 22. Ubuntu 24.04 passes 21: `stat` sizes over SMB
+  fail for the files with non-ASCII names, the known `linux-modules-extra` problem
+  ([below](#linux-nfs-and-smb-mounts)), the same as on 0.4.1.
+- **FUSE requests** (counted from sacdfs's request log): a scan by the scripted servers sends 2 to 20 %
+  fewer than on 0.4.1. Over SMB, a first `ls -lR` of the 206-file test tree takes 226 requests,
+  against 722 on 0.4.1 (#205).
+- **Real discs:** TODO(coordinator): fill in the real-disc results on the release candidate.
+- **Not run on 0.5.0:** Windows 11 (Explorer, PowerShell, Robocopy: the 0.4.1-rc.1 result stands),
+  macOS, Roon and Plex at scale, foobar2000, JRiver and the Tier 2 tools.
+- **Release binaries:** the x86_64 build targets glibc 2.17. Run in a UBI 7 container, the mount and
+  the bytes read match those of a host mount, and the corpus check passes 457 of 457. The aarch64 build
+  also targets glibc 2.17; its tests run natively in CI.
 
 ## 0.4.1-rc.3 checks
 
@@ -423,7 +445,7 @@ results do not depend on the sacdfs version, since the bytes of the files are un
 
 ## Linux NFS and SMB mounts
 
-**Tested on 0.4.1-rc.1** (the published image, rootful Podman in a Fedora 44 VM; 0.4.0 was
+**Tested on 0.4.1-rc.1** (re-run on 0.5.0-rc.1, [above](#050-rc1-checks), with the same result; the published image, rootful Podman in a Fedora 44 VM; 0.4.0 was
 the baseline for the restart test). The server held the 5 test images and one multichannel
 disc whose WAV file passes 4 GiB (`SACDFS_PCM_RATE=352800`): 103 DSF and 103 WAV files, 206 in
 all. Each client mounted NFSv4.2 on the default port and SMB 3.1.1 on a custom port, in a VM
