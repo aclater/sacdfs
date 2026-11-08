@@ -585,7 +585,9 @@ the summary table above. The sacdfs version is given where the report gives it.
   - **USB Audio Player Pro 7.1.3.1** on a Pixel 8 Pro (Android 17), into several DACs: stereo DSF
     and WAV.
 
-  Not reported: scan times, memory use and the sacdfs options.
+  The NAS has 4 GB of memory, with about 660 MB in use by programs on the whole NAS. With 1,891
+  ISO files, the user reported the library loaded in under 3 seconds. Not reported: sacdfs's own
+  memory use, client scan times and the sacdfs options.
 
 ## Reporting a client
 
