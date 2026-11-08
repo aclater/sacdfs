@@ -1222,7 +1222,10 @@ TOC is read through the handle kept for the audio reads (6 to 8 calls, as before
    play range, but a TOC whose last track runs past it is still shown, and inside a track every
    frame has its real neighbours.
 4. **Cache.** Converted frames go into the same byte-bounded LRU as the decoded DSD frames,
-   keyed by (disc, area, position, kind), so `--cache-mb` is one budget for both. *Why one
+   keyed by (disc, area, position, kind), so `--cache-mb` is one budget for both. The disc
+   is its id, which every tree takes from one counter of the process, so that trees sharing
+   an engine (a test scanning the source again) never share a key: ids counted per tree gave
+   a second tree's image the first tree's cached audio of another image (#272). *Why one
    budget:* a mount that serves only WAV files spends all of it on PCM, and memory stays
    bounded whatever the number of open files. The DSD frames a conversion reads are not
    cached (the PCM frame is what is served again).
