@@ -6,7 +6,7 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-11-0X
+## [0.5.0] - 2026-11-08
 
 Tested as release candidate 0.5.0-rc.1 (2026-11-07). The final version carries only the version
 change on top of the rc.1 code and a test-only fix (#272). The results are in docs/clients.md and
