@@ -15,7 +15,7 @@ Only the path was changed per system, and Synology also needed `modprobe fuse` (
 
 Your system's guide lists any extra step and what else was checked there:
 [Synology](synology.md), [QNAP](qnap.md), [ASUSTOR](asustor.md),
-[TerraMaster](terramaster.md), [UGREEN](ugreen-ugos.md).
+[TerraMaster](terramaster.md), [UGREEN](ugreen-ugos.md), [ReadyNAS](readynas.md).
 
 ## Before you start
 
@@ -107,21 +107,107 @@ Your system's guide lists any extra step and what else was checked there:
 
    *You should see* one folder per image. Each holds `Stereo` and, on multichannel discs,
    `Multichannel`, with files such as `01 - Title.dsf` and `01 - Title.wav`.
-9. **To stop it:**
+9. **To stop it,** see [Start at boot and stop safely](#start-at-boot-and-stop-safely)
+   below. Don't use `kill -9`.
 
-   ```sh
-   umount /volume1/sacd
-   ```
-
-**After the NAS restarts,** sacdfs isn't running, and Synology also needs `modprobe fuse`
-again. Run step 7 again. A way to start it at boot was checked only on TerraMaster (a
-systemd service; see [terramaster.md](terramaster.md)). The vendors' own schedulers and
-startup scripts weren't checked.
+**After the NAS restarts,** sacdfs isn't running unless you set up
+[Start at boot and stop safely](#start-at-boot-and-stop-safely). Synology also needs
+`modprobe fuse` again; the unit and `sacdfs-ctl` do that.
 
 **Sharing the folder.** Clients reach the files through the NAS's own SMB or NFS sharing
 of `/volume1/sacd`, or of a folder above it. The vendors' sharing settings weren't checked.
 What was checked on each system (hand-made NFS exports and a test Samba share) is in its
 guide.
+
+## Start at boot and stop safely
+
+**Never stop sacdfs with `kill -9` or `killall -9`.** That signal gives sacdfs no chance to
+unmount. The mount stays behind with nobody serving it, and every program that touches the
+folder (a file manager, a share, a player) fails with `Transport endpoint is not connected`
+until someone runs `umount -l` on it. A plain `kill` (or `killall sacdfs`, which sends SIGTERM)
+is safe: sacdfs unmounts and exits. If a file on the mount is still open, sacdfs detaches the
+mount at once and exits when the last file closes, and that can take forever (a stuck share, a
+paused player). So the service and the script below wait up to 30 seconds, and only then kill
+sacdfs and clear the mount. A new sacdfs also clears a dead mount when it starts.
+
+Both routes read one settings file, `/etc/default/sacdfs`. The files below are in the
+[`deploy`](../../deploy) folder of the repository, from 0.6.0:
+
+```sh
+mkdir -p /etc/default
+curl -fL -o /etc/default/sacdfs https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/sacdfs.conf.example
+vi /etc/default/sacdfs        # set SACDFS_IMAGES and SACDFS_MOUNT to your paths
+```
+
+`SACDFS_IMAGES` is the folder with your images and `SACDFS_MOUNT` the folder to mount on (step 6).
+`SACDFS_OPTIONS` takes any other [options](../options.md), separated by spaces. Keep the file to
+plain `NAME=value` lines: systemd reads it too.
+
+### With systemd
+
+Use this where `systemctl --version` works: TerraMaster, UGREEN, and Debian-based systems such as
+ReadyNAS OS 6. The unit expects the program at `/usr/local/bin/sacdfs`:
+
+```sh
+cp /volume1/sacdfs/sacdfs /usr/local/bin/sacdfs
+curl -fL -o /etc/systemd/system/sacdfs.service https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/systemd/sacdfs.service
+systemctl daemon-reload
+systemctl enable --now sacdfs
+```
+
+*You should see* `systemctl is-active sacdfs` print `active`, and `ls /volume1/sacd` list the
+images, also after the NAS restarts. Day to day:
+
+```sh
+systemctl stop sacdfs       # unmounts, then exits; waits up to 30 s
+systemctl restart sacdfs
+journalctl -u sacdfs        # the log
+```
+
+The unit loads FUSE if `/dev/fuse` is missing, makes the folder to mount on, restarts sacdfs if it
+crashes, and clears any mount left behind after a stop. It uses only settings that systemd 215
+(Debian 8) has, and none that hide `/dev` or the file system from the mount.
+
+### Without systemd: sacdfs-ctl
+
+QNAP, ASUSTOR and Synology have no systemd. `sacdfs-ctl` is a short script for BusyBox `sh`:
+
+```sh
+curl -fL -o /volume1/sacdfs/sacdfs-ctl https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/sacdfs-ctl
+chmod +x /volume1/sacdfs/sacdfs-ctl
+echo 'SACDFS_BIN=/volume1/sacdfs/sacdfs' >> /etc/default/sacdfs
+/volume1/sacdfs/sacdfs-ctl start
+```
+
+| Command | What it does | Exit code |
+|---|---|---|
+| `sacdfs-ctl start` | Loads FUSE if needed, makes the folder, starts sacdfs with a pid file (`/var/run/sacdfs.pid`) and a log (`/var/log/sacdfs.log`). Refuses if sacdfs already runs. Clears a leftover mount first. | 0 started, 1 failed |
+| `sacdfs-ctl stop` | Sends SIGTERM and waits up to 30 s for the process to exit and the mount to go. Only then detaches the mount and uses SIGKILL. | 0 stopped, 1 failed |
+| `sacdfs-ctl status` | Says whether sacdfs runs and the folder is mounted. | 0 running, 3 not running, 1 half-way (for example a dead mount) |
+| `sacdfs-ctl restart` | stop, then start. | as for the two |
+
+Change where the pid file and log go with `SACDFS_PIDFILE` and `SACDFS_LOG` in the settings file.
+On QNAP, `/etc` and `/var` are on a RAM disk that is empty after a restart. Keep the settings
+file on the data volume and run the script with `SACDFS_CONF=/volume1/sacdfs/sacdfs.conf` in front.
+
+**Starting it at boot with the vendor's own tools** (QNAP `autorun.sh`, ASUSTOR
+`/usr/local/etc/init.d`, Synology Task Scheduler) was **not checked**. Each needs an entry that
+runs `sacdfs-ctl start` once the data volume is up; the vendor's help is the guide.
+
+### What was checked
+
+Checked on each system in a VM, not on the vendor's hardware. Storage setup and app stores weren't exercised. The 0.5.0
+release binary with the unit and script from this change.
+
+| Where | What was run | Result |
+|---|---|---|
+| TerraMaster TOS 7.0, UGREEN's Debian 12 kernel, ReadyNAS OS 6.10.10 (systemd) | The unit: start; read all 22 files of two test images; `systemctl stop` while idle; stop with a file held open; `kill -9`; a dead mount left in place, then start; enable, restart the VM | All files identical. Start under 1 s (ReadyNAS 15.3 s the first time). Idle stop under 0.1 s, exit status 0, no mount left. Held-open stop 30.1 to 30.3 s, then systemd killed sacdfs; no mount left. After `kill -9` the unit had sacdfs running again 7 s later. The dead mount was cleared at the next start. The service was active after the restart |
+| ADM 5.1.4, QuTScloud 5.2.9, DSM 7.4.1 (BusyBox or bash `sh`), ReadyNAS OS 6.10.10, Debian 8 container | `sacdfs-ctl`: status, start, a second start, read the files, stop while idle, stop with a file held open, start after `kill -9`, restart, stop twice | Files identical. Start 1 s. Idle stop 1 s. Held-open stop 31 to 32 s, then forced; no mount left. Start after `kill -9` said it was clearing a leftover mount and worked. Exit codes 0, 1 and 3 as in the table. On DSM, which had no `/dev/fuse`, the script loaded FUSE |
+
+Not checked: the vendors' own start-at-boot tools, `sacdfs-ctl` after a restart of the NAS, the
+unit on systemd 215 (the oldest checked was 230), and a client on another machine. A stop with a
+file held open takes the full 30 s on every system; a file that is closed in time makes it quick.
+
 
 ## If something goes wrong
 

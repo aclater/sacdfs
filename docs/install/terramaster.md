@@ -26,38 +26,16 @@ wasn't checked.
 
 ### Starting at boot
 
-TOS uses systemd. This service started sacdfs again after the VM restarted. Create the file
-`/etc/systemd/system/sacdfs.service`:
-
-```ini
-[Unit]
-Description=SACD images as DSF and WAV files
-RequiresMountsFor=/Volume1/music /Volume1/sacd
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=notify
-CacheDirectory=sacdfs
-ExecStart=/Volume1/sacdfs/sacdfs -f --allow-other --index-cache %C/sacdfs /Volume1/music /Volume1/sacd
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Stop sacdfs if you started it by hand (`umount /Volume1/sacd`), then:
-
-```sh
-systemctl daemon-reload
-systemctl enable --now sacdfs
-systemctl is-active sacdfs
-```
-
-*You should see* `active`, and `ls /Volume1/sacd` lists the images, now and after a restart.
-`journalctl -u sacdfs` shows its log. In the VM the data volume was mounted before TOS
-started, not by TOS's own storage manager. So whether `RequiresMountsFor=` waits for the
-volume on real hardware wasn't checked, and neither was whether a TOS update keeps the file.
+TOS uses systemd, so use the shipped unit: see
+[With systemd](nas-binary.md#with-systemd) in the NAS steps, with `/Volume1` in
+`/etc/default/sacdfs`. In the VM the unit started sacdfs (22 files of two test images identical to
+the reference), `systemctl stop` unmounted at once when nothing was open, a sacdfs killed with
+`kill -9` was started again by the unit, and a dead mount left behind was cleared on the next start.
+After a restart of the VM the service was active. Stopping with a file held open took the full 30 s,
+after which systemd killed sacdfs and no mount was left. Never stop sacdfs with `kill -9` by hand;
+the NAS steps say why. In the VM the data volume was mounted before TOS started, not by TOS's own
+storage manager. So whether the unit waits for the volume on real hardware wasn't checked, and
+neither was whether a TOS update keeps the unit file.
 
 **Docker (Compose): not checked on TOS.** TerraMaster's Docker Engine comes from its App Center,
 which wasn't exercised. The Compose file for every NAS container manager is

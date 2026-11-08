@@ -7,6 +7,14 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Safe start and stop for the release binary on a NAS (#289).** `deploy/systemd/sacdfs.service`
+  is a unit for `/usr/local/bin/sacdfs` (settings in `/etc/default/sacdfs`, loads FUSE, waits up to
+  30 s for the unmount, clears a leftover mount); `deploy/sacdfs-ctl` does `start`, `stop`, `status`
+  and `restart` with BusyBox `sh` where there is no systemd. Stopping is SIGTERM, and SIGKILL only
+  after the wait. The NAS steps warn against `kill -9`, which leaves a dead mount, and the
+  TerraMaster guide uses the shipped unit. CI runs `shellcheck` on the script and
+  `systemd-analyze verify` on the unit.
+
 - **Unraid and TrueNAS app-store entries, prepared (part of #284).** `deploy/unraid/sacdfs.xml` is a
   Community Applications template (device, capabilities and AppArmor setting in Extra Parameters,
   not privileged; ports 10445 and 12049; read-only images and index cache paths; SMB and NFS

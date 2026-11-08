@@ -784,6 +784,8 @@ and ignored by sacdfs itself; sacdfs is always read-only. Any other option is an
 typo does not pass silently. `allow_other` needs `user_allow_other` in `/etc/fuse.conf` for
 non-root users. Without `-f`, sacdfs goes to the background once mounted, which `mount` expects.
 
+**On a NAS,** the shipped unit and the `sacdfs-ctl` script ([start at boot and stop safely](install/nas-binary.md#start-at-boot-and-stop-safely)) do this with one settings file.
+
 **systemd unit.** sacdfs sends `READY=1` when `NOTIFY_SOCKET` is set, so `Type=notify` works.
 Run it in the foreground (`-f`) so that the service's main process is the one that serves the
 mount; its log goes to the journal.

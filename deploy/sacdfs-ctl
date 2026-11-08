@@ -1,0 +1,148 @@
+#!/bin/sh
+# Start and stop sacdfs safely on a NAS without systemd (BusyBox ash is enough).
+#   sacdfs-ctl start|stop|status|restart
+# Reads /etc/default/sacdfs, or the file in $SACDFS_CONF (see deploy/sacdfs.conf.example).
+# Stop sends SIGTERM and waits; it never starts with kill -9, which leaves a dead mount.
+# Exit codes: 0 done / running; 1 failed; 2 usage; 3 not running (status).
+
+CONF=${SACDFS_CONF:-/etc/default/sacdfs}
+if [ ! -r "$CONF" ]; then
+    echo "sacdfs-ctl: cannot read $CONF; copy deploy/sacdfs.conf.example there and edit it" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+. "$CONF"
+SACDFS_MOUNT=${SACDFS_MOUNT%/}
+BIN=${SACDFS_BIN:-/usr/local/bin/sacdfs}
+PIDFILE=${SACDFS_PIDFILE:-/var/run/sacdfs.pid}
+LOG=${SACDFS_LOG:-/var/log/sacdfs.log}
+WAIT=${SACDFS_STOP_WAIT:-30}
+if [ -z "$SACDFS_IMAGES" ] || [ -z "$SACDFS_MOUNT" ]; then
+    echo "sacdfs-ctl: SACDFS_IMAGES and SACDFS_MOUNT must be set in $CONF" >&2
+    exit 1
+fi
+
+# The type column of the mount, empty when nothing is mounted there.
+mount_type() {
+    t=
+    while read -r _ dir type _; do
+        [ "$dir" = "$SACDFS_MOUNT" ] && t=$type
+    done < /proc/mounts
+    echo "$t"
+}
+
+# Prints the pid when the pidfile names a running sacdfs.
+running_pid() {
+    [ -r "$PIDFILE" ] || return 1
+    p=$(cat "$PIDFILE")
+    case $p in '' | *[!0-9]*) return 1 ;; esac
+    [ -d "/proc/$p" ] || return 1
+    case $(cat "/proc/$p/comm" 2>/dev/null) in sacdfs*) echo "$p" ;; *) return 1 ;; esac
+}
+
+do_start() {
+    if pid=$(running_pid); then
+        echo "sacdfs is already running (pid $pid) on $SACDFS_MOUNT"
+        return 1
+    fi
+    [ -e /dev/fuse ] || modprobe fuse 2>/dev/null
+    if [ ! -e /dev/fuse ]; then
+        echo "sacdfs-ctl: /dev/fuse is missing and modprobe fuse did not help" >&2
+        return 1
+    fi
+    t=$(mount_type)
+    case $t in
+        '') ;;
+        fuse*)
+            echo "leftover mount on $SACDFS_MOUNT (no running sacdfs); clearing it"
+            umount -l "$SACDFS_MOUNT" || return 1
+            ;;
+        *)
+            echo "sacdfs-ctl: $SACDFS_MOUNT already has a $t mount that is not sacdfs's" >&2
+            return 1
+            ;;
+    esac
+    mkdir -p "$SACDFS_MOUNT" || return 1
+    # Not quoted on purpose: the options are separated by spaces.
+    # shellcheck disable=SC2086
+    # setsid (where there is one) keeps a hang-up of the login from reaching sacdfs.
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$BIN" -f $SACDFS_OPTIONS "$SACDFS_IMAGES" "$SACDFS_MOUNT" </dev/null >>"$LOG" 2>&1 &
+    else
+        "$BIN" -f $SACDFS_OPTIONS "$SACDFS_IMAGES" "$SACDFS_MOUNT" </dev/null >>"$LOG" 2>&1 &
+    fi
+    echo $! >"$PIDFILE"
+    i=0
+    while [ "$i" -lt 60 ]; do
+        if [ -n "$(mount_type)" ]; then
+            echo "sacdfs started (pid $(cat "$PIDFILE")) on $SACDFS_MOUNT; log: $LOG"
+            return 0
+        fi
+        running_pid >/dev/null || break
+        sleep 1
+        i=$((i + 1))
+    done
+    echo "sacdfs-ctl: sacdfs did not mount; see the end of $LOG" >&2
+    tail -n 5 "$LOG" >&2
+    rm -f "$PIDFILE"
+    return 1
+}
+
+do_stop() {
+    if ! pid=$(running_pid); then
+        rm -f "$PIDFILE"
+        if [ -n "$(mount_type)" ]; then
+            echo "no running sacdfs, but $SACDFS_MOUNT is still mounted; unmounting it"
+            umount -l "$SACDFS_MOUNT" || return 1
+        else
+            echo "sacdfs is not running"
+        fi
+        return 0
+    fi
+    kill -TERM "$pid"
+    i=0
+    while [ "$i" -lt "$WAIT" ]; do
+        if [ ! -d "/proc/$pid" ] && [ -z "$(mount_type)" ]; then
+            rm -f "$PIDFILE"
+            echo "sacdfs stopped"
+            return 0
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    echo "sacdfs did not stop within ${WAIT}s (a file on it is probably still open); forcing it" >&2
+    [ -n "$(mount_type)" ] && umount -l "$SACDFS_MOUNT"
+    [ -d "/proc/$pid" ] && kill -KILL "$pid"
+    sleep 1
+    rm -f "$PIDFILE"
+    [ -z "$(mount_type)" ]
+}
+
+do_status() {
+    t=$(mount_type)
+    if pid=$(running_pid); then
+        if [ -n "$t" ]; then
+            echo "sacdfs is running (pid $pid), mounted on $SACDFS_MOUNT"
+            return 0
+        fi
+        echo "sacdfs is running (pid $pid) but $SACDFS_MOUNT is not mounted (stopping, or files still open)"
+        return 1
+    fi
+    if [ -n "$t" ]; then
+        echo "sacdfs is not running but $SACDFS_MOUNT is still mounted (dead mount); sacdfs-ctl start or stop clears it"
+        return 1
+    fi
+    echo "sacdfs is not running"
+    return 3
+}
+
+case $1 in
+    start) do_start ;;
+    stop) do_stop ;;
+    restart) do_stop && do_start ;;
+    status) do_status ;;
+    *)
+        echo "usage: sacdfs-ctl start|stop|status|restart" >&2
+        exit 2
+        ;;
+esac
