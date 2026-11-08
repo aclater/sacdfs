@@ -44,9 +44,16 @@ above keeps each client's last full run.
   fail for the files with non-ASCII names, the known `linux-modules-extra` problem
   ([below](#linux-nfs-and-smb-mounts)), the same as on 0.4.1.
 - **FUSE requests** (counted from sacdfs's request log): a scan by the scripted servers sends 2 to 20 %
-  fewer than on 0.4.1. Over SMB, a first `ls -lR` of the 206-file test tree takes 226 requests,
+  fewer than on 0.4.1. Over SMB, a first `ls -lR` of the 216-file test tree takes 226 requests,
   against 722 on 0.4.1 (#205).
-- **Real discs:** TODO(coordinator): fill in the real-disc results on the release candidate.
+- **Real discs** (main at the rc.1 code; a real library, read only):
+  - `scripts/real-discs.sh` passes 3 of 3 on 40 images (12 multichannel, 28 stereo only), with every area's tracks equal to the area stream.
+  - 466 DSF and WAV files from 12 discs are byte-identical to 0.4.0.
+  - 5 multichannel WAV tracks of 4.2 to 7.9 GiB at 352.8 kHz are RF64 and byte-identical to 0.4.0. FFmpeg reads each correctly.
+  - The whole library lists the same 4,911 DSF files as 0.4.0. The only differences are intended:
+    - untitled tracks are named `NN - Track NN`, as since 0.4.1;
+    - cover images were added;
+    - folders that hold only art are hidden (#175).
 - **Not run on 0.5.0:** Windows 11 (Explorer, PowerShell, Robocopy: the 0.4.1-rc.1 result stands),
   macOS, Roon and Plex at scale, foobar2000, JRiver and the Tier 2 tools.
 - **Release binaries:** the x86_64 build targets glibc 2.17. Run in a UBI 7 container, the mount and

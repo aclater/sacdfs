@@ -102,7 +102,7 @@ otherwise stated as untested.
 | MinimServer | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Same tracks, albums, art and bytes as 0.4.1 ([results](#results-050-gate)) |
 | Windows 11 Explorer, PowerShell, Robocopy | 1 | SMB 3 | Unattended VM, not a physical client | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0; the 0.4.1-rc.1 result stands |
 | Linux NFS and SMB mounts (Fedora, RHEL, Debian, Ubuntu) | 1 | NFSv4, SMB 3 | VMs and containers | 0.4.1-rc.1 on seven distributions | SMB 3.1.1 and NFS 4.2 listings correct, 10 files byte-identical over both, writes refused, SMB reconnects after a restart. Which distributions: not recorded | 22 of 22 on six distributions, 21 of 22 on Ubuntu 24.04 (known), as on 0.4.1 ([results](#results-050-gate)) |
-| beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | CI on main green (2026-11-05); import run on the rc.2 mount: pass, see [results](#results-041-rc2-gate-2026-11-06). Run on 0.4.0 too, same result | TODO(coordinator): result not recorded here |
+| beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | CI on main green (2026-11-05); import run on the rc.2 mount: pass, see [results](#results-041-rc2-gate-2026-11-06). Run on 0.4.0 too, same result | Not run on 0.5.0 |
 | FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
 | foobar2000 | 2 | SMB 3 | Windows VM | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
@@ -381,8 +381,7 @@ fix; 0.4.1 was the baseline. Details in [clients.md](clients.md#050-rc1-checks).
 identity match a host mount, and the corpus check passes 457 of 457. The aarch64 build targets glibc
 2.17 and its tests run natively in CI.
 
-**Real-disc tests:** TODO(coordinator): result of `scripts/real-discs.sh` on the last candidate, with
-the number of images.
+**Real-disc tests:** `scripts/real-discs.sh` passes 3 of 3 on 40 real images (12 multichannel), run on main at the rc.1 code. A byte comparison with 0.4.0 matches on 466 files from 12 discs, and on 5 RF64 WAV tracks of 4.2 to 7.9 GiB. A whole-library tree comparison with 0.4.0 shows no audio file missing or added; the only differences are the intended renames and art changes (see [clients](clients.md)).
 
 **Soak:** TODO(coordinator): soak results on 0.5.0-rc.1 (hosts, lengths, verdicts, unexpected errors,
 memory trend), or the reason none is needed under the [soak rule](#when-a-soak-is-needed).
