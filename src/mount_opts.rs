@@ -51,6 +51,7 @@ const FLAGS: &[&str] = &[
     "foreground",
     "flatten",
     "allow_other",
+    "no_allow_other",
     "no_index_cache",
     "musicbrainz",
     "lookup_name",
@@ -166,6 +167,11 @@ mod tests {
             run(&["s", "-o", "log_file=/var/log/x,flatten"]).unwrap(),
             ["s", "--log-file", "/var/log/x", "--flatten"]
         );
+    }
+
+    #[test]
+    fn no_allow_other() {
+        assert_eq!(run(&["s", "-o", "ro,no_allow_other"]).unwrap(), ["s", "--no-allow-other"]);
     }
 
     #[test]

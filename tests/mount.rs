@@ -545,6 +545,60 @@ fn bad_arguments_fail_cleanly() {
     assert!(out.status.success());
 }
 
+/// The first messages a NAS user meets say what is wrong and what to type (#282).
+#[test]
+fn start_up_messages_name_the_fix() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("sacd");
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .arg(corpus().join("images"))
+        .arg(&missing)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!("Create it with `mkdir -p {}`", missing.display())), "{err}");
+    assert_eq!(err.lines().count(), 1, "{err}");
+    // Both ways at once is refused.
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .args(["--allow-other", "--no-allow-other"])
+        .arg(corpus().join("images"))
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be used with"));
+}
+
+/// A mount that fails in the background is reported once, by the waiting parent, not again by
+/// the daemon (#282): a mount helper that fails stands in for any mount error.
+#[test]
+fn a_background_mount_failure_is_reported_once() {
+    skip_without_fuse!();
+    if std::fs::read_to_string("/proc/self/status")
+        .unwrap_or_default()
+        .lines()
+        .find_map(|l| l.strip_prefix("CapEff:"))
+        .and_then(|h| u64::from_str_radix(h.trim(), 16).ok())
+        .is_some_and(|c| c >> 21 & 1 == 1)
+    {
+        skip!("runs as root (or with CAP_SYS_ADMIN), which mounts without the helper");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .env("XDG_CACHE_HOME", cache.path())
+        .env("FUSERMOUNT_PATH", "false")
+        .arg(corpus().join("images"))
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(err.matches("cannot mount on").count(), 1, "{err}");
+    assert!(!is_mounted(&dir.path().canonicalize().unwrap()));
+}
+
 /// The FUSE mounts on `mountpoint`: more than one when one is mounted over another.
 fn fuse_mounts_on(mountpoint: &Path) -> usize {
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();

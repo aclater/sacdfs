@@ -54,8 +54,11 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   made); `-vv` logs debug detail. `RUST_LOG` (for example `RUST_LOG=sacdfs=debug`) overrides
   both.
 - `--allow-other` lets users other than the one who mounted read the files, which a media
-  server running as its own user, or an NFS or SMB server sharing the mount, needs. FUSE
-  allows it only with `user_allow_other` in `/etc/fuse.conf` (or when mounting as root).
+  server running as its own user, or an NFS or SMB server sharing the mount, needs. From 0.6.0
+  it is the default when sacdfs runs as root (the mount is read-only; the reasons are in
+  [design.md](design.md#other-users-on-by-default-as-root)), and `--no-allow-other` turns it
+  off. For other users it stays off unless asked for, and FUSE allows it only with
+  `user_allow_other` in `/etc/fuse.conf`.
 
 **Speed and memory.**
 - `--threads N` sets how many threads decode DST frames and convert frames to PCM; `0` (the
@@ -111,7 +114,7 @@ most when the images are on a network share, where each read is a round trip.
   Deleting the directory is always safe.
 - `--no-index-cache` starts every mount with an empty index (used for measurements).
 
-**Unmounting.** `fusermount3 -u MOUNTPOINT` (`fusermount -u` with FUSE 2), or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
+**Unmounting.** `umount MOUNTPOINT` as root; as another user `fusermount3 -u MOUNTPOINT` (`fusermount -u` with FUSE 2); or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
 If files are still open, or an NFS server still exports the mount, the mount is detached
 instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
 stops when the last one is closed.
@@ -550,7 +553,8 @@ the [container](deployment.md) does this for you, with SMB as well.) Inode numbe
 what each entry is (its source path, or the image, area, track and format), not from the order
 sacdfs finds things, so they are the same on every mount, and clients keep working, open files
 included, after sacdfs restarts. `/etc/exports` needs an `fsid` (a FUSE mount has no device
-number of its own), and sacdfs `--allow-other`, even when sacdfs runs as root:
+number of its own), and sacdfs `--allow-other`, even when sacdfs runs as root (from 0.6.0,
+the default as root):
 
 ```
 /srv/sacd  192.0.2.0/24(ro,fsid=4242,no_subtree_check)
@@ -811,9 +815,10 @@ mount should say `After=sacdfs.service` and `Requires=sacdfs.service`. A contain
 bind-mounts the mount point must bind its parent directory instead
 ([deployment guide](deployment.md#media-servers-in-containers-on-a-client-host)). This
 recipe was run in a Fedora 44 VM: mounted from fstab and from the unit, after a reboot, with
-`log_file` and the journal. A service runs as root without `allow_other`, so other users see
-"Permission denied" on the mount; add `--allow-other` (and `user_allow_other` in
-`/etc/fuse.conf` if the service runs as a user) when other users read it.
+`log_file` and the journal. Up to 0.5.0, a service running as root mounted without
+`allow_other`, so other users saw "Permission denied" on the mount; from 0.6.0 root's mount
+lets them read it (`--no-allow-other` keeps it to root). A service that runs as a user needs
+`--allow-other` and `user_allow_other` in `/etc/fuse.conf` when other users read it.
 
 ## Troubleshooting
 
@@ -831,7 +836,9 @@ goes to the journal: `journalctl -u sacdfs`.
   mounts and, from 0.5.0, unmounts through its `fusermount` instead; 0.4.1 and earlier mounted that
   way but couldn't unmount on SIGTERM and left the mount behind.
 - **`fusermount3: option allow_other only allowed if 'user_allow_other' is set in
-  /etc/fuse.conf`:** add that line to `/etc/fuse.conf`, or drop `--allow-other`.
+  /etc/fuse.conf`** (from 0.6.0: "--allow-other, for a user other than root, needs the line
+  `user_allow_other` in /etc/fuse.conf"): add that line to `/etc/fuse.conf`, or drop
+  `--allow-other`.
 - **`Transport endpoint is not connected`:** sacdfs was killed (or crashed) without
   unmounting. Starting sacdfs again on the same mount point, as the same user, clears it; or
   `fusermount3 -u MOUNTPOINT` (`umount -l MOUNTPOINT` as root).

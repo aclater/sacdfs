@@ -199,6 +199,66 @@ CONF
     log "NFS: export /$SHARE, clients $clients"
 }
 
+# --- checks before starting (#282) -----------------------------------------------------
+# Each problem met on NAS container managers gets one line that says what to change, instead
+# of a mount error that names the mount point.
+# has_cap SET BIT: whether bit BIT is set in the capability set SET (CapEff, CapBnd) of
+# /proc/self/status. Unknown counts as set: the mount then says what is wrong.
+has_cap() {
+    local key val
+    while read -r key val; do
+        [ "$key" = "$1:" ] || continue
+        [[ $val =~ ^[0-9a-fA-F]{1,16}$ ]] || return 0
+        (((16#$val >> $2) & 1)) && return 0 || return 1
+    done </proc/self/status
+    return 0
+}
+# port_taken PORT: whether a TCP socket listens on PORT in this network namespace, which with
+# host networking is the host's (a NAS's own SMB and NFS hold 445 and 2049).
+port_taken() {
+    local want f _ local_addr _rem state _rest
+    want=$(printf ':%04X' "$1")
+    for f in /proc/net/tcp /proc/net/tcp6; do
+        [ -r "$f" ] || continue
+        while read -r _ local_addr _rem state _rest; do
+            [ "$state" = 0A ] && [ "${local_addr: -5}" = "$want" ] && return 0
+        done < <(tail -n +2 "$f")
+    done
+    return 1
+}
+# The security label the container runs under: an AppArmor profile, or an SELinux context.
+security_label() {
+    local f l
+    for f in /proc/self/attr/apparmor/current /proc/self/attr/current; do
+        l=$(tr -d '\0' <"$f" 2>/dev/null) || continue
+        [ -n "$l" ] && { printf '%s' "$l"; return; }
+    done
+}
+preflight() {
+    [ -c /dev/fuse ] || die "the container has no /dev/fuse: add \`--device /dev/fuse\` (Compose: devices: [/dev/fuse]). If the host has none either, load FUSE there first, as root: \`modprobe fuse\`"
+    has_cap CapEff 21 || die "the container may not mount (it lacks CAP_SYS_ADMIN): add \`--cap-add SYS_ADMIN\` (Compose: cap_add: [SYS_ADMIN])"
+    if on "${NFS:-1}"; then
+        has_cap CapEff 2 || log "warning: NFS needs CAP_DAC_READ_SEARCH, which the container lacks: add \`--cap-add DAC_READ_SEARCH\` (Compose: cap_add: [DAC_READ_SEARCH]), or set NFS=0"
+        ! port_taken 2049 || die "port 2049 (NFS) is already in use here; with host networking the NAS's own NFS service holds it. Use bridge networking and publish another port (\`-p 12049:2049\`), or set NFS=0"
+    fi
+    if on "${SMB:-1}"; then
+        ! port_taken 445 || die "port 445 (SMB) is already in use here; with host networking the NAS's own file sharing holds it. Use bridge networking and publish another port (\`-p 10445:445\`), or set SMB=0"
+    fi
+    # A host folder bound over /srv shares the mount with players on the same host
+    # (docs/deployment.md, "Players on the same host"): only with shared propagation.
+    if mountpoint -q /srv; then
+        local line="" a b c d mp rest
+        while read -r a b c d mp rest; do
+            if [ "$mp" = /srv ]; then line="$a $b $c $d $mp $rest"; fi
+        done </proc/self/mountinfo
+        case " ${line%% - *} " in
+            *" shared:"*) ;;
+            *) log "warning: /srv is bound from the host without shared propagation, so players on the host won't see the mount (SMB and NFS still work). Bind it with \`:rshared\` (Compose: bind: propagation: rshared), from a host folder on a shared mount (docs/deployment.md, \"Players on the same host\")" ;;
+        esac
+    fi
+}
+preflight
+
 # --- start ------------------------------------------------------------------------------
 pids=()
 # Stop in order: the servers first (NFS-Ganesha drops its exports and file handles, smbd
@@ -242,7 +302,12 @@ sacdfs "${args[@]}" "$SOURCE" "$MNT" &
 pids+=($!)
 for _ in $(seq $((MOUNT_TIMEOUT * 10))); do
     mountpoint -q "$MNT" && break
-    kill -0 "${pids[0]}" 2>/dev/null || die "sacdfs exited (needs --device /dev/fuse and CAP_SYS_ADMIN)"
+    if ! kill -0 "${pids[0]}" 2>/dev/null; then
+        case "$(security_label)" in
+            *"(enforce)") die "sacdfs exited before mounting (its message is above). The container runs under the AppArmor profile '$(security_label)', which forbids mounting: add \`--security-opt apparmor=unconfined\` (Compose: security_opt: [apparmor=unconfined])" ;;
+            *) die "sacdfs exited before mounting; its message above says why" ;;
+        esac
+    fi
     sleep 0.1
 done
 mountpoint -q "$MNT" || die "sacdfs did not mount within ${MOUNT_TIMEOUT} s (raise SACDFS_MOUNT_TIMEOUT for a large library on a slow disk)"

@@ -1838,6 +1838,82 @@ decisions, each with its reason:
 - **If one process stops, the container stops**, so the runtime's restart policy restarts
   all three together instead of leaving a server sharing an empty directory.
 
+## Start-up on a NAS (#282)
+
+Most people who start sacdfs by hand run it on a NAS over SSH, and are not Linux users. The
+first problems they meet used to end in messages that pointed the wrong way: without FUSE
+loaded (Synology DSM before `modprobe fuse`) sacdfs said `cannot mount on /volume1/sacd: No such
+file or directory`, twice, blaming a folder that exists; the "still mounted" hint suggested
+`fusermount3 -u`, which ADM, DSM and QuTScloud don't have; and a root mount without
+`--allow-other` worked for root while every share and app got "Permission denied", with nothing
+in sacdfs's log.
+
+### Checks before mounting
+
+Before the library is scanned (which can take minutes) and before anything is mounted, sacdfs
+looks at what the mount will need, and each missing piece is one line with the fix:
+
+- `/dev/fuse` can't be opened: missing, or a node without its driver, says to run
+  `modprobe fuse` (and, in a container, to pass `--device /dev/fuse`); refused, says how to let
+  the user or the container open it.
+- The folder to mount on doesn't exist: says `mkdir -p` with its path.
+- No right to mount: mount(2) needs `CAP_SYS_ADMIN`. Without it in the effective set, sacdfs
+  needs a setuid mount helper (`fusermount3`, or FUSE 2's `fusermount`); without it in the
+  bounding set either (a container started without `--cap-add SYS_ADMIN`), no helper can gain
+  it. Each case says what to add or install.
+
+The checks only refuse what is certain to fail. A fact that can't be read (no
+`/proc/self/status`, an unexpected error opening `/dev/fuse`) passes, and the mount then says
+what is wrong. Whether `user_allow_other` is in `/etc/fuse.conf` is not checked ahead: a
+helper built with another configuration path would make such a check refuse a mount that
+works. Instead, the errors met at mount time are put in plain words: fusermount's
+`user_allow_other` refusal, and an `EACCES` from mount(2) as root, which comes from a security
+module (Docker's default AppArmor profile forbids mounting); sacdfs reads its own security label
+to name AppArmor or SELinux and the option that lifts it.
+
+A mount that fails in the background was printed twice: by the waiting parent, which the
+daemon tells, and by the daemon itself, whose standard error is still the terminal then. The
+daemon now stays quiet once it has told the parent.
+
+The unmount hints name a command that exists on the system: `umount` for root (always there,
+and the only one on DSM, ADM and QuTScloud), else the helper found (`fusermount3 -u`, or
+`fusermount -u`), else `umount` as root.
+
+The container's entry point checks, before starting sacdfs, for `/dev/fuse`, `CAP_SYS_ADMIN`
+(and warns without `CAP_DAC_READ_SEARCH` when NFS is on), ports 445 and 2049 already taken in its
+network namespace (with host networking, by the NAS's own SMB or NFS), and, when a host folder is
+bound over `/srv` to share the mount with players on the same host, that the bind has shared
+propagation (a warning: SMB and NFS still work). A mount that fails under an enforcing AppArmor
+profile names `apparmor=unconfined`; that path, and sacdfs's own `EACCES` explanation, are covered
+by unit tests only, as no AppArmor host was available to run them on.
+
+### Other users: on by default as root
+
+**Decision.** When sacdfs runs as root, other users may read the mount (FUSE's `allow_other`)
+unless `--no-allow-other` is given. For other users nothing changes: it stays off unless
+`--allow-other` is given, which FUSE allows them only with `user_allow_other` in
+`/etc/fuse.conf`.
+
+**Why.** On a NAS, sacdfs runs as root, and the mount is there to be shared: Samba serves
+guests and users as their own uid, NFS servers and media apps run as other users. Without
+`allow_other`, the kernel refuses all of them with "Permission denied", and the guides' checks
+on five NAS systems met exactly that. Root's mount needs no `/etc/fuse.conf` entry, so turning it
+on can't fail. The risk is small: the mount is read-only, `nodev`, `nosuid` and `noexec`, every
+file is `r--r--r--` and every folder `r-xr-xr-x`, and the kernel checks those modes
+(`default_permissions`), so another user can read what sacdfs shows and nothing else. What it
+shows is derived from images that root chose to share.
+
+**Alternatives.** Keeping it off and only warning at start, as the issue's minimum asked: a
+warning on a background start goes nowhere without `--log-file`, and the user would still meet
+"Permission denied" first. Turning it on for every user: a non-root user without
+`user_allow_other` would then fail to mount at all, a change in behaviour for desktop users who
+mount for themselves. `allow_root` (root and the owner): fuser enforces it itself, and it would
+not help Samba guests or app users, which are neither.
+
+**Trade-off.** A root mount that should be private now needs `--no-allow-other`, and a reader
+of a root-only mount's files is no longer limited to root. The container already ran with
+`--allow-other`; it keeps passing it.
+
 ## Release binaries and image (#44)
 
 `.github/workflows/release.yml` builds, tests and publishes a release on a `v*` tag, and does
