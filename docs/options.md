@@ -29,7 +29,8 @@ above it.
 | `--lookup-durations` | With `--musicbrainz`: if that finds nothing, also ask by the tracks' start times (a disc of 4 tracks or more). Sends the times. |
 | `--flatten` | Collapse each chain of folders that holds a single image into its outermost folder ([Layout](layout.md)). Top-level folders of `SOURCE` are never collapsed. |
 | `--sidecars LIST` | Files passed through from `SOURCE`, byte for byte, next to the images: extensions, and folder names ending in `/` whose whole content passes. `default` (the default) is `jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/`; `default,cue` adds to it, `default,-webp` removes from it, `none` passes nothing ([Layout](layout.md)). |
-| `--allow-other` | Let other users read the mount. Needs `user_allow_other` in `/etc/fuse.conf`. |
+| `--allow-other` | Let other users read the mount. The default when sacdfs runs as root (from 0.6.0; the mount is read-only). A user other than root needs `user_allow_other` in `/etc/fuse.conf` for it. |
+| `--no-allow-other` | Only the user who mounted may read the mount, also when sacdfs runs as root. |
 | `--index-cache DIR` | Keep the persistent seek index in `DIR` (default: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`). It remembers where frames are in each image, so that seeks after a remount skip most of their search. |
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
 | `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default `64`). The least recently used is closed first, and any image unused for 5 minutes is closed. |
@@ -41,7 +42,7 @@ above it.
 
 `mount -t fuse.sacdfs` and fstab work too, with the options above as `-o` options, and `Type=notify` units are supported: see [Mounting at boot](user-guide.md#mounting-at-boot-fstab-and-systemd).
 
-Unmount with `fusermount3 -u MOUNTPOINT` (`fusermount -u` where only FUSE 2 is installed); SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
+Unmount with `umount MOUNTPOINT` as root, or as another user `fusermount3 -u MOUNTPOINT` (`fusermount -u` where only FUSE 2 is installed); SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
 still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
 each option does in detail, and the seek index cache, are in the
 [user guide](user-guide.md#options).

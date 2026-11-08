@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 mod mount_opts;
+mod startup;
 
 use fuser::{Config, MountOption, Session, SessionACL};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
@@ -32,7 +33,8 @@ use sacdfs::tree::{Output, SourceDir, Tree};
 /// SOURCE is an image file or a directory searched recursively for *.iso files. Each image
 /// appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN - title.dsf,
 /// with NN - title.wav (24-bit PCM, converted on demand) next to it.
-/// Unmount with `fusermount3 -u MOUNTPOINT`, or stop sacdfs with SIGINT, SIGTERM or SIGHUP.
+/// Unmount with `umount MOUNTPOINT` as root, else `fusermount3 -u MOUNTPOINT` (`fusermount -u`
+/// with FUSE 2), or stop sacdfs with SIGINT, SIGTERM or SIGHUP.
 ///
 /// `sacdfs verify SOURCE [EXTRACTS]...` checks extracted DSF and DFF files against what
 /// sacdfs serves, before they are deleted: see `sacdfs verify --help`. `sacdfs tags` keeps
@@ -112,9 +114,13 @@ struct Args {
     /// item (default,-webp), `none` passes nothing.
     #[arg(long, default_value = "default", value_name = "LIST", value_parser = Sidecars::parse)]
     sidecars: Sidecars,
-    /// Let other users see the mount (needs `user_allow_other` in /etc/fuse.conf).
+    /// Let other users read the mount: the default when run as root (the mount is read-only).
+    /// A user other than root needs `user_allow_other` in /etc/fuse.conf for it.
     #[arg(long)]
     allow_other: bool,
+    /// Only the user who mounted may read the mount, also when run as root.
+    #[arg(long, conflicts_with = "allow_other")]
+    no_allow_other: bool,
     /// Directory of the persistent seek index, which lets seeks after a remount skip most
     /// of their search (default: $XDG_CACHE_HOME/sacdfs, else ~/.cache/sacdfs).
     #[arg(long, value_name = "DIR")]
@@ -235,6 +241,8 @@ fn main() -> ExitCode {
     logger.init();
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
+        // A daemon that told the waiting parent, which printed it: once is enough (#282).
+        Err(_) if REPORTED.load(Ordering::Relaxed) => ExitCode::FAILURE,
         Err(e) => {
             eprintln!("sacdfs: {e}");
             ExitCode::FAILURE
@@ -325,13 +333,19 @@ fn run(args: Args) -> io::Result<()> {
     // Waited for before the mount point itself is looked at: a stat of a mount that is
     // going away can fail.
     wait_for_earlier_mount(&outside_path(&args.mountpoint))?;
-    let mountpoint = args.mountpoint.canonicalize().map_err(|e| with_path(e, &args.mountpoint))?;
+    let mountpoint = args.mountpoint.canonicalize().map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => io::Error::new(e.kind(), startup::missing_mountpoint(&args.mountpoint)),
+        _ => with_path(e, &args.mountpoint),
+    })?;
     if !mountpoint.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::NotADirectory,
             format!("{}: not a directory", mountpoint.display()),
         ));
     }
+    // FUSE, the right to mount and the mount helper (#282): before the scan, which can take
+    // minutes on a large library, and with a plain line for each thing that is missing.
+    startup::check(&startup::Facts::gather()).map_err(io::Error::other)?;
     // Nothing sacdfs reads may lie under its own mount (#56): before the scan, which can
     // take a while on a large library.
     refuse_source_under_mountpoint(&source, &mountpoint)?;
@@ -438,7 +452,9 @@ fn run(args: Args) -> io::Result<()> {
         MountOption::DefaultPermissions,
         MountOption::CUSTOM(format!("max_read={MAX_READ}")),
     ];
-    if args.allow_other {
+    // Root lets other users read by default (#282): see docs/design.md, "Other users".
+    if startup::allow_other(args.allow_other, args.no_allow_other, uid) {
+        log::info!("other users may read the mount (--no-allow-other turns it off)");
         config.acl = SessionACL::All;
     }
     config.n_threads = Some(4);
@@ -456,7 +472,10 @@ fn run(args: Args) -> io::Result<()> {
     let session = match Session::new(fs, &mountpoint, &config) {
         Ok(s) => s,
         Err(e) => {
-            let e = io::Error::new(e.kind(), format!("cannot mount on {}: {e}", mountpoint.display()));
+            log::debug!("mount: {e}");
+            let why = startup::explain_mount_error(&e.to_string(), uid, startup::own_confinement())
+                .unwrap_or_else(|| e.to_string());
+            let e = io::Error::new(e.kind(), format!("cannot mount on {}: {why}", mountpoint.display()));
             if let Some(n) = notify {
                 n.fail(&e);
             }
@@ -821,11 +840,11 @@ fn wait_for_earlier_mount(at: &Path) -> io::Result<()> {
                 io::ErrorKind::AlreadyExists,
                 format!(
                     "{}: {}{how} is still mounted there after {} s (another sacdfs?); stop it or \
-                     unmount it first (fusermount3 -u {})",
+                     unmount it first: {}",
                     at.display(),
                     m.describe(uid),
                     EARLIER_MOUNT_WAIT.as_secs(),
-                    at.display()
+                    startup::unmount_hint(at)
                 ),
             ));
         }
@@ -849,7 +868,7 @@ fn detach_dead_mount(at: &Path, m: &MountEntry, uid: u32) -> io::Result<()> {
         )
     };
     if !m.is_sacdfs() || m.owner != Some(uid) {
-        return Err(dead(&format!("unmount it first (fusermount3 -u {})", at.display())));
+        return Err(dead(&format!("unmount it first: {}", startup::unmount_hint(at))));
     }
     if top_mount(at).as_ref().map(|t| &t.dev) != Some(&m.dev) {
         // Gone or covered meanwhile: look again.
@@ -1140,6 +1159,9 @@ fn ids() -> (u32, u32) {
     unsafe { (libc::getuid(), libc::getgid()) }
 }
 
+/// Set once the daemon has handed its error to the waiting parent, which prints it.
+static REPORTED: AtomicBool = AtomicBool::new(false);
+
 /// The daemon side of the pipe to the waiting parent.
 struct Notify(File, bool);
 
@@ -1150,7 +1172,9 @@ impl Notify {
     }
 
     fn fail(mut self, e: &io::Error) {
-        let _ = write!(self.0, "{e}");
+        if write!(self.0, "{e}").is_ok() {
+            REPORTED.store(true, Ordering::Relaxed);
+        }
     }
 }
 

@@ -15,7 +15,26 @@ All notable changes to sacdfs are recorded here. The format follows
   Podman, and Docker 25 with Compose 2.24 on ASUSTOR ADM in a VM; the other vendors' container
   managers are untested.
 
+- **Plain start-up messages for NAS users (#282).** Before scanning or mounting, sacdfs checks
+  what the mount needs and says in one line what is missing and what to type: FUSE not loaded
+  (`modprobe fuse`, instead of `cannot mount on X: No such file or directory`), the folder to
+  mount on missing (`mkdir -p X`), no mount helper for a user other than root, no right to mount
+  in a container (`--cap-add SYS_ADMIN`). A mount refused by AppArmor or SELinux, and
+  `--allow-other` without `user_allow_other`, are explained the same way. The container's entry
+  point checks `/dev/fuse`, `CAP_SYS_ADMIN`, ports 445 and 2049 already taken, and the `/srv` bind
+  for players on the same host before it starts.
+
+### Changed
+- **Root's mount lets other users read it (#282).** Run as root, sacdfs now mounts with
+  `allow_other` by default, so Samba guests, NFS clients and apps can read the mount instead of
+  getting "Permission denied". `--no-allow-other` (`-o no_allow_other`) keeps it to root. Users
+  other than root are unchanged. The mount is read-only; the decision and its trade-off are in
+  docs/design.md.
+- **Unmount hints name a command that exists (#282):** `umount` as root (DSM, ADM and QuTScloud
+  have no `fusermount3`), else `fusermount3 -u` or `fusermount -u`, whichever is installed.
+
 ### Fixed
+- **A background mount that failed printed its error twice (#282).**
 - **The container could take 10 s to stop (#283).** A stop within a few seconds of the start (a
   restart right after `up`, say) sometimes waited 10 s for the servers to release the mount,
   because `fuser -m` listed every process on the container's filesystem once the mount was gone.

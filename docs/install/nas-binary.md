@@ -96,7 +96,9 @@ Your system's guide lists any extra step and what else was checked there:
    keeps running in the background. It goes on running after you log out of SSH.
    `--allow-other` lets users other than root read the files. Without it, only root can.
    In the checks, an SMB guest login and a non-root user both got "Permission denied" without
-   it. NFS needs it too ([user guide](../user-guide.md#sharing-the-mount-over-nfs)).
+   it. NFS needs it too ([user guide](../user-guide.md#sharing-the-mount-over-nfs)). From
+   0.6.0 it is the default when sacdfs runs as root, so the option does no harm but is no
+   longer needed.
 8. **Check it works.**
 
    ```sh
@@ -125,17 +127,20 @@ guide.
 
 The messages are as they appeared in these checks, except for the last two rows: the glibc
 message is from an earlier check of 0.4.1 on QNAP, and the last row is from [binary.md](binary.md#binaries).
+From 0.6.0, sacdfs checks these things itself before it starts and says what to type, in one
+line each; where a message changed, the row gives both.
 
 | You see | Why | What to do |
 |---|---|---|
 | `./sacdfs: No such file or directory` or `./sacdfs: not found` | `./` means "in this folder", and sacdfs is in another one | Use the full path, as in step 7: `/volume1/sacdfs/sacdfs` |
-| `sacdfs: /volume1/sacd: No such file or directory (os error 2)` | The folder to mount on doesn't exist | Step 6: `mkdir -p /volume1/sacd` |
-| `/dev/fuse not found. Try 'modprobe fuse'`, then `sacdfs: cannot mount on /volume1/sacd: No such file or directory` | FUSE isn't loaded. The second line names the mount folder, but the missing thing is `/dev/fuse` | `modprobe fuse`, then step 7 again |
-| `Permission denied` when a share, an app or another user opens the folder | sacdfs was started without `--allow-other` | `umount /volume1/sacd`, then step 7 as written |
+| `sacdfs: /volume1/sacd: No such file or directory (os error 2)`; from 0.6.0 `sacdfs: the folder to mount on, /volume1/sacd, does not exist. Create it with mkdir -p /volume1/sacd ...` | The folder to mount on doesn't exist | Step 6: `mkdir -p /volume1/sacd` |
+| `/dev/fuse not found. Try 'modprobe fuse'`, then `sacdfs: cannot mount on /volume1/sacd: No such file or directory`, twice; from 0.6.0 `sacdfs: FUSE is not loaded: /dev/fuse does not exist. Load it as root with modprobe fuse ...` | FUSE isn't loaded. Before 0.6.0 the message names the mount folder, but the missing thing is `/dev/fuse` | `modprobe fuse`, then step 7 again |
+| `sacdfs: a user other than root needs FUSE's mount helper, fusermount3, and it isn't installed ...` (0.6.0; before, `cannot mount on /volume1/sacd: No such file or directory`) | You aren't logged in as root, and the NAS has no mount helper for other users | `sudo -i` (see [Before you start](#before-you-start)), then step 7 again |
+| `Permission denied` when a share, an app or another user opens the folder | sacdfs 0.5.0 or earlier was started without `--allow-other` (or 0.6.0 with `--no-allow-other`) | `umount /volume1/sacd`, then step 7 as written |
 | `sha256sum: ... no properly formatted SHA256 checksum lines found`, or `gzip: stdin: not in gzip format` | The download saved an error page instead of the file, for example while GitHub was down | Delete both files and run step 3 again later. `curl -f` (step 3) reports the error instead of saving it |
 | `curl: (28) Operation timed out` | GitHub didn't answer | Try again later |
 | `umount: ... Device or resource busy` | Something is using the folder: a share, an app, or a login whose current folder is inside it | Stop that, or `cd /` in that login, then `umount` again |
-| `... a sacdfs mount of this user's is still mounted there ...` | sacdfs is already running on that folder | `umount /volume1/sacd` first. The message suggests `fusermount3 -u`, which some NAS systems don't have; as root, `umount` does the same |
+| `... a sacdfs mount of this user's is still mounted there ...` | sacdfs is already running on that folder | `umount /volume1/sacd` first. Before 0.6.0 the message suggests `fusermount3 -u`, which some NAS systems don't have; as root, `umount` does the same, and from 0.6.0 the message says `umount` |
 | `flag provided but not defined: -m` (TerraMaster) | On TOS, `install` is TerraMaster's own tool, not the usual one | Use `cp`, as in step 5 |
 | `` weak version `GLIBC_2.28' not found `` (QNAP) | sacdfs 0.4.1 or earlier, which needs a newer system library | Use 0.5.0 or later |
 | `Illegal instruction` | The `x86_64-v3` build on a CPU without AVX2 | Use the `x86_64` build ([binary.md](binary.md#binaries)) |

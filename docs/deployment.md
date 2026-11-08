@@ -1288,8 +1288,19 @@ The container speaks only NFSv4 (`Protocols = 4`); NFSv3 can't be tried against 
 
 ## Troubleshooting
 
-- **`sacdfs exited (needs --device /dev/fuse and CAP_SYS_ADMIN)`**: the device or the
-  capability is missing, or (on AppArmor hosts) `apparmor=unconfined` is.
+- **`sacdfs exited (needs --device /dev/fuse and CAP_SYS_ADMIN)`** (0.5.0 and earlier): the
+  device or the capability is missing, or (on AppArmor hosts) `apparmor=unconfined` is. From
+  0.6.0 the entry point checks before it starts and says which, in one line: `the container has
+  no /dev/fuse: add --device /dev/fuse ...`, `the container may not mount (it lacks
+  CAP_SYS_ADMIN): add --cap-add SYS_ADMIN ...`, or, when the mount fails under an AppArmor
+  profile, `... add --security-opt apparmor=unconfined` (that case is untested: it wasn't run on
+  an AppArmor host). It also warns when NFS is on without
+  `CAP_DAC_READ_SEARCH`, and when `/srv` is bound without shared propagation (see
+  [Players on the same host](#players-on-the-same-host-no-smb-hop)).
+- **`port 445 (SMB) is already in use here`** (or 2049, NFS; from 0.6.0): with host networking,
+  the NAS's own file sharing holds the port. Use bridge networking and publish other ports
+  (`-p 10445:445 -p 12049:2049`), or turn that server off with `SMB=0` or `NFS=0`. Before 0.6.0,
+  smbd stopped with `INTERNAL ERROR: Could not bind to any sockets`.
 - **NFS clients get "permission denied" or I/O errors listing the share, and the log shows
   `vfs_open_by_handle ... Operation not permitted`**: `CAP_DAC_READ_SEARCH` is missing, or
   the container is rootless.
