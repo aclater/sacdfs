@@ -31,6 +31,11 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - run: cargo fmt --all --check
+      - name: NAS start/stop files (deploy/sacdfs-ctl, deploy/systemd/sacdfs.service)
+        run: |
+          shellcheck -s sh deploy/sacdfs-ctl
+          sed 's|/usr/local/bin/sacdfs|/bin/true|' deploy/systemd/sacdfs.service > /tmp/sacdfs.service
+          systemd-analyze verify /tmp/sacdfs.service
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo doc --no-deps --locked
         env:

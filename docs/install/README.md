@@ -20,7 +20,9 @@ Reports are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
 Have a NAS? See [beta testing](../beta-testing.md) for how to report.
 
 **New to SSH and Linux?** [The NAS steps](nas-binary.md) go one command at a time, each with
-what you should see and what to do when something else appears.
+what you should see and what to do when something else appears. They end with
+[starting sacdfs at boot and stopping it safely](nas-binary.md#start-at-boot-and-stop-safely)
+(a systemd unit, or the `sacdfs-ctl` script where there is no systemd); never stop it with `kill -9`.
 
 ## Pick your setup
 
@@ -37,6 +39,7 @@ what you should see and what to do when something else appears.
 | UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated (a kernel check only) |
 | ASUSTOR ADM | [asustor.md](asustor.md) | Checked in a VM (ADM 5.1.4; binary, and Docker Compose) |
 | TerraMaster TOS | [terramaster.md](terramaster.md) | Checked in a VM (TOS 7.0; binary, NFS, start at boot). Container untested |
+| Netgear ReadyNAS OS 6 | [readynas.md](readynas.md) | Binary and start at boot checked in a VM (OS 6.10.10). Container untested |
 
 Without a container, on any Linux host (x86_64, or aarch64 from the first release after 0.4.1, glibc 2.17 or later; as a user other than root, FUSE 3's `fusermount3`,
 package `fuse3`, or from 0.5.0 FUSE 2's `fusermount`; root needs neither):

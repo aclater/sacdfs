@@ -1,0 +1,29 @@
+# sacdfs under systemd, for the release binary at /usr/local/bin/sacdfs.
+# Install:  cp sacdfs.service /etc/systemd/system/ && systemctl daemon-reload
+# Settings: /etc/default/sacdfs (see deploy/sacdfs.conf.example); then
+#           systemctl enable --now sacdfs
+# Written for old systemd too (Debian 8 has v215): no newer directives.
+# No hardening options such as PrivateDevices= or ProtectSystem=: they would hide
+# /dev/fuse or the mount from the other programs on the NAS.
+[Unit]
+Description=SACD images as DSF and WAV files (sacdfs)
+After=local-fs.target network.target
+
+[Service]
+Type=notify
+EnvironmentFile=/etc/default/sacdfs
+# Load FUSE where /dev/fuse is missing, and make the folder to mount on. A mount left
+# by a killed sacdfs makes mkdir fail; sacdfs clears that itself when it starts.
+ExecStartPre=-/bin/sh -c '[ -e /dev/fuse ] || /sbin/modprobe fuse'
+ExecStartPre=-/bin/mkdir -p ${SACDFS_MOUNT}
+ExecStart=/usr/local/bin/sacdfs -f $SACDFS_OPTIONS ${SACDFS_IMAGES} ${SACDFS_MOUNT}
+# Stop sends SIGTERM. sacdfs unmounts and exits; if a file is still open it detaches the
+# mount and exits when the last file closes. After 30 s systemd sends SIGKILL, which is
+# safe because the next line then clears any mount left over.
+TimeoutStopSec=30
+ExecStopPost=-/bin/umount -l ${SACDFS_MOUNT}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

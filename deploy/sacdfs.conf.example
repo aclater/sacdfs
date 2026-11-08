@@ -1,0 +1,11 @@
+# Settings for the sacdfs systemd unit and for sacdfs-ctl.
+# Copy to /etc/default/sacdfs and change the paths. One setting per line, no spaces
+# around the equals sign, no $variables (systemd reads this file too).
+SACDFS_IMAGES=/volume1/music
+SACDFS_MOUNT=/volume1/sacd
+# Extra options, separated by spaces: see docs/options.md.
+SACDFS_OPTIONS="--allow-other"
+# sacdfs-ctl only (the systemd unit uses the journal):
+#SACDFS_BIN=/usr/local/bin/sacdfs
+#SACDFS_PIDFILE=/var/run/sacdfs.pid
+#SACDFS_LOG=/var/log/sacdfs.log
