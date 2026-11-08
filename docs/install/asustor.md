@@ -1,47 +1,95 @@
 # sacdfs on ASUSTOR ADM
 
-**Validated in a VM only**: ADM 5.1.4 (kernel 6.6) in a VM, not on ASUSTOR hardware, with the
-0.4.1-rc.3 release binary and image. Storage setup, App Central and the ADM web interface were
-not exercised. Run the commands as root over SSH. ADM's own tools are under
-`/usr/builtin/bin` and `/usr/builtin/sbin`, which may not be on the PATH of an SSH session.
+**Release binary and Docker Compose: work.** Checked on ADM 5.1.4 in a VM, not on ASUSTOR
+hardware. Storage setup and app stores weren't exercised. The checks used a build of `main`
+from before 0.5.0, and an image built from it (0.4.1-rc.3 earlier). Run the commands as root
+over SSH. ADM keeps some of its tools in `/usr/builtin/bin` and `/usr/builtin/sbin`, which may
+not be on an SSH session's PATH.
 
-**Release binary.** `/dev/fuse` is present and there is no `fusermount3`; sacdfs mounted
-directly as root.
+## Release binary
 
-```sh
-./sacdfs /volume1/music /volume1/sacd
+Follow [the NAS steps](nas-binary.md) with `/volume1`. Nothing extra was needed: `/dev/fuse`
+is there, and sacdfs mounts as root without `fusermount3`, which ADM doesn't have.
+
+| Check | Result |
+|---|---|
+| Steps 1, 2 and 4 to 9 of [the NAS steps](nas-binary.md), as written | All 22 files of two test images identical to the reference |
+| A Samba guest share of `/volume1/sacd` (ADM's Samba 4.20, a minimal hand-made `smb.conf` on port 4450), mounted on the NAS with `mount.cifs` | All 22 files identical with `--allow-other`. Without it, the mount failed with "Permission denied" |
+| Earlier, with 0.4.1-rc.3: an NFSv3 export, mounted on the same system | Correct, after `modprobe nfsd nfsv3 cifs` |
+
+`umount /volume1/sacd` reports "Device or resource busy" while a share serves the folder:
+stop the share first.
+
+## Compose
+
+ADM's Docker package (Docker CE 25.0.5, with Compose v2.24.7) ran this file as a Compose
+project. Put it in a folder of its own, for example `/volume1/docker/sacdfs/compose.yaml`.
+Change `/volume1/music` to the folder that holds your images.
+
+```yaml
+services:
+  sacdfs:
+    image: ghcr.io/aclater/sacdfs:0.5.0
+    container_name: sacdfs
+    restart: unless-stopped
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    security_opt:
+      - apparmor=unconfined
+    ports:
+      - "10445:445"
+      - "12049:2049"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      retries: 3
+    stop_grace_period: 20s
+    volumes:
+      - /volume1/music:/images:ro
+      - sacdfs-cache:/cache
+volumes:
+  sacdfs-cache:
 ```
 
-All 16 files (DSF and WAV) of two synthetic test images had the right SHA-256, and stopping
-sacdfs with SIGTERM and mounting again gave the same hashes. A SMB share of the mount, made
-with ADM's own Samba 4.20 and mounted with `mount.cifs`, read all 16 correctly; so did an NFSv3
-loopback mount of a kernel NFS export (`/etc/exports` as in the
-[user guide](../user-guide.md#sharing-the-mount-over-nfs), sacdfs with `--allow-other`). In the
-VM the NFS and CIFS kernel modules had to be loaded by hand (`modprobe nfsd nfsv3 cifs`); on
-hardware ADM may do that itself.
+- **Ports 10445 and 12049.** ADM's own SMB service holds port 445, so the container's SMB and
+  NFS are published on 10445 and 12049. Clients name the port:
+  [linux-client.md](linux-client.md#on-other-ports).
+- **`apparmor=unconfined`** is for NAS systems that use AppArmor. ADM has no AppArmor, and
+  Docker accepted the option there anyway, so the same file can be used on both kinds.
+- **The `healthcheck:` lines** make the health check work under any runtime, whatever format
+  the image was saved in.
 
-**Container (Docker CE 25.0.5 from ASUSTOR's package).** In the VM the package would not
-install (`apkg --install` exited with status 22 and no message), so Docker was started with the
-package's own `start-stop.sh start` after putting ADM's `/usr/builtin/sbin` on the PATH
-(without it Docker stopped: "iptables not found"). That install step is untested; do not treat
-it as a recommendation. With Docker running, the documented command worked, with no AppArmor
-option, since ADM has none:
+Then, in that folder:
 
 ```sh
-docker run -d --name sacdfs --restart unless-stopped \
-  --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
-  -p 10445:445 -p 12049:2049 \
-  -v /volume1/music:/images:ro -v sacdfs-cache:/cache \
-  ghcr.io/aclater/sacdfs:0.4.1-rc.3
+docker compose up -d
+docker inspect -f '{{.State.Health.Status}}' sacdfs
 ```
 
-The container was healthy in under a minute, `docker restart sacdfs` brought it back healthy,
-and all 16 files read inside it with the right SHA-256. Mounted from the NAS itself with
-`mount.cifs` on port 10445, the SMB share read all 16 correctly. ADM's own SMB service uses port
-445, so other ports were used. NFS to the container was not read: ADM's `mount` here reports
-"NFSv4 not supported".
+*You should see* `healthy` within a minute (31 to 32 s in the checks). Before that,
+`starting`. `docker logs sacdfs` shows the number of image files, `mounted`, the SMB share and
+`NFS SERVER INITIALIZED`.
 
-**Not tested:** the ADM Docker app's own interface (so which container settings a normal user can
-set there is unknown), Compose, a client on another machine, and anything on hardware.
+| Check | Result |
+|---|---|
+| `docker compose up -d` | Healthy after 32 s |
+| SMB on port 10445, mounted on the NAS with `mount.cifs` (`port=10445,guest,ro,vers=3.0`) | All 22 files identical |
+| `docker compose restart` | Back in 1 s, healthy 31 s later, all 22 files identical again |
+| NFS | Not read: ADM's `mount` (BusyBox) has no NFSv4, and the VM had no second machine |
+
+**How Docker was started in the VM, which is not a recommendation:** the App Central package
+wouldn't install there (`apkg --install` exited with status 22 and no message). Docker was
+started with the package's own `CONTROL/start-stop.sh start`. Without ADM's
+`/usr/builtin/sbin` on the PATH it stopped with "iptables not found", and without the
+package's `bin` folder with `invalid userland-proxy-path`. Whether App Central does all this on
+a real NAS wasn't checked.
+
+**Not checked:** the ADM Docker app's own screens (which settings it lets you set), a client
+on another machine, NFS to the container, and anything on hardware.
 
 Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).

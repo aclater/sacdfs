@@ -58,6 +58,13 @@ Rootless Podman, SMB only (`-e NFS=0`; the `--health-*` options as above), was r
 0.4.1-rc.1 image: `podman inspect` showed `healthy` within 25 s. Without the options it fails
 with a nil-pointer error, because the image has no health check for Podman to run.
 
-Compose: [openmediavault.md](openmediavault.md) has a validated Compose file. Not validated
+Run again before 0.5.0, as written above, with an image built from `main`, under rootful
+Podman 6.1.3 on Fedora 45: healthy after 31 s; NFS 4.2 and SMB clients on the same host read
+all 22 files of two test images identical to the reference; `podman restart` brought it back
+healthy (Podman warned that SIGTERM hadn't stopped the container within its default 10 s and
+used SIGKILL).
+
+Compose: [openmediavault.md](openmediavault.md) has a validated Compose file, and
+[asustor.md](asustor.md#compose) one for other ports with the health check written in. Not validated
 here: rootless Podman (SMB only; NFS needs root, see the
 [deployment guide](../deployment.md#privileges)).

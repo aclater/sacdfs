@@ -1,16 +1,20 @@
 # sacdfs on UGREEN UGOS Pro
 
-**Not yet validated.** Nobody has run sacdfs on UGREEN UGOS Pro and reported
-back, so this guide has no steps yet.
+**Not yet validated on UGOS Pro.** Nobody has run sacdfs on UGOS Pro itself and reported back.
 
-sacdfs runs there only if its container may use `/dev/fuse` and the capability
-`SYS_ADMIN` (and `DAC_READ_SEARCH` for NFS); whether UGREEN UGOS Pro allows that is not known. The general
-container guide is [docker-podman.md](docker-podman.md), and every setting is in the
+Most UGOS Pro owners would use its Docker app. sacdfs's container needs `/dev/fuse` and the
+capability `SYS_ADMIN` (and `DAC_READ_SEARCH` for NFS), and whether UGOS Pro's Docker app
+allows that is not known. The Compose file that worked under ASUSTOR's Docker is in
+[asustor.md](asustor.md#compose), the general container guide is
+[docker-podman.md](docker-podman.md), and every setting is in the
 [deployment guide](../deployment.md).
 
-A kernel-only check, not UGOS: Debian 12 userland on UGREEN's 6.18.15 kernel, in a VM,
-mounted and served sacdfs 0.4.1-rc.3 correctly (the release binary, with NFSv3, NFSv4 and SMB
-loopback mounts). It says nothing about UGOS Pro itself.
+**A kernel-only check, not UGOS:** Debian 12 on UGREEN's 6.18.15 kernel, in a VM, without the
+UGOS apps, web interface or Docker. With a build of `main` from before 0.5.0, steps 1, 2 and
+4 to 9 of [the NAS steps](nas-binary.md), as written with `/volume1`, read all 22 files of two
+test images identical to the reference. Earlier, 0.4.1-rc.3 served NFSv3, NFSv4 and SMB
+loopback mounts correctly there. This says only that UGREEN's kernel runs sacdfs. It says
+nothing about UGOS Pro itself.
 
 Reports are welcome: open an issue that mentions
 [#82](https://github.com/aclater/sacdfs/issues/82), with the system's version, how the

@@ -5,12 +5,18 @@ it works. Each says what it was validated on. The full reference, with every set
 reasons behind it, is the [deployment guide](../deployment.md); what each client was tested
 with is in [clients](../clients.md).
 
-These guides were written against **sacdfs 0.4.0**. Each says what it was run on, and that version
-is kept as is: the guides were not re-run on 0.4.1, except for the checks named in them (the rootless
-Podman health check in [docker-podman.md](docker-podman.md), run on a 0.4.1 candidate). Their image tags
-still name 0.4.0, which stays published. A guide marked *not validated* has no steps yet:
-nobody has run sacdfs there and reported back. Reports are welcome on
-[#82](https://github.com/aclater/sacdfs/issues/82).
+These guides were written against **sacdfs 0.4.0**, and each says what it was run on. Before
+0.5.0, the guides for Synology, QNAP, ASUSTOR, TerraMaster and UGREEN, and the Docker and
+Podman guide, were run again, step by step as written, with a build of `main`. The NAS
+systems ran in VMs, not on the vendors' hardware. Storage setup and app stores weren't
+exercised there. The TrueNAS SCALE and OpenMediaVault guides were not run again for 0.5.0.
+Image tags still name the release each guide was first checked with. The ASUSTOR Compose file,
+new for 0.5.0, names 0.5.0. A guide marked
+*not validated* has no tested steps yet: nobody has run sacdfs there and reported back.
+Reports are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
+
+**New to SSH and Linux?** [The NAS steps](nas-binary.md) go one command at a time, each with
+what you should see and what to do when something else appears.
 
 ## Pick your setup
 
@@ -18,19 +24,19 @@ nobody has run sacdfs there and reported back. Reports are welcome on
 
 | Your system | Guide | Status |
 |---|---|---|
-| TrueNAS SCALE 24.10 or later | [truenas-scale.md](truenas-scale.md) | Validated (TrueNAS SCALE 25.10) |
-| Any Linux host with Docker or Podman | [docker-podman.md](docker-podman.md) | Validated (Fedora 44, Podman) |
-| OpenMediaVault 8 | [openmediavault.md](openmediavault.md) | Validated (OMV 8.6 on Debian 13, Compose plugin) |
+| TrueNAS SCALE 24.10 or later | [truenas-scale.md](truenas-scale.md) | Validated (TrueNAS SCALE 25.10, on 0.4.0; not run again for 0.5.0) |
+| Any Linux host with Docker or Podman | [docker-podman.md](docker-podman.md) | Validated (Fedora 44 and 45, Podman) |
+| OpenMediaVault 8 | [openmediavault.md](openmediavault.md) | Validated (OMV 8.6 on Debian 13, Compose plugin, on 0.4.0; not run again for 0.5.0) |
 | Unraid | [unraid.md](unraid.md) | Not validated |
-| Synology DSM | [synology.md](synology.md) | Partly validated (DSM 7.4.1 in a VM; binary and NFS) |
-| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Not validated (the binary fails on QuTScloud 5.2.9, [#244](https://github.com/aclater/sacdfs/issues/244)) |
+| Synology DSM | [synology.md](synology.md) | Binary checked in a VM (DSM 7.4.1; binary and NFSv3). Container Manager untested |
+| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Binary checked in a VM (QuTScloud 5.2.9), from 0.5.0. Container Station untested |
 | UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated (a kernel check only) |
-| ASUSTOR ADM | [asustor.md](asustor.md) | Validated in a VM (ADM 5.1.4; binary and Docker) |
-| TerraMaster TOS | [terramaster.md](terramaster.md) | Validated in a VM (TOS 7.0, binary route only) |
+| ASUSTOR ADM | [asustor.md](asustor.md) | Checked in a VM (ADM 5.1.4; binary, and Docker Compose) |
+| TerraMaster TOS | [terramaster.md](terramaster.md) | Checked in a VM (TOS 7.0; binary, NFS, start at boot). Container untested |
 
 Without a container, on any Linux host (x86_64, or aarch64 from the first release after 0.4.1, glibc 2.17 or later; as a user other than root, FUSE 3's `fusermount3`,
 package `fuse3`, or from 0.5.0 FUSE 2's `fusermount`; root needs neither):
-a [release binary](binary.md#binaries), or, from 0.4.0, `cargo install --locked sacdfs`
+a [release binary](binary.md#binaries) ([step by step on a NAS](nas-binary.md)), or, from 0.4.0, `cargo install --locked sacdfs`
 from crates.io (Rust 1.85 or later; tested on 0.4.0 in a clean Rust container). The [user guide](../user-guide.md) covers running it.
 
 **2. How other computers reach it:**

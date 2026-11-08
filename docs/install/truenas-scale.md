@@ -8,7 +8,7 @@ The share listed over SMB on 10445, and a DSF file (starting `DSD `) and a WAV f
 start returned. NFS on 12049 was validated with 0.4.0-rc.2 (a Linux client mounted it with
 the command below and read stereo and multichannel files); with 0.4.0 only a successful NFS
 RPC to the port was checked, because the host used for this run cannot mount NFS. Screen names
-may differ between releases.
+may differ between releases. Not run again for 0.5.0.
 Reference: [deployment guide](../deployment.md#truenas-scale).
 
 TrueNAS's own SMB and NFS services hold ports 445 and 2049, so this app publishes sacdfs's
