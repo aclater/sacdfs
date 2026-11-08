@@ -570,6 +570,23 @@ on #82.
   bounded by the disk and no sacdfs setting changed it
   ([#71](https://github.com/aclater/sacdfs/issues/71), [performance](performance.md#client-side-where-the-slow-reads-come-from-71)).
 
+## Reported by users
+
+Results from users on their own hardware. We didn't run these ourselves, so they don't appear in
+the summary table above. The sacdfs version is given where the report gives it.
+
+- **Netgear ReadyNAS Pro Pioneer**, ReadyNAS OS 6.10.10, Intel Pentium Dual E2160 (2 cores,
+  1.8 GHz), sacdfs built from source, files shared through the NAS's own Samba
+  ([#287](https://github.com/aclater/sacdfs/issues/287)). Playback was reported as perfect for:
+  - **Eversolo DMP-A6ME** (firmware 1.6.15): stereo and multichannel DSF and WAV.
+  - **HEOS** on a Marantz AV10 and NR1200: stereo DSF and WAV.
+  - **JRiver Media Center 36**: stereo and multichannel WAV, and stereo and multichannel DSF
+    sent to the Eversolo.
+  - **USB Audio Player Pro 7.1.3.1** on a Pixel 8 Pro (Android 17), into several DACs: stereo DSF
+    and WAV.
+
+  Not reported: scan times, memory use and the sacdfs options.
+
 ## Reporting a client
 
 Open an issue with the label `documentation`, mention #82, and title it
