@@ -15,6 +15,10 @@ the path of your images. Unraid's own SMB and NFS
 use ports 445 and 2049, which is why the file publishes 10445 and 12049. Every setting is in the
 [deployment guide](../deployment.md).
 
+**Template: untested on Unraid.** [deploy/unraid/sacdfs.xml](../../deploy/unraid/sacdfs.xml) is
+a Community Applications template for the Docker tab; how to load it, and what was checked on
+Podman, is in [store-apps.md](store-apps.md).
+
 Reports are welcome: open an issue that mentions
 [#82](https://github.com/aclater/sacdfs/issues/82), with the system's version, how the
 container was started, and what worked.

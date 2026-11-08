@@ -14,6 +14,15 @@ All notable changes to sacdfs are recorded here. The format follows
   after the wait. The NAS steps warn against `kill -9`, which leaves a dead mount, and the
   TerraMaster guide uses the shipped unit. CI runs `shellcheck` on the script and
   `systemd-analyze verify` on the unit.
+
+- **Unraid and TrueNAS app-store entries, prepared (part of #284).** `deploy/unraid/sacdfs.xml` is a
+  Community Applications template (device, capabilities and AppArmor setting in Extra Parameters,
+  not privileged; ports 10445 and 12049; read-only images and index cache paths; SMB and NFS
+  settings), loadable today from Unraid's user templates. `deploy/truenas/sacdfs/` is a TrueNAS
+  apps-catalog app definition (form, template, test values) that renders with the catalog's tooling.
+  Both were started with rootful Podman and served the SMB share; neither was run on Unraid or
+  TrueNAS, and neither is submitted to a store. See `docs/install/store-apps.md`.
+
 - **One Compose file for every NAS container manager (#283).** `deploy/nas-compose.yaml` runs the
   published image with ports 10445 and 12049 (a NAS's own SMB and NFS usually hold 445 and 2049),
   the health check and a commented setting list. The one line to edit is the path of your images.
