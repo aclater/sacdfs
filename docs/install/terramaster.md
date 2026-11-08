@@ -1,35 +1,73 @@
 # sacdfs on TerraMaster TOS
 
-**Validated in a VM only, binary route**: TOS 7.0.1422 (kernel 6.12, glibc 2.35) in a VM, not on
-TerraMaster hardware, with the 0.4.1-rc.3 release binary. Storage setup, the App Center and the
-TOS web interface were not exercised. Run the commands as root over SSH.
+**Release binary: works. Container route: untested.** Checked on TOS 7.0.1422 in a VM, not on
+TerraMaster hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 release (0.4.1-rc.3 earlier). Run the commands as root over SSH.
 
-1. `fusermount3` and `/dev/fuse` are present. Install the binary as in
-   [binary.md](binary.md#binaries) and mount:
+## Release binary
 
-   ```sh
-   ./sacdfs /Volume1/music /Volume1/sacd
-   ```
+Follow [the NAS steps](nas-binary.md) with `/Volume1` (capital V) in place of `/volume1`.
+`/dev/fuse` and `fusermount3` are there.
 
-   All 16 files (DSF and WAV) of two synthetic test images had the right SHA-256, and stopping
-   sacdfs with SIGTERM and mounting again gave the same hashes.
-2. NFS: TOS has the kernel NFS server. With sacdfs started `--allow-other` and
-   `/etc/exports` holding `/Volume1/sacd 127.0.0.1(ro,fsid=4242,no_subtree_check)`, loopback
-   mounts as NFSv3 and NFSv4 both read all 16 files correctly (see the
-   [user guide](../user-guide.md#sharing-the-mount-over-nfs)).
-3. SMB: a Samba share of the mount (4.15, a minimal `smb.conf` of one read-only guest share)
-   read all 16 files correctly with `smbclient`. `mount.cifs` stopped with "not installed setuid
-   root" even as root; the cause is unknown.
+- **Don't use `install` to copy sacdfs.** For root on TOS, `install` is TerraMaster's own
+  tool (`/usr/sbin/install`), which stops with `flag provided but not defined: -m`. The NAS
+  steps use `cp`.
 
-**Docker (Compose): untested on TOS.** No Docker package that could be downloaded directly was
-found (TerraMaster's Docker Engine comes from its App Center). The Compose file is
-[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml), the one file for every NAS container
-manager; it was run with Docker Compose and Podman on other systems (see
-[docker-podman.md](docker-podman.md) and [asustor.md](asustor.md)), not on TOS. In TOS's Docker
-app, create a project from the file (the menu names were not seen) and change the one marked line
-to the path of your images. The file publishes ports 10445 and 12049 because TOS's own file services
-use 445 and 2049.
+| Check | Result |
+|---|---|
+| Steps 1 to 9 of [the NAS steps](nas-binary.md), as written, download included, with `/Volume1` | All 22 files of two test images identical to the reference |
+| NFS: `/Volume1/sacd 127.0.0.1(ro,fsid=4242,no_subtree_check)` added to `/etc/exports`, then `exportfs -ra`, mounted on the NAS itself as NFSv3 and NFSv4 | All 22 files identical over each |
+| `systemctl restart nfs-server` afterwards | `/etc/exports` was empty again |
+| Earlier, with 0.4.1-rc.3: a Samba share of the mount (a minimal `smb.conf`, one read-only guest share), read with `smbclient` | All files correct |
 
-**Not tested:** TOS's Docker app, a client on another machine, and anything on hardware.
+**A line added to `/etc/exports` by hand doesn't last.** It stayed while NFS ran, but every
+restart of the NFS service left the file empty. A restart of the NAS starts that service again,
+but its effect on the file wasn't checked. Which TOS tool empties it wasn't traced. Sharing through TOS's own NFS settings
+wasn't checked.
+
+### Starting at boot
+
+TOS uses systemd. This service started sacdfs again after the VM restarted. Create the file
+`/etc/systemd/system/sacdfs.service`:
+
+```ini
+[Unit]
+Description=SACD images as DSF and WAV files
+RequiresMountsFor=/Volume1/music /Volume1/sacd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+CacheDirectory=sacdfs
+ExecStart=/Volume1/sacdfs/sacdfs -f --allow-other --index-cache %C/sacdfs /Volume1/music /Volume1/sacd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Stop sacdfs if you started it by hand (`umount /Volume1/sacd`), then:
+
+```sh
+systemctl daemon-reload
+systemctl enable --now sacdfs
+systemctl is-active sacdfs
+```
+
+*You should see* `active`, and `ls /Volume1/sacd` lists the images, now and after a restart.
+`journalctl -u sacdfs` shows its log. In the VM the data volume was mounted before TOS
+started, not by TOS's own storage manager. So whether `RequiresMountsFor=` waits for the
+volume on real hardware wasn't checked, and neither was whether a TOS update keeps the file.
+
+**Docker (Compose): not checked on TOS.** TerraMaster's Docker Engine comes from its App Center,
+which wasn't exercised. The Compose file for every NAS container manager is
+[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml). It was run with Docker Compose on ASUSTOR
+ADM ([asustor.md](asustor.md#compose)) and on Podman, not on TOS. In TOS's Docker app, create a
+project from the file (the menu names were not seen) and change the one marked line to the path of
+your images. The file publishes ports 10445 and 12049 because TOS's own file services use 445 and
+2049.
+
+**Not checked:** TOS's Docker app, a client on another machine, and anything on hardware.
+`mount.cifs` stopped with "not installed setuid root" even as root, cause unknown.
 
 Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).

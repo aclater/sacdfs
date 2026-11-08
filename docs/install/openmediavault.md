@@ -4,8 +4,8 @@
 (`openmediavault-compose` 8.2) and Docker 29, running a sacdfs 0.4.0 build (`main`). The
 steps were run through the same calls the web interface makes. The container turned healthy,
 and NFS and SMB clients read every DSF track of two test discs, matching the reference hashes
-(29 of 29 over each). OMV's own SMB and NFS services were off. Reference:
-[deployment guide](../deployment.md).
+(29 of 29 over each). OMV's own SMB and NFS services were off. Not run again for 0.5.0 (no
+OpenMediaVault system was available). Reference: [deployment guide](../deployment.md).
 
 1. **omv-extras.** If System, Plugins doesn't list `openmediavault-omvextrasorg`, install
    omv-extras. The test VM, a plain Debian 13, got OMV and omv-extras together from the
