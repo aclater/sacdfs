@@ -297,6 +297,17 @@ fn read_threads(pid: u32) -> usize {
 /// every other image failed too (#241: 64 in about 24 s with these settings). An image with
 /// several reads blocked past the timeout now has its new reads failed at once, without a
 /// thread.
+///
+/// *Why the threads are counted from when the cap holds, not from the start (#272):* how many
+/// threads the hang takes before that depends on the kernel, not on sacdfs. Every read the
+/// kernel sends within the timeout gets a thread, and for the clients' first reads it sends
+/// its read-ahead too: up to three requests per file here, and the clients share five files.
+/// Some of those requests are answered (the image's open handle still serves them) and their
+/// threads stay idle for 10 s (`SPARE_IDLE`) before they end. That took 8 to 18 threads
+/// locally and 15 on CI, against a fixed bound of 14. What #241 changed is what comes after:
+/// once 4 reads are blocked past the timeout, no read of the image gets a thread, so the
+/// count must not grow from then on, however long the clients retry. Before #257 it grew by
+/// about one thread per client every timeout.
 #[test]
 fn retrying_clients_of_a_stalled_image_leave_threads_to_the_others() {
     common::skip_without_fuse!();
@@ -357,15 +368,30 @@ fn retrying_clients_of_a_stalled_image_leave_threads_to_the_others() {
         .collect();
     // Long enough for the clients to have taken more than half of the 64 threads, had nothing
     // stopped them.
-    let mut most = 0;
-    let until = Instant::now() + 7 * TIMEOUT;
+    let start = Instant::now();
+    let until = start + 7 * TIMEOUT;
+    // The cap holds once a read fails at once; a second later, any read the kernel sent before
+    // that has its thread. Without the cap, no read fails at once: then counted from when it
+    // should have held by, the timeout and the watchdog's slack.
+    while fast_eio.load(Ordering::Relaxed) == 0 && start.elapsed() < TIMEOUT + SLACK {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let capped = fast_eio.load(Ordering::Relaxed) > 0;
+    if capped {
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    let at_cap = read_threads(pid);
+    let mut most = at_cap;
     while Instant::now() < until {
         most = most.max(read_threads(pid));
         std::thread::sleep(Duration::from_millis(100));
     }
-    // The 2 core threads, 4 reads blocked past the timeout, and at most one more per client.
-    assert!(most <= 2 + 4 + CLIENTS, "{most} read threads during the hang");
-    assert!(fast_eio.load(Ordering::Relaxed) > 0, "no read of the stalled image failed at once");
+    // Not one more thread while the clients retry: spare threads only end.
+    assert!(
+        most <= at_cap,
+        "the retries took read threads: {at_cap} once the cap should hold, then up to {most}"
+    );
+    assert!(capped, "no read of the stalled image failed at once");
 
     // The other image reads on, in both formats, while the clients keep retrying.
     let start = Instant::now();
