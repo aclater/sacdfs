@@ -13,6 +13,12 @@ nobody has run sacdfs there and reported back. Reports are welcome on
 [#82](https://github.com/aclater/sacdfs/issues/82).
 Have a NAS? See [beta testing](../beta-testing.md) for how to report.
 
+**One Compose file for the NAS container managers:** [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml)
+(the 0.5.0 image, ports 10445 and 12049, health check) is what the Synology, QNAP, UGREEN, TerraMaster,
+ASUSTOR, Unraid and OpenMediaVault guides point to. Its one line to edit is the path of your images.
+It was run with Docker Compose on Podman and on ASUSTOR ADM in a VM; each guide says what was run on
+its system. See [docker-podman.md](docker-podman.md#compose).
+
 ## Pick your setup
 
 **1. Where sacdfs runs** (next to the SACD images, normally on the NAS):
@@ -26,7 +32,7 @@ Have a NAS? See [beta testing](../beta-testing.md) for how to report.
 | Synology DSM | [synology.md](synology.md) | Partly validated (DSM 7.4.1 in a VM; binary and NFS) |
 | QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Not validated (the binary fails on QuTScloud 5.2.9, [#244](https://github.com/aclater/sacdfs/issues/244)) |
 | UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated (a kernel check only) |
-| ASUSTOR ADM | [asustor.md](asustor.md) | Validated in a VM (ADM 5.1.4; binary and Docker) |
+| ASUSTOR ADM | [asustor.md](asustor.md) | Validated in a VM (ADM 5.1.4; binary, Docker and the Compose file) |
 | TerraMaster TOS | [terramaster.md](terramaster.md) | Validated in a VM (TOS 7.0, binary route only) |
 
 Without a container, on any Linux host (x86_64, or aarch64 from the first release after 0.4.1, glibc 2.17 or later; as a user other than root, FUSE 3's `fusermount3`,

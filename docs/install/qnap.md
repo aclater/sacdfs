@@ -24,10 +24,17 @@ stores weren't exercised. QTS and QuTS hero were not checked and may differ.
   Run it as `admin` with `sacdfs SOURCE MOUNTPOINT`, as in the [user guide](../user-guide.md), and
   unmount with `umount MOUNTPOINT`. Where to keep the images and the mount point on a real QNAP
   volume was not checked (the checked system had no storage pool).
-- **Container: not tested.** The checked system had no Docker, and Container Station could not be
-  installed there. sacdfs's container needs `/dev/fuse` and the capability `SYS_ADMIN` (and
-  `DAC_READ_SEARCH` for NFS). The general container guide is [docker-podman.md](docker-podman.md),
-  and every setting is in the [deployment guide](../deployment.md).
+- **Container (Container Station): untested on QNAP.** The checked system had no Docker, and
+  Container Station could not be installed there. The Compose file is
+  [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml), the one file for every NAS container
+  manager. It was run with Docker Compose and Podman on other systems (see
+  [docker-podman.md](docker-podman.md) and [asustor.md](asustor.md)), not on QNAP. In Container
+  Station, create an application from the file (the menu names were not seen) and change the one
+  marked line to the path of your images. QNAP's own file
+  services use ports 445 and 2049, which is why the file publishes 10445 and 12049. sacdfs's
+  container needs `/dev/fuse` and the capability `SYS_ADMIN` (and `DAC_READ_SEARCH` for NFS);
+  whether Container Station allows them is not known. Every setting is in the
+  [deployment guide](../deployment.md).
 
 Reports from real QNAP hardware are welcome: open an issue that mentions
 [#82](https://github.com/aclater/sacdfs/issues/82), with the system's version, how sacdfs was

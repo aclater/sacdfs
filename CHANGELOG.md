@@ -6,6 +6,22 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **One Compose file for every NAS container manager (#283).** `deploy/nas-compose.yaml` runs the
+  published image with ports 10445 and 12049 (a NAS's own SMB and NFS usually hold 445 and 2049),
+  the health check and a commented setting list. The one line to edit is the path of your images.
+  The Synology, QNAP, UGREEN, TerraMaster, Unraid, OpenMediaVault and ASUSTOR guides point to it
+  instead of repeating Compose blocks, and each says where it was actually run: Docker Compose on
+  Podman, and Docker 25 with Compose 2.24 on ASUSTOR ADM in a VM; the other vendors' container
+  managers are untested.
+
+### Fixed
+- **The container could take 10 s to stop (#283).** A stop within a few seconds of the start (a
+  restart right after `up`, say) sometimes waited 10 s for the servers to release the mount,
+  because `fuser -m` listed every process on the container's filesystem once the mount was gone.
+  Podman's default stop timeout then killed the container ("resorting to SIGKILL"). The entry point
+  now waits only while the mount exists: 0 of 75 stops took over a second, against 14 of 75 before (Podman on Fedora and Docker on ADM).
+
 ## [0.5.0] - 2026-11-08
 
 Tested as release candidate 0.5.0-rc.1 (2026-11-07). The final version carries only the version

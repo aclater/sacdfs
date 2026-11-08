@@ -21,8 +21,15 @@ TOS web interface were not exercised. Run the commands as root over SSH.
    read all 16 files correctly with `smbclient`. `mount.cifs` stopped with "not installed setuid
    root" even as root; the cause is unknown.
 
-**Not tested:** the container route (no Docker package that could be downloaded directly was
-found; TerraMaster's Docker Engine comes from its App Center), a client on another machine, and
-anything on hardware.
+**Docker (Compose): untested on TOS.** No Docker package that could be downloaded directly was
+found (TerraMaster's Docker Engine comes from its App Center). The Compose file is
+[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml), the one file for every NAS container
+manager; it was run with Docker Compose and Podman on other systems (see
+[docker-podman.md](docker-podman.md) and [asustor.md](asustor.md)), not on TOS. In TOS's Docker
+app, create a project from the file (the menu names were not seen) and change the one marked line
+to the path of your images. The file publishes ports 10445 and 12049 because TOS's own file services
+use 445 and 2049.
+
+**Not tested:** TOS's Docker app, a client on another machine, and anything on hardware.
 
 Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
