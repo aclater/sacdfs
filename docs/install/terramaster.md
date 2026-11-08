@@ -1,8 +1,8 @@
 # sacdfs on TerraMaster TOS
 
 **Release binary: works. Container route: untested.** Checked on TOS 7.0.1422 in a VM, not on
-TerraMaster hardware. Storage setup and app stores weren't exercised. The checks used a build
-of `main` from before 0.5.0 (0.4.1-rc.3 earlier). Run the commands as root over SSH.
+TerraMaster hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 code (a build of `main` that
+differs from the release only in its version number) (0.4.1-rc.3 earlier). Run the commands as root over SSH.
 
 ## Release binary
 

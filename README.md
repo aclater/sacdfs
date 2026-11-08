@@ -29,7 +29,7 @@ sudo podman run -d --name sacdfs --restart unless-stopped \
   -p 445:445 -p 2049:2049 \
   -v /srv/music:/images:ro \
   -v sacdfs-cache:/cache \
-  ghcr.io/aclater/sacdfs:0.4.1
+  ghcr.io/aclater/sacdfs:0.5.0
 ```
 
 The [Docker and Podman guide](docs/install/docker-podman.md) explains each line and how to
@@ -52,6 +52,10 @@ fusermount3 -u ~/sacd
 [docs/options.md](docs/options.md).
 
 ## Install on your system
+
+**Beta testers wanted:** if you have a NAS (Synology, QNAP, UGREEN, Unraid, TrueNAS, ASUSTOR, TerraMaster
+and others), we'd like your report from real hardware, whether it worked or not:
+[beta testing](docs/beta-testing.md).
 
 - [Install guides](docs/install/README.md): TrueNAS SCALE, OpenMediaVault, Unraid,
   Synology, QNAP, UGREEN, Docker/Podman, and Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD.

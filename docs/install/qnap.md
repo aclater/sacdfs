@@ -2,7 +2,8 @@
 
 **Release binary: works from 0.5.0. Container Station: untested.** Checked on QuTScloud 5.2.9
 in a VM, not on QNAP hardware. Storage setup and app stores weren't exercised. QTS and
-QuTS hero weren't checked and may differ. The checks used a build of `main` from before 0.5.0.
+QuTS hero weren't checked and may differ. The checks used the 0.5.0 code (a build of `main` that
+differs from the release only in its version number).
 
 ## Release binary
 

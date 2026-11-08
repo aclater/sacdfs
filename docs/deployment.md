@@ -843,8 +843,8 @@ player wait for sacdfs's health check:
 ```yaml
 services:
   sacdfs:
-    image: ghcr.io/aclater/sacdfs:0.4.1
-    # 0.4.1 and earlier only (0.5.0 makes /srv/sacd itself); or make sacd in the host directory first
+    image: ghcr.io/aclater/sacdfs:0.5.0
+    # needed with 0.4.1 and earlier images only (0.5.0 makes /srv/sacd itself); or make sacd in the host directory first
     entrypoint: ["bash", "-c", "mkdir -p /srv/sacd 2>/dev/null; exec /usr/local/bin/entrypoint.sh"]
     restart: unless-stopped
     devices:
@@ -1155,7 +1155,7 @@ question asked again (#205). Counted with the kernel's `fuse:fuse_request_send` 
 (284 folders, 2,412 entries), the container's Samba 4.24.7, and the Linux kernel client (SMB 3.1.1,
 Fedora 45, kernel 7.2) over loopback:
 
-| Listing | 0.4.1 | Unreleased |
+| Listing | 0.4.1 | 0.5.0 |
 |---|---|---|
 | `ls -lR`, first | 6,897 (2.86 per entry) | 1,765 (0.73) |
 | `ls -lR`, again after 30 s | 6,469 (2.68) | 1,555 (0.64) |
@@ -1188,7 +1188,7 @@ kernel change notify = no
 dfree cache time = 60
 ```
 
-Measured on the same tree with the unreleased sacdfs: without these five, `ls -lR` costs 7,195 requests
+Measured on the same tree with sacdfs 0.5.0-rc.1: without these five, `ls -lR` costs 7,195 requests
 (2.98 per entry) instead of 1,765, mostly two `LISTXATTR` per entry, and `stat -f` reaches sacdfs every
 time. They were measured as a group, not one by one. Adding `vfs objects = streams_xattr` with them changed
 nothing (1,743). Measured on Linux clients only: the macOS client that showed the highest counts in #205,

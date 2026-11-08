@@ -7,13 +7,15 @@ with is in [clients](../clients.md).
 
 These guides were written against **sacdfs 0.4.0**, and each says what it was run on. Before
 0.5.0, the guides for Synology, QNAP, ASUSTOR, TerraMaster and UGREEN, and the Docker and
-Podman guide, were run again, step by step as written, with a build of `main`. The NAS
+Podman guide, were run again, step by step as written, with the 0.5.0 code (a build of `main` that
+differs from the release only in its version number). The NAS
 systems ran in VMs, not on the vendors' hardware. Storage setup and app stores weren't
 exercised there. The TrueNAS SCALE and OpenMediaVault guides were not run again for 0.5.0.
 Image tags still name the release each guide was first checked with. The ASUSTOR Compose file,
 new for 0.5.0, names 0.5.0. A guide marked
 *not validated* has no tested steps yet: nobody has run sacdfs there and reported back.
 Reports are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
+Have a NAS? See [beta testing](../beta-testing.md) for how to report.
 
 **New to SSH and Linux?** [The NAS steps](nas-binary.md) go one command at a time, each with
 what you should see and what to do when something else appears.

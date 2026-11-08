@@ -1,8 +1,8 @@
 # sacdfs on ASUSTOR ADM
 
 **Release binary and Docker Compose: work.** Checked on ADM 5.1.4 in a VM, not on ASUSTOR
-hardware. Storage setup and app stores weren't exercised. The checks used a build of `main`
-from before 0.5.0, and an image built from it (0.4.1-rc.3 earlier). Run the commands as root
+hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 code (a build
+of `main` that differs from the release only in its version number) and an image built from it (0.4.1-rc.3 earlier). Run the commands as root
 over SSH. ADM keeps some of its tools in `/usr/builtin/bin` and `/usr/builtin/sbin`, which may
 not be on an SSH session's PATH.
 
@@ -71,13 +71,16 @@ docker compose up -d
 docker inspect -f '{{.State.Health.Status}}' sacdfs
 ```
 
-*You should see* `healthy` within a minute (31 to 32 s in the checks). Before that,
+*You should see* `healthy` within a minute or so (31 to 40 s in the checks, the first time
+including the download of the image). Before that,
 `starting`. `docker logs sacdfs` shows the number of image files, `mounted`, the SMB share and
 `NFS SERVER INITIALIZED`.
 
 | Check | Result |
 |---|---|
-| `docker compose up -d` | Healthy after 32 s |
+| `docker compose up -d`, the file exactly as above, with the published 0.5.0 image | Pulled and healthy 40 s after `up`; `sacdfs --version` in the container printed 0.5.0 |
+| SMB on port 10445 with that image, mounted on the NAS with `mount.cifs` | All 22 files identical |
+| The same file with an image built from `main` (same code) | Healthy after 32 s |
 | SMB on port 10445, mounted on the NAS with `mount.cifs` (`port=10445,guest,ro,vers=3.0`) | All 22 files identical |
 | `docker compose restart` | Back in 1 s, healthy 31 s later, all 22 files identical again |
 | NFS | Not read: ADM's `mount` (BusyBox) has no NFSv4, and the VM had no second machine |

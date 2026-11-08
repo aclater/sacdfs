@@ -2,7 +2,8 @@
 
 **Release binary: works, with one extra step. Container Manager: untested.** Checked on
 DSM 7.4.1 in a VM, not on Synology hardware. Storage setup and app stores weren't exercised.
-The checks used a build of `main` from before 0.5.0 (0.4.1-rc.3 earlier).
+The checks used the 0.5.0 code (a build of `main` that
+differs from the release only in its version number) (0.4.1-rc.3 earlier).
 
 ## Release binary
 

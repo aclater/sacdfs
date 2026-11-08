@@ -6,6 +6,66 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- NAS install guides for people new to SSH and Linux: a new `docs/install/nas-binary.md` runs the
+  release binary on a NAS one command at a time, each with what you should see, and a table of the
+  messages met when something goes wrong and what to do. It keeps sacdfs on the data volume, adds
+  `--allow-other` (without it, SMB guests and other users got "Permission denied"), and uses `cp`,
+  not `install`, which on TerraMaster TOS is a different program. The Synology, QNAP, ASUSTOR,
+  TerraMaster and UGREEN guides were rewritten around it and run again as written with the 0.5.0
+  code, in VMs, not on the vendors' hardware. ASUSTOR gains a tested Compose file (other ports, the
+  health check written in); TerraMaster a systemd service that mounted again after a restart, and a
+  warning that its NFS service empties `/etc/exports`. Why Synology's Container Manager and QNAP's
+  Container Station couldn't be tested is recorded. `docs/install/binary.md` creates `~/.local/bin`
+  before installing into it.
+
+## [0.5.0] - 2026-11-08
+
+Tested as release candidate 0.5.0-rc.1 (2026-11-07). The final version carries only the version
+change on top of the rc.1 code and a test-only fix (#272). The results are in docs/clients.md and
+docs/test-plan.md: the scripted servers (Jellyfin, Navidrome, Lyrion, MPD, MinimServer) and the Linux
+NFS and SMB clients were run against 0.4.1, and the release binaries were run on the oldest glibc
+they target.
+
+Tested before release:
+- **Real discs.** 40 real discs pass the real-disc tests. Files from 12 of them, including tracks of up to 7.9 GiB, are byte-identical to 0.4.0. A whole library lists the same 4,911 tracks.
+- **Soak.** A 2-hour soak on three machines matches or beats 0.4.1 on memory, threads, stalls and remounts.
+- **Clients.** Jellyfin, Navidrome, Lyrion, MPD and MinimServer behave as on 0.4.1, and so do NFS and SMB clients on seven Linux distributions.
+- **Release binaries.** Checked in a glibc 2.17 container. See [the test plan](docs/test-plan.md) and [clients](docs/clients.md).
+
+### Upgrade notes
+
+What to do, or what you may see, after the move from 0.4.1 to 0.5.0.
+
+- **NFS clients of the container: remount once.** The first 0.5.0 container to start changes the
+  handles NFS-Ganesha gives out (#218), so a client that still holds handles from 0.4.1 or earlier
+  gets `Stale file handle` until it unmounts and mounts again. After that, a restart of the container
+  no longer breaks them, under Docker or Podman.
+- **Memory limit: the cache default is lower, and listings are bounded.** Under a memory limit of
+  512 MiB or less the cache defaults to 16 MiB (it was 32 MiB because the container set it), and the
+  decoder threads are capped by the limit. Under any cgroup limit, listings are kept to
+  `--listing-mb` (default 3/8 of the limit) and idle images are read again when used, so a second
+  pass over a library past its budget takes longer. Nothing changes without a limit. If you set
+  `SACDFS_CACHE_MB` yourself, your value is used.
+- **Your own Samba:** the container's Samba settings changed for fewer requests (#205). If you share
+  the mount with your own Samba, see the settings in
+  [deployment](docs/deployment.md#what-a-listing-costs-over-smb). Over SMB, files and folders now carry
+  the read-only attribute (#217); `SMB_EXTRA_GLOBAL=map readonly = no` goes back. This was not tried
+  on Windows, macOS, Roon or Plex.
+- **Reading a hung image:** once 4 reads of an image are blocked past the timeout, its new reads fail
+  with `EIO` at once (#241), where they used to fail one timeout each. A client that retries without a
+  pause sees the errors faster.
+- **Binaries:** the release binaries now need glibc 2.17 or later (they needed 2.28), and an aarch64
+  binary is published. The binary is about 3 MB larger.
+- **FUSE 2 only (no `fusermount3`):** a user other than root can now stop sacdfs and unmount it.
+- **Players on the same host:** reading the mount directly needs a host directory shared with
+  `rshared`, and a player container that binds it with `ro,rslave` (#186). Optional; SMB and NFS
+  work as before. The container makes `/srv/sacd` itself, so the `mkdir` workaround in the Compose
+  example is no longer needed.
+- **Optional features off by default:** `--musicbrainz` and `sacdfs tags fetch` send data to
+  MusicBrainz only when you run or enable them.
+
 ### Added
 
 - **An aarch64 release binary**, `sacdfs-<version>-aarch64-linux.tar.gz`, built and tested the
@@ -212,17 +272,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
-- NAS install guides for people new to SSH and Linux: a new `docs/install/nas-binary.md` runs the
-  release binary on a NAS one command at a time, each with what you should see, and a table of the
-  messages met when something goes wrong and what to do. It keeps sacdfs on the data volume, adds
-  `--allow-other` (without it, SMB guests and other users got "Permission denied"), and uses `cp`,
-  not `install`, which on TerraMaster TOS is a different program. The Synology, QNAP, ASUSTOR,
-  TerraMaster and UGREEN guides were rewritten around it and run again as written with a build of
-  `main`, in VMs, not on the vendors' hardware. ASUSTOR gains a tested Compose file (other ports, the
-  health check written in); TerraMaster a systemd service that mounted again after a restart, and a
-  warning that its NFS service empties `/etc/exports`. Why Synology's Container Manager and QNAP's
-  Container Station couldn't be tested is recorded. `docs/install/binary.md` creates `~/.local/bin`
-  before installing into it.
+- **Beta testing for NAS owners:** a [beta testing page](docs/beta-testing.md) (what to do, copy-and-paste
+  commands that collect the NAS, kernel, `/dev/fuse`, container runtime and log details, and how to remove
+  sacdfs again) and a NAS test report issue form (`.github/ISSUE_TEMPLATE/nas-test-report.yml`).
+
 - `docs/clients.md`, Windows Robocopy speed (#225): the two speeds of a Robocopy from a Windows VM
   came from the VM's emulated e1000e network card with receive-side scaling on, not from sacdfs, Samba or
   Robocopy; a plain Samba share showed the same split. With RSS off or a virtio-net card no run was slow
@@ -933,7 +986,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0

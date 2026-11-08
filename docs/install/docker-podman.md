@@ -58,7 +58,8 @@ Rootless Podman, SMB only (`-e NFS=0`; the `--health-*` options as above), was r
 0.4.1-rc.1 image: `podman inspect` showed `healthy` within 25 s. Without the options it fails
 with a nil-pointer error, because the image has no health check for Podman to run.
 
-Run again before 0.5.0, as written above, with an image built from `main`, under rootful
+Run again as written above with the 0.5.0 code (an image built from `main` that differs from
+the release only in its version number), under rootful
 Podman 6.1.3 on Fedora 45: healthy after 31 s; NFS 4.2 and SMB clients on the same host read
 all 22 files of two test images identical to the reference; `podman restart` brought it back
 healthy (Podman warned that SIGTERM hadn't stopped the container within its default 10 s and
