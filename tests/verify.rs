@@ -567,8 +567,15 @@ fn report_to_a_descriptor_redirected_to_a_file() {
     check(out, "");
     assert!(!dir.path().join("out.tsv.partial").exists());
 
-    // A descriptor that isn't open is an error, not a report beside it.
-    let out = Command::new(bin).args(["verify", "-q", "-o", "/dev/fd/9"]).arg(&lib).output().unwrap();
+    // A descriptor that isn't open is an error, not a report beside it. Closed by the shell
+    // first: a wrapper of the test run may hold it open (`flock 9`), and the child inherits it
+    // (#272).
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(r#"exec 9>&-; exec "$0" verify -q -o /dev/fd/9 "$1""#)
+        .args([bin.as_ref(), lib.as_os_str()])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
