@@ -38,7 +38,12 @@ unknown), SMB (the VM had no `smbd`), a client on another machine, and starting 
 `synopkg install` stops with "failed to get any volume for installation". DSM's own
 `synostgpool --create` refused the VM's data disk with "Create space failed. Disk is already
 used", even after its start was wiped. The VM's disks have no DSM slot or serial number.
-The Compose file that worked under ASUSTOR's Docker is in [asustor.md](asustor.md#compose).
-Container Manager runs Compose projects, but whether that file works there is unknown.
+The Compose file for every NAS container manager is
+[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml). It was run with Docker Compose on
+ASUSTOR ADM ([asustor.md](asustor.md#compose)) and on Podman, not on DSM. In Container Manager,
+create a project from the file (the menu names were not seen) and change the one marked line to
+the path of your images. DSM's own file services use ports 445 and 2049, which is why the file
+publishes 10445 and 12049. Whether Container Manager's Docker allows `/dev/fuse` and `SYS_ADMIN`
+is unknown.
 
 Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).

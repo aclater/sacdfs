@@ -22,39 +22,11 @@ stop the share first.
 
 ## Compose
 
-ADM's Docker package (Docker CE 25.0.5, with Compose v2.24.7) ran this file as a Compose
-project. Put it in a folder of its own, for example `/volume1/docker/sacdfs/compose.yaml`.
-Change `/volume1/music` to the folder that holds your images.
-
-```yaml
-services:
-  sacdfs:
-    image: ghcr.io/aclater/sacdfs:0.5.0
-    container_name: sacdfs
-    restart: unless-stopped
-    devices:
-      - /dev/fuse
-    cap_add:
-      - SYS_ADMIN
-      - DAC_READ_SEARCH
-    security_opt:
-      - apparmor=unconfined
-    ports:
-      - "10445:445"
-      - "12049:2049"
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
-      interval: 30s
-      timeout: 10s
-      start_period: 300s
-      retries: 3
-    stop_grace_period: 20s
-    volumes:
-      - /volume1/music:/images:ro
-      - sacdfs-cache:/cache
-volumes:
-  sacdfs-cache:
-```
+ADM's Docker package (Docker CE 25.0.5, with Compose v2.24.7) ran
+[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml), the one Compose file for every NAS
+container manager, as a Compose project. Put it in a folder of its own, for example
+`/volume1/docker/sacdfs/compose.yaml`. Change the one marked line, `/volume1/music`, to the folder
+that holds your images. Each setting has a comment in the file. In short:
 
 - **Ports 10445 and 12049.** ADM's own SMB service holds port 445, so the container's SMB and
   NFS are published on 10445 and 12049. Clients name the port:
@@ -71,19 +43,19 @@ docker compose up -d
 docker inspect -f '{{.State.Health.Status}}' sacdfs
 ```
 
-*You should see* `healthy` within a minute or so (31 to 40 s in the checks, the first time
-including the download of the image). Before that,
+*You should see* `healthy` within a minute or so (31 to 40 s in the checks). Before that,
 `starting`. `docker logs sacdfs` shows the number of image files, `mounted`, the SMB share and
 `NFS SERVER INITIALIZED`.
 
 | Check | Result |
 |---|---|
-| `docker compose up -d`, the file exactly as above, with the published 0.5.0 image | Pulled and healthy 40 s after `up`; `sacdfs --version` in the container printed 0.5.0 |
-| SMB on port 10445 with that image, mounted on the NAS with `mount.cifs` | All 22 files identical |
-| The same file with an image built from `main` (same code) | Healthy after 32 s |
+| `docker compose up -d`, the file as published, with the 0.5.0 image | Healthy 40 s after `up`; `sacdfs --version` in the container printed 0.5.0 |
 | SMB on port 10445, mounted on the NAS with `mount.cifs` (`port=10445,guest,ro,vers=3.0`) | All 22 files identical |
+| Later run, `docker compose up -d` with the published 0.5.0 image (loaded from a saved copy) and a 457-track test corpus (914 files) | Healthy after 32 s |
+| That corpus over SMB (`mount.cifs`, port 10445) | All 914 files had the SHA-256 of the same files read by a Linux client on another system |
+| That corpus over NFS 4.2 on port 12049, from a Fedora 44 container run with `--network host` (ADM's own `mount` has no NFSv4) | All 914 files identical, the same hashes |
 | `docker compose restart` | Back in 1 s, healthy 31 s later, all 22 files identical again |
-| NFS | Not read: ADM's `mount` (BusyBox) has no NFSv4, and the VM had no second machine |
+| `docker stop` 2 s after a start, 15 times | 3 took 11 s, the rest under a second; exit status 0 each time because the file waits up to 20 s. With the fixed entry point (see [docker-podman.md](docker-podman.md#stopping-and-restarting)), none took over a second |
 
 **How Docker was started in the VM, which is not a recommendation:** the App Central package
 wouldn't install there (`apkg --install` exited with status 22 and no message). Docker was
@@ -93,6 +65,6 @@ package's `bin` folder with `invalid userland-proxy-path`. Whether App Central d
 a real NAS wasn't checked.
 
 **Not checked:** the ADM Docker app's own screens (which settings it lets you set), a client
-on another machine, NFS to the container, and anything on hardware.
+on another machine, and anything on hardware.
 
 Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).

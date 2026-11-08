@@ -36,6 +36,11 @@ jobs:
       - name: Build the image
         run: docker build -f Containerfile -t sacdfs:ci .
 
+      # deploy/nas-compose.yaml, the file the NAS guides point to (#283): valid, healthy with this
+      # image, and a stop 2 s after the start exits normally in under 8 s. About 1 min.
+      - name: Bring up deploy/nas-compose.yaml and stop it (deploy/ci-compose-test.sh)
+        run: deploy/ci-compose-test.sh sacdfs:ci
+
       # The share test is a script so that the release (release.yml) runs the same test on
       # the image it publishes.
       - name: Serve the corpus and read it over SMB and NFS (deploy/ci-share-test.sh)

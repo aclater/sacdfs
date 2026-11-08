@@ -15,36 +15,13 @@ OpenMediaVault system was available). Reference: [deployment guide](../deploymen
    `compose`), and the one that holds your SACD images (here `music`).
 4. **Docker.** Services, Compose, Settings: choose the `compose` shared folder, Save, then
    **Reinstall Docker**.
-5. **The file.** Services, Compose, Files, Add: name it `sacdfs` and paste, with the absolute
-   path of your images' shared folder (Storage, Shared Folders shows it; `/srv/music` in the
-   test):
-
-   ```yaml
-   services:
-     sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.4.0
-       restart: unless-stopped
-       devices:
-         - /dev/fuse
-       cap_add:
-         - SYS_ADMIN
-         - DAC_READ_SEARCH
-       security_opt:
-         - apparmor=unconfined
-       ports:
-         - "445:445"
-         - "2049:2049"
-       volumes:
-         - /srv/music:/images:ro
-         - sacdfs-cache:/cache
-       environment:
-         SACDFS_FLATTEN: "1"
-   volumes:
-     sacdfs-cache:
-   ```
-
-   For a password on the SMB share add `SMB_USER` and `SMB_PASSWORD` under `environment`;
-   for Roon or MPD, `SACDFS_FORMATS: dsf` (see your server's guide).
+5. **The file.** Services, Compose, Files, Add: name it `sacdfs` and paste
+   [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml). Change the one marked line to the
+   absolute path of your images' shared folder (Storage, Shared Folders shows it; `/srv/music` in the
+   test). For a password on the SMB share, uncomment `SMB_USER` and `SMB_PASSWORD`; for Roon or
+   MPD, set `SACDFS_FORMATS: dsf` (see your server's guide). The file publishes ports 10445 and
+   12049 to keep clear of OMV's own SMB and NFS services; clients name them when they mount
+   ([linux-client.md](linux-client.md#on-other-ports)).
 6. Save, select the file and press **Up**.
 
 ## Check it works
@@ -55,6 +32,8 @@ OpenMediaVault system was available). Reference: [deployment guide](../deploymen
   `NFS SERVER INITIALIZED`.
 - From a client: [linux-client.md](linux-client.md).
 
-Not validated: running beside OMV's own SMB or NFS service. Both want ports 445 and 2049; the
-[TrueNAS guide](truenas-scale.md) shows the same container on other ports, which was not
-tried on OMV.
+**Which file was run where.** The validation above used an earlier Compose file (the 0.4.0 image, ports
+445 and 2049, OMV's SMB and NFS off). The current file, `deploy/nas-compose.yaml` (the 0.5.0 image,
+ports 10445 and 12049), was not run through OMV's Compose plugin; the same file was run with Docker
+Compose and Podman elsewhere ([asustor.md](asustor.md), [docker-podman.md](docker-podman.md)). Not
+tried: running beside OMV's own SMB or NFS services on those ports.

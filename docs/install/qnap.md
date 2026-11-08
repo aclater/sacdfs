@@ -43,8 +43,12 @@ sacdfs at boot.
 its first-run web setup, which wasn't run. Until that setup runs, the web interface reports
 `mediaReady` 0, the storage command-line tools point into a partition that isn't mounted, and
 there is no volume to install apps on. QuTScloud may also need a paid licence. The Compose
-file that worked under ASUSTOR's Docker is in [asustor.md](asustor.md#compose); whether it
-works in Container Station is unknown.
+file for every NAS container manager is [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml).
+It was run with Docker Compose on ASUSTOR ADM ([asustor.md](asustor.md#compose)) and on Podman,
+not on QNAP. In Container Station, create an application from the file (the menu names were not
+seen) and change the one marked line to the path of your images. QNAP's own file services use ports
+445 and 2049, which is why the file publishes 10445 and 12049. Whether Container Station allows
+`/dev/fuse` and `SYS_ADMIN` is unknown.
 
 Reports from real QNAP hardware are welcome: open an issue that mentions
 [#82](https://github.com/aclater/sacdfs/issues/82), with the system's version, how sacdfs was

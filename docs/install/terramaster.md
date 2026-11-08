@@ -59,8 +59,15 @@ systemctl is-active sacdfs
 started, not by TOS's own storage manager. So whether `RequiresMountsFor=` waits for the
 volume on real hardware wasn't checked, and neither was whether a TOS update keeps the file.
 
-**Not checked:** the container route (TerraMaster's Docker Engine comes from its App Center,
-which wasn't exercised), a client on another machine, and anything on hardware.
+**Docker (Compose): not checked on TOS.** TerraMaster's Docker Engine comes from its App Center,
+which wasn't exercised. The Compose file for every NAS container manager is
+[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml). It was run with Docker Compose on ASUSTOR
+ADM ([asustor.md](asustor.md#compose)) and on Podman, not on TOS. In TOS's Docker app, create a
+project from the file (the menu names were not seen) and change the one marked line to the path of
+your images. The file publishes ports 10445 and 12049 because TOS's own file services use 445 and
+2049.
+
+**Not checked:** TOS's Docker app, a client on another machine, and anything on hardware.
 `mount.cifs` stopped with "not installed setuid root" even as root, cause unknown.
 
 Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).

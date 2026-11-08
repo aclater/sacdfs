@@ -11,8 +11,10 @@ Podman guide, were run again, step by step as written, with the 0.5.0
 release (the Docker and Podman guide with an image built from `main` with the same code). The NAS
 systems ran in VMs, not on the vendors' hardware. Storage setup and app stores weren't
 exercised there. The TrueNAS SCALE and OpenMediaVault guides were not run again for 0.5.0.
-Image tags still name the release each guide was first checked with. The ASUSTOR Compose file,
-new for 0.5.0, names 0.5.0. A guide marked
+Image tags still name the release each guide was first checked with. The Compose file for every NAS
+container manager, [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml), names 0.5.0; each NAS
+guide says where it was run (Docker Compose on ASUSTOR ADM in a VM and on Podman; the other vendors'
+container managers are untested). See [docker-podman.md](docker-podman.md#compose). A guide marked
 *not validated* has no tested steps yet: nobody has run sacdfs there and reported back.
 Reports are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
 Have a NAS? See [beta testing](../beta-testing.md) for how to report.

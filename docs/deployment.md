@@ -597,6 +597,11 @@ docker compose -f deploy/compose.yaml logs -f
 Edit its `environment:` section for the settings. It works with `podman compose` too
 (rootful, for NFS).
 
+For a NAS (Synology, QNAP, UGREEN, TerraMaster, ASUSTOR, Unraid, OpenMediaVault, and any host
+that already serves SMB or NFS), `deploy/nas-compose.yaml` runs the published image, with ports
+10445 and 12049 and the health check. Its one line to edit is the path of your images; see
+[Docker and Podman, Compose](install/docker-podman.md#compose) for where it was checked.
+
 ### TrueNAS SCALE
 
 These steps follow TrueNAS SCALE 24.10 ("Electric Eel") and later, whose apps run on Docker.
@@ -1331,3 +1336,6 @@ number away first, so the test doesn't depend on the number happening to stay th
 bound over `/srv` with `rshared`, and a reader container, as uid 1000, binds that directory with `rslave`
 and checks every DSF track of the corpus: at start, after a restart, and after sacdfs in the container
 is killed and the restart policy starts it again, without the reader being restarted.
+`deploy/ci-compose-test.sh` brings up `deploy/nas-compose.yaml` (the file the NAS guides use) with
+the image under test: it must be valid, healthy and open on ports 10445 and 12049, and eight stops
+2 s after a start must each exit normally in under 8 s (#283).

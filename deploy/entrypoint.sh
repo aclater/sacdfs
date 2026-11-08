@@ -210,8 +210,11 @@ stop_all() {
     local p
     for p in "${pids[@]:1}"; do kill -TERM "$p" 2>/dev/null || true; done
     # Until no process but sacdfs uses the mount (NFS-Ganesha keeps the export's root open
-    # until it has exited), at most 10 s.
+    # until it has exited), at most 10 s. Only while the mount exists: once it is gone (sacdfs
+    # was signalled too, or exited), fuser -m lists every process on the container's root
+    # filesystem, which is never empty, and the loop would always run its full 10 s (#283).
     for _ in $(seq 100); do
+        mountpoint -q "$MNT" || break
         users=$(fuser -m "$MNT" 2>/dev/null | tr -s ' ' '\n' | grep -vx -e '' -e "${pids[0]}" || true)
         [ -z "$users" ] && break
         sleep 0.1

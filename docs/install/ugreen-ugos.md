@@ -4,9 +4,13 @@
 
 Most UGOS Pro owners would use its Docker app. sacdfs's container needs `/dev/fuse` and the
 capability `SYS_ADMIN` (and `DAC_READ_SEARCH` for NFS), and whether UGOS Pro's Docker app
-allows that is not known. The Compose file that worked under ASUSTOR's Docker is in
-[asustor.md](asustor.md#compose), the general container guide is
-[docker-podman.md](docker-podman.md), and every setting is in the
+allows that is not known. **Docker (Compose): untested on UGOS Pro**, whose VM has no Docker.
+The Compose file for every NAS container manager is
+[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml). It was run with Docker Compose on
+ASUSTOR ADM ([asustor.md](asustor.md#compose)) and on Podman. In the Docker app, create a project
+from the file (the menu names were not seen) and change the one marked line to the path of your
+images. The file publishes ports 10445 and 12049 because UGOS's own file services use 445 and 2049.
+The general container guide is [docker-podman.md](docker-podman.md), and every setting is in the
 [deployment guide](../deployment.md).
 
 **A kernel-only check, not UGOS:** Debian 12 on UGREEN's 6.18.15 kernel, in a VM, without the
