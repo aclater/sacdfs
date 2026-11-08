@@ -198,7 +198,8 @@ impl ReadAt for Source {
 /// index of each area and makes the cursors.
 #[derive(Debug)]
 pub struct Disc {
-    /// Process-unique id, part of the frame cache key.
+    /// Process-unique id of an image a [`crate::tree::Tree`] opened (0 for one opened alone,
+    /// to read its TOC), part of the frame cache key.
     pub id: u32,
     /// The image file.
     pub path: PathBuf,
