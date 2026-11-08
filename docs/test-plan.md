@@ -383,8 +383,11 @@ identity match a host mount, and the corpus check passes 457 of 457. The aarch64
 
 **Real-disc tests:** `scripts/real-discs.sh` passes 3 of 3 on 40 real images (12 multichannel), run on main at the rc.1 code. A byte comparison with 0.4.0 matches on 466 files from 12 discs, and on 5 RF64 WAV tracks of 4.2 to 7.9 GiB. A whole-library tree comparison with 0.4.0 shows no audio file missing or added; the only differences are the intended renames and art changes (see [clients](clients.md)).
 
-**Soak:** TODO(coordinator): soak results on 0.5.0-rc.1 (hosts, lengths, verdicts, unexpected errors,
-memory trend), or the reason none is needed under the [soak rule](#when-a-soak-is-needed).
+**Soak:** `scripts/soak.py --hours 2 --sample-paths` on three Linux machines, the 0.5.0 code (main at the rc.1 code) side by side with 0.4.1 on the same images:
+- **Load.** 675 GB to 1.0 TB read per run, 38 deliberate stalls and 23 remounts per run. No stall or remount failed.
+- **Memory.** Flat: a second-half trend of at most +1.9 MiB/h (limit 4.9). The peak sits 3 to 7 MiB above the warm level (0.4.1: 10 to 12). The warm level is 7 to 11 MiB above 0.4.1's.
+- **Resources.** No thread spike, at most 18 fds, and the cache stayed flat.
+- **The failed check.** The "unexpected read errors" check failed on both versions, with 1 to 6 errors per run. All of them are designed behaviour on the art-churn album: `ESTALE` on replaced art and `ENOENT` on `cover.jpg`. The soak script doesn't yet count those as expected (#279). This is not a regression.
 
 **Not run on 0.5.0:** Windows 11 (the 0.4.1-rc.1 result stands), macOS, Roon and Plex at scale,
 foobar2000, JRiver, and the Tier 2 tools.

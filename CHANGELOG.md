@@ -14,7 +14,11 @@ docs/test-plan.md: the scripted servers (Jellyfin, Navidrome, Lyrion, MPD, Minim
 NFS and SMB clients were run against 0.4.1, and the release binaries were run on the oldest glibc
 they target.
 
-TODO(coordinator): one-paragraph summary of the real-disc and soak results once they are in.
+Tested before release:
+- **Real discs.** 40 real discs pass the real-disc tests. Files from 12 of them, including tracks of up to 7.9 GiB, are byte-identical to 0.4.0. A whole library lists the same 4,911 tracks.
+- **Soak.** A 2-hour soak on three machines matches or beats 0.4.1 on memory, threads, stalls and remounts.
+- **Clients.** Jellyfin, Navidrome, Lyrion, MPD and MinimServer behave as on 0.4.1, and so do NFS and SMB clients on seven Linux distributions.
+- **Release binaries.** Checked in a glibc 2.17 container. See [the test plan](docs/test-plan.md) and [clients](docs/clients.md).
 
 ### Upgrade notes
 
