@@ -31,12 +31,15 @@ what you should see and what to do when something else appears.
 | TrueNAS SCALE 24.10 or later | [truenas-scale.md](truenas-scale.md) | Validated (TrueNAS SCALE 25.10, on 0.4.0; not run again for 0.5.0) |
 | Any Linux host with Docker or Podman | [docker-podman.md](docker-podman.md) | Validated (Fedora 44 and 45, Podman) |
 | OpenMediaVault 8 | [openmediavault.md](openmediavault.md) | Validated (OMV 8.6 on Debian 13, Compose plugin, on 0.4.0; not run again for 0.5.0) |
-| Unraid | [unraid.md](unraid.md) | Not validated |
+| Unraid | [unraid.md](unraid.md), [template](store-apps.md#unraid-install-from-the-template-file) | Not validated (template started on Podman only) |
 | Synology DSM | [synology.md](synology.md) | Binary checked in a VM (DSM 7.4.1; binary and NFSv3). Container Manager untested |
 | QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Binary checked in a VM (QuTScloud 5.2.9), from 0.5.0. Container Station untested |
 | UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated (a kernel check only) |
 | ASUSTOR ADM | [asustor.md](asustor.md) | Checked in a VM (ADM 5.1.4; binary, and Docker Compose) |
 | TerraMaster TOS | [terramaster.md](terramaster.md) | Checked in a VM (TOS 7.0; binary, NFS, start at boot). Container untested |
+
+Unraid and TrueNAS app-store entries (an Unraid template file you can load today; a TrueNAS
+catalog app that is not listed yet): [store-apps.md](store-apps.md).
 
 Without a container, on any Linux host (x86_64, or aarch64 from the first release after 0.4.1, glibc 2.17 or later; as a user other than root, FUSE 3's `fusermount3`,
 package `fuse3`, or from 0.5.0 FUSE 2's `fusermount`; root needs neither):
