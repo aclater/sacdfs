@@ -39,8 +39,12 @@ gh release download "v$v" -R aclater/sacdfs -p "sacdfs-$v-$a-linux.tar.gz*"
 sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
 gh attestation verify "sacdfs-$v-$a-linux.tar.gz" -R aclater/sacdfs
 tar -xzf "sacdfs-$v-$a-linux.tar.gz"
+mkdir -p ~/.local/bin
 install -m 0755 "sacdfs-$v-$a-linux/sacdfs" ~/.local/bin/
 ```
+
+On a NAS, follow [the NAS steps](nas-binary.md) instead: they keep sacdfs on the data volume,
+don't need `gh`, and avoid `install`, which on TerraMaster TOS is a different program.
 
 Without `gh`, download the files from the release page (or with `curl -LO`). The checksum
 shows the download is intact; the attestation (GitHub's build provenance, signed with
