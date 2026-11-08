@@ -53,6 +53,10 @@ fusermount3 -u ~/sacd
 
 ## Install on your system
 
+**Beta testers wanted:** if you have a NAS (Synology, QNAP, UGREEN, Unraid, TrueNAS, ASUSTOR, TerraMaster
+and others), we'd like your report from real hardware, whether it worked or not:
+[beta testing](docs/beta-testing.md).
+
 - [Install guides](docs/install/README.md): TrueNAS SCALE, OpenMediaVault, Unraid,
   Synology, QNAP, UGREEN, Docker/Podman, and Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD.
 - [Release binary, crates.io or source](docs/install/binary.md).

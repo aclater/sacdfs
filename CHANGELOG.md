@@ -212,6 +212,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- **Beta testing for NAS owners:** a [beta testing page](docs/beta-testing.md) (what to do, copy-and-paste
+  commands that collect the NAS, kernel, `/dev/fuse`, container runtime and log details, and how to remove
+  sacdfs again) and a NAS test report issue form (`.github/ISSUE_TEMPLATE/nas-test-report.yml`).
+
 - `docs/clients.md`, Windows Robocopy speed (#225): the two speeds of a Robocopy from a Windows VM
   came from the VM's emulated e1000e network card with receive-side scaling on, not from sacdfs, Samba or
   Robocopy; a plain Samba share showed the same split. With RSS off or a virtio-net card no run was slow

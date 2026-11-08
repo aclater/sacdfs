@@ -1,0 +1,131 @@
+name: NAS test report
+description: Tell us how sacdfs worked (or didn't) on your NAS. Failures help as much as successes.
+title: "NAS test report: <make and model>"
+labels: ["nas-test-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing sacdfs on real NAS hardware. **A report that says "it didn't work" is just as useful as one that says "it did".**
+        Only the first few fields are required. Fill in what you know and skip the rest.
+        The [beta testing page](https://github.com/aclater/sacdfs/blob/main/docs/beta-testing.md) shows how to collect the details safely.
+  - type: input
+    id: nas-model
+    attributes:
+      label: NAS make and model
+      placeholder: "for example: Synology DS923+, QNAP TS-464, UGREEN DXP4800, home-built Unraid"
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: NAS operating system and version
+      placeholder: "for example: DSM 7.2.2, QTS 5.2.1, UGOS Pro 1.6, Unraid 7.1, TrueNAS SCALE 25.10"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-route
+    attributes:
+      label: How did you install sacdfs?
+      options:
+        - The NAS's own container manager (Container Manager, Container Station, Docker app and so on)
+        - Docker or Docker Compose by hand
+        - Podman
+        - The plain binary
+        - A TrueNAS app
+        - Other (say how below)
+    validations:
+      required: true
+  - type: input
+    id: sacdfs-version
+    attributes:
+      label: sacdfs version
+      description: "The release or image tag you used. `sacdfs --version` prints it for the binary."
+      placeholder: "for example: 0.5.0-rc.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Overall, how did it go?
+      options:
+        - It worked
+        - It mostly worked, with problems
+        - It did not work
+        - I got stuck before I could try
+    validations:
+      required: true
+  - type: input
+    id: guide
+    attributes:
+      label: Which install guide did you follow?
+      placeholder: "for example: docs/install/synology.md, or none"
+  - type: textarea
+    id: stuck
+    attributes:
+      label: If you got stuck, at which step, and what did you see?
+      description: "Copy the step number or text and the message you got. Screenshots are fine."
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU
+      placeholder: "for example: Intel Celeron J4125, AMD Ryzen 7 5825U, ARM Cortex-A55"
+  - type: input
+    id: ram
+    attributes:
+      label: RAM
+      placeholder: "for example: 4 GB"
+  - type: dropdown
+    id: mount-works
+    attributes:
+      label: Does the sacdfs mount work? (you can see a folder per disc with the tracks inside)
+      options:
+        - Not tried
+        - "Yes"
+        - "No"
+  - type: dropdown
+    id: share-works
+    attributes:
+      label: Can another computer open the share (SMB or NFS)?
+      options:
+        - Not tried
+        - "Yes, SMB"
+        - "Yes, NFS"
+        - "Yes, both"
+        - "No"
+  - type: input
+    id: player
+    attributes:
+      label: Which player or server did you use?
+      placeholder: "for example: Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD, a file manager, none"
+  - type: dropdown
+    id: playback
+    attributes:
+      label: Did playback work?
+      options:
+        - Not tried
+        - "Yes"
+        - "Partly (skips, gaps, some discs only)"
+        - "No"
+  - type: dropdown
+    id: art-tags
+    attributes:
+      label: Did cover art and track titles show?
+      options:
+        - Not tried
+        - Both showed
+        - Only titles
+        - Only art
+        - Neither
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and system details
+      description: |
+        Paste the output of the copy-and-paste block for your NAS from the beta testing page, and the end of the sacdfs log.
+        Look through it first and replace anything private, such as folder names you would rather not share.
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else?
