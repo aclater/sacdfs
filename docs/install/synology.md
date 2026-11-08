@@ -2,8 +2,7 @@
 
 **Release binary: works, with one extra step. Container Manager: untested.** Checked on
 DSM 7.4.1 in a VM, not on Synology hardware. Storage setup and app stores weren't exercised.
-The checks used the 0.5.0 code (a build of `main` that
-differs from the release only in its version number) (0.4.1-rc.3 earlier).
+The checks used the 0.5.0 release (0.4.1-rc.3 earlier).
 
 ## Release binary
 
@@ -24,7 +23,7 @@ What was checked on DSM 7.4.1 (kernel 4.4):
 
 | Check | Result |
 |---|---|
-| Steps 1, 2 and 4 to 9 of [the NAS steps](nas-binary.md), as written | All 22 files of two test images identical to the reference |
+| Steps 1 to 9 of [the NAS steps](nas-binary.md), as written, download included | All 22 files of two test images identical to the reference |
 | A non-root user reading the mount | "Permission denied" without `--allow-other`, files readable with it |
 | NFSv3: `/volume1/sacd 127.0.0.1(ro,fsid=4242,no_subtree_check)` in `/etc/exports`, `systemctl start nfs-server`, mounted on the NAS itself with `mount -t nfs -o vers=3,nolock,ro` | All 22 files identical |
 | NFSv4 the same way | `mount.nfs: Protocol not supported` |

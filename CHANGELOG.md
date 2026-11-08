@@ -14,7 +14,7 @@ All notable changes to sacdfs are recorded here. The format follows
   `--allow-other` (without it, SMB guests and other users got "Permission denied"), and uses `cp`,
   not `install`, which on TerraMaster TOS is a different program. The Synology, QNAP, ASUSTOR,
   TerraMaster and UGREEN guides were rewritten around it and run again as written with the 0.5.0
-  code, in VMs, not on the vendors' hardware. ASUSTOR gains a tested Compose file (other ports, the
+  release, in VMs, not on the vendors' hardware. ASUSTOR gains a tested Compose file (other ports, the
   health check written in); TerraMaster a systemd service that mounted again after a restart, and a
   warning that its NFS service empties `/etc/exports`. Why Synology's Container Manager and QNAP's
   Container Station couldn't be tested is recorded. `docs/install/binary.md` creates `~/.local/bin`

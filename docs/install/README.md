@@ -5,10 +5,10 @@ it works. Each says what it was validated on. The full reference, with every set
 reasons behind it, is the [deployment guide](../deployment.md); what each client was tested
 with is in [clients](../clients.md).
 
-These guides were written against **sacdfs 0.4.0**, and each says what it was run on. Before
+These guides were written against **sacdfs 0.4.0**, and each says what it was run on. For
 0.5.0, the guides for Synology, QNAP, ASUSTOR, TerraMaster and UGREEN, and the Docker and
-Podman guide, were run again, step by step as written, with the 0.5.0 code (a build of `main` that
-differs from the release only in its version number). The NAS
+Podman guide, were run again, step by step as written, with the 0.5.0
+release (the Docker and Podman guide with an image built from `main` with the same code). The NAS
 systems ran in VMs, not on the vendors' hardware. Storage setup and app stores weren't
 exercised there. The TrueNAS SCALE and OpenMediaVault guides were not run again for 0.5.0.
 Image tags still name the release each guide was first checked with. The ASUSTOR Compose file,

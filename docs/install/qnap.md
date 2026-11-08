@@ -2,8 +2,7 @@
 
 **Release binary: works from 0.5.0. Container Station: untested.** Checked on QuTScloud 5.2.9
 in a VM, not on QNAP hardware. Storage setup and app stores weren't exercised. QTS and
-QuTS hero weren't checked and may differ. The checks used the 0.5.0 code (a build of `main` that
-differs from the release only in its version number).
+QuTS hero weren't checked and may differ. The checks used the 0.5.0 release.
 
 ## Release binary
 
@@ -30,7 +29,7 @@ an ext4 filesystem on its data disk was mounted at `/share/CACHEDEV1_DATA`, with
 
 | Check | Result |
 |---|---|
-| Steps 1, 2 and 4 to 9 of [the NAS steps](nas-binary.md), as written | All 22 files of two test images identical to the reference |
+| Steps 1 to 9 of [the NAS steps](nas-binary.md), as written, download included | All 22 files of two test images identical to the reference |
 | Logging out of SSH and back in | Still mounted, same files |
 | Earlier, with the pull request's build: QuTScloud's own NFS server (NFSv3, explicit `fsid=`), mounted on the same system | Same bytes as on a current Linux system, for two test images and a real DST disc |
 

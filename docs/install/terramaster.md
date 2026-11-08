@@ -1,8 +1,7 @@
 # sacdfs on TerraMaster TOS
 
 **Release binary: works. Container route: untested.** Checked on TOS 7.0.1422 in a VM, not on
-TerraMaster hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 code (a build of `main` that
-differs from the release only in its version number) (0.4.1-rc.3 earlier). Run the commands as root over SSH.
+TerraMaster hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 release (0.4.1-rc.3 earlier). Run the commands as root over SSH.
 
 ## Release binary
 
@@ -15,7 +14,7 @@ Follow [the NAS steps](nas-binary.md) with `/Volume1` (capital V) in place of `/
 
 | Check | Result |
 |---|---|
-| Steps 1, 2 and 4 to 9 of [the NAS steps](nas-binary.md), as written, with `/Volume1` | All 22 files of two test images identical to the reference |
+| Steps 1 to 9 of [the NAS steps](nas-binary.md), as written, download included, with `/Volume1` | All 22 files of two test images identical to the reference |
 | NFS: `/Volume1/sacd 127.0.0.1(ro,fsid=4242,no_subtree_check)` added to `/etc/exports`, then `exportfs -ra`, mounted on the NAS itself as NFSv3 and NFSv4 | All 22 files identical over each |
 | `systemctl restart nfs-server` afterwards | `/etc/exports` was empty again |
 | Earlier, with 0.4.1-rc.3: a Samba share of the mount (a minimal `smb.conf`, one read-only guest share), read with `smbclient` | All files correct |

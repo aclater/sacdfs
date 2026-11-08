@@ -1,8 +1,8 @@
 # sacdfs on ASUSTOR ADM
 
 **Release binary and Docker Compose: work.** Checked on ADM 5.1.4 in a VM, not on ASUSTOR
-hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 code (a build
-of `main` that differs from the release only in its version number) and an image built from it (0.4.1-rc.3 earlier). Run the commands as root
+hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 release binary and image, and before the tag an image built
+from `main` with the same code (0.4.1-rc.3 earlier). Run the commands as root
 over SSH. ADM keeps some of its tools in `/usr/builtin/bin` and `/usr/builtin/sbin`, which may
 not be on an SSH session's PATH.
 
@@ -13,7 +13,7 @@ is there, and sacdfs mounts as root without `fusermount3`, which ADM doesn't hav
 
 | Check | Result |
 |---|---|
-| Steps 1, 2 and 4 to 9 of [the NAS steps](nas-binary.md), as written | All 22 files of two test images identical to the reference |
+| Steps 1 to 9 of [the NAS steps](nas-binary.md), as written, download included | All 22 files of two test images identical to the reference |
 | A Samba guest share of `/volume1/sacd` (ADM's Samba 4.20, a minimal hand-made `smb.conf` on port 4450), mounted on the NAS with `mount.cifs` | All 22 files identical with `--allow-other`. Without it, the mount failed with "Permission denied" |
 | Earlier, with 0.4.1-rc.3: an NFSv3 export, mounted on the same system | Correct, after `modprobe nfsd nfsv3 cifs` |
 

@@ -5,15 +5,13 @@ It mounts a folder that shows your SACD images (`.iso`) as DSF and WAV files. Us
 on a NAS that has no container app, or if you'd rather not use one. With a container app,
 [docker-podman.md](docker-podman.md) and your NAS's own guide cover that route instead.
 
-**What was checked.** Every step below was run as written, as root over SSH, with the 0.5.0
-code (a build of `main` that differs from the 0.5.0 release only in its version number, linked
-for glibc 2.17 the way the release workflow does it), on:
-Synology DSM 7.4.1, QNAP QuTScloud 5.2.9, ASUSTOR ADM 5.1.4, TerraMaster TOS 7.0, and
-Debian 12 on UGREEN's 6.18 kernel (not UGOS itself). Each ran in a VM, not on the vendor's
-hardware. Storage setup and app stores weren't exercised. On each system all 22 DSF and WAV
-files of two synthetic test images read back identical to a reference. The download step (3)
-could not be run on that day, because GitHub's release downloads were down. The archive was
-copied onto each system instead, and the remaining steps ran unchanged.
+**What was checked.** Every step below was run as written, as root over SSH, from a clean
+system, with the 0.5.0 release downloaded in step 3, on: Synology DSM 7.4.1, QNAP QuTScloud
+5.2.9, ASUSTOR ADM 5.1.4, TerraMaster TOS 7.0, and Debian 12 on UGREEN's 6.18 kernel (not
+UGOS itself). Each ran in a VM, not on the vendor's hardware. Storage setup and app stores
+weren't exercised. On each system the checksum was `OK`, `--version` printed `sacdfs 0.5.0`,
+and all 22 DSF and WAV files of two synthetic test images read back identical to a reference.
+Only the path was changed per system, and Synology also needed `modprobe fuse` (step 1).
 
 Your system's guide lists any extra step and what else was checked there:
 [Synology](synology.md), [QNAP](qnap.md), [ASUSTOR](asustor.md),
