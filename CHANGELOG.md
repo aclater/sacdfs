@@ -71,6 +71,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- **#185 (MusicBrainz lookup) is complete except fingerprinting.** Fallback naming, `tags fetch` and
+  `--musicbrainz` are shipped; the AcoustID fingerprint lookup, which needs an API key and a
+  Chromaprint dependency decision, moved to #296 (Later). The user guide and design notes say so.
+
 - **macOS and SMB restarts (part of #204):** the install guides now say, where a user updates, that a
   macOS client must mount the SMB share again after an upgrade or restart, while Linux and Windows
   clients carry on. `docs/deployment.md` records that the SMB server identity follows the container's

@@ -2250,6 +2250,18 @@ through the mount's images and calls the same code as `tags fetch` for each disc
   nothing: it reads TOCs and makes at most 1 request per second. *Alternative:* wait for phase 3.
   *Trade-off:* the in-process AcoustID switch still waits for its soak, and the worker will gain it
   only then.
+- **AcoustID fingerprinting is not part of 0.6.0 (#185 closed; the rest is #296, milestone Later).**
+  The owner delegated the split. *Why:* it needs two things that are not code: an AcoustID API key
+  (an external account), and a Chromaprint source. The choices are the C library (a new native
+  dependency, against the glibc-2.17 baseline), `fpcalc` as a run-time program, or a Rust port. Each
+  needs a decision of its own, and a soak that proves the owner's CPU, memory and thread bounds
+  before the in-process switch. The other lookups already match the discs in the real-disc sample that
+  carry no text (19 of 21, by number), so the fingerprint is a last resort for a small group.
+  *Alternatives:* ship `tags fetch --acoustid` now with `fpcalc` required on `PATH` (rejected: nobody
+  can use it without a key, and the dependency choice would be made by default); keep #185 open
+  (rejected: it would hold a milestone for the last 5% of discs). *Trade-off:* a disc with no number,
+  no usable name and no matching durations keeps its generated names (`Track NN`, folder-derived
+  album) until #296 ships; hand tags (`tags import`, beets-pysacd) still work for it.
 - **Never in the FUSE path.** The worker shares no lock with the serving side. It reads TOCs with
   its own disc handles, without the seek index cache, and writes only the tags file, through the
   same atomic rename as `tags fetch`; the mount then picks the file up as it does a hand edit
