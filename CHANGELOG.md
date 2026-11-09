@@ -15,8 +15,7 @@ All notable changes to sacdfs are recorded here. The format follows
   TerraMaster guide uses the shipped unit. CI runs `shellcheck` on the script and
   `systemd-analyze verify` on the unit. The NAS steps now say how to start it at boot with the
   vendor's own tools: an ASUSTOR `init.d` script, a QNAP `autorun.sh` and a Synology Task Scheduler
-  task, checked in VMs. The release archives carry `sacdfs-ctl`, `sacdfs.service` and
-  `sacdfs.conf.example`.
+  task, checked in VMs.
 
 - **Unraid and TrueNAS app-store entries, prepared (part of #284).** `deploy/unraid/sacdfs.xml` is a
   Community Applications template (device, capabilities and AppArmor setting in Extra Parameters,

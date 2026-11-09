@@ -191,8 +191,7 @@ On QNAP, `/etc` and `/var` are on a RAM disk that is empty after a restart. Keep
 file on the data volume and run the script with `SACDFS_CONF=/volume1/sacdfs/sacdfs.conf` in front.
 
 One `sacdfs-ctl` runs at a time: a second `start` or `stop` waits for the first (a lock folder
-next to the pid file). That matters on ASUSTOR, whose start-up ran the script twice; see below. The
-script, the unit and the settings file are also in the release archive, from 0.6.0.
+next to the pid file). That matters on ASUSTOR, whose start-up ran the script twice; see below.
 
 ### Starting it at boot with the NAS's own tools
 
