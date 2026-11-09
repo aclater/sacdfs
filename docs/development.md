@@ -86,7 +86,9 @@ Each minute it writes one TSV row with:
 The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all of these:
 
 - resident and anonymous memory stay within the cache cap (`--cache-mb`, default 64) plus
-  32 MiB of noise above their level at the end of the warm-up;
+  32 MiB of noise above their level at the end of the warm-up. Both are counted with the pages
+  the kernel has swapped out (`VmSwap`, the `swap_kb` column), so that a host under memory
+  pressure doesn't move them (see below, "What the steps are");
 - their trend over the second half is at most 4 MiB/h, or adds less than 3 MiB over the part of
   it that is judged (`--trend-floor-mb`), so that a short run's noise does not fail it. The
   trend is taken with the largest single step set aside: the second half is cut into six equal
@@ -128,6 +130,25 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   different files failed.
 
 The exit status is 0 on PASS and 1 on FAIL. `--help` lists the knobs.
+
+**What the steps are ([#247](https://github.com/aclater/sacdfs/issues/247)).** In four
+2.5-hour soaks run side by side on one busy host (three of the same build and one 0.4.1-rc.2),
+the resident size fell in two steps of about 4.5 and 9 MiB at the same two samples in all four,
+and then crept back up. The malloc heap's size and its free bytes (glibc `malloc_info`) did not
+change at those samples, and it is one arena (the limit from #73), so nothing was freed or trimmed.
+The kernel had paged out the pages of a quiet process and paged them in again as they were used.
+Checked directly: `madvise(MADV_PAGEOUT)` on the heap of a running soak took 31.8 MiB off `VmRSS`
+and put 31.8 MiB in `VmSwap`, and most of it was back within a minute under the soak's reads.
+So the steps are the host's reclaim, not sacdfs's allocations, and they show up on a loaded host
+that has swap (a zram device counts). Since 0.6.0 the soak records `VmSwap` and judges
+resident plus swapped memory, which reclaim leaves where it was; a leak that gets swapped out
+still counts. Runs recorded before then have no swap column, so their steps are explained by this
+only where the same samples moved on parallel runs.
+
+To look at a step yourself, add `--smaps` (writes `<out>.smaps.tsv`: every mapping with 64 KiB or
+more resident at each sample, as `t start perms size_kb rss_kb anon_kb name`) and
+`--malloc-info-every SECONDS` (glibc's `malloc_info` XML into `<out>.malloc-info/`, taken through
+`gdb`, which stops the mount for a moment: leave it off in a gate run).
 
 On a hybrid CPU, pin the soak to the efficiency cores so that it leaves the host's
 benchmarks alone, for example `taskset -c 12-19 python3 scripts/soak.py ...` on a

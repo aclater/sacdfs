@@ -351,9 +351,9 @@ not explained by the induced stall or churn.
 would mean a leak and a new candidate, and a flat line would mean a one-time step. Both long runs stayed
 flat: on rig A at about 155 MiB from hour 3 to the end. The check itself was not changed, and the gate
 was counted as passed on those long runs. Steps of this size also appear on rc.2 and 0.4.0, in both
-directions. **Still unexplained:** what the steps are, and why rc.3 sits a steady 4 to 5 MiB above rc.2
-on rig A, without growth (on rig B the gap moved between -2 and +2.4 MiB). Both are in
-[#247](https://github.com/aclater/sacdfs/issues/247). No soak covers a long hang with retrying clients
+directions. **Unexplained then, explained later:** the steps are the host's memory reclaim (see
+[Soak memory steps (#247)](#soak-memory-steps-247)); the level gap on rig A is the malloc heap's live
+data (same section). No soak covers a long hang with retrying clients
 ([#241](https://github.com/aclater/sacdfs/issues/241)).
 
 **Clients re-run on rc.3,** details in [clients.md](clients.md#041-rc3-checks): seven Linux distributions
@@ -397,6 +397,52 @@ identity match a host mount, and the corpus check passes 457 of 457. The aarch64
 
 **Not run on 0.5.0:** Windows 11 (the 0.4.1-rc.1 result stands), macOS, Roon and Plex at scale,
 foobar2000, JRiver, and the Tier 2 tools.
+
+## Soak memory steps (#247)
+
+Steps of 3 to 9 MiB in a soak's resident size, in both directions, appeared on 0.4.0, 0.4.1-rc.2
+and rc.3 and nobody could say what they were. Four 2.5-hour soaks of the same images were run side by side
+(three runs of the 0.6.0 line, main at b46c5e0, and 0.4.1-rc.2) on one busy host with
+`--smaps --malloc-info-every 300`. The host load stayed above 70 and its zram swap was in use.
+
+**Finding.** Every run fell in the same two steps at the same minutes: about -4.5 MiB at minute 125
+and -9 MiB at minute 132 (medians of six samples either side: -4.6 and -9.0, -4.6 and -9.6, -4.9 and -10.4 MiB for the three
+runs of main, -4.1 and -6.4 for rc.2), almost all of it in the `[heap]` mapping, then crept back up
+(+1.6 to +2.7 MiB at minute 138). In the same samples the malloc heap's size (`system current`,
+186.2, 188.3, 187.9 and 177.6 MB) did not change, there was one arena, and its free bytes varied by a few MB from sample to
+sample as before, with no step. Nothing was freed or trimmed; four unrelated processes, two of them a different
+build, can't free memory at the same second. A run of `madvise(MADV_PAGEOUT)` on a running mount's heap took
+31.8 MiB from `VmRSS` into `VmSwap`, and most of it returned within a minute. The steps are the
+kernel swapping a quiet process's pages out and in. The earlier eight-hour runs on their own rigs
+had 20 to 248 KiB in swap at the start; the steps on those isolated rigs were not
+re-measured, so for them this is the likely cause, not a shown one.
+
+**The rig A level difference.** On one host, the same images, one hour in: main sat 8 MiB above rc.2
+(resident 186 against 177 MiB; anon 179 against 170). By mapping, the whole difference is in `[heap]` (112 against
+104.5 MiB); the cache's anonymous mappings and thread stacks (64 MiB) match, and the files are 1 MiB
+apart (the larger binary). In `malloc_info` the heap holds 165 MB in use for main and 153 for rc.2 and
+about the same free bytes. So it is live data on the heap, not fragmentation, arenas or stacks. Which
+allocation it is, a profile of the soak segment would show ([massif](development.md#heap-profile-of-a-soak-segment-massif));
+that wasn't run. The 0.5.0 results already put the warm level 7 to 11 MiB above 0.4.1.
+
+**Decision.** The soak records `VmSwap` and judges resident plus swapped memory (`swap_kb` column).
+*Why:* the soak measures what sacdfs holds; reclaim changes where it sits and has no cause in sacdfs.
+*Alternatives:* leave the steps to the step rule of #249 only (a step that is not a leak passes, but
+a leak beside a big drop could still hide, and a swapped-out leak would show as a falling trend);
+run soaks only on a host without swap (not always possible, and it hides nothing about sacdfs);
+fail on swapped memory (it says nothing about sacdfs). *Trade-off:* a swapped-out leak is counted
+(that is the point), and the check can't tell if pages came back from swap; it also trusts
+`VmSwap`, which Linux gives. The step rule from #249 stays as a second guard for what is
+not swap (a step that is not explained is still set aside, never a climb). Tests:
+`scripts/test_soak.py` (reclaim to swap passes, a swapped-out leak of 10 MiB/h fails).
+
+**The thread ceiling** was handled in #249: a spike line of median + 16 that may be passed for under
+`--spike-hold` (120 s), and a hard ceiling of median + 32. In the four runs above the threads peaked at
+81, 82, 81 and 87 with a first-half median of 73 and the spike line at 89: a margin of 2 to 8
+threads where the single ceiling of the old rule would have sat at 89; rc.2 reached 87, 2 below it.
+
+**Not run.** Isolated rigs (no other load, no swap) with `VmSwap` recorded: whether a quiet rig
+still steps by itself. The soak CI job (20 minutes) wasn't re-run on this change beyond the unit tests.
 
 ## Exit criteria
 

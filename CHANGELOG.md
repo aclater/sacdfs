@@ -7,6 +7,12 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Soak: the memory steps explained, and judged without them (part of #247).** The steps of 3 to
+  9 MiB in a soak's resident size are the kernel swapping pages out and in on a busy host: four
+  parallel runs fell by the same amounts at the same samples while the malloc heap did not change.
+  `scripts/soak.py` now records `VmSwap` (`swap_kb`) and judges resident plus swapped memory,
+  and has `--smaps` and `--malloc-info-every` to trace a step to its mapping.
+
 - **The release archives also ship `sacdfs-ctl`, `sacdfs.service` and `sacdfs.conf.example`**
   (part of #289), next to the binary, so a NAS install doesn't need a second download.
 - **Safe start and stop for the release binary on a NAS (#289).** `deploy/systemd/sacdfs.service`
