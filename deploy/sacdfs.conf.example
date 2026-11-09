@@ -5,6 +5,9 @@ SACDFS_IMAGES=/volume1/music
 SACDFS_MOUNT=/volume1/sacd
 # Extra options, separated by spaces: see docs/options.md.
 SACDFS_OPTIONS="--allow-other"
+# Where a NAS start-up tool runs sacdfs-ctl there may be no HOME, and sacdfs then logs
+# "no seek index cache". Name a folder for it, for example:
+#SACDFS_OPTIONS="--allow-other --index-cache /volume1/sacdfs/cache"
 # sacdfs-ctl only (the systemd unit uses the journal):
 #SACDFS_BIN=/usr/local/bin/sacdfs
 #SACDFS_PIDFILE=/var/run/sacdfs.pid

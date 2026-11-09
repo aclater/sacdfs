@@ -13,7 +13,9 @@ All notable changes to sacdfs are recorded here. The format follows
   and `restart` with BusyBox `sh` where there is no systemd. Stopping is SIGTERM, and SIGKILL only
   after the wait. The NAS steps warn against `kill -9`, which leaves a dead mount, and the
   TerraMaster guide uses the shipped unit. CI runs `shellcheck` on the script and
-  `systemd-analyze verify` on the unit.
+  `systemd-analyze verify` on the unit. The NAS steps now say how to start it at boot with the
+  vendor's own tools: an ASUSTOR `init.d` script, a QNAP `autorun.sh` and a Synology Task Scheduler
+  task, checked in VMs.
 
 - **Unraid and TrueNAS app-store entries, prepared (part of #284).** `deploy/unraid/sacdfs.xml` is a
   Community Applications template (device, capabilities and AppArmor setting in Extra Parameters,
@@ -62,6 +64,9 @@ All notable changes to sacdfs are recorded here. The format follows
   have no `fusermount3`), else `fusermount3 -u` or `fusermount -u`, whichever is installed.
 
 ### Fixed
+- **Two `sacdfs-ctl start` at once started two sacdfs (#289).** ASUSTOR ADM runs its start script
+  twice at boot; both starts passed the "already running" check and stacked two mounts, one of
+  which `stop` never reached. A lock now serialises `start` and `stop`.
 - **A background mount that failed printed its error twice (#282).**
 - **The container could take 10 s to stop (#283).** A stop within a few seconds of the start (a
   restart right after `up`, say) sometimes waited 10 s for the servers to release the mount,
