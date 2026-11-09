@@ -548,16 +548,16 @@ fn real_discs() {
 }
 
 /// Writes a sparse RF64 file made by sacdfs's own header and trailer code (six channels,
-/// 25 minutes at 176.4 kHz: 4.6 GB of silence), for checking with other programs locally:
-/// `SACDFS_RF64_OUT=FILE cargo test --test wav rf64_file -- --ignored`. No real disc in the
-/// local set has a track long enough to need RF64.
+/// 25 minutes at 176.4 kHz: 4.6 GB of silence, a few KiB on disk) and has programs that share
+/// no code with sacdfs read it (#220): `scripts/check_rf64.py` always, which checks the chunk
+/// layout and sizes against the file; and `ffprobe` when it is installed, which must see the
+/// channels, rate, duration and tags. `SACDFS_RF64_OUT=FILE` keeps the file for other programs.
+/// No real disc in the local set has a track long enough to need RF64.
 #[test]
-#[ignore = "writes a 4.6 GB sparse file: set SACDFS_RF64_OUT"]
 fn rf64_file() {
     use std::io::{Seek, SeekFrom, Write};
-    let Some(path) = std::env::var_os("SACDFS_RF64_OUT") else {
-        common::skip!("writes a 4.6 GB sparse file: set SACDFS_RF64_OUT")
-    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = std::env::var_os("SACDFS_RF64_OUT").map_or_else(|| dir.path().join("long.wav"), Into::into);
     let layout = wav::Layout { channels: 6, frames: 25 * 60 * 75, samples_per_frame: 2352, rate: 176_400 };
     use scarletbook::output::{TagItem, TagSet};
     let mut tags = TagSet::new();
@@ -575,6 +575,34 @@ fn rf64_file() {
     let size = std::fs::metadata(&path).unwrap().len();
     assert_eq!(size, h.len() as u64 + layout.data_len() + t.bytes.len() as u64);
     eprintln!("{size} bytes, {} samples per channel", layout.samples());
+
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/check_rf64.py");
+    let out = std::process::Command::new("python3")
+        .arg("-I")
+        .arg(script)
+        .arg(&path)
+        .args(["6", "176400", &layout.samples().to_string()])
+        .output()
+        .expect("python3 is needed to run scripts/check_rf64.py");
+    assert!(out.status.success(), "check_rf64.py: {}", String::from_utf8_lossy(&out.stderr));
+    eprintln!("{}", String::from_utf8_lossy(&out.stdout).trim());
+
+    let probe = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-of", "default=nw=1", "-show_entries"])
+        .arg("stream=channels,sample_rate:format=duration:format_tags=title,album")
+        .arg(&path)
+        .output();
+    match probe {
+        Ok(o) => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            assert!(o.status.success(), "ffprobe: {}", String::from_utf8_lossy(&o.stderr));
+            for want in ["channels=6", "sample_rate=176400", "duration=1500.000000", "TAG:title=Long track"] {
+                assert!(text.lines().any(|l| l == want), "ffprobe did not report {want}: {text}");
+            }
+            eprintln!("ffprobe agrees");
+        }
+        Err(_) => eprintln!("ffprobe is not installed: only check_rf64.py read the file"),
+    }
 }
 
 /// A tagger that walks the chunks reads the data chunk's header, which touches the first
