@@ -71,6 +71,12 @@ All notable changes to sacdfs are recorded here. The format follows
   `--musicbrainz` are shipped; the AcoustID fingerprint lookup, which needs an API key and a
   Chromaprint dependency decision, moved to #296 (Later). The user guide and design notes say so.
 
+- **macOS and SMB restarts (part of #204):** the install guides now say, where a user updates, that a
+  macOS client must mount the SMB share again after an upgrade or restart, while Linux and Windows
+  clients carry on. `docs/deployment.md` records that the SMB server identity follows the container's
+  host name, how to keep it across a recreate (`hostname: sacdfs` or `netbios name`, checked with a
+  raw SMB2 negotiate and the gvfs client), and why that is not the default. macOS was not re-tested.
+
 - NAS install guides for people new to SSH and Linux: a new `docs/install/nas-binary.md` runs the
   release binary on a NAS one command at a time, each with what you should see, and a table of the
   messages met when something goes wrong and what to do. It keeps sacdfs on the data volume, adds

@@ -12,6 +12,7 @@ services:
       dockerfile: Containerfile
     image: localhost/sacdfs:latest
     container_name: sacdfs
+    # hostname: sacdfs   # keeps the SMB server identity across a recreate (docs/deployment.md#smb-and-restarts)
     restart: unless-stopped
     # FUSE: the device and CAP_SYS_ADMIN (mounting). NFS-Ganesha: CAP_DAC_READ_SEARCH
     # (open_by_handle_at, how it reopens files by NFS file handle). Nothing else.
