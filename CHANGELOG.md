@@ -28,8 +28,8 @@ All notable changes to sacdfs are recorded here. The format follows
   the health check and a commented setting list. The one line to edit is the path of your images.
   The Synology, QNAP, UGREEN, TerraMaster, Unraid, OpenMediaVault and ASUSTOR guides point to it
   instead of repeating Compose blocks, and each says where it was actually run: Docker Compose on
-  Podman, and Docker 25 with Compose 2.24 on ASUSTOR ADM in a VM; the other vendors' container
-  managers are untested.
+  Podman, Docker 25 with Compose 2.24 on ASUSTOR ADM in a VM, and Docker 29 with Compose 5.1 from
+  the App Center on TerraMaster TOS in a VM; the other vendors' container managers are untested.
 
 - **Plain start-up messages for NAS users (#282).** Before scanning or mounting, sacdfs checks
   what the mount needs and says in one line what is missing and what to type: FUSE not loaded
