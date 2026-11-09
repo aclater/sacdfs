@@ -262,8 +262,8 @@ image is not caught: the sector count comes from the file's size, so the audio a
 short and every comparison still agrees. A checksum against the source checks image integrity.
 
 The WAV test dominates the time: 6 images (about 8.6 GB) took 12 min and 2 images (1.5 GB) 3 min on a
-busy 32-core host (load over 50, so not a speed figure). On main at b46c5e0, 18 images (41 GB: stereo and multichannel, DSD and DST, hybrid and
-single-layer, one early TOC version) passed 3 of 3 in 18 min on an otherwise idle 32-core host at
+busy 32-core host (load over 50, so not a speed figure). On main at b46c5e0, 18 images (36 GB: stereo and multichannel, DSD and DST, hybrid and
+single-layer, one early TOC version) passed 3 of 3 in 18 min on a lightly loaded 32-core host (load under 5) at
 `nice` (DSF head reads 13 s, library index 2 min, WAV 16 min; 20 areas, 117,198 random-range
 positions compared).
 
