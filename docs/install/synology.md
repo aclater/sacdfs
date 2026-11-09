@@ -30,7 +30,8 @@ What was checked on DSM 7.4.1 (kernel 4.4):
 
 **Not checked:** sharing through DSM's own Shared Folder and file-service settings (DSM's web
 interface wasn't used, so whether DSM keeps or rewrites a hand-made `/etc/exports` there is
-unknown), SMB (the VM had no `smbd`), a client on another machine, and starting sacdfs at boot.
+unknown), SMB (the VM had no `smbd`), and a client on another machine. Starting at boot with a Task Scheduler task was checked: see
+[the NAS steps](nas-binary.md#starting-it-at-boot-with-the-nass-own-tools).
 
 ## Container Manager
 

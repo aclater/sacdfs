@@ -17,6 +17,9 @@ is there, and sacdfs mounts as root without `fusermount3`, which ADM doesn't hav
 | A Samba guest share of `/volume1/sacd` (ADM's Samba 4.20, a minimal hand-made `smb.conf` on port 4450), mounted on the NAS with `mount.cifs` | All 22 files identical with `--allow-other`. Without it, the mount failed with "Permission denied" |
 | Earlier, with 0.4.1-rc.3: an NFSv3 export, mounted on the same system | Correct, after `modprobe nfsd nfsv3 cifs` |
 
+**Start at boot and stop:** an `S99sacdfs` file in `/usr/local/etc/init.d` with a `K01sacdfs` link
+worked in the VM: see [the NAS steps](nas-binary.md#starting-it-at-boot-with-the-nass-own-tools).
+
 `umount /volume1/sacd` reports "Device or resource busy" while a share serves the folder:
 stop the share first.
 
