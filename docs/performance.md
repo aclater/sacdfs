@@ -693,6 +693,15 @@ Under the benchmark lock on an idle machine, 2026-11-06 and 07.
   against 14.8 s (8 MiB), 4.6 s (32 MiB) and 1.0 s (64 MiB) on 0.4.1. An ordinary player started 2 s
   earlier, beside the buffering player and a scanner: 1.00×, 0.56 s on 0.5.0, 0.34× and 20.0 s on 0.4.1;
   with four scanners on 4 cores, 1.00×, 0.07 s against 0.38×. 3 runs each.
+- **On a desktop's Zen 5 cores (after 0.5.0).** The same images in rootless Podman on a 16-core Zen 5
+  desktop, limited to 2 CPUs (`--cpus 2`) and 256 MiB. Cores aren't delegated to user cgroups there, so
+  each container's processes were pinned to two physical cores with `taskset` after start; the client ran
+  over SMB on the same host, on other cores. Image files were dropped from the page cache before each
+  run. 3 runs each, under the benchmark lock, at load 4 to 7. Player 0.4.1 → 0.5.0: one scanner, 1.00×
+  and 0.06 s → 1.00× and 0.00 s (scanner 94 → 87 MB/s); four scanners, 0.53× and 14.2 s → 1.00× and
+  0.07 s (93 MB/s between them on both). These cores are about twice as fast as the E-cores above, so one
+  scanner no longer starves 0.4.1 here, but four still do. A player buffering 32 MiB ahead with one
+  scanner held real time on both versions.
 
 ## Cache size (#150)
 
