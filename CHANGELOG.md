@@ -59,6 +59,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- **A player beside whole-file scans, checked on a NAS's own CPU (#230).** The 0.5.0 image as an app on
+  a NAS's E-cores, client on another host over SMB and NFS: a 6-channel WAV player held real time with
+  one or four whole-file scanners on 2 and 4 cores (0.4.1: 0.35 to 0.65× real time), and players that
+  buffer 8 to 64 MiB ahead weren't hurt by counting as scanners while they settle. One run in 7 with
+  four scanners on 2 cores fell to 0.88× while the NAS was busy. Tables in `docs/deployment.md` and
+  `docs/performance.md`.
+
 - NAS install guides for people new to SSH and Linux: a new `docs/install/nas-binary.md` runs the
   release binary on a NAS one command at a time, each with what you should see, and a table of the
   messages met when something goes wrong and what to do. It keeps sacdfs on the data volume, adds

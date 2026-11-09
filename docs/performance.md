@@ -674,6 +674,25 @@ Under the benchmark lock on an idle machine, 2026-11-06 and 07.
   alternating, 3 runs each: player 1.00× in every cell, at most 0.52 s behind at 16 and 0.95 s at 32;
   scan alone 44.5 / 81.4 MB/s at 16 against 44.7 / 81.2 at 32 (2 / 4 cores); peak anonymous memory of
   the container, scan alone, 38 / 42 MiB against 54 / 58.
+- **On a NAS's own CPU, client on another host (after 0.5.0).** The published 0.4.1 and 0.5.0 images
+  as an app on a NAS (Core i5-1235U, pinned to 2 or 4 E-cores, 256 or 512 MiB, default cache, images on its
+  hard disks over ZFS, whose cache was not emptied between runs), a fresh container per run, the client
+  (Python; SMB 3, and NFSv4 through libnfs) on another machine over the LAN. The NAS ran its usual apps (load
+  average 2 to 7), and the client machine was itself loaded, so this is a check of behaviour, not of
+  speed. 3 runs per cell (7 for four scanners on 2 cores, 4 over NFS), medians. Player 0.4.1 → 0.5.0:
+  one scanner, 2 cores, 0.39×, 18.4 s → 1.00×, 0.48 s (SMB) and 0.36× → 1.00×, 0.66 s (NFS); four
+  scanners, 2 cores, 0.35× → 1.00×, 0.75 s, with one run in 7 at 0.88× and 3.6 s behind while the NAS
+  was busy; one scanner, 4 cores, 0.65× → 1.00×; four scanners, 4 cores, 0.35× and 0.38× → 1.00× (SMB,
+  NFS). Scan alone 25.9 → 29.1 MB/s (2 cores) and 49.4 → 52.3 (4 cores); a 6-channel WAV reader flat
+  out 7.5× → 8.2× and 14.3× → 14.4× real time. The full table is in
+  [deployment](deployment.md#small-nas-sizing).
+- **Players that buffer ahead**, same NAS rig: a player that first reads 8, 32 or 64 MiB as fast as it
+  can, then keeps that much ahead at real time, counts as a reader for throughput until its pace
+  settles (up to about 2 × buffer / byte rate, 20 s for 32 MiB of 6-channel WAV). With one scanner on 2
+  cores it never ran short on 0.5.0: at most 0.61 s behind a playout clock started at its first read,
+  against 14.8 s (8 MiB), 4.6 s (32 MiB) and 1.0 s (64 MiB) on 0.4.1. An ordinary player started 2 s
+  earlier, beside the buffering player and a scanner: 1.00×, 0.56 s on 0.5.0, 0.34× and 20.0 s on 0.4.1;
+  with four scanners on 4 cores, 1.00×, 0.07 s against 0.38×. 3 runs each.
 
 ## Cache size (#150)
 
