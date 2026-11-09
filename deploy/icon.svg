@@ -1,9 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <title>sacdfs</title>
-  <rect width="512" height="512" rx="96" fill="#1f2937"/>
-  <circle cx="256" cy="256" r="196" fill="#e5e7eb"/>
-  <circle cx="256" cy="256" r="150" fill="none" stroke="#9ca3af" stroke-width="6"/>
-  <circle cx="256" cy="256" r="110" fill="none" stroke="#9ca3af" stroke-width="6"/>
-  <circle cx="256" cy="256" r="72" fill="#2563eb"/>
-  <circle cx="256" cy="256" r="22" fill="#1f2937"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f3a5f"/>
+      <stop offset="1" stop-color="#0f1f36"/>
+    </linearGradient>
+    <linearGradient id="folder" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f5b63d"/>
+      <stop offset="1" stop-color="#e0902a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- folder back with tab -->
+  <path d="M64 168a24 24 0 0 1 24-24h104l36 36h196a24 24 0 0 1 24 24v36H64z" fill="#c9771c"/>
+  <!-- disc rising out of the folder -->
+  <circle cx="256" cy="216" r="132" fill="#e8eef5"/>
+  <circle cx="256" cy="216" r="104" fill="none" stroke="#9fb3c8" stroke-width="6"/>
+  <circle cx="256" cy="216" r="78" fill="none" stroke="#9fb3c8" stroke-width="6"/>
+  <circle cx="256" cy="216" r="52" fill="#c7d3e0"/>
+  <circle cx="256" cy="216" r="20" fill="#14283f"/>
+  <path d="M256 84a132 132 0 0 1 93 38l-93 94z" fill="#ffffff" opacity="0.55"/>
+  <!-- folder front -->
+  <path d="M64 270a24 24 0 0 1 24-24h336a24 24 0 0 1 24 24v152a24 24 0 0 1-24 24H88a24 24 0 0 1-24-24z" fill="url(#folder)"/>
+  <!-- DSF-style waveform on the folder -->
+  <g fill="none" stroke="#14283f" stroke-width="14" stroke-linecap="round">
+    <path d="M148 358v0"/><path d="M188 336v44"/><path d="M228 318v80"/><path d="M268 340v36"/><path d="M308 322v72"/><path d="M348 340v36"/><path d="M388 352v12"/>
+  </g>
 </svg>
