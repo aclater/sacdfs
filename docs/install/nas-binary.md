@@ -284,9 +284,9 @@ release binary with the unit and script from this change.
 
 | ADM 5.1.4 (`/usr/local/etc/init.d`), the 0.6.0-line binary | Restarts of the VM: sacdfs mounted at boot, 18 files identical; restart from ADM: `signal 15: unmounting` | As described above |
 | DSM 7.4.1 (Task Scheduler boot-up and shutdown tasks) | Restart of the VM; `synopoweroff -r`; plain `reboot` | Boot task started sacdfs (files identical); shutdown task stopped it in 1 s; plain `reboot` did not stop it |
-| QuTScloud 5.2.9 (`autorun.sh`) | Restart of the VM with sacdfs running; the vendor's autorun lines run by hand | The VM drops `Autorun = TRUE` at every restart (no system volume), so `autorun.sh` didn't run by itself at boot; run by hand it waited for the volume and started sacdfs, files identical. QNAP's restart stopped sacdfs cleanly |
+| QuTScloud 5.2.9 (`autorun.sh`, installed as written above) | Restart of the VM with sacdfs not running; 16 files of two test images read; power-off of the VM with sacdfs running, then start | `Autorun = TRUE` stayed set across restarts. sacdfs was mounted by itself about 2.5 minutes after the VM started (the script waited for the volume), files identical. The power-off stopped sacdfs cleanly (`signal 15: unmounting`) and the next start found the file system clean. The data volume was an ext4 file system made by hand and mounted by a `crontab` line, because QuTScloud in the VM would not make a storage pool ([qnap.md](qnap.md#starting-at-boot-with-autorunsh)). QuTScloud takes about 22 minutes to finish starting in the VM, and a restart asked for before that waits |
 
-Not checked: `autorun.sh` starting by itself at boot on QNAP, the unit
+Not checked: `autorun.sh` on a volume made by QNAP's own Storage Manager, the unit
 on systemd 215 (the oldest checked was 230), and a client on another machine. A stop with a
 file held open takes the full 30 s on every system; a file that is closed in time makes it quick.
 

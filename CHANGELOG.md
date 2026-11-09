@@ -23,7 +23,8 @@ All notable changes to sacdfs are recorded here. The format follows
   TerraMaster guide uses the shipped unit. CI runs `shellcheck` on the script and
   `systemd-analyze verify` on the unit. The NAS steps now say how to start it at boot with the
   vendor's own tools: an ASUSTOR `init.d` script, a QNAP `autorun.sh` and a Synology Task Scheduler
-  task, checked in VMs.
+  task, checked in VMs. The QNAP `autorun.sh` started sacdfs by itself
+  after a restart of the QuTScloud VM, on a hand-made volume.
 
 - **Unraid and TrueNAS app-store entries, prepared (part of #284).** `deploy/unraid/sacdfs.xml` is a
   Community Applications template (device, capabilities and AppArmor setting in Extra Parameters,
@@ -43,7 +44,9 @@ All notable changes to sacdfs are recorded here. The format follows
   The Synology, QNAP, UGREEN, TerraMaster, Unraid, OpenMediaVault and ASUSTOR guides point to it
   instead of repeating Compose blocks, and each says where it was actually run: Docker Compose on
   Podman, Docker 25 with Compose 2.24 on ASUSTOR ADM in a VM, and Docker 29 with Compose 5.1 from
-  the App Center on TerraMaster TOS in a VM; the other vendors' container managers are untested.
+  the App Center on TerraMaster TOS in a VM, and Docker 27 with Compose 5.1 from Container Station
+  on QuTScloud in a VM (on a hand-made volume: QuTScloud wouldn't make a pool); the other vendors'
+  container managers are untested.
 
 - **Plain start-up messages for NAS users (#282).** Before scanning or mounting, sacdfs checks
   what the mount needs and says in one line what is missing and what to type: FUSE not loaded
