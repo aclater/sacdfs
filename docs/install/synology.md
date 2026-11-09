@@ -38,7 +38,9 @@ unknown), SMB (the VM had no `smbd`), and a client on another machine. Starting 
 **Not tested.** Container Manager needs a DSM storage volume, and the VM couldn't make one.
 `synopkg install` stops with "failed to get any volume for installation". DSM's own
 `synostgpool --create` refused the VM's data disk with "Create space failed. Disk is already
-used", even after its start was wiped. The VM's disks have no DSM slot or serial number.
+used", even after its start was wiped. The VM's disks have no DSM slot or serial number. A later try with two extra SATA disks that
+had serial numbers changed little: DSM's disk tool listed them, but its storage API still listed no
+disks and a pool couldn't be created, so Container Manager stayed uninstalled.
 The Compose file for every NAS container manager is
 [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml). It was run with Docker Compose on
 ASUSTOR ADM ([asustor.md](asustor.md#compose)) and on Podman, not on DSM. In Container Manager,
