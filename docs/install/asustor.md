@@ -1,7 +1,8 @@
 # sacdfs on ASUSTOR ADM
 
 **Release binary and Docker Compose: work.** Checked on ADM 5.1.4 in a VM, not on ASUSTOR
-hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 release binary and image, and before the tag an image built
+hardware. Storage setup and app stores weren't exercised: ADM's first-run setup, tried with two extra SATA disks added
+to the VM, listed no disks, so no volume was made with ADM's own tools. The checks used the 0.5.0 release binary and image, and before the tag an image built
 from `main` with the same code (0.4.1-rc.3 earlier). Run the commands as root
 over SSH. ADM keeps some of its tools in `/usr/builtin/bin` and `/usr/builtin/sbin`, which may
 not be on an SSH session's PATH.

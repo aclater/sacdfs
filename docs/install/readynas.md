@@ -1,9 +1,10 @@
 # sacdfs on Netgear ReadyNAS OS 6
 
 **Release binary: works. Container route: untested.** Checked on ReadyNAS OS 6.10.10 in a VM, not
-on the vendor's hardware. Storage setup and app stores weren't exercised: the VM's data disk was a
-plain ext4 volume at `/data`, and the vendor's RAID volume and web interface were not set up or
-used. Run the commands as root over SSH. The checks used the 0.5.0 release binary and the files
+on the vendor's hardware. App stores weren't exercised, and the sacdfs checks ran on a plain ext4 volume at
+`/data`, not on a volume made by the vendor's tools. (A later try with two extra SATA disks
+made a RAID 1 volume with the vendor's `volume_util` command, which came up as a Btrfs `/data`; the
+sacdfs checks were not repeated on it. The web interface was not set up or used.) Run the commands as root over SSH. The checks used the 0.5.0 release binary and the files
 in [`deploy`](../../deploy) from the 0.6.0 development branch.
 
 ReadyNAS OS 6 is Debian 8 (glibc 2.19, kernel 4.4, systemd 230). FUSE is built into the kernel, so

@@ -43,10 +43,10 @@ hardware, with no later re-test). Stop it cleanly first: never `kill -9`.
 | OpenMediaVault 8 | [openmediavault.md](openmediavault.md) | Validated (OMV 8.6 on Debian 13, Compose plugin, on 0.4.0; not run again for 0.5.0) |
 | Unraid | [unraid.md](unraid.md), [template](store-apps.md#unraid-install-from-the-template-file) | Not validated (template started on Podman only) |
 | Synology DSM | [synology.md](synology.md) | Binary checked in a VM (DSM 7.4.1; binary, NFSv3, start and stop with Task Scheduler tasks). Container Manager untested |
-| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Binary checked in a VM (QuTScloud 5.2.9), from 0.5.0; `autorun.sh` run by hand, not by the VM's own boot. Container Station untested |
+| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Binary checked in a VM (QuTScloud 5.2.9), from 0.5.0; started at boot by `autorun.sh` (on a hand-made volume: QuTScloud wouldn't make a pool). Container Station installed from the App Center and the Compose file run on it (command line) |
 | UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated (a kernel check only) |
 | ASUSTOR ADM | [asustor.md](asustor.md) | Checked in a VM (ADM 5.1.4; binary, start at boot and stop with `init.d`, and Docker Compose) |
-| TerraMaster TOS | [terramaster.md](terramaster.md) | Checked in a VM (TOS 7.0; binary, NFS, start at boot). Container untested |
+| TerraMaster TOS | [terramaster.md](terramaster.md) | Checked in a VM (TOS 7.0; binary, NFS, start at boot, and Docker Compose after a Storage Manager volume) |
 | Netgear ReadyNAS OS 6 | [readynas.md](readynas.md) | Binary and start at boot checked in a VM (OS 6.10.10). Container untested |
 
 Unraid and TrueNAS app-store entries (an Unraid template file you can load today; a TrueNAS

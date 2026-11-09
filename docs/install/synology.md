@@ -40,7 +40,10 @@ unknown), SMB (the VM had no `smbd`), and a client on another machine. Starting 
 `synostgpool --create` refused the VM's data disk with "Create space failed. Disk is already
 used", even after its start was wiped. The VM's disks have no DSM slot or serial number. A later try with two extra SATA disks that
 had serial numbers changed little: DSM's disk tool listed them, but its storage API still listed no
-disks and a pool couldn't be created, so Container Manager stayed uninstalled.
+disks and a pool couldn't be created, so Container Manager stayed uninstalled. A third try with two virtio-scsi disks
+(model and serial strings of a retail drive) showed nothing, because DSM's kernel in the VM doesn't see virtio-scsi
+disks at all; the same two disks as virtio-blk disks with serials were listed by the disk tool, again without a DSM slot,
+and the storage API call to list them did not answer.
 The Compose file for every NAS container manager is
 [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml). It was run with Docker Compose on
 ASUSTOR ADM ([asustor.md](asustor.md#compose)) and on Podman, not on DSM. In Container Manager,
