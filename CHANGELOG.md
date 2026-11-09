@@ -24,6 +24,10 @@ All notable changes to sacdfs are recorded here. The format follows
   apps-catalog app definition (form, template, test values) that renders with the catalog's tooling.
   Both were started with rootful Podman and served the SMB share; neither was run on Unraid or
   TrueNAS, and neither is submitted to a store. See `docs/install/store-apps.md`.
+  The store icon is now an original drawing (`deploy/icon.svg`, `deploy/icon.png`), and
+  `ca_profile.xml` (the Community Applications repository profile) is in the repository root.
+  The catalog app passes the TrueNAS apps repository's own render, metadata, port and validate
+  checks (part of #284).
 
 - **One Compose file for every NAS container manager (#283).** `deploy/nas-compose.yaml` runs the
   published image with ports 10445 and 12049 (a NAS's own SMB and NFS usually hold 445 and 2049),
@@ -71,6 +75,10 @@ All notable changes to sacdfs are recorded here. The format follows
   now waits only while the mount exists: 0 of 75 stops took over a second, against 14 of 75 before (Podman on Fedora and Docker on ADM).
 
 ### Documentation
+
+- **#185 (MusicBrainz lookup) is complete except fingerprinting.** Fallback naming, `tags fetch` and
+  `--musicbrainz` are shipped; the AcoustID fingerprint lookup, which needs an API key and a
+  Chromaprint dependency decision, moved to #296 (Later). The user guide and design notes say so.
 
 - **macOS and SMB restarts (part of #204):** the install guides now say, where a user updates, that a
   macOS client must mount the SMB share again after an upgrade or restart, while Linux and Windows
