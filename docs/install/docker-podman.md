@@ -98,6 +98,10 @@ Checked with the published 0.5.0 image, on its 457-track test corpus:
 
 ### Stopping and restarting
 
+After an upgrade or restart, a macOS SMB client has to mount the share again; Linux and Windows
+clients carry on ([SMB and restarts](../deployment.md#smb-and-restarts), which also covers keeping
+the server's identity the same across a recreate with `--hostname`).
+
 With nothing running in it, `stop` and `restart` take under a second: the entry point stops the
 servers, then sacdfs. Open files over SMB and NFS do not delay it (checked on Podman with one file
 held open over each): the servers close them. `stop_grace_period` in the file is 20 s, the most the entry

@@ -13,7 +13,7 @@ systems ran in VMs, not on the vendors' hardware. Storage setup and app stores w
 exercised there. The TrueNAS SCALE and OpenMediaVault guides were not run again for 0.5.0.
 Image tags still name the release each guide was first checked with. The Compose file for every NAS
 container manager, [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml), names 0.5.0; each NAS
-guide says where it was run (Docker Compose on ASUSTOR ADM in a VM and on Podman; the other vendors'
+guide says where it was run (Docker Compose on ASUSTOR ADM and TerraMaster TOS, both in a VM, and on Podman; the other vendors'
 container managers are untested). See [docker-podman.md](docker-podman.md#compose). A guide marked
 *not validated* has no tested steps yet: nobody has run sacdfs there and reported back.
 Reports are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
@@ -23,6 +23,14 @@ Have a NAS? See [beta testing](../beta-testing.md) for how to report.
 what you should see and what to do when something else appears. They end with
 [starting sacdfs at boot and stopping it safely](nas-binary.md#start-at-boot-and-stop-safely)
 (a systemd unit, or the `sacdfs-ctl` script where there is no systemd); never stop it with `kill -9`.
+
+## Updating sacdfs
+
+A new image, a new binary or a restart of the container interrupts SMB and NFS for about 5 to 8 s.
+Linux and Windows clients carry on by themselves (a file open during the restart can fail on
+Windows). **A macOS client drops the SMB mount and has to mount it again**, after every upgrade or
+restart ([SMB and restarts](../deployment.md#smb-and-restarts); macOS results are from VMs on Apple
+hardware, with no later re-test). Stop it cleanly first: never `kill -9`.
 
 ## Pick your setup
 
@@ -34,10 +42,10 @@ what you should see and what to do when something else appears. They end with
 | Any Linux host with Docker or Podman | [docker-podman.md](docker-podman.md) | Validated (Fedora 44 and 45, Podman) |
 | OpenMediaVault 8 | [openmediavault.md](openmediavault.md) | Validated (OMV 8.6 on Debian 13, Compose plugin, on 0.4.0; not run again for 0.5.0) |
 | Unraid | [unraid.md](unraid.md), [template](store-apps.md#unraid-install-from-the-template-file) | Not validated (template started on Podman only) |
-| Synology DSM | [synology.md](synology.md) | Binary checked in a VM (DSM 7.4.1; binary and NFSv3). Container Manager untested |
-| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Binary checked in a VM (QuTScloud 5.2.9), from 0.5.0. Container Station untested |
+| Synology DSM | [synology.md](synology.md) | Binary checked in a VM (DSM 7.4.1; binary, NFSv3, start and stop with Task Scheduler tasks). Container Manager untested |
+| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Binary checked in a VM (QuTScloud 5.2.9), from 0.5.0; `autorun.sh` run by hand, not by the VM's own boot. Container Station untested |
 | UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated (a kernel check only) |
-| ASUSTOR ADM | [asustor.md](asustor.md) | Checked in a VM (ADM 5.1.4; binary, and Docker Compose) |
+| ASUSTOR ADM | [asustor.md](asustor.md) | Checked in a VM (ADM 5.1.4; binary, start at boot and stop with `init.d`, and Docker Compose) |
 | TerraMaster TOS | [terramaster.md](terramaster.md) | Checked in a VM (TOS 7.0; binary, NFS, start at boot). Container untested |
 | Netgear ReadyNAS OS 6 | [readynas.md](readynas.md) | Binary and start at boot checked in a VM (OS 6.10.10). Container untested |
 
