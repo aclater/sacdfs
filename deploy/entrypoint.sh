@@ -108,6 +108,11 @@ write_smb_conf() {
    map readonly = yes
    # Nothing can change on a read-only mount: no change notifications, no oplock breaks.
    kernel change notify = no
+   # A folder's listing changes behind Samba's back (images added, art changed), so Samba
+   # never breaks a client's directory lease: the Linux kernel client, which caches a leased
+   # folder for as long as it keeps using it, didn't show a new image until it left that
+   # folder alone for 30 s (#205). Without leases it shows at the next listing.
+   smb3 directory leases = no
    # The size and free space don't change while mounted: ask sacdfs once a minute, not for
    # every client's volume query (#205).
    dfree cache time = 60
@@ -118,6 +123,11 @@ write_smb_conf() {
    comment = SACD images as DSF and WAV files (sacdfs)
    read only = yes
    browseable = yes
+   # Samba reopens each folder it lists through /proc/self/fd with RESOLVE_NO_XDEV, which
+   # fails there (the link leads out of /proc's mount), and then asks for the filesystem type
+   # (one STATFS to sacdfs per folder) to rule out an automount point before it retries.
+   # Nothing in this share is an automount point: open it directly (#205).
+   vfs_default:VFS_OPEN_HOW_RESOLVE_NO_XDEV = no
    $names
    $access
 CONF

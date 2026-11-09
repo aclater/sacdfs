@@ -681,6 +681,8 @@ impl Shared {
                 if self.tree.refusing() {
                     return None;
                 }
+                // The kernel caches this page without the name: not past the next open.
+                self.tree.unkeep_listing(ino);
                 continue;
             };
             // `.` and `..` are not entries of `ino`: the kernel links neither, only lists them.
@@ -724,11 +726,13 @@ impl Shared {
         Ok(fh)
     }
 
-    fn opendir(&self, ino: u64, node: Option<Arc<Node>>) -> Result<FopenFlags, Errno> {
+    /// Opens directory `ino` (`keep`: from [`Tree::keep_listing`]). The kernel caches every
+    /// listing (#205), and keeps it at an open only while it is still the directory's: a
+    /// folder that is re-read gets the cache dropped when its listing was made again.
+    fn opendir(&self, node: Option<Arc<Node>>, keep: bool) -> Result<FopenFlags, Errno> {
         match node.as_deref() {
-            // A listing that is re-read when its source changes is not cached by the kernel.
-            Some(Node::Dir(_)) if self.tree.is_live(ino) => Ok(FopenFlags::empty()),
-            Some(Node::Dir(_)) => Ok(FopenFlags::FOPEN_KEEP_CACHE | FopenFlags::FOPEN_CACHE_DIR),
+            Some(Node::Dir(_)) if keep => Ok(FopenFlags::FOPEN_KEEP_CACHE | FopenFlags::FOPEN_CACHE_DIR),
+            Some(Node::Dir(_)) => Ok(FopenFlags::FOPEN_CACHE_DIR),
             Some(Node::File(_) | Node::Sidecar(_)) => Err(Errno::ENOTDIR),
             None => Err(self.not_found()),
         }
@@ -1007,14 +1011,25 @@ impl Filesystem for SacdFs {
     }
 
     fn opendir(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+        // A folder listed already and never re-read is answered here; one that may be re-read
+        // (or listed) first reads its source, on a request thread.
         if let Some(node) = self.shared.tree.loaded(ino.0) {
-            reply_opened(reply, self.shared.opendir(ino.0, Some(node)).map(|f| (0, f)));
-            return;
+            let keep = match &*node {
+                Node::Dir(_) => self.shared.tree.keep_listing(ino.0, false),
+                _ => Some(false),
+            };
+            if let Some(keep) = keep {
+                reply_opened(reply, self.shared.opendir(Some(node), keep).map(|f| (0, f)));
+                return;
+            }
         }
         self.serve(
             What::new("opendir", Ino(ino.0)),
             reply,
-            move |sh| sh.opendir(ino.0, sh.tree.get(ino.0)),
+            move |sh| {
+                let keep = sh.tree.keep_listing(ino.0, true).unwrap_or(false);
+                sh.opendir(sh.tree.get(ino.0), keep)
+            },
             |reply, r| {
                 if let Some(reply) = reply {
                     reply_opened(reply, r.map(|f| (0, f)))

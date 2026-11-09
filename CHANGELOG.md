@@ -63,6 +63,15 @@ All notable changes to sacdfs are recorded here. The format follows
   change to the program.
 
 ### Changed
+- **Listings over SMB cost sacdfs a quarter fewer requests (#205).** The kernel now keeps the
+  listing of every folder until it changes, including areas that are re-read for their art, which
+  it listed again at every open before. The container's Samba no longer asks sacdfs for the
+  filesystem's size at each folder (`vfs_default:VFS_OPEN_HOW_RESOLVE_NO_XDEV = no` on the share),
+  and no longer offers directory leases (`smb3 directory leases = no`), with which the Linux kernel
+  client did not show a new image while it kept listing that folder. Through the container and the
+  Linux kernel client, a repeated `ls -lR` of 2,484 entries costs 2,010 requests instead of 2,776,
+  and a library rescan 1,582 instead of 2,345. Names, sizes, times and bytes are unchanged. See
+  docs/deployment.md ("What a listing costs over SMB"), with the settings for your own Samba.
 - **Root's mount lets other users read it (#282).** Run as root, sacdfs now mounts with
   `allow_other` by default, so Samba guests, NFS clients and apps can read the mount instead of
   getting "Permission denied". `--no-allow-other` (`-o no_allow_other`) keeps it to root. Users

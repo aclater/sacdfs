@@ -686,6 +686,9 @@ struct Listing {
     served: SystemTime,
     /// An area's disc's tags file key and what that file was like when listed (#81).
     tags: Option<(String, crate::tags::FileState)>,
+    /// Whether an open of the directory has told the kernel it may cache this listing (#205):
+    /// from the next open on, it may keep what it cached.
+    kept: bool,
 }
 
 #[derive(Debug)]
@@ -1487,6 +1490,44 @@ impl Tree {
         }
     }
 
+    /// At an open of directory `ino` (#205): whether the kernel may keep the listing it cached
+    /// at an earlier open (`FOPEN_KEEP_CACHE`), else it drops it and lists again. Yes when the
+    /// listing is the one an earlier open was told of: then everything the kernel cached since
+    /// came from it. A listing made again (its source or art changed, a re-read area) is new,
+    /// so the kernel's copy goes. A directory not listed yet is listed here, so that its first
+    /// listing already counts. With `wait` false, answers only what needs no reading of the
+    /// source (`None` otherwise): a directory that is never re-read, listed already.
+    pub fn keep_listing(&self, ino: u64, wait: bool) -> Option<bool> {
+        let node = if wait { self.get(ino) } else { self.loaded(ino) };
+        let Some(node) = node else { return Some(false) };
+        let Node::Dir(dir) = &*node else { return Some(false) };
+        if !wait {
+            let listed = dir.children.lock().unwrap_or_else(|p| p.into_inner()).is_some();
+            if !listed || (self.watching && live(dir)) {
+                return None;
+            }
+        } else if self.children(ino).is_none() {
+            return Some(false);
+        }
+        if dir.closed.load(Ordering::Acquire) || dir.gone.load(Ordering::Acquire) {
+            return Some(false);
+        }
+        let mut guard = dir.children.lock().unwrap_or_else(|p| p.into_inner());
+        Some(guard.as_mut().is_some_and(|l| std::mem::replace(&mut l.kept, true)))
+    }
+
+    /// Makes the next open of directory `ino` drop what the kernel cached of its listing: a
+    /// page of it left out a name (#237), which the next listing shows again.
+    pub fn unkeep_listing(&self, ino: u64) {
+        if let Some(node) = self.loaded(ino) {
+            if let Node::Dir(dir) = &*node {
+                if let Some(l) = dir.children.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+                    l.kept = false;
+                }
+            }
+        }
+    }
+
     /// The entries of directory `ino`, made on first use, and again when its source changed
     /// since (on a [watching](Tree::watching) tree). `None` if it is not a directory.
     pub fn children(&self, ino: u64) -> Option<Arc<Vec<Entry>>> {
@@ -1549,6 +1590,7 @@ impl Tree {
             head: cx.head,
             served: self.dir_mtime(dir),
             tags: cx.tags,
+            kept: false,
         }));
         drop(guard);
         self.keep_to_budget();
