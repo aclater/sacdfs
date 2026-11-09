@@ -358,6 +358,9 @@ sacdfs tags fetch --tags ~/music/sacd-tags ~/music/sacd-images/disc.iso
 sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations ~/music/sacd-images/*.iso
 ```
 
+There is no lookup by audio fingerprint (AcoustID) yet; it is planned in [#296](https://github.com/aclater/sacdfs/issues/296).
+A disc nothing else identifies keeps its generated names until then.
+
 It and the mount's `--musicbrainz` ([below](#in-the-background---musicbrainz)) are the only parts of
 sacdfs that use the network, and nothing is sent unless you run this command or turn that option
 on. Steps run in this order, and the first one that finds a match or

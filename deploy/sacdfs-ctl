@@ -31,6 +31,33 @@ mount_type() {
     echo "$t"
 }
 
+# One start or stop at a time. Some NAS systems run their start scripts twice at boot (seen
+# on ASUSTOR ADM): without this lock both would start a sacdfs and stack two mounts.
+LOCKDIR=$PIDFILE.lock
+lock() {
+    i=0
+    while ! mkdir "$LOCKDIR" 2>/dev/null; do
+        lp=$(cat "$LOCKDIR/pid" 2>/dev/null)
+        # The lock of a script that was killed (its pid is gone) is taken over.
+        if [ -n "$lp" ] && [ ! -d "/proc/$lp" ]; then
+            rm -rf "$LOCKDIR"
+            continue
+        fi
+        i=$((i + 1))
+        if [ "$i" -gt 120 ]; then
+            echo "sacdfs-ctl: another sacdfs-ctl has held $LOCKDIR for 2 minutes; remove it if none runs" >&2
+            return 1
+        fi
+        sleep 1
+    done
+    echo $$ >"$LOCKDIR/pid"
+    trap 'rm -rf "$LOCKDIR"' EXIT
+}
+unlock() {
+    rm -rf "$LOCKDIR"
+    trap - EXIT
+}
+
 # Prints the pid when the pidfile names a running sacdfs.
 running_pid() {
     [ -r "$PIDFILE" ] || return 1
@@ -40,7 +67,7 @@ running_pid() {
     case $(cat "/proc/$p/comm" 2>/dev/null) in sacdfs*) echo "$p" ;; *) return 1 ;; esac
 }
 
-do_start() {
+start_unlocked() {
     if pid=$(running_pid); then
         echo "sacdfs is already running (pid $pid) on $SACDFS_MOUNT"
         return 1
@@ -88,7 +115,7 @@ do_start() {
     return 1
 }
 
-do_stop() {
+stop_unlocked() {
     if ! pid=$(running_pid); then
         rm -f "$PIDFILE"
         if [ -n "$(mount_type)" ]; then
@@ -116,6 +143,22 @@ do_stop() {
     sleep 1
     rm -f "$PIDFILE"
     [ -z "$(mount_type)" ]
+}
+
+do_start() {
+    lock || return 1
+    start_unlocked
+    r=$?
+    unlock
+    return "$r"
+}
+
+do_stop() {
+    lock || return 1
+    stop_unlocked
+    r=$?
+    unlock
+    return "$r"
 }
 
 do_status() {

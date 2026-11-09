@@ -79,6 +79,11 @@ Your system's guide lists any extra step and what else was checked there:
    ```
 
    *You should see* `sacdfs 0.5.0`.
+
+   From 0.6.0 the archive also holds `sacdfs-ctl`, `sacdfs.service` and `sacdfs.conf.example`,
+   the files used in "Start at boot and stop safely" below. The commands there download the same
+   files from the repository, so they work with older archives too. This is untested on a
+   published archive until 0.6.0 is released.
 6. **Make an empty folder to mount on.** While sacdfs runs, this folder shows the DSF and
    WAV files, and anything already in it is hidden.
 
@@ -190,9 +195,82 @@ Change where the pid file and log go with `SACDFS_PIDFILE` and `SACDFS_LOG` in t
 On QNAP, `/etc` and `/var` are on a RAM disk that is empty after a restart. Keep the settings
 file on the data volume and run the script with `SACDFS_CONF=/volume1/sacdfs/sacdfs.conf` in front.
 
-**Starting it at boot with the vendor's own tools** (QNAP `autorun.sh`, ASUSTOR
-`/usr/local/etc/init.d`, Synology Task Scheduler) was **not checked**. Each needs an entry that
-runs `sacdfs-ctl start` once the data volume is up; the vendor's help is the guide.
+One `sacdfs-ctl` runs at a time: a second `start` or `stop` waits for the first (a lock folder
+next to the pid file). That matters on ASUSTOR, whose start-up ran the script twice; see below.
+
+### Starting it at boot with the NAS's own tools
+
+QNAP, ASUSTOR and Synology run your script at boot and, on two of them, at shutdown. Keep `sacdfs`,
+`sacdfs-ctl` and the settings file together on the data volume (here `/volume1/sacdfs`; on QNAP
+`/share/CACHEDEV1_DATA/Multimedia/sacdfs`) and give `SACDFS_CONF` the settings file, because
+`/etc/default` isn't kept across restarts on all three.
+
+**ASUSTOR ADM.** ADM runs every `S??*` file in `/usr/local/etc/init.d` with `start` at boot, and
+every `K??*` file with `stop` at shutdown (it waits up to 60 s). One file serves for both:
+
+```sh
+cat > /usr/local/etc/init.d/S99sacdfs <<'EOF'
+#!/bin/sh
+export SACDFS_CONF=/volume1/sacdfs/sacdfs.conf
+case $1 in
+    start | stop | restart | status) exec /volume1/sacdfs/sacdfs-ctl "$1" ;;
+esac
+EOF
+chmod +x /usr/local/etc/init.d/S99sacdfs
+ln -s S99sacdfs /usr/local/etc/init.d/K01sacdfs
+```
+
+*You should see* sacdfs mounted about a minute after the NAS starts, and `signal 15: unmounting`
+in the sacdfs log (add `-v` to `SACDFS_OPTIONS`) after a restart from ADM. In the VM, ADM ran
+`S99sacdfs start` twice at each boot, a second apart or in the same second. The lock makes the
+second one say "already running" and do nothing. Without it, 20 of 25 pairs of starts run at once
+left two sacdfs processes, and one kept a mount that `sacdfs-ctl stop` didn't reach. Whether
+`/usr/local/etc/init.d` survives an ADM update wasn't checked.
+
+**QNAP (QuTScloud).** QNAP runs `autorun.sh`, kept on a small flash partition, early in the boot,
+before the data volume is mounted, so the script waits for the volume in the background. It runs
+only if "Run user defined processes during startup" is ticked in the QNAP settings (Control Panel,
+System, Hardware, General; that menu wasn't seen). The ticked box is `Misc Autorun = TRUE` in
+`/etc/config/uLinux.conf`.
+
+```sh
+mount $(/sbin/hal_app --get_boot_pd port_id=0)6 -t ext2 /tmp/config
+cat > /tmp/config/autorun.sh <<'EOF'
+#!/bin/sh
+# The data volume isn't mounted yet: wait for it in the background, then start sacdfs.
+(
+  D=/share/CACHEDEV1_DATA/Multimedia/sacdfs
+  i=0
+  while [ ! -x $D/sacdfs-ctl ] && [ $i -lt 120 ]; do sleep 5; i=$((i + 1)); done
+  SACDFS_CONF=$D/sacdfs.conf $D/sacdfs-ctl start
+) > /tmp/sacdfs-autorun.log 2>&1 &
+EOF
+chmod +x /tmp/config/autorun.sh
+umount /tmp/config
+```
+
+QNAP has no hook for shutdown. Its own restart sends SIGTERM to every process; sacdfs unmounted and
+exited (`signal 15: unmounting`) and the file system was clean afterwards.
+
+**Synology DSM.** Use a Task Scheduler task that runs on "Boot-up" (Control Panel, Task Scheduler,
+Create, Triggered Task, User-defined script; user `root`, event Boot-up, the `start` line below as
+the script). The same with the event "Shutdown" makes the stop task. Those menus weren't used; the
+command that sits behind them was:
+
+```sh
+esynoscheduler --create task_name=sacdfs-start event=bootup enable=true owner='{"0":"root"}' \
+  operation_type=script operation='SACDFS_CONF=/volume1/sacdfs/sacdfs.conf /volume1/sacdfs/sacdfs-ctl start'
+esynoscheduler --create task_name=sacdfs-stop event=shutdown enable=true owner='{"0":"root"}' \
+  operation_type=script operation='SACDFS_CONF=/volume1/sacdfs/sacdfs.conf /volume1/sacdfs/sacdfs-ctl stop'
+esynoscheduler --list
+```
+
+DSM's boot-up tasks ran about two minutes after power-on. A task has no `HOME`: put
+`--index-cache /volume1/sacdfs/cache` in `SACDFS_OPTIONS` (and make the folder), or sacdfs logs
+"no seek index cache" and works without it. The shutdown task ran when DSM itself restarted
+(`synopoweroff -r`, which the web interface uses); a plain `reboot` from a shell didn't run it, and
+sacdfs was killed with no unmount. In the VM the folder `/usr/syno/etc/esynoscheduler` was missing
+and had to be made with `mkdir -p` first; a DSM on real hardware is expected to have it.
 
 ### What was checked
 
@@ -204,8 +282,12 @@ release binary with the unit and script from this change.
 | TerraMaster TOS 7.0, UGREEN's Debian 12 kernel, ReadyNAS OS 6.10.10 (systemd) | The unit: start; read all 22 files of two test images; `systemctl stop` while idle; stop with a file held open; `kill -9`; a dead mount left in place, then start; enable, restart the VM | All files identical. Start under 1 s (ReadyNAS 15.3 s the first time). Idle stop under 0.1 s, exit status 0, no mount left. Held-open stop 30.1 to 30.3 s, then systemd killed sacdfs; no mount left. After `kill -9` the unit had sacdfs running again 7 s later. The dead mount was cleared at the next start. The service was active after the restart |
 | ADM 5.1.4, QuTScloud 5.2.9, DSM 7.4.1 (BusyBox or bash `sh`), ReadyNAS OS 6.10.10, Debian 8 container | `sacdfs-ctl`: status, start, a second start, read the files, stop while idle, stop with a file held open, start after `kill -9`, restart, stop twice | Files identical. Start 1 s. Idle stop 1 s. Held-open stop 31 to 32 s, then forced; no mount left. Start after `kill -9` said it was clearing a leftover mount and worked. Exit codes 0, 1 and 3 as in the table. On DSM, which had no `/dev/fuse`, the script loaded FUSE |
 
-Not checked: the vendors' own start-at-boot tools, `sacdfs-ctl` after a restart of the NAS, the
-unit on systemd 215 (the oldest checked was 230), and a client on another machine. A stop with a
+| ADM 5.1.4 (`/usr/local/etc/init.d`), the 0.6.0-line binary | Restarts of the VM: sacdfs mounted at boot, 18 files identical; restart from ADM: `signal 15: unmounting` | As described above |
+| DSM 7.4.1 (Task Scheduler boot-up and shutdown tasks) | Restart of the VM; `synopoweroff -r`; plain `reboot` | Boot task started sacdfs (files identical); shutdown task stopped it in 1 s; plain `reboot` did not stop it |
+| QuTScloud 5.2.9 (`autorun.sh`) | Restart of the VM with sacdfs running; the vendor's autorun lines run by hand | The VM drops `Autorun = TRUE` at every restart (no system volume), so `autorun.sh` didn't run by itself at boot; run by hand it waited for the volume and started sacdfs, files identical. QNAP's restart stopped sacdfs cleanly |
+
+Not checked: `autorun.sh` starting by itself at boot on QNAP, the unit
+on systemd 215 (the oldest checked was 230), and a client on another machine. A stop with a
 file held open takes the full 30 s on every system; a file that is closed in time makes it quick.
 
 
