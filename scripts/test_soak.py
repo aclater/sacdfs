@@ -172,5 +172,40 @@ class Threads(unittest.TestCase):
         self.assertTrue(ok, out)
 
 
+class Swapped(unittest.TestCase):
+    """The kernel swapping pages out and back in moves the resident size, not the memory (#247)."""
+
+    @staticmethod
+    def reclaim(rows, spans):
+        """Moves MiB from resident to swap for the samples in each (from_minute, to_minute, MiB)."""
+        for r in rows:
+            r["swap_kb"] = 0
+            for a, b, mib in spans:
+                if a * 60 <= r["t"] < b * 60:
+                    r["rss_kb"] -= mib * MIB
+                    r["anon_kb"] -= mib * MIB
+                    r["swap_kb"] = mib * MIB
+        return rows
+
+    def test_pages_reclaimed_to_swap_do_not_count_as_a_step(self):
+        # As in the four parallel 2-hour soaks: -4.5 then -9 MiB resident late in the run, with the
+        # same amount in swap.
+        spans = [(100, 108, 4), (108, 120, 9)]
+        rows = self.reclaim(series(), spans)
+        ok, out = run(rows)
+        self.assertTrue(ok, out)
+        self.assertIn("swapped out", out)
+
+    def test_a_leak_that_is_swapped_out_still_fails(self):
+        rows = series(leak=10)
+        for r in rows:
+            if r["t"] >= 600:
+                held = int(10 * (r["t"] - 600) / 3600 * MIB)
+                r["rss_kb"] -= held
+                r["anon_kb"] -= held
+                r["swap_kb"] = held
+        self.assertFalse(run(rows)[0])
+
+
 if __name__ == "__main__":
     unittest.main()
