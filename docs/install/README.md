@@ -24,6 +24,14 @@ what you should see and what to do when something else appears. They end with
 [starting sacdfs at boot and stopping it safely](nas-binary.md#start-at-boot-and-stop-safely)
 (a systemd unit, or the `sacdfs-ctl` script where there is no systemd); never stop it with `kill -9`.
 
+## Updating sacdfs
+
+A new image, a new binary or a restart of the container interrupts SMB and NFS for about 5 to 8 s.
+Linux and Windows clients carry on by themselves (a file open during the restart can fail on
+Windows). **A macOS client drops the SMB mount and has to mount it again**, after every upgrade or
+restart ([SMB and restarts](../deployment.md#smb-and-restarts); macOS results are from VMs on Apple
+hardware, with no later re-test). Stop it cleanly first: never `kill -9`.
+
 ## Pick your setup
 
 **1. Where sacdfs runs** (next to the SACD images, normally on the NAS):
