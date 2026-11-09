@@ -67,6 +67,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- **#185 (MusicBrainz lookup) is complete except fingerprinting.** Fallback naming, `tags fetch` and
+  `--musicbrainz` are shipped; the AcoustID fingerprint lookup, which needs an API key and a
+  Chromaprint dependency decision, moved to #296 (Later). The user guide and design notes say so.
+
 - NAS install guides for people new to SSH and Linux: a new `docs/install/nas-binary.md` runs the
   release binary on a NAS one command at a time, each with what you should see, and a table of the
   messages met when something goes wrong and what to do. It keeps sacdfs on the data volume, adds
