@@ -56,3 +56,31 @@ jobs:
           sudo modprobe nfsd
           sudo docker run --rm --privileged -v "$PWD:/src" -w /src "$FEDORA" \
             sh -c 'dnf -y -q install nfs-utils rpcbind fuse3 python3 util-linux procps-ng findutils && tests/nfs-loopback.sh target/debug/sacdfs'
+
+  # The same file handle tests as root on aarch64 (#220): the handle code is arch-independent
+  # Rust, but open_by_handle_at and the kernel's handle layout are not, and the arm64 `tests`
+  # job runs as a normal user, where these tests skip. The loopback NFS server stays x86-64 only.
+  handles-arm64:
+    name: file handles (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - name: File handles across a restart (as root)
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          cargo test --locked --test export --no-run
+          sudo --preserve-env=HOME,PATH,CARGO_TERM_COLOR env SACDFS_FUSE_TESTS=1 SACDFS_EXPORT_TESTS=1 cargo test --locked --test export 2>&1 | tee "$RUNNER_TEMP/test-output.txt"
+      - name: Only the expected tests skipped
+        run: python3 -I scripts/check_skips.py --job nfs-arm64 "$RUNNER_TEMP/test-output.txt"

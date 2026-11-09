@@ -203,7 +203,7 @@ if !handles_available(&m.at, &files[0]) {
 It prints `SKIPPED binary::test: reason` directly to stderr, past libtest's capture, so every
 `cargo test` shows it without `--nocapture`. `#[ignore]` tests print their reason themselves.
 
-The `tests`, `tests (arm64)`, `coverage` and `nfs export` jobs save cargo's output and then run
+The `tests`, `tests (arm64)`, `coverage`, `nfs export` and `file handles (arm64)` jobs save cargo's output and then run
 `scripts/check_skips.py`, as a step of the same job. It writes the job summary: how many tests ran
 (libtest's `passed` less the guards' tests), how many were skipped by a guard, how many were
 ignored, and each one with its reason. The step fails on a skip that isn't listed for that job in
@@ -255,7 +255,13 @@ the tests print `SKIPPED` (counted by `check_skips.py`), and with `SACDFS_REAL_T
 
 A run that looked at nothing fails: a directory that doesn't exist or holds no image, and an image
 that doesn't open, has no area, or serves no file, each fail the run, because the tree and
-`check_image` drop such images silently. So don't put non-SACD images in `DIR`. The WAV test dominates the time: 6 images (about 8.6 GB) took 12 min and 2 images (1.5 GB) 3 min on a
+`check_image` drop such images silently. So don't put non-SACD images in `DIR`.
+
+The tests check that sacdfs agrees with itself and with the library on the image as it is. A truncated
+image is not caught: the sector count comes from the file's size, so the audio area is cut
+short and every comparison still agrees. A checksum against the source checks image integrity.
+
+The WAV test dominates the time: 6 images (about 8.6 GB) took 12 min and 2 images (1.5 GB) 3 min on a
 busy 32-core host (load over 50, so not a speed figure).
 
 The release checklist runs this before every release candidate ([test plan](test-plan.md#real-disc-tests)).

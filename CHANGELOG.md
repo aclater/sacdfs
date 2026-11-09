@@ -40,6 +40,14 @@ All notable changes to sacdfs are recorded here. The format follows
   point checks `/dev/fuse`, `CAP_SYS_ADMIN`, ports 445 and 2049 already taken, and the `/srv` bind
   for players on the same host before it starts.
 
+- **The RF64 test is read by other programs, and the file-handle tests also run on arm64 (#220).**
+  `wav::rf64_file` used to be ignored and asserted only the file's size. It now runs in every test
+  job: it writes the 4.6 GB sparse file and has `scripts/check_rf64.py` (Python, shares no code with
+  sacdfs) check the chunk layout and sizes, and `ffprobe` when installed check the channels, rate,
+  duration and tags. A new `file handles (arm64)` job in the NFS workflow runs the `open_by_handle_at`
+  tests as root on a native arm64 runner, where the normal arm64 job skips them. Tests and CI only; no
+  change to the program.
+
 ### Changed
 - **Root's mount lets other users read it (#282).** Run as root, sacdfs now mounts with
   `allow_other` by default, so Samba guests, NFS clients and apps can read the mount instead of
