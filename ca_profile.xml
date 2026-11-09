@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Repository profile for Unraid Community Applications. Must stay in the repository root.
+     Add a <Forum> line with the support thread's URL once the thread exists
+     (docs/install/store-apps.md). -->
+<CommunityApplications>
+  <Profile>
+    sacdfs serves SACD disc images (ISO files) as DSF and WAV files over SMB and NFS, so
+    music servers and players can read them like ordinary albums. This repository holds the
+    sacdfs source, its container image and the Unraid template. Support happens in the
+    repository's GitHub issues.
+  </Profile>
+  <Icon>https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/icon.png</Icon>
+  <WebPage>https://github.com/aclater/sacdfs</WebPage>
+</CommunityApplications>
