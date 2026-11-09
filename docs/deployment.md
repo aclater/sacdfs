@@ -1220,7 +1220,18 @@ the name lookup of a folder that is checked for changes (2 s), and per art file 
 For a scan, the cost is the files it reads: about 7 requests per file read (`OPEN`, `READ`s, `FLUSH`,
 `RELEASE`), which no cache setting changes.
 
-TIMING_PLACEHOLDER
+Time, on the same tree (an idle machine under a benchmark lock, the container on six cores and the VM on
+four, 7 rounds alternating the versions, median in seconds; source images on a network share with a warm
+cache):
+
+| | 0.5.0 | now |
+|---|---|---|
+| `smbclient` listing, first | 0.153 | 0.151 |
+| `smbclient` listing, repeated | 0.117 | 0.107 |
+| Kernel client, `ls -lR` | 0.514 | 0.513 |
+| Kernel client, rescan | 0.161 | 0.150 |
+
+The kernel client's `ls -lR` is bound by its own 9,000 SMB2 requests, not by sacdfs. No case got slower.
 
 **If you run your own Samba** on a sacdfs mount instead of the container, put the container's settings in
 `smb.conf`. In `[global]`:
