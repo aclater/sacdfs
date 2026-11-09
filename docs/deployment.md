@@ -1173,17 +1173,57 @@ Fedora 45, kernel 7.2) over loopback:
 - **A name per file:** gone (2,412). Each entry's attributes come with the folder's listing, and a
   track's name is kept for a day instead of 2 s, so a listing repeated later doesn't ask again.
 - **Free space:** the container's Samba asks sacdfs at most once a minute (`dfree cache time = 60`).
-- **What's left is per folder:** an open and a release, two reads of the listing, a name lookup for a folder
-  that is checked for changes (every 2 s), and one `STATFS`. Samba makes that `STATFS` when it reopens a
-  folder's path handle; no Samba setting was found that avoids it.
 - **Time:** on an idle machine, a local `ls -lR` of the same mount (the kernel, no Samba; 7 alternating
   rounds, median) took 0.32 s instead of 0.40 s the first time, and 0.07 s instead of 0.12 s when repeated
   after 3 s. Times through Samba were taken on a loaded machine only, so none is given here.
 - **The client's own requests don't change:** 3.5 SMB2 requests per entry for `ls -l` on the kernel client,
   on either version. What the client asks is up to the client.
 
+**After 0.5.0 (#205).** What was left was per folder: an open and a release, two reads of the listing, a
+`STATFS`, and a name lookup for a folder that is checked for changes. The reads and the `STATFS` are
+gone, and the container no longer offers directory leases:
+
+- **Listings come from the kernel's cache** until a folder changes: sacdfs checks a re-read folder (an
+  area with art, a folder of the source) when it is opened, and lets the kernel keep its copy of the listing
+  if it is the same. Up to 0.5.0 that was done for folders that are never re-read only, which since #95
+  leaves out nearly every area.
+- **No `STATFS` per folder:** the container's share sets `vfs_default:VFS_OPEN_HOW_RESOLVE_NO_XDEV = no`.
+  Samba otherwise checks every folder it reopens for an automount point, and there are none in the share.
+- **No directory leases:** the container sets `smb3 directory leases = no`. With leases, the Linux kernel
+  client keeps a folder's listing for as long as it keeps using that folder, and Samba can't tell it that
+  the folder changed, because images and art change behind Samba's back. A new image didn't show in the
+  share's top folder while that folder was listed every few seconds, still not after 70 s, and showed after
+  45 s without a listing. Without leases it showed 3 s after it was added, as it did through `smbclient`.
+  The cost: about 2 % more SMB2 requests from the kernel client for a repeated `ls -lR` (9,024 against
+  8,819) and 5 % for `find`, and the same requests to sacdfs.
+
+Counted with fuser's request log (`RUST_LOG=fuser::request=debug`), on another tree than the table above:
+93 images in 357 folders with their art (2,484 entries), through the container's Samba 4.24.7. The kernel client (Fedora 44, kernel 6.19,
+SMB 3.1.1) ran in a VM on the same machine, over the VM's user-mode network. "Scan" is a script that does
+what a library scan does: it walks the share and stats every entry, then reads each DSF and WAV file's
+first 64 KiB and its tags (the ID3 chunk, or the last 64 KiB) and each picture in full ("first import"), or
+only walks and stats ("rescan"):
+
+| Requests to sacdfs | 0.5.0 | sacdfs now, 0.5.0's Samba settings | sacdfs and Samba settings now |
+|---|---|---|---|
+| `ls -lR`, first | 3,028 | 3,037 | 2,648 |
+| `ls -lR`, again after 30 s | 2,776 (1.12 per entry) | 2,319 | 2,010 (0.81) |
+| `find` | 2,335 | 1,859 | 1,587 |
+| `smbclient`, `recurse ON; ls` (after the above) | 2,375 | 1,942 | 1,585 |
+| Scan, first import | 19,585 | 18,980 | 18,747 |
+| Scan, rescan | 2,345 | 1,857 | 1,582 |
+
+The names, sizes and times every scan saw, and the bytes the import read, were the same on all three
+(one hash over all of them). What's left per folder is the open and release (`OPENDIR`, `RELEASEDIR`) and
+the name lookup of a folder that is checked for changes (2 s), and per art file in an area a `LOOKUP` and a
+`GETATTR`, which are asked each time on purpose (#235).
+For a scan, the cost is the files it reads: about 7 requests per file read (`OPEN`, `READ`s, `FLUSH`,
+`RELEASE`), which no cache setting changes.
+
+TIMING_PLACEHOLDER
+
 **If you run your own Samba** on a sacdfs mount instead of the container, put the container's settings in
-`smb.conf`'s `[global]` section, as the container does:
+`smb.conf`. In `[global]`:
 
 ```ini
 ea support = no
@@ -1191,13 +1231,24 @@ store dos attributes = no
 map archive = no
 kernel change notify = no
 dfree cache time = 60
+smb3 directory leases = no
 ```
 
-Measured on the same tree with sacdfs 0.5.0-rc.1: without these five, `ls -lR` costs 7,195 requests
+and in the share's own section (it applies to that share only, so no other share loses its automount
+check):
+
+```ini
+vfs_default:VFS_OPEN_HOW_RESOLVE_NO_XDEV = no
+```
+
+Measured on the same tree with sacdfs 0.5.0-rc.1: without the first five, `ls -lR` costs 7,195 requests
 (2.98 per entry) instead of 1,765, mostly two `LISTXATTR` per entry, and `stat -f` reaches sacdfs every
 time. They were measured as a group, not one by one. Adding `vfs objects = streams_xattr` with them changed
-nothing (1,743). Measured on Linux clients only: the macOS client that showed the highest counts in #205,
-Windows, and the scans of Roon and Plex have not been run with these changes.
+nothing (1,743). The last two were measured in the container only (Samba 4.24.7), one by one, as above;
+`vfs_default:VFS_OPEN_HOW_RESOLVE_NO_XDEV` is a Samba option meant for testing, and a Samba that no longer
+knows it ignores it. Measured on Linux clients only: the macOS client that showed the highest counts in
+#205, Windows, and Roon's and Plex's own scans have not been run with these changes; the scan above is a
+script.
 
 ## Client-side: images on hard disks over NFS
 

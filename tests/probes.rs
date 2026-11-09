@@ -330,3 +330,52 @@ fn a_listing_repeated_later_asks_for_no_track_again() {
     assert_eq!(again, 0, "track names looked up again");
     assert_eq!(access, 0, "access checks reached sacdfs");
 }
+
+/// A folder listed again comes from the kernel's cache (#205), also one that is re-read for
+/// its art (an area) and the folders above it, until its listing changes: art added to the
+/// image's folder shows at the first listing after the refresh interval (2 s), and art
+/// removed goes. Samba and macOS's client open the same folder many times in one browse; each
+/// listing was a `READDIRPLUS` and a `READDIR` more.
+#[test]
+fn a_repeated_listing_comes_from_the_kernel_until_the_folder_changes() {
+    common::skip_without_fuse!();
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    std::fs::create_dir_all(src.join("Album")).unwrap();
+    std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), src.join("Album/disc.iso"))
+        .unwrap();
+    std::fs::write(src.join("Album/folder.jpg"), b"\xff\xd8\xff\xe0 one").unwrap();
+    let mount = Mount::new(&src, &["--threads", "2"]);
+    let dirs = [mount.path(), mount.path().join("Album"), mount.path().join("Album/disc/Stereo")];
+    let names = |d: &Path| {
+        let mut n: Vec<String> =
+            std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        n.sort();
+        n
+    };
+    let area = &dirs[2];
+    let first: Vec<Vec<String>> = dirs.iter().map(|d| names(d)).collect();
+    assert!(first[2].iter().any(|n| n == "folder.jpg"), "{:?}", first[2]);
+    let reads = mount.requests("READDIR", || {
+        for _ in 0..3 {
+            for (d, was) in dirs.iter().zip(&first) {
+                assert_eq!(&names(d), was);
+            }
+        }
+    });
+    assert_eq!(reads, 0, "a folder listed again was read from sacdfs again");
+
+    // Art added: the area's listing is made again, and the kernel's copy dropped.
+    std::fs::write(src.join("Album/back.jpg"), b"\xff\xd8\xff\xe0 two").unwrap();
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(names(area).iter().any(|n| n == "back.jpg"), "added art not shown: {:?}", names(area));
+    let reads = mount.requests("READDIR", || {
+        names(area);
+    });
+    assert_eq!(reads, 0, "the new listing was not kept");
+    // Art removed: gone at the next listing after the interval.
+    std::fs::remove_file(src.join("Album/back.jpg")).unwrap();
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(!names(area).iter().any(|n| n == "back.jpg"), "removed art still shown");
+    assert_eq!(names(area), first[2]);
+}

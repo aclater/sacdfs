@@ -1417,12 +1417,55 @@ changes directory each time), a `LOOKUP` per entry, and the same again 2 s later
 *Measured* with the kernel's `fuse:fuse_request_send` tracepoint through the container's Samba 4.24.7
 and the Linux kernel client, 95 images, 2,412 entries: a first `ls -lR` 6,897 requests on 0.4.1 and
 1,765 after, a repeat 30 s later 6,469 and 1,555 ([deployment](deployment.md#what-a-listing-costs-over-smb)).
-*Left:* per folder, an `OPENDIR`/`RELEASEDIR` pair, two listing reads, a `STATFS` from Samba's reopening
-of the folder's path handle, and a `LOOKUP` for a folder that is re-read. *Not done:* answering
-`OPENDIR` with `ENOSYS` (the kernel then stops sending `OPENDIR` and `RELEASEDIR` for the mount),
-because the kernel then caches every listing, including those of folders that are re-read, which
-would rely on their mtime moving for every change, and an area's does not move when its art does.
-Test: `tests/probes.rs` `a_listing_repeated_later_asks_for_no_track_again`.
+*Left after that:* per folder, an `OPENDIR`/`RELEASEDIR` pair, two listing reads, a `STATFS` from
+Samba's reopening of the folder's path handle, and a `LOOKUP` for a folder that is re-read. Two more
+changes (#205, after 0.5.0):
+
+- **The kernel keeps every listing until it changes.** A folder is opened with `FOPEN_CACHE_DIR`, and
+  with `FOPEN_KEEP_CACHE` when its listing is still the one an earlier open was told of, so a folder
+  listed again costs an `OPENDIR`/`RELEASEDIR` and no read. Up to 0.5.0 only folders that are never
+  re-read were kept, and since #95 nearly every area is re-read for its art. Each listing remembers
+  whether an open has offered it to the kernel. A folder that is re-read is compared with its source
+  at the open (at most once per refresh interval, on a request thread, as its listing was), and a
+  listing made again is new, so the open drops what the kernel holds and it lists again. *Why this is
+  safe:* the kernel fills its cache only after the open, from the folder's current listing, and a
+  listing that changes after that is a new one, which the next open sees; whatever the kernel holds at
+  an open that keeps came from the listing that open checked. A page of `READDIRPLUS` that left out a
+  name (#237) also makes the next open drop the cache. *Trade-off:* the open of a re-read folder now
+  goes to a request thread instead of being answered on fuser's own; a stalled source then times out
+  the open instead of the listing that follows it. *Why not the folder's mtime:* the kernel also drops
+  its copy when the folder's mtime moves, but an area's does not move when its art does (#235).
+- **Samba's `STATFS` per folder.** Samba reopens a folder it lists through `/proc/self/fd/N` with
+  `openat2(RESOLVE_NO_XDEV)`; the link leads out of `/proc`'s mount, so that always fails with `EXDEV`,
+  and before retrying without the flag Samba calls `fstatfs` to see whether the folder is an automount
+  point (Samba 4.24, `source3/smbd/open.c`). The container sets `vfs_default:VFS_OPEN_HOW_RESOLVE_NO_XDEV
+  = no` on its share, so Samba opens the folder at once. *Trade-off:* the option is meant for testing
+  Samba's fallback and could go in a later Samba (an unknown option is ignored, which brings the
+  `STATFS` back); and an automount point in the share would no longer be mounted on access, which a
+  FUSE mount of sacdfs cannot hold. *Why not cache `STATFS` in sacdfs:* it is answered from memory
+  already; what costs is the request, and the kernel caches no `statfs` answer.
+
+- **No directory leases in the container** (`smb3 directory leases = no`). A folder's listing changes
+  behind Samba's back (images added, art changed), so Samba never breaks a lease on it, and the Linux
+  kernel client kept a leased folder's listing for as long as it went on using it: a new image did not
+  show while its folder was listed every few seconds, and showed after 45 s without a listing. *Trade-off:*
+  about 2 % more SMB2 requests from that client for a repeated `ls -lR` (5 % for `find`), none more to
+  sacdfs. *Why not `kernel change notify`:* it watches with inotify, which reports changes made through
+  the kernel, not those a FUSE daemon makes itself (from how inotify works; not tried).
+
+*Measured* with fuser's request log through the container's Samba 4.24.7 (the Linux kernel client in a
+VM, 93 images with their art, 357 folders, 2,484 entries): an `ls -lR` repeated 30 s later costs 2,776
+requests on 0.5.0 and 2,010 now, a stat-only rescan 2,345 and 1,582, with the same names, sizes, times and
+bytes ([deployment](deployment.md#what-a-listing-costs-over-smb)).
+
+*Not done:* answering `OPENDIR` with `ENOSYS` (the kernel then stops sending `OPENDIR` and `RELEASEDIR`
+for the mount, the last per-folder pair). The kernel would then keep every listing until the folder's
+mtime moved, with nothing to ask sacdfs at the open, and an area's mtime doesn't move when its art does.
+Making it move would change the times every client sees and Roon's rescans follow (#123). The pair is
+answered from memory for a folder that is never re-read, and does the refresh check for one that is.
+
+Tests: `tests/probes.rs` `a_listing_repeated_later_asks_for_no_track_again` and
+`a_repeated_listing_comes_from_the_kernel_until_the_folder_changes`.
 
 Art in an area is the exception to the long cache (#235). A listing is made again at most once per
 refresh interval, so for up to that long it can name a file that was replaced or removed, and
