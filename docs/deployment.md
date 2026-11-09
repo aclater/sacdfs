@@ -542,8 +542,35 @@ than 0.5 s late at 16, and 47 at 32; none more than 1 s.
 Stereo DSF with four scanners held real time on every version and cache here. At 32 MiB, a reader
 counts as a player only after 0.5 s: with four scanners on 2 cores the player fell up to 0.72 s behind
 and up to 15 of about 700 reads were more than 0.5 s late, so a player with a buffer under 1 s may
-still hear a gap; at 8 and 16 MiB almost none were (above). Not tested: a client on another host,
-and a NAS's own CPU. Memory at the floors is [#231](https://github.com/aclater/sacdfs/issues/231).
+still hear a gap; at 8 and 16 MiB almost none were (above). Memory at the floors is [#231](https://github.com/aclater/sacdfs/issues/231).
+
+**On a NAS's own CPU, client on another host (0.5.0).** The published 0.5.0 and 0.4.1 images as an app on a
+NAS with a Core i5-1235U, pinned to 2 or 4 of its E-cores at 256 or 512 MiB and the default cache,
+images on its hard disks, the client on another machine over the LAN, over SMB and NFSv4 (a user-space client). The NAS
+also ran its usual apps (load average 2 to 7), so the figures are from a shared machine. Same
+method as above, 3 to 7 runs per cell, medians (range); speed relative to real time and the most behind:
+
+| 6-channel WAV player | 0.4.1 (cache 32) | 0.5.0 (cache 16) |
+|---|---|---|
+| Alone, 2 cores | 1.00×, 0.15 s | 1.00×, 0.14 s |
+| 1 whole-file scanner, 2 cores, SMB | 0.39×, 18.4 s | **1.00×, 0.48 s** (at most 0.60 s) |
+| 1 whole-file scanner, 2 cores, NFS | 0.36×, 19.2 s | 1.00×, 0.66 s |
+| 4 whole-file scanners, 2 cores, SMB | 0.35×, 19.8 s | 1.00×, 0.75 s; 1 run of 7 0.88×, 3.6 s |
+| 4 whole-file scanners, 2 cores, NFS | | 1.00×, 0.59 s (at most 1.00 s) |
+| 1 whole-file scanner, 4 cores, SMB | 0.65×, 10.6 s | 1.00×, 0.28 s |
+| 4 whole-file scanners, 4 cores, SMB | 0.35×, 19.5 s | 1.00×, 0.10 s |
+| 4 whole-file scanners, 4 cores, NFS | 0.38×, 18.6 s | 1.00×, 0.23 s |
+| Scan alone, 2 / 4 cores (MB/s) | 25.9 / 49.4 | 29.1 / 52.3 |
+| 6-channel WAV read flat out, 2 / 4 cores | 7.5× / 14.3× | 8.2× / 14.4× |
+
+In most 0.5.0 runs the player's worst moment was its first half second, before it counts as a
+player. The one slow run, with four scanners on 2 cores, came while the NAS's other apps were busy.
+That is a case beyond what a 1 s buffer is promised for. **Players that buffer ahead** (8, 32 or 64 MiB
+read at once, then at real time) count as scanners until their pace settles and are not hurt by it: with
+one scanner on 2 cores they never ran short (0.5.0: at most 0.61 s behind a playout started at their
+first read; 0.4.1: 14.8 s with 8 MiB). A second, ordinary player beside a buffering player and a scanner
+held real time on 0.5.0 (1.00×, 0.56 s) and fell to 0.34× on 0.4.1. Not tested: Roon, Plex or other
+real players doing the same.
 
 **Idle.** sacdfs used 0.007 % of a CPU and woke 1.5 times a second, and 5 minutes of `strace`
 showed no image reads and no metadata calls, so sacdfs itself does not keep a disk awake. Not

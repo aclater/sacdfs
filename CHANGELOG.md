@@ -84,6 +84,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Documentation
 
+- **A player beside whole-file scans, checked on a NAS's own CPU (#230).** The 0.5.0 image as an app on
+  a NAS's E-cores, client on another host over SMB and NFS: a 6-channel WAV player held real time with
+  one or four whole-file scanners on 2 and 4 cores (0.4.1: 0.35 to 0.65× real time), and players that
+  buffer 8 to 64 MiB ahead weren't hurt by counting as scanners while they settle. One run in 7 with
+  four scanners on 2 cores fell to 0.88× while the NAS was busy. Tables in `docs/deployment.md` and
+  `docs/performance.md`.
+
 - **#185 (MusicBrainz lookup) is complete except fingerprinting.** Fallback naming, `tags fetch` and
   `--musicbrainz` are shipped; the AcoustID fingerprint lookup, which needs an API key and a
   Chromaprint dependency decision, moved to #296 (Later). The user guide and design notes say so.
