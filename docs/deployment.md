@@ -1265,9 +1265,12 @@ What clients did when the container restarted (about 8 s):
 | Plex on a kernel CIFS mount | recovered by itself | 0.1.1, a restart mid-test ([clients](clients.md#plex)) |
 | macOS, `mount_smbfs`, in VMs on Apple hardware | **the mount drops and doesn't come back**, with no hang. Mounting it again works | 15.7 on 0.4.0 and 0.4.1-rc.1; 27.2 on 0.4.1-rc.1; restart of about 8 s |
 
-So on macOS, mount the share again after an upgrade or restart. Whether the server can change this is
-still open ([#204](https://github.com/aclater/sacdfs/issues/204)). What's known about the shipped
-Samba configuration:
+**After an upgrade (a new image, or a restart), a macOS client has to mount the share again.** That is
+the documented answer to [#204](https://github.com/aclater/sacdfs/issues/204), not a bug that a setting
+is known to fix: the cause is in the macOS client's own reconnect, and no server setting tried here
+changes it (macOS itself was not re-tested for this; there is no lab Mac, and the VM results above are
+the only ones). Linux and Windows clients carry on by themselves, so nothing else is needed. What's
+known about the shipped Samba configuration:
 
 - **Durable handles can't survive a restart, under any setting here.** Samba grants them (they're on by
   default), and a raw SMB2 client reconnected one after dropping its connection. After a restart it gets
@@ -1278,8 +1281,19 @@ Samba configuration:
   `durable handles = no` or `smb2 leases = no`.
 - **The server's identity can change.** Samba's SMB server GUID is made from its NetBIOS name, which is
   the container's host name by default. It stays the same on a restart and changes when the
-  container is recreated. Linux clients don't mind either way. `SMB_EXTRA_GLOBAL=netbios name = sacdfs`
-  keeps it the same on recreate, and Linux clients recovered with that too.
+  container is recreated (which is what an image upgrade does: a new container with a new random
+  host name). Linux clients don't mind either way. To keep it the same, give the container a fixed
+  host name (`--hostname sacdfs` for `docker run` and `podman run`; `hostname: sacdfs` in a Compose
+  file, left commented in the shipped files) or set `SMB_EXTRA_GLOBAL=netbios name = sacdfs`. Checked
+  on `main` (the 0.6.0 line) with rootless Podman (a raw SMB2 NEGOTIATE reads the GUID): the
+  GUID was the container's random id before, and stayed `sacdfs` across a recreate with either
+  setting. The GNOME gvfs client (`gio list smb://...`) listed the share again after a recreate and
+  after a restart with either setting. The Linux kernel client with these two settings was not run
+  again for this change (it needs root). Don't give two containers on one network the same name.
+- **Why it isn't the default.** The fixed name is only known to help clients that compare the GUID,
+  and no client here does: macOS keeps dropping the mount on a restart, where the GUID doesn't
+  change anyway. A shipped default that no result supports would also give two sacdfs containers the
+  same identity.
 
 None of these settings has been run on macOS, so none is recommended for it.
 

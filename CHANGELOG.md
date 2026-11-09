@@ -40,6 +40,14 @@ All notable changes to sacdfs are recorded here. The format follows
   point checks `/dev/fuse`, `CAP_SYS_ADMIN`, ports 445 and 2049 already taken, and the `/srv` bind
   for players on the same host before it starts.
 
+- **The RF64 test is read by other programs, and the file-handle tests also run on arm64 (#220).**
+  `wav::rf64_file` used to be ignored and asserted only the file's size. It now runs in every test
+  job: it writes the 4.6 GB sparse file and has `scripts/check_rf64.py` (Python, shares no code with
+  sacdfs) check the chunk layout and sizes, and `ffprobe` when installed check the channels, rate,
+  duration and tags. A new `file handles (arm64)` job in the NFS workflow runs the `open_by_handle_at`
+  tests as root on a native arm64 runner, where the normal arm64 job skips them. Tests and CI only; no
+  change to the program.
+
 ### Changed
 - **Root's mount lets other users read it (#282).** Run as root, sacdfs now mounts with
   `allow_other` by default, so Samba guests, NFS clients and apps can read the mount instead of
@@ -65,6 +73,12 @@ All notable changes to sacdfs are recorded here. The format follows
   buffer 8 to 64 MiB ahead weren't hurt by counting as scanners while they settle. One run in 7 with
   four scanners on 2 cores fell to 0.88× while the NAS was busy. Tables in `docs/deployment.md` and
   `docs/performance.md`.
+
+- **macOS and SMB restarts (part of #204):** the install guides now say, where a user updates, that a
+  macOS client must mount the SMB share again after an upgrade or restart, while Linux and Windows
+  clients carry on. `docs/deployment.md` records that the SMB server identity follows the container's
+  host name, how to keep it across a recreate (`hostname: sacdfs` or `netbios name`, checked with a
+  raw SMB2 negotiate and the gvfs client), and why that is not the default. macOS was not re-tested.
 
 - NAS install guides for people new to SSH and Linux: a new `docs/install/nas-binary.md` runs the
   release binary on a NAS one command at a time, each with what you should see, and a table of the

@@ -14,6 +14,7 @@ services:
   sacdfs:
     image: ghcr.io/aclater/sacdfs:0.5.0
     container_name: sacdfs
+    # hostname: sacdfs   # keeps the SMB server identity across a recreate (docs/deployment.md#smb-and-restarts)
     restart: unless-stopped
     # FUSE needs the device and CAP_SYS_ADMIN (to mount). NFS-Ganesha needs
     # CAP_DAC_READ_SEARCH (open_by_handle_at, how it reopens files by NFS file handle).

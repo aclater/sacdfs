@@ -194,6 +194,12 @@ disc titles. Exit 0 passes. Exit 77 (no images given) is a skip and is reported 
 was not run, which [the exit criteria](#exit-criteria) do not count as passed. Details:
 [development.md](development.md#real-disc-tests).
 
+The run is checked to fail when it should: on a directory holding only an empty file, only random
+bytes named `.iso`, or a real image next to random bytes, each of the three tests fails (images
+that don't open, compare nothing or serve no file). It does not catch a truncated image, because
+the sector count comes from the file's size. For a long run use `nice`; it is not timed, so it
+needs no benchlock.
+
 ## Install channels
 
 Run on the release they describe, following the docs as written, in a clean environment.
