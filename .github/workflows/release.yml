@@ -5,7 +5,7 @@
 #     #244), sacdfs-<version>-x86_64-linux.tar.gz (generic x86-64),
 #     sacdfs-<version>-x86_64-v3-linux.tar.gz (x86-64-v3: AVX2 CPUs) and
 #     sacdfs-<version>-aarch64-linux.tar.gz, each with COPYING,
-#     README.md and CHANGELOG.md, a .sha256 checksum and a build provenance attestation;
+#     README.md, CHANGELOG.md, sacdfs-ctl, sacdfs.service and sacdfs.conf.example, a .sha256 checksum and a build provenance attestation;
 #   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
 #     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
 #   - the crate on crates.io (#155), for final versions only (no hyphen: not 0.4.0-rc.1),
@@ -199,6 +199,10 @@ jobs:
           mkdir -p "dist/$pkg"
           install -m 0755 "target/$TARGET/release/sacdfs" "dist/$pkg/sacdfs"
           install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
+          # The files for starting and stopping sacdfs on a NAS (#289): the script for systems
+          # without systemd, the systemd unit and the settings file both read.
+          install -m 0755 deploy/sacdfs-ctl "dist/$pkg/"
+          install -m 0644 deploy/systemd/sacdfs.service deploy/sacdfs.conf.example "dist/$pkg/"
           # Reproducible: fixed order, owner and times (the commit's), no gzip timestamp.
           mtime=$(git log -1 --format=%ct)
           tar -C dist --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$mtime" \

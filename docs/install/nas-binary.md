@@ -79,6 +79,11 @@ Your system's guide lists any extra step and what else was checked there:
    ```
 
    *You should see* `sacdfs 0.5.0`.
+
+   From 0.6.0 the archive also holds `sacdfs-ctl`, `sacdfs.service` and `sacdfs.conf.example`,
+   the files used in "Start at boot and stop safely" below. The commands there download the same
+   files from the repository, so they work with older archives too. This is untested on a
+   published archive until 0.6.0 is released.
 6. **Make an empty folder to mount on.** While sacdfs runs, this folder shows the DSF and
    WAV files, and anything already in it is hidden.
 

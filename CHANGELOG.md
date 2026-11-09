@@ -7,6 +7,8 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The release archives also ship `sacdfs-ctl`, `sacdfs.service` and `sacdfs.conf.example`**
+  (part of #289), next to the binary, so a NAS install doesn't need a second download.
 - **Safe start and stop for the release binary on a NAS (#289).** `deploy/systemd/sacdfs.service`
   is a unit for `/usr/local/bin/sacdfs` (settings in `/etc/default/sacdfs`, loads FUSE, waits up to
   30 s for the unmount, clears a leftover mount); `deploy/sacdfs-ctl` does `start`, `stop`, `status`
