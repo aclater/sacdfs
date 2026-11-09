@@ -7,13 +7,23 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Soak: the memory steps explained, and judged without them (part of #247).** The steps of 3 to
+  9 MiB in a soak's resident size are the kernel swapping pages out and in on a busy host: four
+  parallel runs fell by the same amounts at the same samples while the malloc heap did not change.
+  `scripts/soak.py` now records `VmSwap` (`swap_kb`) and judges resident plus swapped memory,
+  and has `--smaps` and `--malloc-info-every` to trace a step to its mapping.
+
+- **The release archives also ship `sacdfs-ctl`, `sacdfs.service` and `sacdfs.conf.example`**
+  (part of #289), next to the binary, so a NAS install doesn't need a second download.
 - **Safe start and stop for the release binary on a NAS (#289).** `deploy/systemd/sacdfs.service`
   is a unit for `/usr/local/bin/sacdfs` (settings in `/etc/default/sacdfs`, loads FUSE, waits up to
   30 s for the unmount, clears a leftover mount); `deploy/sacdfs-ctl` does `start`, `stop`, `status`
   and `restart` with BusyBox `sh` where there is no systemd. Stopping is SIGTERM, and SIGKILL only
   after the wait. The NAS steps warn against `kill -9`, which leaves a dead mount, and the
   TerraMaster guide uses the shipped unit. CI runs `shellcheck` on the script and
-  `systemd-analyze verify` on the unit.
+  `systemd-analyze verify` on the unit. The NAS steps now say how to start it at boot with the
+  vendor's own tools: an ASUSTOR `init.d` script, a QNAP `autorun.sh` and a Synology Task Scheduler
+  task, checked in VMs.
 
 - **Unraid and TrueNAS app-store entries, prepared (part of #284).** `deploy/unraid/sacdfs.xml` is a
   Community Applications template (device, capabilities and AppArmor setting in Extra Parameters,
@@ -22,14 +32,18 @@ All notable changes to sacdfs are recorded here. The format follows
   apps-catalog app definition (form, template, test values) that renders with the catalog's tooling.
   Both were started with rootful Podman and served the SMB share; neither was run on Unraid or
   TrueNAS, and neither is submitted to a store. See `docs/install/store-apps.md`.
+  The store icon is now an original drawing (`deploy/icon.svg`, `deploy/icon.png`), and
+  `ca_profile.xml` (the Community Applications repository profile) is in the repository root.
+  The catalog app passes the TrueNAS apps repository's own render, metadata, port and validate
+  checks (part of #284).
 
 - **One Compose file for every NAS container manager (#283).** `deploy/nas-compose.yaml` runs the
   published image with ports 10445 and 12049 (a NAS's own SMB and NFS usually hold 445 and 2049),
   the health check and a commented setting list. The one line to edit is the path of your images.
   The Synology, QNAP, UGREEN, TerraMaster, Unraid, OpenMediaVault and ASUSTOR guides point to it
   instead of repeating Compose blocks, and each says where it was actually run: Docker Compose on
-  Podman, and Docker 25 with Compose 2.24 on ASUSTOR ADM in a VM; the other vendors' container
-  managers are untested.
+  Podman, Docker 25 with Compose 2.24 on ASUSTOR ADM in a VM, and Docker 29 with Compose 5.1 from
+  the App Center on TerraMaster TOS in a VM; the other vendors' container managers are untested.
 
 - **Plain start-up messages for NAS users (#282).** Before scanning or mounting, sacdfs checks
   what the mount needs and says in one line what is missing and what to type: FUSE not loaded
@@ -67,6 +81,9 @@ All notable changes to sacdfs are recorded here. The format follows
   have no `fusermount3`), else `fusermount3 -u` or `fusermount -u`, whichever is installed.
 
 ### Fixed
+- **Two `sacdfs-ctl start` at once started two sacdfs (#289).** ASUSTOR ADM runs its start script
+  twice at boot; both starts passed the "already running" check and stacked two mounts, one of
+  which `stop` never reached. A lock now serialises `start` and `stop`.
 - **A background mount that failed printed its error twice (#282).**
 - **The container could take 10 s to stop (#283).** A stop within a few seconds of the start (a
   restart right after `up`, say) sometimes waited 10 s for the servers to release the mount,
@@ -75,6 +92,16 @@ All notable changes to sacdfs are recorded here. The format follows
   now waits only while the mount exists: 0 of 75 stops took over a second, against 14 of 75 before (Podman on Fedora and Docker on ADM).
 
 ### Documentation
+
+- **#185 (MusicBrainz lookup) is complete except fingerprinting.** Fallback naming, `tags fetch` and
+  `--musicbrainz` are shipped; the AcoustID fingerprint lookup, which needs an API key and a
+  Chromaprint dependency decision, moved to #296 (Later). The user guide and design notes say so.
+
+- **macOS and SMB restarts (part of #204):** the install guides now say, where a user updates, that a
+  macOS client must mount the SMB share again after an upgrade or restart, while Linux and Windows
+  clients carry on. `docs/deployment.md` records that the SMB server identity follows the container's
+  host name, how to keep it across a recreate (`hostname: sacdfs` or `netbios name`, checked with a
+  raw SMB2 negotiate and the gvfs client), and why that is not the default. macOS was not re-tested.
 
 - NAS install guides for people new to SSH and Linux: a new `docs/install/nas-binary.md` runs the
   release binary on a NAS one command at a time, each with what you should see, and a table of the

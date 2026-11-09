@@ -76,8 +76,46 @@ Two things the catalog's maintainers will weigh, noted here so nobody is surpris
   fail to start that way (`smbd` aborts), so the template keeps the container runtime's
   default set and adds the two. This was found by running it.
 
+## The icon
+
+The mark is an original drawing of a disc rising out of a folder, with a waveform on the folder
+(no third-party logo or trademark). Sources and sizes:
+
+- [deploy/icon.svg](../../deploy/icon.svg): the master drawing.
+- [deploy/icon.png](../../deploy/icon.png): 512 x 512 PNG, 8-bit with transparency, exported from the SVG.
+  Unraid's template and `ca_profile.xml` point to its raw URL on `main`.
+- TrueNAS hosts catalog icons on its own CDN. The app's `icon:` and `icon_url:` already carry the
+  CDN path the catalog uses (`.../apps/sacdfs/icons/icon.svg`); the catalog's reviewers upload the
+  file from the pull request and confirm the URL. The SVG is the file to attach.
+
+Requirements this was checked against. The apps catalog's contribution guide says icons and
+screenshots go on the TrueNAS CDN and are uploaded by the reviewer from the pull request; most
+catalog apps use SVG (267 of 500 in the checked-out catalog) or PNG (217). For Unraid, the
+Community Applications submission pages give no icon rule; the community starter kit for CA
+repositories asks for a square PNG of 256 to 512 pixels at a raw URL on `main`, which the file
+meets. Unraid's own documentation was not reachable, so the icon size rule is not confirmed by
+Unraid.
+
+## Checked with the stores' own tooling
+
+- **TrueNAS apps catalog**, current `main` (cloned 2026-11-09), with the app copied to
+  `ix-dev/community/sacdfs`: `ci.py --render-only` renders both test value sets
+  (`basic-values.yaml`, `auth-values.yaml`) and `docker compose config` parses the result;
+  `generate_metadata.py` and `check_metadata.py` report the metadata up to date;
+  `port_validation.py` passes; the catalog's own `apps_dev_charts_validate validate` (the
+  `ghcr.io/truenas/apps_validation` image) exits 0 over the whole catalog with the app in place.
+  Run on a Linux host with rootless Podman standing in for Docker. One message is logged on every
+  render and is not an error exit: "No cap_drop for service: sacdfs", because the app keeps the
+  runtime's default capabilities (see above). Reviewers may ask about it.
+- **Unraid Community Applications:** `deploy/unraid/sacdfs.xml` and `ca_profile.xml` are well
+  formed and pass a check of the elements and `Config` attributes that the community CA starter
+  kit's validator requires (written out by hand here, because Unraid publishes no validator).
+  Unraid's own validate and scan on `ca.unraid.net/submit` has not been run: it needs the owner's
+  account.
+
 ## Before a store listing
 
-What a listing needs from the project (an icon, screenshots, an account, a support thread)
-is a submission step and is not done. The icon in the Unraid template is
-[deploy/icon.png](../../deploy/icon.png), a placeholder drawn for this purpose.
+Submission is the owner's step and is not done. The repository is ready for it: icon, template,
+`ca_profile.xml` (the repository profile Community Applications requires in the root), and the
+catalog app directory. Still needed from outside: an Unraid forum account and support thread, and
+a pull request to the TrueNAS apps repository (and an issue there first, as their template asks).
