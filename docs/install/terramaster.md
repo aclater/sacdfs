@@ -1,7 +1,8 @@
 # sacdfs on TerraMaster TOS
 
-**Release binary: works. Container route: untested.** Checked on TOS 7.0.1422 in a VM, not on
-TerraMaster hardware. Storage setup and app stores weren't exercised. The checks used the 0.5.0 release (0.4.1-rc.3 earlier). Run the commands as root over SSH.
+**Release binary and Docker Compose: work.** Checked on TOS 7.0.1422 in a VM, not on
+TerraMaster hardware. For Docker, storage setup (a pool and volume made with TOS's own Storage
+Manager) and the App Center's Docker install were exercised; for the release binary they weren't. The checks used the 0.5.0 release (0.4.1-rc.3 earlier). Run the commands as root over SSH.
 
 ## Release binary
 
@@ -37,15 +38,28 @@ the NAS steps say why. In the VM the data volume was mounted before TOS started,
 storage manager. So whether the unit waits for the volume on real hardware wasn't checked, and
 neither was whether a TOS update keeps the unit file.
 
-**Docker (Compose): not checked on TOS.** TerraMaster's Docker Engine comes from its App Center,
-which wasn't exercised. The Compose file for every NAS container manager is
-[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml). It was run with Docker Compose on ASUSTOR
-ADM ([asustor.md](asustor.md#compose)) and on Podman, not on TOS. In TOS's Docker app, create a
-project from the file (the menu names were not seen) and change the one marked line to the path of
-your images. The file publishes ports 10445 and 12049 because TOS's own file services use 445 and
-2049.
+## Docker (Compose)
 
-**Not checked:** TOS's Docker app, a client on another machine, and anything on hardware.
-`mount.cifs` stopped with "not installed setuid root" even as root, cause unknown.
+TerraMaster's Container Manager and its Docker Engine come from the App Center, and need a
+volume made with TOS's Storage Manager first (the App Center offers no install path without
+one). In the VM the install gave Docker 29.4.0 and Compose v5.1.2. The Docker Engine is a
+separate App Center entry from Container Manager: install both.
+
+[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml) ran as published, with only the images
+path changed to `/Volume1/music`, from `/Volume1/docker/sacdfs/compose.yaml`, with
+`docker compose up -d` over SSH. TOS's own file services use ports 445 and 2049, which is why the
+file publishes 10445 and 12049.
+
+| Check | Result |
+|---|---|
+| `docker compose up -d` with the published 0.5.0 image, pulled from the registry | Healthy 8 s after `up` |
+| SMB on port 10445 (`smbclient`), a 457-track test corpus (914 files) copied off the share | All 457 tracks match the reference checksums, 0 failures |
+| `docker compose restart` | Healthy again, the same 914 files with identical SHA-256 |
+| `docker compose stop` | 2 s, exit status 0, and `down` leaves nothing behind |
+| `docker stop` 2 s after a fresh start, 5 times | The first took 11 s (the 0.5.0 image's stop delay, fixed in 0.6.0); the others took under 0.8 s |
+
+**Not checked:** the Container Manager screens (this used the command line, not the web
+interface), NFS, a client on another machine, and anything on hardware. `mount.cifs` stopped with
+"not installed setuid root" even as root, cause unknown, so the share was read with `smbclient`.
 
 Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).

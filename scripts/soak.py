@@ -401,7 +401,42 @@ def sample(pid, cache: Path):
                 pass  # a temporary file renamed meanwhile
     du //= 1024
     return {"rss_kb": int(st["VmRSS"]), "hwm_kb": int(st["VmHWM"]), "anon_kb": anon,
+            "swap_kb": int(st.get("VmSwap") or 0),
             "threads": int(st["Threads"]), "fds": fds, "cache_kb": du}
+
+
+def sample_maps(pid, t):
+    """One line per mapping of `pid` with at least 64 KiB resident, from /proc/PID/smaps (#247):
+    `t start perms size_kb rss_kb anon_kb name`; anonymous ones are named `[anon]`. Lets a step
+    in the resident memory be traced to the heap (`[heap]`), a thread stack, an arena or a large
+    allocation's own mapping, and to the pages that changed."""
+    out = []
+    cur = None
+    for line in Path(f"/proc/{pid}/smaps").read_text().splitlines():
+        head = line.split()
+        if "-" in head[0] and not line.startswith(("Rss:", "Size:")) and ":" not in head[0]:
+            if cur and cur[4] >= 64:
+                out.append(cur)
+            name = head[5] if len(head) > 5 else "[anon]"
+            cur = [t, head[0], head[1], 0, 0, 0, name]
+        elif cur and head[0] == "Size:":
+            cur[3] = int(head[1])
+        elif cur and head[0] == "Rss:":
+            cur[4] = int(head[1])
+        elif cur and head[0] == "Anonymous:":
+            cur[5] = int(head[1])
+    if cur and cur[4] >= 64:
+        out.append(cur)
+    return out
+
+
+def malloc_info(pid, path):
+    """Asks the process for glibc's malloc_info XML through gdb (it stops the process for a
+    moment; for diagnosis only, `--malloc-info-every`)."""
+    cmd = ["gdb", "-p", str(pid), "-batch", "-ex", f'set $f = (void*)fopen("{path}", "w")',
+           "-ex", "call (int)malloc_info(0, $f)", "-ex", "call (int)fclose($f)"]
+    subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   check=False, timeout=120)
 
 
 def slope_per_hour(rows, key):
@@ -454,6 +489,13 @@ def spike_hold(rows, soft):
 
 
 def verdict(rows, args):
+    # The kernel may swap pages of a quiet process out and back in on a busy host, which moves
+    # the resident size in steps that have nothing to do with sacdfs's allocations (#247). The
+    # memory checks therefore judge resident plus swapped (`VmSwap`), which a reclaim leaves
+    # alone; the TSV keeps both columns.
+    swapped = max((r.get("swap_kb", 0) for r in rows), default=0)
+    rows = [dict(r, rss_kb=r["rss_kb"] + r.get("swap_kb", 0), anon_kb=r["anon_kb"] + r.get("swap_kb", 0))
+            for r in rows]
     after = [r for r in rows if r["t"] >= args.warmup]
     if len(after) < 6:
         return False, ["too few samples after the warm-up"]
@@ -479,7 +521,9 @@ def verdict(rows, args):
         ok &= good
         lines.append(f"{key}: warm {base / 1024:.1f} MiB, peak {peak / 1024:.1f} MiB (+{(peak - base) / 1024:.1f}, "
                      f"allowed {allowed / 1024:.0f}), second-half trend {slope:+.2f} MiB/h "
-                     f"(allowed {limit:.1f}; largest step set aside {step:+.1f} MiB) {'ok' if good else 'FAIL'}")
+                     f"(allowed {limit:.1f}; largest step set aside {step:+.1f} MiB; resident plus swapped"
+                     f"{f', up to {swapped / 1024:.1f} MiB of it swapped out' if swapped else ''}) "
+                     f"{'ok' if good else 'FAIL'}")
     # Threads are judged by level, not by the maximum of a half: the staller makes sacdfs spawn
     # spare threads on purpose (#167/#168) and one sample can land in a stall. A run fails if the
     # median or the end level of the second half is above the first half's median by more than
@@ -567,6 +611,10 @@ def main():
     ap.add_argument("--sample-paths", action="store_true",
                     help="print the paths of unexpected read errors (off: only their top folder; "
                          "leave it off for a library whose names must not be published)")
+    ap.add_argument("--smaps", action="store_true",
+                    help="also write <out>.smaps.tsv: each sample's larger mappings (#247)")
+    ap.add_argument("--malloc-info-every", type=float, default=0,
+                    help="every this many seconds, write glibc's malloc_info XML (via gdb) to <out>.malloc-info/")
     ap.add_argument("--wrap", default="", help="command line to run the main sacdfs under")
     args = ap.parse_args()
     args.sacdfs = str(Path(args.sacdfs).resolve())
@@ -605,7 +653,7 @@ def main():
     for t in threads:
         t.start()
 
-    keys_out = ["t", "rss_kb", "hwm_kb", "anon_kb", "threads", "fds", "cache_kb"] + list(COUNTS)
+    keys_out = ["t", "rss_kb", "hwm_kb", "anon_kb", "swap_kb", "threads", "fds", "cache_kb"] + list(COUNTS)
     rows = []
     t0 = time.monotonic()
     try:
@@ -633,6 +681,13 @@ def main():
 def run(args, main_mount, keys_out, rows, t0):
     with open(args.out, "w") as out:
         out.write("\t".join(keys_out) + "\n")
+        maps_out = open(args.out.with_suffix(".smaps.tsv"), "w") if args.smaps else None
+        if maps_out:
+            maps_out.write("t\tstart\tperms\tsize_kb\trss_kb\tanon_kb\tname\n")
+        mi_dir = args.out.with_suffix(".malloc-info")
+        mi_next = 0.0
+        if args.malloc_info_every:
+            mi_dir.mkdir(exist_ok=True)
         while time.monotonic() - t0 < args.hours * 3600 and not STOP.is_set():
             STOP.wait(args.interval)
             if main_mount.proc.poll() is not None:
@@ -642,6 +697,16 @@ def run(args, main_mount, keys_out, rows, t0):
             with LOCK:
                 r |= COUNTS
             rows.append(r)
+            if maps_out:
+                try:
+                    for m in sample_maps(main_mount.pid, r["t"]):
+                        maps_out.write("\t".join(str(x) for x in m) + "\n")
+                    maps_out.flush()
+                except OSError:
+                    pass
+            if args.malloc_info_every and r["t"] >= mi_next:
+                mi_next = r["t"] + args.malloc_info_every
+                malloc_info(main_mount.pid, str((mi_dir / f"{r['t']:06d}.xml").resolve()))
             out.write("\t".join(str(r[k]) for k in keys_out) + "\n")
             out.flush()
             log(f"rss {r['rss_kb'] // 1024} MiB anon {r['anon_kb'] // 1024} MiB threads {r['threads']} "

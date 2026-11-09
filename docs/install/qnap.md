@@ -34,8 +34,10 @@ an ext4 filesystem on its data disk was mounted at `/share/CACHEDEV1_DATA`, with
 | Earlier, with the pull request's build: QuTScloud's own NFS server (NFSv3, explicit `fsid=`), mounted on the same system | Same bytes as on a current Linux system, for two test images and a real DST disc |
 
 **Not checked:** a non-root user (QuTScloud has no `su`), SMB (no Samba server ran), sharing
-through QNAP's own shared-folder and NFS settings, a client on another machine, and starting
-sacdfs at boot.
+through QNAP's own shared-folder and NFS settings, a client on another machine, and `autorun.sh`
+starting sacdfs by itself at boot (the VM forgets the "run user defined processes" setting at every
+restart; run by hand, the script worked). For starting at boot and stopping, see
+[the NAS steps](nas-binary.md#starting-it-at-boot-with-the-nass-own-tools).
 
 ## Container Station
 
