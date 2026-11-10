@@ -104,8 +104,10 @@ the server's identity the same across a recreate with `--hostname`).
 
 With nothing running in it, `stop` and `restart` take under a second: the entry point stops the
 servers, then sacdfs. Open files over SMB and NFS do not delay it (checked on Podman with one file
-held open over each): the servers close them. `stop_grace_period` in the file is 20 s, the most the entry
-point can wait (10 s for the servers to let go of the mount, 10 s for the unmount).
+held open over each): the servers close them. `stop_grace_period` in the file is 30 s: the entry
+point waits up to 10 s for the servers to let go of the mount, and sacdfs then exits within
+`SACDFS_STOP_GRACE` (10 s) even if a process on the same host still holds a file on the mount open (#276).
+Raise the period if you raise the grace.
 
 In 0.5.0 and earlier, a stop within a few seconds of the start (a restart right after `up`, say)
 sometimes took 10 s or more: 11 of 60 stops 2 s after the start on Fedora with Podman, and 3 of 15

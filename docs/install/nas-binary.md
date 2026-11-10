@@ -131,9 +131,10 @@ unmount. The mount stays behind with nobody serving it, and every program that t
 folder (a file manager, a share, a player) fails with `Transport endpoint is not connected`
 until someone runs `umount -l` on it. A plain `kill` (or `killall sacdfs`, which sends SIGTERM)
 is safe: sacdfs unmounts and exits. If a file on the mount is still open, sacdfs detaches the
-mount at once and exits when the last file closes, and that can take forever (a stuck share, a
-paused player). So the service and the script below wait up to 30 seconds, and only then kill
-sacdfs and clear the mount. A new sacdfs also clears a dead mount when it starts.
+mount at once and exits when the last file closes or after `--stop-grace` seconds (10 by default),
+whichever comes first; before that option it could take forever (a stuck share, a paused player).
+The service and the script below wait up to 30 seconds, longer than the grace, and only then kill
+sacdfs and clear the mount. If you raise `--stop-grace`, raise `TimeoutStopSec` and `SACDFS_STOP_WAIT` too. A new sacdfs also clears a dead mount when it starts.
 
 Both routes read one settings file, `/etc/default/sacdfs`. The files below are in the
 [`deploy`](../../deploy) folder of the repository, from 0.6.0:

@@ -6,6 +6,20 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **sacdfs exits after a grace period on SIGTERM even while clients hold files open (#276).** This
+  changes the lifecycle next to the read path, not the reads, and the next release needs a soak.
+  The mount is still detached at once; sacdfs now serves the files still open for `--stop-grace`
+  seconds (default 10, container: `SACDFS_STOP_GRACE`, `0` for the old wait-for-ever) and then
+  saves its state and exits with status 0. Clients with a file still open get I/O errors. It exits
+  only when its mount is gone from the mount table, so a stop never leaves `Transport endpoint is
+  not connected`; if the detach fails it logs an error and keeps serving. The stop timeouts stay
+  above the grace: the container's `stop_grace_period` and the Unraid `--stop-timeout` go from
+  20 s to 30 s, `TimeoutStopSec` and `sacdfs-ctl` stay at 30 s (`sacdfs-ctl` waits `grace + 15` s
+  for a larger `--stop-grace`). Tests: an integration test with a held-open file, and
+  `deploy/ci-held-stop-test.sh` in the container share test (files held open over SMB and NFS and
+  inside the container).
+
 ## [0.6.0] - 2026-11-10
 
 Tested as release candidate 0.6.0-rc.1 (2026-11-10). The final version carries only the version
