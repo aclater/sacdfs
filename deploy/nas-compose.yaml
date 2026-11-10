@@ -57,8 +57,9 @@ services:
       start_period: 300s
       retries: 3
     # How long the runtime waits after SIGTERM before SIGKILL. The entry point stops the servers,
-    # then sacdfs, each within 10 s at most; it takes under a second when nothing is open.
-    stop_grace_period: 20s
+    # then sacdfs, each within 10 s at most (sacdfs's --stop-grace, SACDFS_STOP_GRACE, is
+    # 10 s: raise this with it); it takes under a second when nothing is open.
+    stop_grace_period: 30s
 
 volumes:
   sacdfs-cache:

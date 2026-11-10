@@ -90,6 +90,15 @@ podman_image=$(docker save "$image" | sudo podman load -q | sed -n 's/^Loaded im
 RUNTIME="sudo podman" "$here/ci-restart-test.sh" "sudo podman" "$podman_image"
 endgroup
 
+# A stop does not wait for files that stay open (#276).
+group "Stop with files held open (Docker)"
+"$here/ci-held-stop-test.sh" docker "$image"
+endgroup
+
+group "Stop with files held open (Podman)"
+RUNTIME="sudo podman" "$here/ci-held-stop-test.sh" "sudo podman" "$podman_image"
+endgroup
+
 group "Players on the same host read the mount directly (#186)"
 "$here/ci-same-host-test.sh" "$image"
 endgroup

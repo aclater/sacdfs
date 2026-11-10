@@ -33,7 +33,7 @@ File: [deploy/unraid/sacdfs.xml](../../deploy/unraid/sacdfs.xml).
 
 The template does not make the container privileged. It passes the device and capabilities
 in **Extra Parameters** (`--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH
---security-opt apparmor=unconfined`), plus a 20 second stop timeout and the health check.
+--security-opt apparmor=unconfined`), plus a 30 second stop timeout and the health check.
 If you edit that field, keep those.
 
 **What was checked.** The template's container, with its Extra Parameters, ports, paths and
