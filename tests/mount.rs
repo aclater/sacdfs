@@ -1123,9 +1123,10 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
     set(&album, later - Duration::from_secs(1));
     // One step on (#185), as for any folder with an image below.
     let moved = later + sacdfs::ident::FILLED_STEP;
-    wait_for("the root to move", || mtime("") == moved);
+    // Each folder is its own cached attribute in the kernel, so each is waited for: the root
+    // moving first does not mean the others have, under load (#305).
     for p in &dirs[..3] {
-        assert_eq!(mtime(p), moved, "{p}");
+        wait_for(&format!("{p:?} to move"), || mtime(p) == moved);
     }
     // The image's own folders do not show the playlist: they keep their time.
     for p in &dirs[3..] {

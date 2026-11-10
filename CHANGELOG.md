@@ -12,7 +12,8 @@ All notable changes to sacdfs are recorded here. The format follows
   for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that
   spawned it, blocked in `exec`. The two tests that stop a daemon now run exclusive: every FUSE
   test holds a shared lock for its whole run (`common::skip_without_fuse!`), and they hold it
-  exclusive (`skip_without_fuse!(exclusive)`).
+  exclusive (`skip_without_fuse!(exclusive)`). The folder-times test also waits for each folder to
+  move, not only the root, which failed one run in four under load.
 
 ## [0.6.0] - 2026-11-10
 
