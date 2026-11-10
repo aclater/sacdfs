@@ -925,6 +925,54 @@ fn a_restart_after_sigkill_clears_the_dead_mount() {
     assert_eq!(fuse_mounts_on(&at), 0);
 }
 
+/// A client that keeps a file open does not keep sacdfs from exiting (#276): after SIGTERM the
+/// mount is detached at once, the open file is served for `--stop-grace` seconds, then sacdfs
+/// exits, leaves no mount behind (no "Transport endpoint is not connected"), and the open file
+/// fails with an error instead of hanging. Without a held file the exit is at once.
+#[test]
+fn a_held_open_file_does_not_keep_sacdfs_after_sigterm() {
+    common::skip_without_fuse!();
+    let m = Mount::foreground(&corpus().join("images"), &["--stop-grace", "2"]);
+    let mnt = m.path();
+    let dsf = files_under(&mnt).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap();
+    let file = mnt.join(dsf);
+    let held = std::fs::File::open(&file).unwrap();
+    let mut first = [0u8; 4096];
+    held.read_exact_at(&mut first, 0).unwrap();
+    let mut m = m;
+    let mut child = m.child.take().unwrap();
+    let st = Command::new("kill").arg("-TERM").arg(child.id().to_string()).status().unwrap();
+    assert!(st.success());
+    let start = Instant::now();
+    // Detached at once: the mount is gone from the table, the process still serves the file.
+    wait_for("the detach", || !is_mounted(&mnt));
+    assert!(child.try_wait().unwrap().is_none(), "sacdfs exited at once with a file open");
+    held.read_exact_at(&mut first, 4096).unwrap();
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s;
+        }
+        assert!(start.elapsed() < Duration::from_secs(15), "sacdfs still running 15 s after SIGTERM");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(status.success(), "sacdfs exited with {status}");
+    let took = start.elapsed();
+    assert!(took >= Duration::from_secs(2), "exited before the grace period: {took:?}");
+    assert_eq!(fuse_mounts_on(&mnt), 0, "a mount is left behind");
+    // The path is a plain directory again, not a dead mount.
+    std::fs::read_dir(&mnt).unwrap();
+    // The held file fails, it does not hang. Not from the page cache: drop it first.
+    {
+        use std::os::fd::AsRawFd;
+        #[allow(unsafe_code)]
+        // SAFETY: an open descriptor; the call only advises the kernel.
+        unsafe {
+            libc::posix_fadvise(held.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED)
+        };
+    }
+    assert!(held.read_exact_at(&mut first, 0).is_err());
+}
+
 /// A SIGTERM at any moment of the start leaves no dead mount behind (#57): sacdfs either
 /// stops before mounting, or mounts and then unmounts. Before, the handlers were set up
 /// after mounting, and a SIGTERM in between killed it with the mount in place.

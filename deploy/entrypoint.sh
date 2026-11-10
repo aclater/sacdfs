@@ -22,6 +22,13 @@ args=(-f --allow-other --format "${SACDFS_FORMATS:-dsf,wav}")
 [ -n "${SACDFS_THREADS:-}" ] && args+=(--threads "$SACDFS_THREADS")
 [ -n "${SACDFS_MAX_OPEN_IMAGES:-}" ] && args+=(--max-open-images "$SACDFS_MAX_OPEN_IMAGES")
 [ -n "${SACDFS_REQUEST_TIMEOUT:-}" ] && args+=(--request-timeout "$SACDFS_REQUEST_TIMEOUT")
+# Seconds sacdfs keeps serving files that clients hold open after the stop signal, before it
+# exits anyway (#276). Keep the container's stop timeout above this plus the servers' 10 s.
+if [ -n "${SACDFS_STOP_GRACE:-}" ]; then
+    [[ $SACDFS_STOP_GRACE =~ ^(0|[1-9][0-9]{0,3})$ ]] ||
+        die "SACDFS_STOP_GRACE must be a whole number of seconds from 0 to 9999 (got '$SACDFS_STOP_GRACE')"
+    args+=(--stop-grace "$SACDFS_STOP_GRACE")
+fi
 [ -n "${SACDFS_PAUSES:-}" ] && args+=(--pauses "$SACDFS_PAUSES")
 [ -n "${SACDFS_PCM_RATE:-}" ] && args+=(--pcm-rate "$SACDFS_PCM_RATE")
 [ -n "${SACDFS_PCM_CUTOFF:-}" ] && args+=(--pcm-cutoff "$SACDFS_PCM_CUTOFF")

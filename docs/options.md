@@ -35,6 +35,7 @@ above it.
 | `--no-index-cache` | Keep no persistent seek index: every mount starts with an empty one. |
 | `--max-open-images N` | Most image files kept open at once, 1 to 1024 (default `64`). The least recently used is closed first, and any image unused for 5 minutes is closed. |
 | `--request-timeout SECS` | A read, lookup or listing still waiting for the source after `SECS` seconds (default `30`) fails with an I/O error and a log line, instead of hanging its client; other images keep being served. `0` waits for good. |
+| `--stop-grace SECS` | After SIGINT, SIGTERM or SIGHUP, sacdfs detaches the mount at once and keeps serving files clients still hold open for `SECS` seconds (default `10`), then exits even if they are open; their clients get I/O errors. It does not exit while the mount is still in the mount table, so no dead mount is left. `0` waits for the last file to close, however long (the behaviour before this option). Keep the service manager's stop timeout above it: [stopping](user-guide.md#stopping-with-files-open). |
 | `--log-file FILE` | Append the log to `FILE` instead of standard error, at info level unless `-v` says more. Without it, a background mount logs nowhere, except to the journal under systemd; use it (or `-f`) to see read errors and the `mounted` line ([troubleshooting](user-guide.md#troubleshooting)). |
 | `-v`, `--verbose` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
 | `-h`, `--help` | Print help (`-h` for a summary). |
@@ -43,6 +44,7 @@ above it.
 `mount -t fuse.sacdfs` and fstab work too, with the options above as `-o` options, and `Type=notify` units are supported: see [Mounting at boot](user-guide.md#mounting-at-boot-fstab-and-systemd).
 
 Unmount with `umount MOUNTPOINT` as root, or as another user `fusermount3 -u MOUNTPOINT` (`fusermount -u` where only FUSE 2 is installed); SIGINT (Ctrl-C), SIGTERM and SIGHUP unmount too. If files are
-still open, the mount is detached instead, and sacdfs stops when the last one is closed. What
+still open, the mount is detached instead, and sacdfs stops when the last one is closed, or
+after `--stop-grace` seconds if some stay open. What
 each option does in detail, and the seek index cache, are in the
 [user guide](user-guide.md#options).
