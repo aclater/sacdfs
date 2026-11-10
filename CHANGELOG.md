@@ -19,6 +19,10 @@ All notable changes to sacdfs are recorded here. The format follows
   for a larger `--stop-grace`). Tests: an integration test with a held-open file, and
   `deploy/ci-held-stop-test.sh` in the container share test (files held open over SMB and NFS and
   inside the container).
+- **Install guides rewritten to be simpler (part of #310).** `docs/install/README.md` is now a chooser
+  with three questions; the Docker and Podman, Linux binary and Linux client guides follow one shape
+  (what you need, numbered steps, check it worked, three common problems, Details), with the test
+  history moved to Details. The NAS and player guides follow in later pull requests.
 
 ## [0.6.0] - 2026-11-10
 
