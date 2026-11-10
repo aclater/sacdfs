@@ -10,9 +10,12 @@ All notable changes to sacdfs are recorded here. The format follows
 - **A platform-neutral core, split from the Linux FUSE front end (part of #22).** The first step of
   native macOS and Windows support. `docs/design.md` ("The core and its front ends") describes the
   API the front ends call, what stays Linux-only, and the decisions the Windows and macOS front
-  ends build on (handles, threads, name rules, end-of-file reads). The code moves follow in their
-  own pull requests, with no change in behaviour; they change the structure of the read path, so
-  the release that includes them needs the full gate and a soak.
+  ends build on (handles, threads, name rules, end-of-file reads). The code moved with no change in
+  behaviour: every request handler is now in `sacdfs::vfs::Volume`, which answers through replies
+  the front end supplies, and the FUSE front end (`src/fuse.rs`, formerly `src/fs.rs`) only converts
+  fuser's types. A new test (`tests/vfs.rs`) reads every file of a DSD and a DST image through the
+  core without a mount and checks it against the reader. These changes touch the structure of the
+  read path, so the release that includes them needs the full gate and a soak.
 - **Windows thumbnail pass: where the extra folder opens come from (part of #312).** Docs only. On
   Windows 11 in a VM, the pass over 196 files sends 2,104 to 2,166 requests on 0.6.0 against 508 to 514
   on 0.5.0 and 921 to 941 on 0.4.1; the 800 extra are `OPENDIR` and `RELEASEDIR` pairs. They come from
