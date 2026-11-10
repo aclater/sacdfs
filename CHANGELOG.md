@@ -43,6 +43,12 @@ All notable changes to sacdfs are recorded here. The format follows
   the churner replaced or removed, and `ENOENT` or `ESTALE` on an area's `cover.jpg` in the
   art-churn album after a cover removal, are counted as replaced sidecars. Every other errno, and
   these on any other path, still fail the soak; `scripts/test_soak.py` pins both.
+- **macOS: precomposed (NFC) lookups of accented names (part of #308).** Docs only. Names are
+  served precomposed and macOS lists them decomposed; the macOS SMB client answers a precomposed
+  lookup itself, without asking the server, once it has cached the folder's listing. All 111 names
+  with a differing NFC and NFD spelling failed that way, not 111 of 357 at random. The setting
+  `dir_cache_off=yes` in `nsmb.conf` fixed it on macOS 27.2 in a VM. `docs/deployment.md` (macOS)
+  says so. No code or Samba setting changed. Checked on macOS in a VM, not on Apple hardware.
 
 ## [0.6.0] - 2026-11-10
 
