@@ -1631,7 +1631,8 @@ pitfall in #22.
   watchdog fails one that waits too long, whatever the front end. A front end whose callbacks
   must answer before they return (WinFsp, and the libfuse API under FUSE-T) waits for its reply
   on a one-shot channel; one that can answer later (WinFsp's `STATUS_PENDING` for reads) passes
-  its own reply. *Why:* the stall protections (#63, #72, #241) are about the source, not the
+  its own reply. A reply dropped without an answer must answer `Io`, as fuser's do, so that a
+  request whose job never ran is not left open. *Why:* the stall protections (#63, #72, #241) are about the source, not the
   kernel interface, and would otherwise be rebuilt per platform.
 - **Names: case and normalisation.** The core stays case-sensitive and byte-exact, and serves
   names precomposed (NFC), as on Linux today. Windows (case-insensitive de-duplication, reserved
