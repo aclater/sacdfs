@@ -6,6 +6,38 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **sacdfs exits after a grace period on SIGTERM even while clients hold files open (#276).** This
+  changes the lifecycle next to the read path, not the reads, and the next release needs a soak.
+  The mount is still detached at once; sacdfs now serves the files still open for `--stop-grace`
+  seconds (default 10, container: `SACDFS_STOP_GRACE`, `0` for the old wait-for-ever) and then
+  saves its state and exits with status 0. Clients with a file still open get I/O errors. It exits
+  only when its mount is gone from the mount table, so a stop never leaves `Transport endpoint is
+  not connected`; if the detach fails it logs an error and keeps serving. The stop timeouts stay
+  above the grace: the container's `stop_grace_period` and the Unraid `--stop-timeout` go from
+  20 s to 30 s, `TimeoutStopSec` and `sacdfs-ctl` stay at 30 s (`sacdfs-ctl` waits `grace + 15` s
+  for a larger `--stop-grace`). Tests: an integration test with a held-open file, and
+  `deploy/ci-held-stop-test.sh` in the container share test (files held open over SMB and NFS and
+  inside the container).
+- **Install guides rewritten to be simpler (part of #310).** `docs/install/README.md` is now a chooser
+  with three questions; the Docker and Podman, Linux binary and Linux client guides follow one shape
+  (what you need, numbered steps, check it worked, three common problems, Details), with the test
+  history moved to Details. The NAS and player guides follow in later pull requests.
+- **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
+- **NAS install guides rewritten (part of #310).** Each vendor guide (Synology, QNAP, ASUSTOR, TerraMaster, UGREEN, ReadyNAS) is one page with one path, the 0.6.0 release archive and the vendor's own start-at-boot method, followed as written on 0.6.0 in the NAS VMs; TrueNAS SCALE, Unraid and OpenMediaVault keep their facts in the same layout, marked untested on 0.6.0. `nas-binary.md` is the short generic guide; test history, options and the longer troubleshooting moved to each page's Details. Found while checking: TOS has no `/usr/local/bin`, so the unit steps make it.
+### Fixed
+- **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
+  open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
+  for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that
+  spawned it, blocked in `exec`. The two tests that stop a daemon now run exclusive: every FUSE
+  test holds a shared lock for its whole run (`common::skip_without_fuse!`), and they hold it
+  exclusive (`skip_without_fuse!(exclusive)`). The folder-times test also waits for each folder to
+  move, not only the root, which failed one run in four under load.
+### Fixed
+- **Real-disc tests: a truncated image fails (#294).** Before the tests run, each image is checked
+  against its own TOC (every area's TOC copies and audio must lie inside the file); a copy cut
+  short fails the run with "truncated: ...". A test on truncated copies of a corpus image runs in
+  CI. A corrupt image of the right size is still not caught.
 ### Fixed
 - **Soak: designed art-churn errors no longer fail the verdict (#279).** `ESTALE` on a `cover-N.jpg`
   the churner replaced or removed, and `ENOENT` or `ESTALE` on an area's `cover.jpg` in the

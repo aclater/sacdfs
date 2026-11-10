@@ -17,6 +17,11 @@ BIN=${SACDFS_BIN:-/usr/local/bin/sacdfs}
 PIDFILE=${SACDFS_PIDFILE:-/var/run/sacdfs.pid}
 LOG=${SACDFS_LOG:-/var/log/sacdfs.log}
 WAIT=${SACDFS_STOP_WAIT:-30}
+# Wait longer than sacdfs's own --stop-grace (#276) if SACDFS_OPTIONS sets a larger one.
+if [ -z "${SACDFS_STOP_WAIT:-}" ]; then
+    grace=$(printf '%s\n' " $SACDFS_OPTIONS " | sed -n 's/.* --stop-grace[= ]\([0-9][0-9]*\) .*/\1/p')
+    if [ -n "$grace" ] && [ "$((grace + 15))" -gt "$WAIT" ]; then WAIT=$((grace + 15)); fi
+fi
 if [ -z "$SACDFS_IMAGES" ] || [ -z "$SACDFS_MOUNT" ]; then
     echo "sacdfs-ctl: SACDFS_IMAGES and SACDFS_MOUNT must be set in $CONF" >&2
     exit 1
