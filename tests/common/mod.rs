@@ -52,12 +52,40 @@ macro_rules! skip {
     }};
 }
 
-/// Skips the enclosing test if FUSE is missing, or fails it under `SACDFS_FUSE_TESTS=1`.
+/// Orders the FUSE tests of one test binary (#305). A forked child holds a copy of every file
+/// descriptor of its parent until it execs, and its exec closes the copies of the close-on-exec
+/// ones. Closing a file on a FUSE mount waits for the mount's daemon to answer `FLUSH`. So when a
+/// test holds a stopped daemon (`SIGSTOP`), a child forked by any test thread that has a file open
+/// on that mount, or is opening one, blocks in `exec`, and so does the thread that spawned it.
+/// Every FUSE test therefore runs shared (many at once), and a test that stops a daemon runs
+/// exclusive, with no other FUSE test in progress: nothing else has a descriptor on its mount
+/// to hand to a child.
+pub static FUSE_TESTS: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// The shared hold of [`FUSE_TESTS`], taken by [`skip_without_fuse!`] for the whole test.
+pub fn fuse_shared() -> std::sync::RwLockReadGuard<'static, ()> {
+    FUSE_TESTS.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The exclusive hold of [`FUSE_TESTS`], for a test that stops a daemon.
+pub fn fuse_exclusive() -> std::sync::RwLockWriteGuard<'static, ()> {
+    FUSE_TESTS.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Skips the enclosing test if FUSE is missing, or fails it under `SACDFS_FUSE_TESTS=1`; else
+/// holds [`FUSE_TESTS`] until the test ends, shared, or exclusive for `skip_without_fuse!(exclusive)`.
 macro_rules! skip_without_fuse {
     () => {
         if !$crate::common::fuse_available() {
             $crate::common::skip!($crate::common::NO_FUSE);
         }
+        let _fuse_tests = $crate::common::fuse_shared();
+    };
+    (exclusive) => {
+        if !$crate::common::fuse_available() {
+            $crate::common::skip!($crate::common::NO_FUSE);
+        }
+        let _fuse_tests = $crate::common::fuse_exclusive();
     };
 }
 
