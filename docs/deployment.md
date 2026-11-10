@@ -1107,6 +1107,16 @@ see [Players on the same host](#players-on-the-same-host-no-smb-hop).
   `SMB_USER` name and password.
 - **NFS** (macOS speaks NFS 4.0): `sudo mount -t nfs -o vers=4,ro,resvport nas:/sacd /Volumes/sacd`
   after `sudo mkdir /Volumes/sacd`; or Finder's Connect to Server with `nfs://nas/sacd`.
+- **Accented names over SMB:** the share serves names precomposed (NFC), and macOS lists them
+  decomposed (NFD). Opening a name by the listed spelling always works. Opening it by its
+  precomposed spelling (a player's database, a playlist, a typed path) fails for a name with
+  accents while the macOS client has that folder's listing cached, and works otherwise. The
+  server is not asked, so no sacdfs or Samba setting changes it. In `~/Library/Preferences/nsmb.conf`,
+  `[default]` with `dir_cache_off=yes` turned the client's folder cache off, and every name
+  then opened by both spellings (357 of 357, on macOS 27.2 in a VM, not on Apple hardware or
+  other macOS versions). Walking 13,547 entries took the same time (17 s); a second walk is no
+  longer served from the cache (5 s with it). Not run: Finder, NFS, other macOS releases
+  (#308).
 - **After a restart of the container** an SMB mount on macOS drops and has to be mounted again: see
   [SMB and restarts](#smb-and-restarts).
 
