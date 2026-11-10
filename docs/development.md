@@ -121,8 +121,12 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   (ENOENT on a `.dsf` after a tags edit since the file list was taken, or within 60 s of it),
   `sidecar` (ENOENT on a `cover-*.jpg` the churner has removed, or under `Artwork/` within
   60 s of the churner toggling it; sacdfs lists a removed file until it has re-read the
-  folder, which takes seconds on real discs). A `cover.jpg` that fails to read is not expected
-  (#235: it used to be counted apart, as `cover`, for the second after a cover was replaced).
+  folder, which takes seconds on real discs. Also, in the art-churn album only: ESTALE on a
+  `cover-*.jpg` the churner has replaced or removed, since art whose source changed since it was
+  listed is refused, not served as other bytes, and ENOENT or ESTALE on an area's `cover.jpg`
+  once a cover has been removed, since the file it stood for is gone: [design](design.md),
+  "Changes while mounted", #235, #279). Any other errno on these paths, and these errnos on
+  any other path, stay unexpected.
   Any other error, such as EIO on a stable disc, fails the run, with no tolerance. The counts
   per class are columns of the TSV, and `<out>.errors.tsv` has class, errno and area. The summary lists up to ten unexpected paths only with `--sample-paths`: leave it off
   on a real library, whose names must not be published. A failed read returns at once and is
@@ -224,6 +228,12 @@ if !handles_available(&m.at, &files[0]) {
 It prints `SKIPPED binary::test: reason` directly to stderr, past libtest's capture, so every
 `cargo test` shows it without `--nocapture`. `#[ignore]` tests print their reason themselves.
 
+The same macro orders the FUSE tests of a binary (#305): it holds a shared lock until the test
+ends, and `common::skip_without_fuse!(exclusive)` holds it exclusive, with no other FUSE test in
+progress. A test that stops a daemon (`SIGSTOP`) needs the second form: a child forked by any other
+test thread inherits that thread's open files on a FUSE mount until it execs, and its exec then
+blocks on closing a file whose daemon is stopped.
+
 The `tests`, `tests (arm64)`, `coverage`, `nfs export` and `file handles (arm64)` jobs save cargo's output and then run
 `scripts/check_skips.py`, as a step of the same job. It writes the job summary: how many tests ran
 (libtest's `passed` less the guards' tests), how many were skipped by a guard, how many were
@@ -278,9 +288,15 @@ A run that looked at nothing fails: a directory that doesn't exist or holds no i
 that doesn't open, has no area, or serves no file, each fail the run, because the tree and
 `check_image` drop such images silently. So don't put non-SACD images in `DIR`.
 
-The tests check that sacdfs agrees with itself and with the library on the image as it is. A truncated
-image is not caught: the sector count comes from the file's size, so the audio area is cut
-short and every comparison still agrees. A checksum against the source checks image integrity.
+The tests check that sacdfs agrees with itself and with the library on the image as it is, so they
+would pass a truncated image: the sector count comes from the file's size, and the audio area is cut
+short everywhere alike. Before any test runs, every image is therefore checked against its own TOC
+(#294): each area's TOC copies and its audio, up to the last audio sector, must lie within the file.
+An image cut short fails the run ("truncated: area ... needs N sectors, the file holds M"), and
+so does one cut through its master TOC (it no longer opens). The check catches a copy that stops in
+or before the audio area. It cannot see a corrupt image of the right size: for that, compare a
+checksum against the source. `tests/image_complete.rs` runs the check on a corpus image and on
+truncated copies of it, in CI.
 
 The WAV test dominates the time: 6 images (about 8.6 GB) took 12 min and 2 images (1.5 GB) 3 min on a
 busy 32-core host (load over 50, so not a speed figure). On main at b46c5e0, 18 images (36 GB: stereo and multichannel, DSD and DST, hybrid and

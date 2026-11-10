@@ -117,7 +117,21 @@ most when the images are on a network share, where each read is a round trip.
 **Unmounting.** `umount MOUNTPOINT` as root; as another user `fusermount3 -u MOUNTPOINT` (`fusermount -u` with FUSE 2); or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
 If files are still open, or an NFS server still exports the mount, the mount is detached
 instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
-stops when the last one is closed.
+stops when the last one is closed, or when `--stop-grace` seconds (10 by default) have passed.
+
+### Stopping with files open
+
+A client that keeps a file open (a stuck share, a paused player, a hung program) would otherwise
+keep sacdfs running for good, until a service manager's timeout ended it with SIGKILL. After the
+signal sacdfs waits `--stop-grace` seconds, then saves its state and exits with status 0 if the
+mount is gone from the mount table; the clients' open files then fail with I/O errors. It never
+exits while its mount is still there (that would leave `Transport endpoint is not connected`): if
+the detach itself fails it logs an error and keeps serving, and the mount needs `umount -l`.
+`--stop-grace 0` waits for the last file to close. Whatever stops sacdfs must wait longer than the
+grace: the shipped systemd unit (`TimeoutStopSec=30`), `sacdfs-ctl` (30 s, longer when `SACDFS_OPTIONS`
+holds a larger `--stop-grace`) and the container (`stop_grace_period: 30s`, with `SACDFS_STOP_GRACE`) do.
+Raise their timeouts with the grace. Only the mount table of sacdfs's own mount namespace is
+checked: a copy bind-mounted into another namespace is not.
 
 **Signals.** SIGINT, SIGTERM and SIGHUP all unmount and stop sacdfs; SIGHUP does not reload
 anything (there is nothing to reload). A foreground sacdfs whose terminal closes gets SIGHUP and
