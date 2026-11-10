@@ -15,7 +15,7 @@ services hold 445 and 2049), the images mounted read-only at `/images`, and the 
 
 File: [deploy/unraid/sacdfs.xml](../../deploy/unraid/sacdfs.xml). The steps (copy it into Unraid's user templates, then Docker, Add Container, pick `sacdfs`) are in [unraid.md](unraid.md); they are untested on Unraid.
 
-The template does not make the container privileged. It passes the device and capabilities in **Extra Parameters** (`--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined`), plus a 20 second stop timeout and the health check. If you edit that field, keep those.
+The template does not make the container privileged. It passes the device and capabilities in **Extra Parameters** (`--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined`), plus a 30 second stop timeout and the health check. If you edit that field, keep those.
 
 **What was checked.** The template's container, with its Extra Parameters, ports, paths and variables, was started with rootful Podman on a Linux host (Fedora) from the 0.5.0 image and a test set of 135 image files. It turned healthy, and the SMB share on 10445 listed the folders and the 457 DSF files, as a guest. **Not checked:** loading the file in Unraid's Docker tab, whether Unraid lets the container use `/dev/fuse` and `SYS_ADMIN`, the Community Applications listing, the icon in Unraid, and NFS from the template. Treat the Unraid steps as untested until someone reports them on [#82](https://github.com/aclater/sacdfs/issues/82).
 

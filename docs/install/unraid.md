@@ -24,7 +24,7 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 3. **Add the container.** Docker, **Add Container**, and under **Template** pick `sacdfs` (in the "User templates" group). *(untested)*
 4. **Fill in the form.** Set **SACD images** to your share (for example `/mnt/user/music`). Set **SMB user** and **SMB password**: without them the share is open, read-only, to the whole network. Set **NFS clients** (for example `192.168.1.0/24`) to limit NFS. Leave the rest. *(untested)*
 5. **Apply.** *You should see* a container named `sacdfs` that shows a health status after its start period (up to 5 minutes). *(untested)*
-6. **Stop it cleanly when you need to.** Use the container's Stop (or `docker stop sacdfs`), never a forced kill: the template gives it 20 seconds to unmount. *(untested)*
+6. **Stop it cleanly when you need to.** Use the container's Stop (or `docker stop sacdfs`), never a forced kill: the template gives it 30 seconds to unmount. *(untested)*
 
 ## Check it worked
 

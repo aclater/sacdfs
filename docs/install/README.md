@@ -1,82 +1,69 @@
-# Install guides
+# Install sacdfs
 
-Short guides, one per NAS system or media server: numbered steps to copy, and a check that
-it works. Each says what it was validated on. The full reference, with every setting and the
-reasons behind it, is the [deployment guide](../deployment.md); what each client was tested
-with is in [clients](../clients.md).
+Pick one guide. Answer the questions in order and stop at the first that fits.
+Each guide is one page: follow it from top to bottom.
 
-These guides were written against **sacdfs 0.4.0**, and each says what it was run on. For
-0.5.0, the guides for Synology, QNAP, ASUSTOR, TerraMaster and UGREEN, and the Docker and
-Podman guide, were run again, step by step as written, with the 0.5.0
-release (the Docker and Podman guide with an image built from `main` with the same code). The NAS
-systems ran in VMs, not on the vendors' hardware. Storage setup and app stores weren't
-exercised there. The TrueNAS SCALE and OpenMediaVault guides were not run again for 0.5.0.
-Image tags still name the release each guide was first checked with. The Compose file for every NAS
-container manager, [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml), names 0.5.0; each NAS
-guide says where it was run (Docker Compose on ASUSTOR ADM and TerraMaster TOS, both in a VM, and on Podman; the other vendors'
-container managers are untested). See [docker-podman.md](docker-podman.md#compose). A guide marked
-*not validated* has no tested steps yet: nobody has run sacdfs there and reported back.
-Reports are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
-Have a NAS? See [beta testing](../beta-testing.md) for how to report.
+## 1. What will sacdfs run on?
 
-**New to SSH and Linux?** [The NAS steps](nas-binary.md) go one command at a time, each with
-what you should see and what to do when something else appears. They end with
-[starting sacdfs at boot and stopping it safely](nas-binary.md#start-at-boot-and-stop-safely)
-(a systemd unit, or the `sacdfs-ctl` script where there is no systemd); never stop it with `kill -9`.
+sacdfs runs next to your SACD images (`.iso` files), normally on the NAS that holds them.
 
-## Updating sacdfs
+**Is it one of these NAS systems?**
 
-A new image, a new binary or a restart of the container interrupts SMB and NFS for about 5 to 8 s.
-Linux and Windows clients carry on by themselves (a file open during the restart can fail on
-Windows). **A macOS client drops the SMB mount and has to mount it again**, after every upgrade or
-restart ([SMB and restarts](../deployment.md#smb-and-restarts); macOS results are from VMs on Apple
-hardware, with no later re-test). Stop it cleanly first: never `kill -9`.
-
-## Pick your setup
-
-**1. Where sacdfs runs** (next to the SACD images, normally on the NAS):
-
-| Your system | Guide | Status |
-|---|---|---|
-| TrueNAS SCALE 24.10 or later | [truenas-scale.md](truenas-scale.md) | Validated (TrueNAS SCALE 25.10, on 0.4.0; not run again for 0.5.0) |
-| Any Linux host with Docker or Podman | [docker-podman.md](docker-podman.md) | Validated (Fedora 44 and 45, Podman) |
-| OpenMediaVault 8 | [openmediavault.md](openmediavault.md) | Validated (OMV 8.6 on Debian 13, Compose plugin, on 0.4.0; not run again for 0.5.0) |
-| Unraid | [unraid.md](unraid.md), [template](store-apps.md#unraid-install-from-the-template-file) | Not validated (template started on Podman only) |
-| Synology DSM | [synology.md](synology.md) | Binary checked in a VM (DSM 7.4.1; binary, NFSv3, start and stop with Task Scheduler tasks). Container Manager untested |
-| QNAP QTS / QuTS hero | [qnap.md](qnap.md) | Binary checked in a VM (QuTScloud 5.2.9), from 0.5.0; started at boot by `autorun.sh` (on a hand-made volume: QuTScloud wouldn't make a pool). Container Station installed from the App Center and the Compose file run on it (command line) |
-| UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) | Not validated (a kernel check only) |
-| ASUSTOR ADM | [asustor.md](asustor.md) | Checked in a VM (ADM 5.1.4; binary, start at boot and stop with `init.d`, and Docker Compose) |
-| TerraMaster TOS | [terramaster.md](terramaster.md) | Checked in a VM (TOS 7.0; binary, NFS, start at boot, and Docker Compose after a Storage Manager volume) |
-| Netgear ReadyNAS OS 6 | [readynas.md](readynas.md) | Binary and start at boot checked in a VM (OS 6.10.10). Container untested |
-
-Unraid and TrueNAS app-store entries (an Unraid template file you can load today; a TrueNAS
-catalog app that is not listed yet): [store-apps.md](store-apps.md).
-
-Without a container, on any Linux host (x86_64, or aarch64 from the first release after 0.4.1, glibc 2.17 or later; as a user other than root, FUSE 3's `fusermount3`,
-package `fuse3`, or from 0.5.0 FUSE 2's `fusermount`; root needs neither):
-a [release binary](binary.md#binaries) ([step by step on a NAS](nas-binary.md)), or, from 0.4.0, `cargo install --locked sacdfs`
-from crates.io (Rust 1.85 or later; tested on 0.4.0 in a clean Rust container). The [user guide](../user-guide.md) covers running it.
-
-**2. How other computers reach it:**
-
-| Client | Guide |
+| Your NAS | Guide |
 |---|---|
-| Linux: NFS or SMB, by hand, in `/etc/fstab`, mounted by systemd | [linux-client.md](linux-client.md) |
-| macOS, Windows | [deployment guide](../deployment.md#mounting-the-shares-on-clients) |
+| Synology DSM | [synology.md](synology.md) |
+| QNAP QTS or QuTS hero | [qnap.md](qnap.md) |
+| ASUSTOR ADM | [asustor.md](asustor.md) |
+| TerraMaster TOS | [terramaster.md](terramaster.md) |
+| UGREEN UGOS Pro | [ugreen-ugos.md](ugreen-ugos.md) |
+| Netgear ReadyNAS OS 6 | [readynas.md](readynas.md) |
+| TrueNAS SCALE | [truenas-scale.md](truenas-scale.md) |
+| Unraid | [unraid.md](unraid.md) |
+| OpenMediaVault | [openmediavault.md](openmediavault.md) |
 
-**3. Your music server:**
+**Not on the list, but the computer runs Linux and has Docker or Podman?**
+Use [docker-podman.md](docker-podman.md). It is the simplest route, and it shares the
+discs over SMB and NFS for you.
 
-| Server | Guide | Tested with |
-|---|---|---|
-| Roon | [roon.md](roon.md) | Roon 2.x, sacdfs 0.2.0 |
-| Plex | [plex.md](plex.md) | Plex Media Server 1.43.5, sacdfs 0.2.0-rc.4 |
-| Jellyfin | [jellyfin.md](jellyfin.md) | Jellyfin 12.4.0, sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1) |
-| Navidrome | [navidrome.md](navidrome.md) | Navidrome 0.64.2, sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1) |
-| Lyrion (Logitech Media Server) | [lms.md](lms.md) | Lyrion 9.1.1, sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1) |
-| MPD (and moOde, Volumio) | [mpd.md](mpd.md) | MPD 0.24.15, sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1) |
+**Linux without a container (a PC, a Raspberry Pi, a NAS with only SSH)?**
+Use [binary.md](binary.md) to run sacdfs on your own computer, or
+[nas-binary.md](nas-binary.md) to run it on a NAS you reach over SSH.
 
-The music-server tests ran on the sacdfs versions named. The Jellyfin, Navidrome, Lyrion and
-MPD tests ran again on 0.4.0-rc.2 at the default cache, 32 MiB since 0.4.0
-([#150](https://github.com/aclater/sacdfs/issues/150)). The Roon and Plex tests are older than
-that default; it was re-checked on 0.4.0: a scan that reads the start and end of every file
-peaked at 48 MiB of memory.
+## 2. How do other computers reach the discs?
+
+sacdfs shares them over SMB (Windows, macOS, Linux) and NFS (Linux). The guide in step 1 sets
+that up. On the computer you listen at:
+
+- **Linux:** [linux-client.md](linux-client.md).
+- **Windows or macOS:** [the deployment guide](../deployment.md#mounting-the-shares-on-clients).
+
+## 3. Which player or music server?
+
+| Player | Guide |
+|---|---|
+| Roon | [roon.md](roon.md) |
+| Plex | [plex.md](plex.md) |
+| Jellyfin | [jellyfin.md](jellyfin.md) |
+| Navidrome | [navidrome.md](navidrome.md) |
+| Lyrion (Logitech Media Server) | [lms.md](lms.md) |
+| MPD, moOde or Volumio | [mpd.md](mpd.md) |
+| Something else | [clients](../clients.md) lists what was tried |
+
+## Before you upgrade
+
+A new image, a new binary or a restart interrupts SMB and NFS for about 5 to 8 seconds.
+Linux and Windows clients carry on by themselves. **A macOS client loses the SMB share and
+must mount it again** after every upgrade or restart. Never stop sacdfs with `kill -9`: use the
+stop step in your guide ([why](nas-binary.md#start-at-boot-and-stop-safely)).
+
+## Details
+
+- **Where each guide was checked** is at the end of that guide, under Details. Guides say
+  "not tested" for steps that were not run on the release they name.
+- **Every setting and the reasons for it:** [deployment guide](../deployment.md). **What each
+  player was tested with:** [clients](../clients.md).
+- **Without a container, on any Linux host:** a [release binary](binary.md#binaries), or
+  `cargo install --locked sacdfs` ([from source](binary.md#from-source)).
+- **Unraid and TrueNAS app-store entries:** [store-apps.md](store-apps.md).
+- **Have a NAS we have not run on?** Reports from real hardware are welcome on
+  [#82](https://github.com/aclater/sacdfs/issues/82); see [beta testing](../beta-testing.md).
