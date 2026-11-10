@@ -59,6 +59,17 @@ All notable changes to sacdfs are recorded here. The format follows
 - **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
 - **NAS install guides rewritten (part of #310).** Each vendor guide (Synology, QNAP, ASUSTOR, TerraMaster, UGREEN, ReadyNAS) is one page with one path, the 0.6.0 release archive and the vendor's own start-at-boot method, followed as written on 0.6.0 in the NAS VMs; TrueNAS SCALE, Unraid and OpenMediaVault keep their facts in the same layout, marked untested on 0.6.0. `nas-binary.md` is the short generic guide; test history, options and the longer troubleshooting moved to each page's Details. Found while checking: TOS has no `/usr/local/bin`, so the unit steps make it.
 ### Fixed
+- **An unmount from outside no longer ends sacdfs with status 1 (#322).** When the mount was
+  unmounted or detached from outside (`fusermount3 -u`, `fusermount3 -u -z`, `umount -l`) while a
+  request was still queued, typically the release of a file just closed, the kernel could end the
+  connection as aborted instead of unmounted, and sacdfs exited with "Software caused connection
+  abort (os error 103)" and status 1: about one detach in ten when the last open file was closed
+  right after it. Under load a plain unmount right after a close can meet the same race, the
+  likely cause of the restart test's rare failure. sacdfs now takes that error as the end of the
+  connection, as it takes the usual one (before, only after its own detach on a signal): the
+  kernel returns it for no other reason, as sacdfs does not ask for `FUSE_ABORT_ERROR`. A new
+  integration test detaches 40 mounts from outside with a file open; without the fix it fails
+  within the first five. The restart test now prints the new sacdfs's log when it fails.
 - **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
   open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
   for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that
