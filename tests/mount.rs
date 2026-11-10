@@ -691,7 +691,7 @@ fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
 /// order certain: unmounted, new mount, then the old one exits.
 #[test]
 fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
-    common::skip_without_fuse!();
+    common::skip_without_fuse!(exclusive);
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     let mut old = Mount::foreground(&image, &[]);
     let at = old.path();
@@ -728,7 +728,7 @@ fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
 /// service manager sends on stop. Several rounds: the number is reused in most, not all.
 #[test]
 fn a_late_signal_leaves_the_next_mount_alone() {
-    common::skip_without_fuse!();
+    common::skip_without_fuse!(exclusive);
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     for round in 0..6 {
         let mut old = Mount::foreground(&image, &[]);

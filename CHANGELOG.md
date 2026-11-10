@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
+  open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
+  for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that
+  spawned it, blocked in `exec`. The two tests that stop a daemon now run exclusive: every FUSE
+  test holds a shared lock for its whole run (`common::skip_without_fuse!`), and they hold it
+  exclusive (`skip_without_fuse!(exclusive)`).
+
 ## [0.6.0] - 2026-11-10
 
 Tested as release candidate 0.6.0-rc.1 (2026-11-10). The final version carries only the version
