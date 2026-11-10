@@ -2,7 +2,7 @@
 
 sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that any player can read. This page installs it from the release file and starts it by itself whenever the NAS starts. About 15 minutes.
 
-Checked on 0.6.0 on TOS 7.0.1422 (in a VM, not on TerraMaster hardware). Steps marked *(untested)* were not run.
+Checked on 0.6.0 on TOS 7.0 (in a VM, not on TerraMaster hardware). Steps marked *(untested)* were not run.
 
 ## What you need
 
@@ -106,7 +106,7 @@ ls /Volume1/sacd
 
 ### What was checked
 
-Checked on TOS 7.0.1422 in a VM, not on TerraMaster hardware. For the release binary, storage setup (a pool and volume made with TOS's own Storage Manager) and the App Center weren't exercised; the data volume was mounted before TOS started, not by TOS's storage manager.
+Checked on TOS 7.0 in a VM, not on TerraMaster hardware. For the release binary, storage setup (a pool and volume made with TOS's own Storage Manager) and the App Center weren't exercised; the data volume was mounted before TOS started, not by TOS's storage manager.
 
 *0.6.0 run, from a clean system:* steps 1 (the `id -u` check only) to 9 as written, with the published 0.6.0 archive, using three images of the conformance corpus (22 DSF and WAV files). The checksum was `OK`, `--version` printed `sacdfs 0.6.0`, `systemctl is-active` printed `active`, and all 22 files hashed identically to a reference read by a Linux host with the same release. After `reboot` the service was `active` when the VM was 1 minute up, with the same 22 files identical; `systemctl stop` while idle took under 0.1 s and left no mount. This run found that `/usr/local/bin` doesn't exist on TOS, which is why step 6 has `mkdir -p /usr/local/bin`.
 

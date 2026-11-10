@@ -2,7 +2,7 @@
 
 sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that any player can read. This page installs it from the release file and starts it by itself whenever the NAS starts. About 15 minutes.
 
-**Not tested on UGOS Pro.** Checked on 0.6.0 on Debian 12 with UGREEN's 6.18 kernel (in a VM, not UGOS Pro and not UGREEN hardware). Steps marked *(untested)* were not run.
+**Not tested on UGOS Pro.** Checked on 0.6.0 on a Linux system with UGREEN's kernel (in a VM, not UGOS Pro and not UGREEN hardware). Steps marked *(untested)* were not run.
 
 ## What you need
 
@@ -106,7 +106,7 @@ ls /volume1/sacd
 
 ### What was checked
 
-**Not checked on UGOS Pro itself.** The check ran on Debian 12 with UGREEN's 6.18.15 kernel and packages in a VM, without the UGOS apps, web interface or Docker. It says that UGREEN's kernel runs sacdfs; it says nothing about UGOS Pro's own tools. Nobody has run sacdfs on UGOS Pro and reported back.
+**Not checked on UGOS Pro itself.** The check ran on a Linux system with UGREEN's kernel and packages in a VM, without the UGOS apps, web interface or Docker. It says that UGREEN's kernel runs sacdfs; it says nothing about UGOS Pro's own tools. Nobody has run sacdfs on UGOS Pro and reported back.
 
 *0.6.0 run:* steps 1 (the `id -u` check only) to 8 as written on that Debian system, then step 9 by shutting the VM down and starting it again, using three images of the conformance corpus (22 DSF and WAV files). The checksum was `OK`, `--version` printed `sacdfs 0.6.0`, `systemctl is-active` printed `active`, and all 22 files hashed identically to a reference read by a Linux host with the same release. After the restart the service was `active` with the same 22 files identical. (In the VM a plain `reboot` didn't mount the data disk again, so the unit started with no images folder and stopped; a real NAS mounts its volume at start-up. Whether UGOS Pro's volume is ready before the unit starts wasn't checked.)
 

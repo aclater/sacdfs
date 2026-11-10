@@ -2,7 +2,7 @@
 
 sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that any player can read. This page installs the release file by hand on a NAS that has no guide of its own, or on a Linux box you reach over SSH. If your NAS has a guide ([Synology](synology.md), [QNAP](qnap.md), [ASUSTOR](asustor.md), [TerraMaster](terramaster.md), [UGREEN](ugreen-ugos.md), [ReadyNAS](readynas.md)), use that: it also starts sacdfs at boot. With a container app instead, see [docker-podman.md](docker-podman.md). About 10 minutes.
 
-Checked on 0.6.0 on Debian 12 with UGREEN's kernel (in a VM, not on a vendor's hardware): steps 1 to 7 and 9, and the systemd lines of [Start at boot and stop safely](#start-at-boot-and-stop-safely). Step 8 (start at boot) is checked per system in the guides listed above, not here. Steps marked *(untested)* were not run.
+Checked on 0.6.0 on a Linux system with UGREEN's kernel (in a VM, not on a vendor's hardware): steps 1 to 7 and 9, and the systemd lines of [Start at boot and stop safely](#start-at-boot-and-stop-safely). Step 8 (start at boot) is checked per system in the guides listed above, not here. Steps marked *(untested)* were not run.
 
 ## What you need
 
@@ -97,9 +97,9 @@ ls /volume1/sacd
 
 ### What was checked
 
-*This page, 0.6.0:* steps 1 to 7 and 9 as written (`/volume1`, root over SSH, the release downloaded from GitHub) on Debian 12 with UGREEN's kernel in a VM: checksum `OK`, `sacdfs 0.6.0`, `sacdfs-ctl status` printed `running` (exit 0) and, after `stop`, `not running` (exit 3), and all 22 files of three conformance-corpus images were identical to a reference. Then the systemd lines in [Start at boot and stop safely](#start-at-boot-and-stop-safely) as written: `active`, same 22 files. Not run: step 8 as such, and the page on any system but that one.
+*This page, 0.6.0:* steps 1 to 7 and 9 as written (`/volume1`, root over SSH, the release downloaded from GitHub) on a Linux system with UGREEN's kernel in a VM: checksum `OK`, `sacdfs 0.6.0`, `sacdfs-ctl status` printed `running` (exit 0) and, after `stop`, `not running` (exit 3), and all 22 files of three conformance-corpus images were identical to a reference. Then the systemd lines in [Start at boot and stop safely](#start-at-boot-and-stop-safely) as written: `active`, same 22 files. Not run: step 8 as such, and the page on any system but that one.
 
-*Each guide* was followed as written, as root over SSH, from a clean system, with the 0.6.0 release downloaded from GitHub, in a VM, not on the vendor's hardware; storage setup and app stores weren't exercised. The results for each system are in its guide: [Synology DSM 7.4.1](synology.md#what-was-checked), [QNAP QuTScloud 5.2.9](qnap.md#what-was-checked), [ASUSTOR ADM 5.1.4](asustor.md#what-was-checked), [TerraMaster TOS 7.0](terramaster.md#what-was-checked), [UGREEN's Debian 12 kernel (not UGOS itself)](ugreen-ugos.md#what-was-checked), [ReadyNAS OS 6.10.10](readynas.md#what-was-checked).
+*Each guide* was followed as written, as root over SSH, from a clean system, with the 0.6.0 release downloaded from GitHub, in a VM, not on the vendor's hardware; storage setup and app stores weren't exercised. The results for each system are in its guide: [Synology DSM 7.4.1](synology.md#what-was-checked), [QNAP QuTScloud 5.2.9](qnap.md#what-was-checked), [ASUSTOR ADM 5.1.4](asustor.md#what-was-checked), [TerraMaster TOS 7.0](terramaster.md#what-was-checked), [UGREEN's kernel (not UGOS itself)](ugreen-ugos.md#what-was-checked), [ReadyNAS OS 6.10.10](readynas.md#what-was-checked).
 
 Earlier, with 0.5.0 on the first five, the checksum was `OK`, `--version` printed `sacdfs 0.5.0`, and all 22 DSF and WAV files of two synthetic test images read back identical to a reference; only the path changed per system, and Synology also needed `modprobe fuse`. 0.5.0 is the first release that runs on QNAP's older system (glibc 2.17 and up; [binary.md](binary.md#binaries)); on Synology, ASUSTOR and TerraMaster 0.4.1 also works.
 
@@ -151,7 +151,7 @@ Day to day: `systemctl stop sacdfs` (unmounts, waits up to 30 s), `systemctl res
 | QNAP | `autorun.sh`, once "run user defined processes" is on | [qnap.md](qnap.md) |
 | ASUSTOR ADM | `S99sacdfs` and `K01sacdfs` in `/usr/local/etc/init.d` | [asustor.md](asustor.md) |
 
-What was checked for the unit and the script (0.5.0 binary, in VMs): the unit on TerraMaster TOS, UGREEN's Debian 12 kernel and ReadyNAS OS 6 read all 22 files of two test images identically; start under 1 s (ReadyNAS 15.3 s the first time); idle stop under 0.1 s; with a file held open the stop took 30.1 to 30.3 s, then systemd killed sacdfs and no mount was left; after `kill -9` the unit had sacdfs running again 7 s later; a dead mount was cleared at the next start. `sacdfs-ctl` on ADM, QuTScloud, DSM, ReadyNAS and a Debian 8 container: files identical; start and idle stop 1 s; held-open stop 31 to 32 s, then forced, no mount left; start after `kill -9` cleared the leftover mount; exit codes 0, 1 and 3 as in the table. Not checked: the unit on systemd 215 (the oldest checked was 230).
+What was checked for the unit and the script (0.5.0 binary, in VMs): the unit on TerraMaster TOS, UGREEN's kernel and ReadyNAS OS 6 read all 22 files of two test images identically; start under 1 s (ReadyNAS 15.3 s the first time); idle stop under 0.1 s; with a file held open the stop took 30.1 to 30.3 s, then systemd killed sacdfs and no mount was left; after `kill -9` the unit had sacdfs running again 7 s later; a dead mount was cleared at the next start. `sacdfs-ctl` on ADM, QuTScloud, DSM, ReadyNAS and a Debian 8 container: files identical; start and idle stop 1 s; held-open stop 31 to 32 s, then forced, no mount left; start after `kill -9` cleared the leftover mount; exit codes 0, 1 and 3 as in the table. Not checked: the unit on systemd 215 (the oldest checked was 230).
 
 ### More problems
 
