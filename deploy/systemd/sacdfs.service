@@ -18,8 +18,9 @@ ExecStartPre=-/bin/sh -c '[ -e /dev/fuse ] || /sbin/modprobe fuse'
 ExecStartPre=-/bin/mkdir -p ${SACDFS_MOUNT}
 ExecStart=/usr/local/bin/sacdfs -f $SACDFS_OPTIONS ${SACDFS_IMAGES} ${SACDFS_MOUNT}
 # Stop sends SIGTERM. sacdfs unmounts and exits; if a file is still open it detaches the
-# mount and exits when the last file closes. After 30 s systemd sends SIGKILL, which is
-# safe because the next line then clears any mount left over.
+# mount and exits when the last file closes, or after --stop-grace seconds (10 by default,
+# #276). Keep TimeoutStopSec above the grace: after it systemd sends SIGKILL, which is safe
+# because the next line then clears any mount left over.
 TimeoutStopSec=30
 ExecStopPost=-/bin/umount -l ${SACDFS_MOUNT}
 Restart=on-failure

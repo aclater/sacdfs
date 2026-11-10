@@ -29,10 +29,10 @@ sudo podman run -d --name sacdfs --restart unless-stopped \
   -p 445:445 -p 2049:2049 \
   -v /srv/music:/images:ro \
   -v sacdfs-cache:/cache \
-  ghcr.io/aclater/sacdfs:0.5.0
+  ghcr.io/aclater/sacdfs:0.6.0
 ```
 
-The [Docker and Podman guide](docs/install/docker-podman.md) explains each line and how to
+The [Docker and Podman guide](docs/install/docker-podman.md) goes step by step, and tells you how to
 check it works.
 
 **Directly on Linux:** build it (Rust 1.85 or later; the [binary guide](docs/install/binary.md)
@@ -57,7 +57,7 @@ fusermount3 -u ~/sacd
 and others), we'd like your report from real hardware, whether it worked or not:
 [beta testing](docs/beta-testing.md).
 
-- [Install guides](docs/install/README.md): TrueNAS SCALE, OpenMediaVault, Unraid,
+- [Install guides](docs/install/README.md): pick yours in two or three questions: TrueNAS SCALE, OpenMediaVault, Unraid,
   Synology, QNAP, UGREEN, Docker/Podman, and Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD.
 - [Release binary, crates.io or source](docs/install/binary.md).
 - [Clients](docs/clients.md): what sacdfs has been tested with, and how to set each one up.

@@ -224,6 +224,12 @@ if !handles_available(&m.at, &files[0]) {
 It prints `SKIPPED binary::test: reason` directly to stderr, past libtest's capture, so every
 `cargo test` shows it without `--nocapture`. `#[ignore]` tests print their reason themselves.
 
+The same macro orders the FUSE tests of a binary (#305): it holds a shared lock until the test
+ends, and `common::skip_without_fuse!(exclusive)` holds it exclusive, with no other FUSE test in
+progress. A test that stops a daemon (`SIGSTOP`) needs the second form: a child forked by any other
+test thread inherits that thread's open files on a FUSE mount until it execs, and its exec then
+blocks on closing a file whose daemon is stopped.
+
 The `tests`, `tests (arm64)`, `coverage`, `nfs export` and `file handles (arm64)` jobs save cargo's output and then run
 `scripts/check_skips.py`, as a step of the same job. It writes the job summary: how many tests ran
 (libtest's `passed` less the guards' tests), how many were skipped by a guard, how many were
