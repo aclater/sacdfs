@@ -59,7 +59,8 @@ macro_rules! skip {
 /// on that mount, or is opening one, blocks in `exec`, and so does the thread that spawned it.
 /// Every FUSE test therefore runs shared (many at once), and a test that stops a daemon runs
 /// exclusive, with no other FUSE test in progress: nothing else has a descriptor on its mount
-/// to hand to a child.
+/// to hand to a child. A test that needs no FUSE but spawns processes holds it shared too
+/// ([`spawns_children!`], #335): its children are the ones that would inherit the descriptor.
 pub static FUSE_TESTS: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 /// The shared hold of [`FUSE_TESTS`], taken by [`skip_without_fuse!`] for the whole test.
@@ -72,6 +73,15 @@ pub fn fuse_exclusive() -> std::sync::RwLockWriteGuard<'static, ()> {
     FUSE_TESTS.write().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Holds [`FUSE_TESTS`] shared until the enclosing test ends, for a test that spawns processes
+/// without needing FUSE (#335). Without it, such a test forked while a FUSE test read a file
+/// on a mount whose daemon it then stopped: the child inherited the descriptor, blocked in
+/// `exec` closing it, and kept the mount busy, so that the stopping test failed to unmount it.
+macro_rules! spawns_children {
+    () => {
+        let _fuse_tests = $crate::common::fuse_shared();
+    };
+}
 /// Skips the enclosing test if FUSE is missing, or fails it under `SACDFS_FUSE_TESTS=1`; else
 /// holds [`FUSE_TESTS`] until the test ends, shared, or exclusive for `skip_without_fuse!(exclusive)`.
 macro_rules! skip_without_fuse {
@@ -188,7 +198,7 @@ macro_rules! real_images_or_skip {
 }
 
 #[allow(unused_imports)] // not every test file uses each of them
-pub(crate) use {real_images_or_skip, skip, skip_without_fuse, test_name};
+pub(crate) use {real_images_or_skip, skip, skip_without_fuse, spawns_children, test_name};
 
 /// Unmounts the FUSE mount at `mountpoint` with `fusermount3 -u`, retrying for up to
 /// 20 s. Right after files on the mount are closed, the kernel can hold it busy for a
