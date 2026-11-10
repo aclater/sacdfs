@@ -59,6 +59,16 @@ All notable changes to sacdfs are recorded here. The format follows
 - **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
 - **NAS install guides rewritten (part of #310).** Each vendor guide (Synology, QNAP, ASUSTOR, TerraMaster, UGREEN, ReadyNAS) is one page with one path, the 0.6.0 release archive and the vendor's own start-at-boot method, followed as written on 0.6.0 in the NAS VMs; TrueNAS SCALE, Unraid and OpenMediaVault keep their facts in the same layout, marked untested on 0.6.0. `nas-binary.md` is the short generic guide; test history, options and the longer troubleshooting moved to each page's Details. Found while checking: TOS has no `/usr/local/bin`, so the unit steps make it.
 ### Fixed
+- **Mount tests: a failing stop test no longer hangs the run (#335).** Tests only. The two tests
+  that stop a daemon (`SIGSTOP`) now hold it in a guard that, when the test fails, resumes it
+  (`SIGCONT`), stops and reaps it, and prints its debug log: a failed assertion no longer leaves
+  a stopped daemon that blocks the rest of the run. The cause of those failures under load was
+  the #305 race through tests outside the lock: `bad_arguments_fail_cleanly`,
+  `start_up_messages_name_the_fix` and `a_source_or_cache_under_the_mount_point_is_refused`
+  need no FUSE but spawn sacdfs, so they did not take the shared lock, and a child they forked
+  could inherit a stop test's file on the mount it was about to stop. The child then blocked in
+  `exec`, the mount stayed busy, and the stop test failed to unmount it. They now hold the lock
+  shared (`common::spawns_children!`).
 - **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
   open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
   for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that
