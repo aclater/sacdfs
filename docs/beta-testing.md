@@ -7,8 +7,8 @@ cannot tell us what real hardware does. A report from your NAS can.
 
 ## What to do
 
-1. **Pick your NAS in the [install guides](install/README.md#pick-your-setup)** and follow its guide.
-   A guide marked "Not validated" is exactly where we most need you.
+1. **Pick your NAS in the [install guides](install/README.md)** and follow its guide.
+   A guide that says "Not tested" is exactly where we most need you.
 2. **Try it with your player or server**, if you have one: Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD
    or just a file manager. See whether the discs show up, play, and have titles and art.
 3. **Tell us how it went** with the
