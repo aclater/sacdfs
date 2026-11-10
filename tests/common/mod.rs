@@ -52,12 +52,40 @@ macro_rules! skip {
     }};
 }
 
-/// Skips the enclosing test if FUSE is missing, or fails it under `SACDFS_FUSE_TESTS=1`.
+/// Orders the FUSE tests of one test binary (#305). A forked child holds a copy of every file
+/// descriptor of its parent until it execs, and its exec closes the copies of the close-on-exec
+/// ones. Closing a file on a FUSE mount waits for the mount's daemon to answer `FLUSH`. So when a
+/// test holds a stopped daemon (`SIGSTOP`), a child forked by any test thread that has a file open
+/// on that mount, or is opening one, blocks in `exec`, and so does the thread that spawned it.
+/// Every FUSE test therefore runs shared (many at once), and a test that stops a daemon runs
+/// exclusive, with no other FUSE test in progress: nothing else has a descriptor on its mount
+/// to hand to a child.
+pub static FUSE_TESTS: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// The shared hold of [`FUSE_TESTS`], taken by [`skip_without_fuse!`] for the whole test.
+pub fn fuse_shared() -> std::sync::RwLockReadGuard<'static, ()> {
+    FUSE_TESTS.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The exclusive hold of [`FUSE_TESTS`], for a test that stops a daemon.
+pub fn fuse_exclusive() -> std::sync::RwLockWriteGuard<'static, ()> {
+    FUSE_TESTS.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Skips the enclosing test if FUSE is missing, or fails it under `SACDFS_FUSE_TESTS=1`; else
+/// holds [`FUSE_TESTS`] until the test ends, shared, or exclusive for `skip_without_fuse!(exclusive)`.
 macro_rules! skip_without_fuse {
     () => {
         if !$crate::common::fuse_available() {
             $crate::common::skip!($crate::common::NO_FUSE);
         }
+        let _fuse_tests = $crate::common::fuse_shared();
+    };
+    (exclusive) => {
+        if !$crate::common::fuse_available() {
+            $crate::common::skip!($crate::common::NO_FUSE);
+        }
+        let _fuse_tests = $crate::common::fuse_exclusive();
     };
 }
 
@@ -93,7 +121,49 @@ pub fn real_images() -> Option<(PathBuf, Vec<PathBuf>)> {
     }
     images.sort();
     assert!(!images.is_empty(), "SACDFS_REAL_IMAGES holds no .iso image");
+    // The tests take the sector count from the file's size, so a truncated image agrees with
+    // itself everywhere; the TOC says how far the audio runs (#294).
+    for image in &images {
+        if let Err(why) = check_image_complete(image) {
+            panic!("image {}: {why}", image.display());
+        }
+    }
     Some((dir, images))
+}
+
+/// Whether the image holds everything its TOC points at: each area's TOC copies and its audio,
+/// up to `audio_end_lsn`, lie within the file. A truncated image (a partial copy or download)
+/// fails; the real-disc tests alone would pass it, as the sector count comes from its size (#294).
+pub fn check_image_complete(path: &Path) -> Result<(), String> {
+    let disc = sacdfs::disc::Disc::open_with(path, 1, sacdfs::disc::Tuning::default(), None)
+        .map_err(|e| format!("does not open as an SACD image: {e}"))?;
+    let toc = disc.toc();
+    // An area whose TOC copies lie past the end is dropped when the image opens, so the areas
+    // that remain can all look whole: the master TOC's pointers say which were meant to be there.
+    for slot in scarletbook::Slot::ALL {
+        let p = toc.master.pointer(slot);
+        if p.is_used() {
+            let end = u64::from(p.toc1_lsn.max(p.toc2_lsn)) + u64::from(p.toc_sectors);
+            if end > toc.sectors {
+                return Err(format!(
+                    "truncated: area TOC of slot {slot} ends at sector {end}, the file holds {}",
+                    toc.sectors
+                ));
+            }
+        }
+    }
+    for (i, a) in toc.areas.iter().enumerate() {
+        let toc_end = u64::from(a.toc_lsn) + u64::from(a.toc_sectors);
+        let audio_end = u64::from(a.audio_end_lsn) + 1;
+        if toc_end > toc.sectors || audio_end > toc.sectors {
+            return Err(format!(
+                "truncated: area {i} needs {} sectors, the file holds {}",
+                toc_end.max(audio_end),
+                toc.sectors
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Fails unless every image in `images` is the source of at least one of `served` (the disc paths
