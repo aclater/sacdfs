@@ -74,6 +74,14 @@ panic = "warn"
 [profile.release]
 overflow-checks = true
 
+# scarletbook in one codegen unit (#270). *Why:* split into cargo's default 16, its DST decoder ran
+# about 4 % more cycles than in the library's own builds (instructions within 1 %), and 6-channel
+# DST on one thread read up to 1.24x the library on a NAS-class CPU. In one unit the decoder's
+# cycles match the library's. *Only scarletbook:* one unit for the whole binary decoded no faster
+# and builds slower; fat LTO ran 14 % more instructions and 8 % more cycles, so it isn't used.
+[profile.release.package.scarletbook]
+codegen-units = 1
+
 # DST decoding in unoptimised test builds is slow.
 [profile.test]
 opt-level = 2

@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **DST areas read faster on one thread: scarletbook is built in one codegen unit (#270).** Release
+  builds now compile scarletbook with `codegen-units = 1`. Its DST decoder then runs in as many cycles
+  as in the library's own builds, about 4 % fewer than before. Six-channel DST on one thread went from
+  1.11-1.15× to 0.99× of the library on a NAS-class CPU, which meets the 1.1× target.
+  Audio bytes are unchanged. A clean release build takes about 10 s longer. Details are in
+  docs/performance.md, "One codegen unit for scarletbook".
+
 ## [0.6.0] - 2026-11-10
 
 Tested as release candidate 0.6.0-rc.1 (2026-11-10). The final version carries only the version
