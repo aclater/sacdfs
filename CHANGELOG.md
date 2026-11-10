@@ -24,6 +24,7 @@ All notable changes to sacdfs are recorded here. The format follows
   (what you need, numbered steps, check it worked, three common problems, Details), with the test
   history moved to Details. The NAS and player guides follow in later pull requests.
 - **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
+- **NAS install guides rewritten (part of #310).** Each vendor guide (Synology, QNAP, ASUSTOR, TerraMaster, UGREEN, ReadyNAS) is one page with one path, the 0.6.0 release archive and the vendor's own start-at-boot method, followed as written on 0.6.0 in the NAS VMs; TrueNAS SCALE, Unraid and OpenMediaVault keep their facts in the same layout, marked untested on 0.6.0. `nas-binary.md` is the short generic guide; test history, options and the longer troubleshooting moved to each page's Details. Found while checking: TOS has no `/usr/local/bin`, so the unit steps make it.
 
 ## [0.6.0] - 2026-11-10
 
