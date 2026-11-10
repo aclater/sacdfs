@@ -156,8 +156,10 @@ rootless Podman on a second host (SMB only), and Docker Compose 2.24.7 on ASUSTO
 ### Stopping and restarting
 
 With nothing running in it, `stop` and `restart` take under a second: the entry point stops the servers,
-then sacdfs. Open files over SMB and NFS do not delay it. `stop_grace_period` in the Compose file is 20 s,
-the most the entry point can wait. In 0.5.0 and earlier, a stop within a few seconds of the start
+then sacdfs. Open files over SMB and NFS do not delay it. `stop_grace_period` in the Compose file is 30 s:
+the entry point waits up to 10 s for the servers to let go of the mount, and sacdfs then exits within
+`SACDFS_STOP_GRACE` (10 s) even if a process on the same computer still holds a file open (#276).
+Raise the period if you raise the grace. In 0.5.0 and earlier, a stop within a few seconds of the start
 sometimes took 10 s or more, and Podman, whose default stop timeout is 10 s, killed the container
 (`StopSignal SIGTERM failed to stop container ... resorting to SIGKILL`); the container came back healthy
 either way. The entry point of 0.6.0 no longer waits for a mount that is already gone. Why macOS must

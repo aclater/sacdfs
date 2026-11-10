@@ -34,7 +34,8 @@ use sacdfs::tree::{Output, SourceDir, Tree};
 /// appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN - title.dsf,
 /// with NN - title.wav (24-bit PCM, converted on demand) next to it.
 /// Unmount with `umount MOUNTPOINT` as root, else `fusermount3 -u MOUNTPOINT` (`fusermount -u`
-/// with FUSE 2), or stop sacdfs with SIGINT, SIGTERM or SIGHUP.
+/// with FUSE 2), or stop sacdfs with SIGINT, SIGTERM or SIGHUP (it exits after --stop-grace seconds even if
+/// files are still open).
 ///
 /// `sacdfs verify SOURCE [EXTRACTS]...` checks extracted DSF and DFF files against what
 /// sacdfs serves, before they are deleted: see `sacdfs verify --help`. `sacdfs tags` keeps
@@ -138,6 +139,11 @@ struct Args {
     /// 0 waits for good.
     #[arg(long, default_value_t = sacdfs::watchdog::DEFAULT_TIMEOUT.as_secs(), value_name = "SECS")]
     request_timeout: u64,
+    /// Seconds after SIGINT, SIGTERM or SIGHUP that sacdfs keeps serving files clients still hold
+    /// open before it exits anyway (the mount is detached at once, so nothing new opens); those
+    /// clients then get I/O errors. 0 waits for the last file to close, however long.
+    #[arg(long, default_value_t = DEFAULT_STOP_GRACE, value_name = "SECS")]
+    stop_grace: u64,
     /// Append the log to FILE instead of standard error, at info level unless -v says more.
     /// Without it a background mount logs nowhere, except to the journal under systemd.
     #[arg(long, value_name = "FILE")]
@@ -493,6 +499,8 @@ fn run(args: Args) -> io::Result<()> {
     let mine = own.clone();
     let detached = Arc::new(AtomicBool::new(false));
     let detached_by_signal = detached.clone();
+    let stop_tree = tags_tree.clone();
+    let stop_grace = args.stop_grace;
     std::thread::Builder::new().name("sacdfs-signals".to_owned()).spawn(move || {
         if let Some(sig) = signals.forever().next() {
             // Unmounting goes by path, so only while the mount on top at the path is still
@@ -504,24 +512,51 @@ fn run(args: Args) -> io::Result<()> {
                      over it): not unmounting it; sacdfs stops when its mount is gone",
                     at.display()
                 );
+            } else {
+                log::info!("signal {sig}: unmounting");
+                detached_by_signal.store(true, Ordering::Relaxed);
+                if let Err(e) = unmount(&at) {
+                    // Busy (open files, or an NFS server exporting the mount): detach it, as
+                    // fusermount3 does for users other than root. sacdfs then serves the files
+                    // still open, for the grace period at most (#276).
+                    if !mine.is_on_top(&at) {
+                        log::warn!("unmount: {e}; {} is no longer this mount: not detaching", at.display());
+                    } else {
+                        match lazy_unmount(&at) {
+                            Ok(()) => log::warn!("unmount: {e}; detached instead: files still open"),
+                            Err(e2) => log::error!("unmount: {e}; detaching: {e2}"),
+                        }
+                    }
+                }
+            }
+            if stop_grace == 0 {
                 return;
             }
-            log::info!("signal {sig}: unmounting");
-            detached_by_signal.store(true, Ordering::Relaxed);
-            if let Err(e) = unmount(&at) {
-                // Busy (open files, or an NFS server exporting the mount): detach it, as
-                // fusermount3 does for users other than root. sacdfs then serves the files
-                // still open and exits when the last is closed.
-                if !mine.is_on_top(&at) {
-                    log::warn!("unmount: {e}; {} is no longer this mount: not detaching it", at.display());
-                    return;
+            // Past the grace period, exit even if clients still hold files open (#276): the
+            // kernel then fails their reads. Only once the mount is gone from every place
+            // this process can see it: exiting with it still mounted would leave it dead
+            // ("Transport endpoint is not connected").
+            std::thread::sleep(Duration::from_secs(stop_grace));
+            if mine.mounted_anywhere() == Some(true) && mine.is_on_top(&at) {
+                let _ = lazy_unmount(&at);
+            }
+            match mine.mounted_anywhere() {
+                Some(false) => {
+                    log::warn!(
+                        "{stop_grace} s after the signal files are still open: exiting; \
+                         their clients get I/O errors"
+                    );
+                    stop_tree.save_tag_watch();
+                    if let Some(cache) = index_cache::global() {
+                        let _ = cache.flush();
+                    }
+                    std::process::exit(0);
                 }
-                match lazy_unmount(&at) {
-                    Ok(()) => log::warn!(
-                        "unmount: {e}; detached instead: sacdfs stops when its open files are closed"
-                    ),
-                    Err(e2) => log::error!("unmount: {e}; detaching: {e2}"),
-                }
+                Some(true) => log::error!(
+                    "{stop_grace} s after the signal the mount is still there and cannot be detached: \
+                     not exiting, as that would leave a dead mount; unmount it by hand"
+                ),
+                None => log::error!("cannot read the mount table: not exiting after the grace period"),
             }
         }
     })?;
@@ -608,6 +643,10 @@ fn run(args: Args) -> io::Result<()> {
         r => r,
     }
 }
+
+/// The default of `--stop-grace`, in seconds. Shorter than every stop timeout shipped in
+/// `deploy/` (systemd 30 s, `sacdfs-ctl` 30 s, the container's 30 s less its servers' 10 s).
+const DEFAULT_STOP_GRACE: u64 = 10;
 
 /// How often the persistent seek index is saved, if it changed.
 const FLUSH_EVERY: Duration = Duration::from_secs(30);
@@ -969,6 +1008,17 @@ impl OwnMount {
     /// connection checked after: up then, the number read was this mount's.
     fn is_on_top(&self, at: &Path) -> bool {
         self.dev.is_some() && top_mount_device(at) == self.dev && fuse_connected(&self.conn)
+    }
+}
+
+impl OwnMount {
+    /// Whether this mount is still in the mount table, under any path (one mounted over it
+    /// hides it, and it is still there). `None` if the table cannot be read or the device
+    /// number is not known. A mount detached from the namespace is gone from it.
+    fn mounted_anywhere(&self) -> Option<bool> {
+        let dev = self.dev.as_deref()?;
+        let info = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+        Some(info.lines().any(|l| l.split(' ').nth(2) == Some(dev)))
     }
 }
 
