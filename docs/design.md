@@ -1299,7 +1299,13 @@ decoding them twice.
   Bounded in bytes, so that six-channel files at 352.8 kHz don't take 50 MB per reader.
 - **A player goes first (#230).** A reader that, since it last jumped, has read 4 MiB at more
   than 1.5 times the file's byte rate reads for *throughput*; any other that has been reading
-  for 0.5 s is a *player*. While a player is active, readers for throughput give up the
+  for 0.5 s is a *player*. A jump here is a read more than 64 MiB from the furthest byte read
+  so far, and the pace counts the bytes read, not how far the reader got (#271). *Why 64 MiB:*
+  Samba serves the Linux kernel client's 4 MiB reads concurrently, so a straight copy over SMB
+  reaches sacdfs up to about 20 MiB out of order. Measured against the sequential gaps below,
+  such a copy kept starting its pace again, counted as a player half the time, lost its long
+  read-ahead window and was 8 to 11 % slower than in 0.4.1. *Why counting bytes:* a player that
+  seeks forward less than 64 MiB has not read what it skipped, so its pace stays its own. While a player is active, readers for throughput give up the
   frames they have passed (they go first from the cache, the oldest first, all but the last
   1 MiB), share a quarter of the cache whatever that leaves them (at least 16 frames), and
   read ahead in slices of 8 frames per decoder thread, waiting up to 50 ms before each for

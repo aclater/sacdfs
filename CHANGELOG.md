@@ -58,6 +58,18 @@ All notable changes to sacdfs are recorded here. The format follows
   `dir_cache_off=yes` in `nsmb.conf` fixed it on macOS 27.2 in a VM. `docs/deployment.md` (macOS)
   says so. No code or Samba setting changed. Checked on macOS in a VM, not on Apple hardware.
 
+### Fixed
+- **WAV copies through the Linux kernel SMB client are about as fast as in 0.4.1 again (#271).**
+  Since 0.5.0 (#252, the player-first rules of #230), a one-reader copy of WAV files over SMB was
+  8 to 11 % slower than in 0.4.1. Samba serves the kernel client's 4 MiB reads concurrently, so
+  they reach sacdfs up to about 20 MiB out of order; each of those counted as a jump, the reader's
+  pace started again, and the copy kept switching between reading for throughput and playing,
+  losing its long read-ahead window. A jump is now a read more than 64 MiB from where the reader
+  got to, and the pace counts the bytes read. Stereo WAV over SMB: 0.6.0 24.91 s, now 22.28 s
+  (0.4.1: 23.02 s); six channels 83.95 → 78.42 s (0.4.1: 75.21 s). DSF over SMB had not slowed
+  down and gets 3 to 4 % faster. Local reads were not affected. Audio bytes are unchanged
+  ([performance](docs/performance.md#wav-copies-over-smb-271)).
+
 ## [0.6.0] - 2026-11-10
 
 Tested as release candidate 0.6.0-rc.1 (2026-11-10). The final version carries only the version
