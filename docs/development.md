@@ -284,9 +284,15 @@ A run that looked at nothing fails: a directory that doesn't exist or holds no i
 that doesn't open, has no area, or serves no file, each fail the run, because the tree and
 `check_image` drop such images silently. So don't put non-SACD images in `DIR`.
 
-The tests check that sacdfs agrees with itself and with the library on the image as it is. A truncated
-image is not caught: the sector count comes from the file's size, so the audio area is cut
-short and every comparison still agrees. A checksum against the source checks image integrity.
+The tests check that sacdfs agrees with itself and with the library on the image as it is, so they
+would pass a truncated image: the sector count comes from the file's size, and the audio area is cut
+short everywhere alike. Before any test runs, every image is therefore checked against its own TOC
+(#294): each area's TOC copies and its audio, up to the last audio sector, must lie within the file.
+An image cut short fails the run ("truncated: area ... needs N sectors, the file holds M"), and
+so does one cut through its master TOC (it no longer opens). The check catches a copy that stops in
+or before the audio area. It cannot see a corrupt image of the right size: for that, compare a
+checksum against the source. `tests/image_complete.rs` runs the check on a corpus image and on
+truncated copies of it, in CI.
 
 The WAV test dominates the time: 6 images (about 8.6 GB) took 12 min and 2 images (1.5 GB) 3 min on a
 busy 32-core host (load over 50, so not a speed figure). On main at b46c5e0, 18 images (36 GB: stereo and multichannel, DSD and DST, hybrid and

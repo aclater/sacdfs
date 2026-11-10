@@ -121,7 +121,49 @@ pub fn real_images() -> Option<(PathBuf, Vec<PathBuf>)> {
     }
     images.sort();
     assert!(!images.is_empty(), "SACDFS_REAL_IMAGES holds no .iso image");
+    // The tests take the sector count from the file's size, so a truncated image agrees with
+    // itself everywhere; the TOC says how far the audio runs (#294).
+    for image in &images {
+        if let Err(why) = check_image_complete(image) {
+            panic!("image {}: {why}", image.display());
+        }
+    }
     Some((dir, images))
+}
+
+/// Whether the image holds everything its TOC points at: each area's TOC copies and its audio,
+/// up to `audio_end_lsn`, lie within the file. A truncated image (a partial copy or download)
+/// fails; the real-disc tests alone would pass it, as the sector count comes from its size (#294).
+pub fn check_image_complete(path: &Path) -> Result<(), String> {
+    let disc = sacdfs::disc::Disc::open_with(path, 1, sacdfs::disc::Tuning::default(), None)
+        .map_err(|e| format!("does not open as an SACD image: {e}"))?;
+    let toc = disc.toc();
+    // An area whose TOC copies lie past the end is dropped when the image opens, so the areas
+    // that remain can all look whole: the master TOC's pointers say which were meant to be there.
+    for slot in scarletbook::Slot::ALL {
+        let p = toc.master.pointer(slot);
+        if p.is_used() {
+            let end = u64::from(p.toc1_lsn.max(p.toc2_lsn)) + u64::from(p.toc_sectors);
+            if end > toc.sectors {
+                return Err(format!(
+                    "truncated: area TOC of slot {slot} ends at sector {end}, the file holds {}",
+                    toc.sectors
+                ));
+            }
+        }
+    }
+    for (i, a) in toc.areas.iter().enumerate() {
+        let toc_end = u64::from(a.toc_lsn) + u64::from(a.toc_sectors);
+        let audio_end = u64::from(a.audio_end_lsn) + 1;
+        if toc_end > toc.sectors || audio_end > toc.sectors {
+            return Err(format!(
+                "truncated: area {i} needs {} sectors, the file holds {}",
+                toc_end.max(audio_end),
+                toc.sectors
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Fails unless every image in `images` is the source of at least one of `served` (the disc paths

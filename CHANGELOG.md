@@ -33,6 +33,11 @@ All notable changes to sacdfs are recorded here. The format follows
   test holds a shared lock for its whole run (`common::skip_without_fuse!`), and they hold it
   exclusive (`skip_without_fuse!(exclusive)`). The folder-times test also waits for each folder to
   move, not only the root, which failed one run in four under load.
+### Fixed
+- **Real-disc tests: a truncated image fails (#294).** Before the tests run, each image is checked
+  against its own TOC (every area's TOC copies and audio must lie inside the file); a copy cut
+  short fails the run with "truncated: ...". A test on truncated copies of a corpus image runs in
+  CI. A corrupt image of the right size is still not caught.
 
 ## [0.6.0] - 2026-11-10
 
