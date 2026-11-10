@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Real-disc tests: a truncated image fails (#294).** Before the tests run, each image is checked
+  against its own TOC (every area's TOC copies and audio must lie inside the file); a copy cut
+  short fails the run with "truncated: ...". A test on truncated copies of a corpus image runs in
+  CI. A corrupt image of the right size is still not caught.
+
 ## [0.6.0] - 2026-11-10
 
 Tested as release candidate 0.6.0-rc.1 (2026-11-10). The final version carries only the version
