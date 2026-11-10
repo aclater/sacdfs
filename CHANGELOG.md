@@ -7,6 +7,10 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Install guides rewritten to be simpler (part of #310).** `docs/install/README.md` is now a chooser
+  with three questions; the Docker and Podman, Linux binary and Linux client guides follow one shape
+  (what you need, numbered steps, check it worked, three common problems, Details), with the test
+  history moved to Details. The NAS and player guides follow in later pull requests.
 - **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
 
 ## [0.6.0] - 2026-11-10
