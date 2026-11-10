@@ -1035,6 +1035,40 @@ alternating; medians (range), seconds:
   the 10 % that needs explaining and was not chased.
 - **Bytes:** all 122 DSF and WAV files of the three test images compare equal (`cmp`) with 0.6.0's.
 
+## A player's import over SMB (#266)
+
+A player's library scan reads each file's header and tags. Through a Linux kernel SMB mount, the
+client reads ahead around those reads: about 525 KB per file reached sacdfs, against 150 KB
+through a direct mount. The extra bytes are audio, so sacdfs decodes them.
+
+sacdfs can't avoid this. It already serves a WAV file's header and tags without decoding, and
+starts no read-ahead of its own in a file's first 1 MiB ([design](design.md#read-ahead)). What it
+decodes is what the client asked for. What changes it is how the share or the mount caches.
+
+**How measured:** 0.6.0, Navidrome 0.64.2 importing 122 DSF and WAV files of three discs.
+- **Rig:** sacdfs in a fresh container per run, pinned to 4 Zen 5 cores. The kernel SMB 3.1.1 client mounted the share on the same machine, with 0.5 ms added to each round trip (`tc netem` on the container's bridge).
+- **Copy:** one reader `cat` of a DST stereo area's WAV files (4.4 GB), medians of 2.
+- **Player:** 32 KiB reads of a 6-channel WAV at its real-time rate for 30 s.
+
+| Setting | Bytes sacdfs served for the import | sacdfs CPU for the import | Copy (s) | Player read, median / worst (ms) |
+|---|---|---|---|---|
+| Direct mount, no SMB | 18.3 MB | 0.32 s | | |
+| Default share and mount (client `rsize` 4 MiB) | 64.0 MB | 1.61 s | 21.42 | 0.04 / 3.2 |
+| Share: `smb2 max read = 1048576` | 48.0 MB | 1.16 s | 19.86 | |
+| Share: `smb2 max read = 262144` | 32.1 MB | 0.64 s | 19.74 | 0.04 / 2.4 |
+| Share: `oplocks = no` | 18.3 MB | 0.31 s | 21.79 | 0.69 / 5.3 |
+| Client mount: `cache=none` | 18.3 MB | 0.32 s | 22.02 | |
+
+- **Which settings matter:**
+  - `smb2 leases = no` alone changed nothing.
+  - `aio read size = 0` changed nothing.
+  - A client `rsize=131072` did what `smb2 max read = 262144` does.
+  - A client `rasize=1048576` did what `smb2 max read = 1048576` does.
+- **`oplocks = no` and `cache=none`:** the client then caches nothing and reads exactly what the player asks for, as a direct mount does. A copy costs the same, since it is limited by decoding. Each player read waits one round trip (here +0.5 ms), well inside the 50 ms target.
+- **A smaller maximum read:** it halves the import's cost. Copies were 8 % faster here, because the client's requests arrive at sacdfs less out of order. Without the added delay, a smaller maximum read was faster again (stereo WAV 19.96 s at 256 KiB against 22.08 s by default; 6 channels 65.23 against 78.97 s; with the fix of #271).
+- **Defaults unchanged:** the import costs about 13 ms of sacdfs CPU per file. A full scan of 10,000 files is two to four minutes of CPU, once. The settings change every client of the share, and macOS and Windows clients, a real network and a NAS CPU were not measured with them.
+- **For a Linux machine that mounts the share only for a player's library, `cache=none` on that mount** makes its imports cost what a direct mount costs. It leaves other clients alone.
+
 ## History
 
 What each improvement changed, one line each, with the pull request that measured it (each
