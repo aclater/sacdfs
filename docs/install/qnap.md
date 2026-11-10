@@ -106,7 +106,7 @@ Checked on 0.6.0 on QuTScloud 5.2.9 (in a VM, not on QNAP hardware; QTS and QuTS
     reboot
     ```
 
-    Wait 5 minutes, log in again, and run `ls /share/CACHEDEV1_DATA/Multimedia/sacd`. *You should see* the same folders.
+    Wait 5 to 10 minutes, log in again, and run `ls /share/CACHEDEV1_DATA/Multimedia/sacd`. *You should see* the same folders.
 
 To stop sacdfs by hand: `SACDFS_CONF=/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs.conf /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs-ctl stop`. Never use `kill -9`.
 
@@ -130,7 +130,7 @@ ls /share/CACHEDEV1_DATA/Multimedia/sacd
 
 Checked on QuTScloud 5.2.9 (kernel 5.10) in a VM, not on QNAP hardware. QuTScloud wouldn't make a storage pool in the VM, so the data volume was an ext4 file system made by hand, mounted at `/share/CACHEDEV1_DATA` early in each start by a `crontab` line (the stand-in for a volume QNAP mounts itself), and the shared folder `Multimedia` was a folder on it.
 
-*0.6.0 run, from a clean system:* steps 1 (the `id -u` check only) to 11 as written, with the published 0.6.0 archive, using three images of the conformance corpus (22 DSF and WAV files). *(restart result below)*
+*0.6.0 run, from a clean system:* steps 1 (the `id -u` check only) to 11 as written, with the published 0.6.0 archive, using three images of the conformance corpus (22 DSF and WAV files). The checksum was `OK`, `--version` printed `sacdfs 0.6.0`, and all 22 files hashed identically to a reference read by a Linux host with the same release. After `reboot` (which QuTScloud in the VM only carried out about 22 minutes after the VM started; see below), `autorun.sh` had started sacdfs by itself when checked 9 minutes into the new start, with `Autorun = TRUE` still set and the same 22 files identical. Step 11 says to wait 5 minutes; the earlier 0.6.0-development check saw it after about 2.5 minutes, this check only looked at 9. Stopping on a restart wasn't looked at on this run.
 
 *Earlier versions:* with 0.5.0, steps 1 to 9 of the old guide (by hand) read all 22 files of two test images identical to the reference and survived logging out and in. With the pull request's build before that, QuTScloud's own NFS server (NFSv3, explicit `fsid=`), mounted on the same system, gave the same bytes as a current Linux system for two test images and a real DST disc. `autorun.sh` was checked on a 0.6.0 development build: `Autorun = TRUE` stayed set across restarts, sacdfs mounted by itself about 2.5 minutes after the VM started (16 files of two test images identical), and QNAP's power-off of the VM stopped it cleanly (`signal 15: unmounting`, file system clean at the next start).
 
