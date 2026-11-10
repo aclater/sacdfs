@@ -3,6 +3,8 @@
 //! The completeness check of the real-disc tests (#294): an image cut short fails it, a whole
 //! one passes. It needs no real disc: the check is run on a corpus image and truncated copies.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 mod common;
 
 use std::fs::OpenOptions;
