@@ -59,6 +59,17 @@ All notable changes to sacdfs are recorded here. The format follows
 - **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
 - **NAS install guides rewritten (part of #310).** Each vendor guide (Synology, QNAP, ASUSTOR, TerraMaster, UGREEN, ReadyNAS) is one page with one path, the 0.6.0 release archive and the vendor's own start-at-boot method, followed as written on 0.6.0 in the NAS VMs; TrueNAS SCALE, Unraid and OpenMediaVault keep their facts in the same layout, marked untested on 0.6.0. `nas-binary.md` is the short generic guide; test history, options and the longer troubleshooting moved to each page's Details. Found while checking: TOS has no `/usr/local/bin`, so the unit steps make it.
 ### Fixed
+- **A stop signal right after the start is no longer lost (#334).** Lifecycle change. A SIGTERM,
+  SIGINT or SIGHUP that arrived in the microseconds while sacdfs set up its signal handlers was
+  dropped by the signal library: sacdfs neither died nor stopped, mounted, and ran on until
+  killed (a service stopped right after its start). The handlers now go in with those signals
+  blocked, before any thread exists, so such a signal waits and stops sacdfs without mounting.
+  They also go in earlier, right after the fork into the background instead of just before the
+  mount: a signal in between now ends sacdfs with status 0 and "stopped by signal before
+  mounting" (the background parent still reports it as a failed start) rather than killing it.
+  A new test (`tests/stop_signals.rs`, no libtest harness) sends SIGTERM into the registration
+  2000 times; about 2 % were lost before. The mount test that found it now prints sacdfs's log
+  and what each of its threads waits on when sacdfs does not stop.
 - **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
   open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
   for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that

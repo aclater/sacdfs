@@ -60,6 +60,11 @@ tempfile = "3"
 name = "pcm"
 harness = false
 
+# One process per trial, and no libtest thread that could take the signal (#334).
+[[test]]
+name = "stop_signals"
+harness = false
+
 [lints.rust]
 missing_debug_implementations = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
