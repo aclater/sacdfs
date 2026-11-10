@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0-rc.1] - 2026-11-10
+
 ### Added
 - **Soak: the memory steps explained, and judged without them (part of #247).** The steps of 3 to
   9 MiB in a soak's resident size are the kernel swapping pages out and in on a busy host: four
@@ -1091,7 +1093,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.0-rc.1...HEAD
+[0.6.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.5.0...v0.6.0-rc.1
 [0.5.0]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
