@@ -90,7 +90,10 @@ def classify(path, err, mnt):
     - sidecar: ENOENT on a cover-*.jpg the churner has removed (by name, at any time: sacdfs
       lists the file until it has re-read the folder, which takes seconds on real discs, and
       the file is gone), or on a file under Artwork/ less than 60 s after the churner toggled
-      that folder;
+      that folder; ESTALE on such a cover-*.jpg too (art whose source changed since it was listed
+      is refused, not served as other bytes: design.md, "Changes while mounted"); and ENOENT or
+      ESTALE on an area's cover.jpg (Stereo/ or Multichannel/) in the art-churn album a0, once
+      the churner has removed a cover file (#279);
     Everything else is unexpected, whatever its errno, and fails the soak.
     """
     try:
@@ -114,6 +117,12 @@ def classify(path, err, mnt):
     if e == errno.ENOENT and rel and (("file:" + rel[-1]) in removed
                                       or ("Artwork" in rel[:-1] and now - TIMES["art_edit"] <= 60)):
         return "sidecar"
+    if rel[:1] == ("a0",) and any(k.startswith("file:") for k in removed):  # the art-churn album only
+        if e == errno.ESTALE and ("file:" + rel[-1]) in removed and rel[-1].startswith("cover-"):
+            return "sidecar"
+        if (e in (errno.ENOENT, errno.ESTALE) and len(rel) >= 3 and rel[-1] == "cover.jpg"
+                and rel[-2] in ("Stereo", "Multichannel")):
+            return "sidecar"
     return "unexpected"
 
 
