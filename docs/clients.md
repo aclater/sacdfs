@@ -31,6 +31,43 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 | [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | Fedora 44, RHEL 10.1 and 9.7, Debian 13 and 12, Ubuntu 26.04 and 24.04 kernels | 0.4.1-rc.1, 0.5.0-rc.1 | NFSv4.2, SMB 3.1.1 | Works | All checks pass; Ubuntu 24.04 cloud image needs `linux-modules-extra` for non-ASCII names over SMB; after a Podman container restart NFS needs a remount |
 | [FFmpeg, sox, mediainfo, ExifTool, mpv, VLC](#ffmpeg-sox-mediainfo-exiftool-mpv-and-vlc) | 7.1.5, 14.4.2, 25.04, 13.25, 0.40.0, VLC 3 | 0.4.1-rc.1 | Mount | Works | sox and ExifTool do not read DSF; this VLC cannot decode DSD (also true of a plain copy) |
 
+## 0.6.0-rc.1 checks
+
+Run on the v0.6.0-rc.1 release binary and the published `0.6.0-rc.1` image; 0.5.0 was the baseline, run side by side. The table above keeps each client's last full run.
+
+- **Scripted servers,** the same images as for 0.5.0 (Jellyfin 12.4.0, Navidrome 0.64.2, Lyrion 9.1.1, MPD 0.24.15, MinimServer 2.2): the same tracks (93), albums (7), art and bytes as 0.5.0, with `dsf` and `dsf,wav`. Navidrome's restart and full rescan found 93 tracks in 7 folders on both. No ERROR or WARN lines on either side.
+- **Linux NFS 4.2 and SMB 3.1.1 mounts,** 22 checks per client: Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12 and Ubuntu 26.04 pass all 22. Ubuntu 24.04 passes 21: `stat` sizes over SMB fail for the files with non-ASCII names, the known `linux-modules-extra` problem ([below](#linux-nfs-and-smb-mounts)), the same as on 0.5.0.
+- **FUSE requests** (counted from sacdfs's request log), whole scripted-server session, 0.5.0 then 0.6.0-rc.1: Navidrome `dsf` 3,477 to 1,204; Lyrion `dsf` 400 to 214; MPD `dsf` 309 to 234; MinimServer 311 to 231; Jellyfin `dsf` 1,900 to 1,713. Directory reads (READDIR and READDIRPLUS) fall most; Jellyfin `dsf` LOOKUP rose from 284 to 304 (+7 %, within run-to-run spread).
+- **Fresh Fedora 44 client, server restarted before each workload, requests caused by the workload alone** (216-file test tree):
+
+  | Workload | 0.5.0 | 0.6.0-rc.1 |
+  |---|---|---|
+  | SMB `ls -lR` | 253 | 175 |
+  | SMB `find` | 241 | 163 |
+  | NFS `ls -lR` | 1,753 (LISTXATTR 238, GETXATTR 1) | 1,753 (the same, kind for kind) |
+  | NFS `find` | 206 | 206 (the same, kind for kind) |
+  | NFS `getfattr -d -R` | 2,052 (LISTXATTR 476, GETXATTR 1) | 2,052 (the same, kind for kind) |
+
+  NFS is unchanged in every kind, so there is no extended-attribute storm: `ls -lR` still sends 1 GETXATTR and 238 LISTXATTR for 206 files, as in 0.4.1 and 0.5.0, and all three NFS commands exit 0 with no error output.
+- **macOS 27.2 in a VM on Apple hardware** (SMB 3.x, `mount_smbfs`, command-line tools; headless, no audio, no Finder GUI), against the published 0.6.0-rc.1 image with an SMB share, flattened layout, 12,434 files (4,911 DSF, 4,911 WAV) in 1,113 folders. The VM has no GPU and no audio path, and no Finder or DSD player app was driven, so those are not covered.
+
+  | Check | Result |
+  |---|---|
+  | Mount (`mount_smbfs`, password) | Works; read-only, listing at once |
+  | Restart of the container | The client drops the mount by itself within seconds; `ls` fails or is empty until a remount, and a remount works at once. This is the documented answer on #204 (macOS needs a remount after a restart or upgrade). Nothing hung. |
+  | Browse (`ls -lR`, `stat`, `df`, `find`) | 16,883 lines in 6 s; sizes right; no hangs |
+  | `._` files and `.DS_Store` | None served; probes for them return "No such file" |
+  | Spotlight | Indexing is disabled on the SMB mount (as on 0.4.0); `mdls`, `mdimport` read both formats; `mdfind` finds nothing on the share |
+  | Quick Look | Thumbnails produced for DSF and WAV; preview opened without a hang |
+  | Read-only | cp, mv, rm, mkdir, touch, chmod, ln, truncate, xattr (including Finder tags) all fail cleanly with "Read-only file system" |
+  | Byte identity | cp of a DSF and a WAV: hashes equal the mount's. rsync of a whole 6.9 GB album (19 files): all 19 hashes identical; a second rsync copied 0 files |
+  | Odd names | 107,258 name components, 411 non-ASCII, 340 with characters macOS treats specially; all 13,547 names open by their listed name. Names are served decomposed (NFD); opening a precomposed (NFC) spelling fails for 111 of 357 accented files, as macOS does not normalise on SMB (#308) |
+  | RF64 over 4 GiB | A 7.4 GB six-channel 352.8 kHz track (needs `SACDFS_PCM_RATE=352800`): `afinfo` reads RF64, 1161 s; seeks at 0 to 99 % and across 4 GiB return in about 0.1 to 0.2 s; reading 256 MiB across the 4 GiB mark took 12.9 s |
+  | Tags | `afinfo` reads the WAV; it cannot open a DSF (no CoreAudio DSD support, as before); `mdls` gives kind and title, other audio attributes are null |
+
+  Not run on macOS: request counts per kind (the test server was not logging FUSE requests), Finder views, DSD player apps, sound or playback.
+- **Not run on 0.6.0-rc.1:** Windows 11 (Explorer, PowerShell, Robocopy: there is no sacdfs Windows harness on the test host; the 0.4.1-rc.1 result stands), Roon and Plex at scale, foobar2000, JRiver and the Tier 2 tools.
+
 ## 0.5.0-rc.1 checks
 
 Run on main at commit 826fa50, which is the 0.5.0-rc.1 code apart from the version and a test-only
