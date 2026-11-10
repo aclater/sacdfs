@@ -6,6 +6,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+- **What a player's import costs over SMB, and the settings that change it (part of #266).**
+  Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
+  use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
+  file's header and tags. `cache=none` on the client mount, or `oplocks = no` on the share,
+  brings it down to the direct mount's cost; `smb2 max read = 262144` halves it. Copies and
+  playback were measured with each. The defaults are unchanged
+  ([performance](docs/performance.md#a-players-import-over-smb-266), Navidrome guide).
+
 ### Changed
 - **SMB directory leases stay off: why they can't be fresh (part of #325).** Docs and a comment in the
   container's entry point only; no code or default changed, so this needs no soak. Samba (4.24.7) breaks a
@@ -25,6 +34,12 @@ All notable changes to sacdfs are recorded here. The format follows
   86 s). `docs/deployment.md` says so, and that `SMB_EXTRA_GLOBAL=smb3 directory leases = yes` turns the
   leases back on for a Windows-only share, at the cost the container's default avoids for the Linux kernel
   client. No code or default changed.
+- **DST areas read faster on one thread: scarletbook is built in one codegen unit (#270).** Release
+  builds now compile scarletbook with `codegen-units = 1`. Its DST decoder then runs in as many cycles
+  as in the library's own builds, about 4 % fewer than before. Six-channel DST on one thread went from
+  1.11-1.15× to 0.99× of the library on a NAS-class CPU, which meets the 1.1× target.
+  Audio bytes are unchanged. A clean release build takes about 10 s longer. Details are in
+  docs/performance.md, "One codegen unit for scarletbook".
 - **sacdfs exits after a grace period on SIGTERM even while clients hold files open (#276).** This
   changes the lifecycle next to the read path, not the reads, and the next release needs a soak.
   The mount is still detached at once; sacdfs now serves the files still open for `--stop-grace`
@@ -67,6 +82,18 @@ All notable changes to sacdfs are recorded here. The format follows
   with a differing NFC and NFD spelling failed that way, not 111 of 357 at random. The setting
   `dir_cache_off=yes` in `nsmb.conf` fixed it on macOS 27.2 in a VM. `docs/deployment.md` (macOS)
   says so. No code or Samba setting changed. Checked on macOS in a VM, not on Apple hardware.
+
+### Fixed
+- **WAV copies through the Linux kernel SMB client are about as fast as in 0.4.1 again (#271).**
+  Since 0.5.0 (#252, the player-first rules of #230), a one-reader copy of WAV files over SMB was
+  8 to 11 % slower than in 0.4.1. Samba serves the kernel client's 4 MiB reads concurrently, so
+  they reach sacdfs up to about 20 MiB out of order; each of those counted as a jump, the reader's
+  pace started again, and the copy kept switching between reading for throughput and playing,
+  losing its long read-ahead window. A jump is now a read more than 64 MiB from where the reader
+  got to, and the pace counts the bytes read. Stereo WAV over SMB: 0.6.0 24.91 s, now 22.28 s
+  (0.4.1: 23.02 s); six channels 83.95 → 78.42 s (0.4.1: 75.21 s). DSF over SMB had not slowed
+  down and gets 3 to 4 % faster. Local reads were not affected. Audio bytes are unchanged
+  ([performance](docs/performance.md#wav-copies-over-smb-271)).
 
 ## [0.6.0] - 2026-11-10
 
