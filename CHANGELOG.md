@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Install guides rewritten to be simpler (part of #310).** `docs/install/README.md` is now a chooser
+  with three questions; the Docker and Podman, Linux binary and Linux client guides follow one shape
+  (what you need, numbered steps, check it worked, three common problems, Details), with the test
+  history moved to Details. The NAS and player guides follow in later pull requests.
+
 ## [0.6.0] - 2026-11-10
 
 Tested as release candidate 0.6.0-rc.1 (2026-11-10). The final version carries only the version
