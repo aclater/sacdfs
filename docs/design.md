@@ -1450,8 +1450,13 @@ changes (#205, after 0.5.0):
   kernel client kept a leased folder's listing for as long as it went on using it: a new image did not
   show while its folder was listed every few seconds, and showed after 45 s without a listing. *Trade-off:*
   about 2 % more SMB2 requests from that client for a repeated `ls -lR` (5 % for `find`), none more to
-  sacdfs. *Why not `kernel change notify`:* it watches with inotify, which reports changes made through
-  the kernel, not those a FUSE daemon makes itself (from how inotify works; not tried).
+  sacdfs. *Why not `kernel change notify`, or FUSE invalidations from sacdfs (#325):* Samba breaks a
+  directory lease only for changes made through Samba; inotify answers change-notify requests and never
+  breaks a lease, and FUSE has no way to raise inotify for an entry the daemon adds. Tried: with leases
+  and `kernel change notify = yes`, the Linux client missed a new image for over 155 s on the sacdfs
+  share and on a plain folder shared by the same Samba ([deployment](deployment.md#what-a-listing-costs-over-smb)).
+  Windows misses it too with leases on, so leases stay off, at the cost of about four folder opens per
+  file in a Windows thumbnail pass (#312).
 
 *Measured* with fuser's request log through the container's Samba 4.24.7 (the Linux kernel client in a
 VM, 93 images with their art, 357 folders, 2,484 entries): an `ls -lR` repeated 30 s later costs 2,776

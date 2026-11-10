@@ -7,6 +7,16 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **SMB directory leases stay off: why they can't be fresh (part of #325).** Docs and a comment in the
+  container's entry point only; no code or default changed, so this needs no soak. Samba (4.24.7) breaks a
+  directory lease only for a change made through Samba, never for a kernel change notification, and a FUSE
+  file system can't raise one for an entry it adds; so neither FUSE invalidations from sacdfs nor
+  `kernel change notify = yes` keep a leased listing fresh. Measured on 0.6.0: with leases on, a new image
+  didn't show within 155 s on the Linux kernel client (also with `kernel change notify = yes`, and also on
+  a plain folder shared by the same Samba) nor on Windows 11 listing every second; with leases off it showed
+  in 0.4 to 1.7 s on Linux and 5.1 s on Windows. `docs/deployment.md` now says that turning leases on for
+  Windows makes Windows miss new images too, and that a Linux kernel client mounted with `nohandlecache`
+  stays fresh with leases on (1.6 s).
 - **Windows thumbnail pass: where the extra folder opens come from (part of #312).** Docs only. On
   Windows 11 in a VM, the pass over 196 files sends 2,104 to 2,166 requests on 0.6.0 against 508 to 514
   on 0.5.0 and 921 to 941 on 0.4.1; the 800 extra are `OPENDIR` and `RELEASEDIR` pairs. They come from
