@@ -19,20 +19,21 @@ image=$2
 read -r -a dk <<<"${DOCKER:-docker}"
 client_image=${CLIENT:-sacdfs-client:ci}
 here=$(cd "$(dirname "$0")" && pwd)
-srv=sacdfs-heldstop
-cli=sacdfs-heldstop-client
 grace=3
-# Not the ports of the other tests, which may still be in TIME_WAIT.
+# Not the ports of the other tests, which may still be in TIME_WAIT. Names of their own per
+# runtime: the client's mounts hang once the server is gone, and its removal can lag behind.
 case "$1" in
-    *podman*) nfs_port=12052 smb_port=10448 ;;
-    *) nfs_port=12051 smb_port=10447 ;;
+    *podman*) nfs_port=12052 smb_port=10448 name=sacdfs-heldstop-podman ;;
+    *) nfs_port=12051 smb_port=10447 name=sacdfs-heldstop ;;
 esac
+srv=$name
+cli=$name-client
 
 cleanup() {
     local rc=$?
     set +e
-    "${dk[@]}" exec "$cli" umount -l /mnt/smb /mnt/nfs >/dev/null 2>&1
-    "${dk[@]}" rm -f "$cli" >/dev/null 2>&1
+    timeout 20 "${dk[@]}" exec "$cli" umount -l /mnt/smb /mnt/nfs >/dev/null 2>&1
+    for _ in 1 2 3; do timeout 60 "${dk[@]}" rm -f "$cli" >/dev/null 2>&1 && break; sleep 2; done
     if [ "$rc" != 0 ]; then "${rt[@]}" logs "$srv" 2>&1 | grep -v ' INFO  sacdfs::' | tail -n 60; fi
     "${rt[@]}" rm -f "$srv" >/dev/null 2>&1
     exit "$rc"

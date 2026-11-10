@@ -966,7 +966,9 @@ fn a_held_open_file_does_not_keep_sacdfs_after_sigterm() {
         use std::os::fd::AsRawFd;
         #[allow(unsafe_code)]
         // SAFETY: an open descriptor; the call only advises the kernel.
-        unsafe { libc::posix_fadvise(held.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
+        unsafe {
+            libc::posix_fadvise(held.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED)
+        };
     }
     assert!(held.read_exact_at(&mut first, 0).is_err());
 }
