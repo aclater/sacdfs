@@ -1108,6 +1108,16 @@ see [Players on the same host](#players-on-the-same-host-no-smb-hop).
   `SMB_USER` name and password.
 - **NFS** (macOS speaks NFS 4.0): `sudo mount -t nfs -o vers=4,ro,resvport nas:/sacd /Volumes/sacd`
   after `sudo mkdir /Volumes/sacd`; or Finder's Connect to Server with `nfs://nas/sacd`.
+- **Accented names over SMB:** the share serves names precomposed (NFC), and macOS lists them
+  decomposed (NFD). Opening a name by the listed spelling always works. Opening it by its
+  precomposed spelling (a player's database, a playlist, a typed path) fails for a name with
+  accents while the macOS client has that folder's listing cached, and works otherwise. The
+  server is not asked, so no sacdfs or Samba setting changes it. In `~/Library/Preferences/nsmb.conf`,
+  `[default]` with `dir_cache_off=yes` turned the client's folder cache off, and every name
+  then opened by both spellings (357 of 357, on macOS 27.2 in a VM, not on Apple hardware or
+  other macOS versions). Walking 13,547 entries took the same time (17 s); a second walk is no
+  longer served from the cache (5 s with it). Not run: Finder, NFS, other macOS releases
+  (#308).
 - **After a restart of the container** an SMB mount on macOS drops and has to be mounted again: see
   [SMB and restarts](#smb-and-restarts).
 
@@ -1223,7 +1233,8 @@ gone, and the container no longer offers directory leases:
   share's top folder while that folder was listed every few seconds, still not after 70 s, and showed after
   45 s without a listing. Without leases it showed 3 s after it was added, as it did through `smbclient`.
   The cost: about 2 % more SMB2 requests from the kernel client for a repeated `ls -lR` (9,024 against
-  8,819) and 5 % for `find`, and the same requests to sacdfs.
+  8,819) and 5 % for `find`, and the same requests to sacdfs. Windows pays more: see
+  "Windows and `smb3 directory leases = no`" below.
 
 Counted with fuser's request log (`RUST_LOG=fuser::request=debug`), on another tree than the table above:
 93 images in 357 folders with their art (2,484 entries), through the container's Samba 4.24.7. The kernel client (Fedora 44, kernel 6.19,
@@ -1260,6 +1271,29 @@ cache):
 | Kernel client, rescan | 0.161 | 0.150 |
 
 The kernel client's `ls -lR` is bound by its own 9,000 SMB2 requests, not by sacdfs. No case got slower.
+
+**Windows and `smb3 directory leases = no` (#312).** The "same requests to sacdfs" above was measured with the
+Linux kernel client. Windows keeps a folder open (under a directory lease) while it works in it; without the
+lease it opens and closes the folder for each file it asks about, and each of those is an `OPENDIR` and a
+`RELEASEDIR` to sacdfs. Checked on Windows 11 in a VM (SMB 3.1.1, virtio-net, not on the vendor's hardware),
+Explorer's thumbnail call on every file of the 196-file test share, in a fresh container each time:
+
+| Requests to sacdfs, 196 files | 0.4.1 | 0.5.0 | 0.6.0 | 0.6.0 with leases |
+|---|---|---|---|---|
+| Listing only | 327 | 108 | 107 to 108 | 107 |
+| Thumbnail pass (`OPENDIR`) | 921 to 941 (19 to 20) | 508 to 514 (19) | 2,104 to 2,166 (801 to 818) | 496 to 497 (19) |
+
+Listing is the same in all three. The thumbnail pass sends about four folder opens per file on 0.6.0 and none
+extra with leases. The change to how sacdfs answers `opendir` (#205) isn't the cause: with leases on, 0.6.0
+sends 19 `OPENDIR` for the pass, as 0.5.0 does. On a larger tree (5,040 files in 640 folders, no request
+log, the container on six cores, the same pass) it took 121 to 126 s on 0.6.0, 80 to 86 s with leases and
+81 to 82 s on 0.5.0 (a first round on a loaded machine, 224 s and 143 s on 0.6.0, is left out), with 58,820 requests on 0.6.0 against 17,560 with leases and 18,876 on 0.5.0 (one run each,
+counted with the request log on). Nothing is wrong with the answers; the extra time is the folder opens and closes.
+
+If the share is used from Windows (or another client that holds folders open), and not from the Linux
+kernel client, turn the leases back on: `SMB_EXTRA_GLOBAL=smb3 directory leases = yes` (it comes after the
+container's own line, so it wins; checked). The trade-off is the one above: with leases, the Linux
+kernel client doesn't show a new image or changed art in a folder it keeps using. macOS was not measured.
 
 **If you run your own Samba** on a sacdfs mount instead of the container, put the container's settings in
 `smb.conf`. In `[global]`:

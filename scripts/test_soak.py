@@ -12,6 +12,7 @@ thread spike added at a chosen minute. The checks they pin down:
 """
 
 import argparse
+import errno
 import random
 import sys
 import unittest
@@ -54,6 +55,43 @@ def series(hours=2.0, interval=60, leak=0.0, steps=(), threads=None, seed=1):
 def run(rows, **kw):
     ok, lines = soak.verdict(rows, args(**kw))
     return ok, "\n".join(lines)
+
+
+class Classify(unittest.TestCase):
+    """Which read errors count as expected (#279): narrow, so a real one still fails."""
+
+    mnt = Path("/m")
+
+    def setUp(self):
+        soak.REMOVED.clear()
+        soak.REMOVED["file:cover-5.jpg"] = 1.0
+        soak.TIMES.update({"listed": 0.0, "tags_edit": 0.0, "art_edit": 0.0, "stall_from": 0.0, "stall_until": 0.0})
+
+    def cls(self, rel, e):
+        return soak.classify(self.mnt / rel, OSError(e, "x"), self.mnt)
+
+    def test_estale_on_a_removed_cover_is_expected(self):
+        self.assertEqual(self.cls("a0/cover-5.jpg", errno.ESTALE), "sidecar")
+
+    def test_estale_on_a_cover_never_removed_is_not(self):
+        self.assertEqual(self.cls("a0/cover-9.jpg", errno.ESTALE), "unexpected")
+
+    def test_estale_on_a_removed_name_in_another_album_is_not(self):
+        self.assertEqual(self.cls("a1/cover-5.jpg", errno.ESTALE), "unexpected")
+
+    def test_area_cover_gone_is_expected_in_the_churn_album(self):
+        for e in (errno.ENOENT, errno.ESTALE):
+            for area in ("Stereo", "Multichannel"):
+                self.assertEqual(self.cls(f"a0/disc/{area}/cover.jpg", e), "sidecar")
+
+    def test_area_cover_elsewhere_or_other_errno_is_not(self):
+        self.assertEqual(self.cls("a1/disc/Stereo/cover.jpg", errno.ENOENT), "unexpected")
+        self.assertEqual(self.cls("a0/disc/Stereo/cover.jpg", errno.EIO), "unexpected")
+        self.assertEqual(self.cls("a0/disc/Stereo/01 Track.dsf", errno.ESTALE), "unexpected")
+
+    def test_area_cover_before_any_removal_is_not(self):
+        soak.REMOVED.clear()
+        self.assertEqual(self.cls("a0/disc/Stereo/cover.jpg", errno.ENOENT), "unexpected")
 
 
 class MemoryTrend(unittest.TestCase):

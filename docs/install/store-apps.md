@@ -13,36 +13,11 @@ services hold 445 and 2049), the images mounted read-only at `/images`, and the 
 
 ## Unraid: install from the template file
 
-File: [deploy/unraid/sacdfs.xml](../../deploy/unraid/sacdfs.xml).
+File: [deploy/unraid/sacdfs.xml](../../deploy/unraid/sacdfs.xml). The steps (copy it into Unraid's user templates, then Docker, Add Container, pick `sacdfs`) are in [unraid.md](unraid.md); they are untested on Unraid.
 
-1. On the Unraid server, open a terminal (the web UI's Terminal) and copy the file into
-   Unraid's user templates, where **Docker, Add Container** lists it:
+The template does not make the container privileged. It passes the device and capabilities in **Extra Parameters** (`--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined`), plus a 30 second stop timeout and the health check. If you edit that field, keep those.
 
-   ```sh
-   wget -O /boot/config/plugins/dockerMan/templates-user/sacdfs.xml \
-     https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/unraid/sacdfs.xml
-   ```
-
-2. Docker, **Add Container**, and under **Template** pick `sacdfs` (the "User templates"
-   group).
-3. Set **SACD images** to the share that holds your images (for example `/mnt/user/music`),
-   and leave the rest, or set **SMB user** and **SMB password** (without them the share is
-   open, read-only, to the whole network) and **NFS clients**.
-4. **Apply.** The container appears as `sacdfs`, with a health status after its start period.
-5. Mount the shares from a client on the ports above ([linux-client.md](linux-client.md)).
-
-The template does not make the container privileged. It passes the device and capabilities
-in **Extra Parameters** (`--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH
---security-opt apparmor=unconfined`), plus a 30 second stop timeout and the health check.
-If you edit that field, keep those.
-
-**What was checked.** The template's container, with its Extra Parameters, ports, paths and
-variables, was started with rootful Podman on a Linux host (Fedora) from the 0.5.0 image
-and a test set of 135 image files. It turned healthy, and the SMB share on 10445 listed the
-folders and the 457 DSF files, as a guest. **Not checked:** loading the file in Unraid's
-Docker tab, whether Unraid lets the container use `/dev/fuse` and `SYS_ADMIN`, the Community
-Applications listing, the icon in Unraid, and NFS from the template. Treat the Unraid
-steps above as untested until someone reports them on [#82](https://github.com/aclater/sacdfs/issues/82).
+**What was checked.** The template's container, with its Extra Parameters, ports, paths and variables, was started with rootful Podman on a Linux host (Fedora) from the 0.5.0 image and a test set of 135 image files. It turned healthy, and the SMB share on 10445 listed the folders and the 457 DSF files, as a guest. **Not checked:** loading the file in Unraid's Docker tab, whether Unraid lets the container use `/dev/fuse` and `SYS_ADMIN`, the Community Applications listing, the icon in Unraid, and NFS from the template. Treat the Unraid steps as untested until someone reports them on [#82](https://github.com/aclater/sacdfs/issues/82).
 
 ## TrueNAS: the catalog app
 
