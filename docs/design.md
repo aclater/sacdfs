@@ -750,7 +750,7 @@ reboot. NFSv3 is stateless and reads on; NFSv4 reclaims its open state in the gr
 
 **Stopping a busy mount.** On SIGINT, SIGTERM or SIGHUP, a mount that cannot be unmounted (files open,
 or held by an NFS server) is detached (`MNT_DETACH`, or `fusermount3 -u -z`) with a warning;
-sacdfs serves the files still open and exits when the last is closed. *Why:* otherwise a
+sacdfs serves the files still open and exits when the last is closed, or after `--stop-grace` seconds (10; #276), when it exits with the mount already gone from the mount table (never before: it would leave a dead mount; if the detach fails it stays and says so). *Why:* otherwise a
 container or service manager waiting for sacdfs to stop would hang until it killed it,
 leaving a dead mount behind; for users other than root, `fusermount3 -u -z` already detaches, so root
 behaves the same.
@@ -2642,7 +2642,7 @@ kernel. The source is a real hybrid disc image, attached read-only. Per distribu
   and a multichannel DSF file, equal to the same files read on a current system from the
   same image; through `--allow-other` mounts, read as root; a private mount refuses root;
 - SIGTERM while a file is open (4 MiB read through it): the mount is detached at once,
-  sacdfs serves the open file until it is closed, then exits; the mount point is usable;
+  sacdfs serves the open file until it is closed, then exits; with the file kept open past `--stop-grace`, it exits after the grace, the file then fails, and the mount point is a plain directory (`mount::a_held_open_file_does_not_keep_sacdfs_after_sigterm`);
 - `fusermount3 -u`: sacdfs exits;
 - the INIT negotiation from fuser's debug log (`RUST_LOG=fuser::session=debug`).
 

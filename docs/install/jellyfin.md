@@ -1,40 +1,68 @@
-# Jellyfin
+# Jellyfin: install sacdfs
 
-**Tested** with Jellyfin 12.4.0 (official image) on sacdfs 0.4.0-rc.2 (and 0.3.0-rc.1), in a container reading
-a sacdfs mount on its host: 93 of 93 tracks with `dsf` (186 of 186 with `dsf,wav`), the
-multichannel areas as their own albums, folder art used, transcoded playback and seeks.
-Details: [clients](../clients.md#jellyfin).
+Jellyfin is a free media server. This guide lets it play your SACD images through sacdfs. About 15 minutes.
 
-## sacdfs settings
+Checked on 0.6.0 with Jellyfin 12.4.0 (official image) in rootless Podman on Fedora Linux. The library was set up through Jellyfin's web API; the clicks in step 4 were not run in a browser *(untested)*.
 
-| Setting | Value | Why |
-|---|---|---|
-| `SACDFS_FORMATS` (`--format`) | `dsf` | Jellyfin's ffprobe reads about 7 MB of each WAV file, which sacdfs must convert: 648.5 MiB served for the first scan against 17.9 MiB with `dsf` |
-| `SACDFS_FLATTEN` (`--flatten`) | `1` | each disc's `Stereo` and `Multichannel` folders sit under the album |
+## What you need
 
-Leave `SACDFS_CACHE_MB` (`--cache-mb`) at its default (32 MiB, or 16 under a memory limit up to 512 MiB; the 0.4.0-rc.2 tests ran with 32, the 0.3.0-rc.1 tests with 16).
+- sacdfs running and mounted on the Linux machine where Jellyfin will run, at `/srv/media/sacd`. Follow [docker-podman.md](docker-podman.md) (start it with `-e SACDFS_FORMATS=dsf -e SACDFS_FLATTEN=1` added to the `podman run` command), then [linux-client.md](linux-client.md), using `/srv/media/sacd` in place of `/mnt/sacd`.
+- Podman or Docker on that machine.
+- A web browser.
 
-## Add the share
+## Steps
 
-1. Mount sacdfs on the host, for example at `/srv/media/sacd`
-   ([user guide](../user-guide.md); the tests ran `sacdfs --format dsf --flatten` as the
-   user). Run the server in rootless Podman as that same user, and bind the folder **that
-   holds** the mount, read-only with `rslave`, so that a restart of sacdfs shows up inside
-   the container (binding the mount point itself leaves the container on a dead mount):
+1. **Check the mount.**
 
    ```sh
-   podman run ... --security-opt label=disable -v /srv/media:/media:ro,rslave ...
+   ls /srv/media/sacd
    ```
 
-   (Compose: `- /srv/media:/media:ro,rslave`.) `label=disable` is for SELinux hosts.
-2. In Jellyfin, add a **Music** library with the folder `/media/sacd`.
-3. Leave **LUFS audio normalization** off (the default): with it on, Jellyfin read the library
-   about twice over, and sacdfs had to decode all of it.
+   *You should see:* your artist or disc folders.
 
-## Check it works
+2. **Start Jellyfin.** The folder that holds the mount (`/srv/media`) is shared into the container, not the mount point itself, with `ro,rslave`. This keeps Jellyfin working when sacdfs restarts.
 
-The library shows every disc, the multichannel ones also as "Album (Multichannel)", and tracks
-play.
+   ```sh
+   podman run -d --name jellyfin --security-opt label=disable -p 8096:8096 \
+     -v jellyfin-config:/config -v jellyfin-cache:/cache \
+     -v /srv/media:/media:ro,rslave \
+     docker.io/jellyfin/jellyfin:latest
+   ```
 
-Not validated: Jellyfin reading the NAS's SMB or NFS share (mounted per
-[linux-client.md](linux-client.md)).
+   *You should see:* `podman ps` lists `jellyfin` as `Up`, `healthy` after about a minute. With Docker, write `docker` for `podman` and drop `--security-opt label=disable`.
+
+3. **Open Jellyfin** at `http://localhost:8096` and finish its first-run wizard (language, an admin user and password).
+
+4. **Add the library.** Dashboard, Libraries, **Add Media Library**. Content type **Music**, then **Folders**, **+**, and type `/media/sacd`. Under the library's settings leave **LUFS audio normalization** off. Click **OK**.
+   *You should see:* a scan starts and the albums appear.
+
+## Check it worked
+
+Open **Music** on the home page. Each disc is an album; a disc with a multichannel area also shows "Album (Multichannel)". Click a track to play it.
+
+## If something goes wrong
+
+- **You see:** no albums after the scan. **Do this:** run `podman exec jellyfin ls /media/sacd`. If it lists nothing, the mount is missing on the host (step 1) or `/srv/media` was shared without `rslave`. Fix the mount, then run Dashboard, Libraries, **Scan All Libraries**.
+- **You see:** every track twice, or a very slow first scan. **Do this:** sacdfs is serving WAV too. Start sacdfs with `SACDFS_FORMATS=dsf` ([docker-podman.md](docker-podman.md)).
+- **You see:** a SELinux "Permission denied" in Jellyfin's log. **Do this:** keep `--security-opt label=disable` in step 2.
+
+## Details
+
+### What was checked
+
+- 0.6.0 (published image), Jellyfin 12.4.0, rootless Podman on Fedora; sacdfs in a rootful Podman container, shares mounted with SMB 3.1.1. A 4-disc test set (13 tracks): all 13 found, 6 albums (2 named "... (Multichannel)"), cover art picked up for 4 albums, a stream and an MP3 transcode returned data, and sacdfs restarted under the running container with all 13 files still listed. The library was created and scanned through the API.
+- Earlier, on 0.4.0-rc.2 and 0.4.1 with the 5-disc test set: 93 of 93 tracks with `dsf` (186 of 186 with `dsf,wav`), transcoded playback and seeks. Full numbers: [clients.md](../clients.md#jellyfin).
+- Not run: Jellyfin reading the SMB or NFS share on a NAS from another machine, and the web-interface clicks.
+
+### Options and reasons
+
+- **`SACDFS_FORMATS=dsf`.** Jellyfin's ffprobe reads about 7 MB of each WAV file, which sacdfs must convert: 648.5 MiB served for the first scan against 17.9 MiB with `dsf`.
+- **`SACDFS_FLATTEN=1`.** Each disc's `Stereo` and `Multichannel` folders then sit under the album.
+- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit up to 512 MiB).
+- **LUFS normalization off.** With it on, Jellyfin read the library about twice over (40.0 GiB from a 22.0 GiB library), and sacdfs had to decode all of it.
+- **Share the folder that holds the mount, with `ro,rslave`.** Sharing the mount point itself leaves the container on a dead mount after sacdfs restarts. `label=disable` is for SELinux hosts.
+- Run Jellyfin as the same user that made the mount if you mount sacdfs directly (without Docker or Podman for sacdfs): see [user-guide.md](../user-guide.md).
+
+### More problems
+
+- A first scan right after Jellyfin's first start may show 0 albums if the library is added while Jellyfin's own startup scan runs. Wait until Dashboard shows no running tasks, then scan again.

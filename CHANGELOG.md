@@ -6,8 +6,27 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **sacdfs exits after a grace period on SIGTERM even while clients hold files open (#276).** This
+  changes the lifecycle next to the read path, not the reads, and the next release needs a soak.
+  The mount is still detached at once; sacdfs now serves the files still open for `--stop-grace`
+  seconds (default 10, container: `SACDFS_STOP_GRACE`, `0` for the old wait-for-ever) and then
+  saves its state and exits with status 0. Clients with a file still open get I/O errors. It exits
+  only when its mount is gone from the mount table, so a stop never leaves `Transport endpoint is
+  not connected`; if the detach fails it logs an error and keeps serving. The stop timeouts stay
+  above the grace: the container's `stop_grace_period` and the Unraid `--stop-timeout` go from
+  20 s to 30 s, `TimeoutStopSec` and `sacdfs-ctl` stay at 30 s (`sacdfs-ctl` waits `grace + 15` s
+  for a larger `--stop-grace`). Tests: an integration test with a held-open file, and
+  `deploy/ci-held-stop-test.sh` in the container share test (files held open over SMB and NFS and
+  inside the container).
+- **Install guides rewritten to be simpler (part of #310).** `docs/install/README.md` is now a chooser
+  with three questions; the Docker and Podman, Linux binary and Linux client guides follow one shape
+  (what you need, numbered steps, check it worked, three common problems, Details), with the test
+  history moved to Details. The NAS and player guides follow in later pull requests.
+- **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
+
 ### Fixed
-- **WAV copies through the Linux kernel SMB client are as fast as in 0.4.1 again (#271).**
+- **WAV copies through the Linux kernel SMB client are about as fast as in 0.4.1 again (#271).**
   Since 0.5.0 (#252, the player-first rules of #230), a one-reader copy of WAV files over SMB was
   8 to 11 % slower than in 0.4.1. Samba serves the kernel client's 4 MiB reads concurrently, so
   they reach sacdfs up to about 20 MiB out of order; each of those counted as a jump, the reader's
