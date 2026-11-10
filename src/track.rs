@@ -608,7 +608,7 @@ static ZEROS: [u8; 6 * dsf::FRAME_BYTES as usize] = [0; 6 * dsf::FRAME_BYTES as 
 const READ_BUFFERS_KEPT: usize = 8;
 
 /// Longest reply buffer kept, the largest read the kernel is asked to send.
-const READ_BUFFER_MAX: usize = crate::fs::MAX_READ as usize;
+const READ_BUFFER_MAX: usize = crate::vfs::MAX_READ as usize;
 
 /// Reply buffers not in use (#210), taken and given back as the DST decoders are.
 ///

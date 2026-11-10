@@ -3,17 +3,29 @@
 //! The platform-neutral core that every front end calls (#22): what sacdfs answers, without
 //! FUSE's types. See docs/design.md, "The core and its front ends".
 //!
-//! The Linux FUSE front end is [`crate::fs`]. A front end maps [`Error`] to its platform's
-//! codes, and supplies the replies the core answers through ([`crate::watchdog::Fail`]).
+//! [`Volume`] answers the requests, by inode number and file handle, through replies the
+//! front end supplies ([`Reply`], [`DataReply`]); a front end maps [`Error`] to its platform's
+//! codes. The Linux FUSE front end is [`crate::fuse`].
 
 mod image_reads;
 mod size;
+mod volume;
 mod workers;
 
 pub use image_reads::HUNG_READS_PER_IMAGE;
 pub(crate) use image_reads::ImageReads;
 pub(crate) use size::ShareSize;
+pub use volume::{
+    Access, Attr, DataReply, DirOpen, EntryAttr, Kind, Listing, ListingPlus, Lookup, Reply, StatFs, TTL,
+    Volume,
+};
 pub use workers::{MAX_POOL_THREADS, Workers};
+
+/// Largest read a front end asks for, and the longest reply buffer kept. On Linux, the largest
+/// read the kernel is asked to send, and the read-ahead it is asked for. It grants no more
+/// read-ahead than it offers, 128 KiB unless root has raised the mount's `read_ahead_kb`, so
+/// reads through the page cache arrive 128 KiB at a time (#210).
+pub const MAX_READ: u32 = 1 << 20;
 
 /// Why a request failed, for the front end to say in its platform's terms (an errno for
 /// FUSE).

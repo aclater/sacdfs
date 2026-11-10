@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use fuser::{Config, MountOption, Session};
 use sacdfs::disc::Tuning;
 use sacdfs::engine::Engine;
-use sacdfs::fs::SacdFs;
+use sacdfs::fuse::SacdFs;
 use sacdfs::memory::{self, Cgroup};
 use sacdfs::sidecar::Sidecars;
 use sacdfs::tree::{Output, SourceDir, Tree};

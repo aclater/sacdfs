@@ -36,7 +36,7 @@ use crate::vfs::Error;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A reply that can be failed with an error. Each front end implements it for its replies
-/// (the FUSE front end for fuser's, in [`crate::fs`]). A reply dropped unanswered must
+/// (the FUSE front end for fuser's, in [`crate::fuse`]). A reply dropped unanswered must
 /// answer [`Error::Io`] (fuser's do), so that a request whose job never ran is not left open.
 pub trait Fail: Send + 'static {
     /// Answers the request with `err`.
