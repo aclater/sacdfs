@@ -115,10 +115,11 @@ write_smb_conf() {
    map readonly = yes
    # Nothing can change on a read-only mount: no change notifications, no oplock breaks.
    kernel change notify = no
-   # A folder's listing changes behind Samba's back (images added, art changed), so Samba
-   # never breaks a client's directory lease: the Linux kernel client, which caches a leased
-   # folder for as long as it keeps using it, didn't show a new image until it left that
-   # folder alone for 30 s (#205). Without leases it shows at the next listing.
+   # A folder's listing changes behind Samba's back (images added, art changed), and Samba
+   # breaks a directory lease only for changes made through Samba, never for kernel change
+   # notifications (#325). With leases, the Linux kernel client and Windows keep a folder's
+   # old listing for as long as they keep using it (#205, #325). Without leases a new image
+   # shows at the next listing; Windows then reopens a folder per file it looks at (#312).
    smb3 directory leases = no
    # The size and free space don't change while mounted: ask sacdfs once a minute, not for
    # every client's volume query (#205).
