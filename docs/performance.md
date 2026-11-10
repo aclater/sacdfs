@@ -958,6 +958,38 @@ On the shared host (5 rounds) the DSF worst read was 23.3 ms and 27.9 ms and the
 - *Jellyfin's LUFS task* (reads 40 GiB of the 22 GiB library): 478 s on 0.4.0 and 508 s on rc.1
   (+6 %, one run each, quiet host); first scan 52.5 s on both.
 
+## WAV copies over SMB (#271)
+
+A one-reader copy of WAV files through the Linux kernel SMB client was 8 to 11 % slower in 0.5.0
+and 0.6.0 than in 0.4.1. The cause was #252: Samba serves the client's 4 MiB reads concurrently, so
+they reach sacdfs up to about 20 MiB out of order. Each read outside the sequential gaps started
+the reader's pace again, so the copy kept switching between reading for throughput and playing
+and lost its long read-ahead window ([design](design.md#read-ahead)). An instrumented 0.6.0 counted
+14,965 restarts and 3,291 switches for one stereo area; with the fix there is one of each per file.
+
+**How measured:** bare metal (Ryzen AI 9 HX 370, on mains, `performance` profile). The container
+was pinned to the 4 Zen 5 cores, and `cat` to the Zen 5c cores. The kernel client (SMB 3.1.1,
+`rsize` 4 MiB) mounted the container's share over loopback. One reader `cat` of every file of an
+area of one DST disc to `/dev/null`, a fresh container per run without an index cache, builds
+alternating; medians (range), seconds:
+
+| One reader, kernel CIFS | 0.4.1 | 0.5.0 | 0.6.0 | This fix |
+|---|---|---|---|---|
+| DST stereo WAV, 4.4 GB (4 rounds) | 23.02 (22.55-23.20) | 25.09 (24.87-25.41), **+9.0 %** | 24.91 (24.72-25.05), **+8.2 %** | **22.28** (22.05-24.32), -3.2 % |
+| DST 6 ch. WAV, 13.7 GB (4 rounds) | 75.21 (74.45-75.93) | 84.06 (81.97-85.16), **+11.8 %** | 83.95 (82.12-85.73), **+11.6 %** | **78.42** (78.24-81.78), +4.3 % |
+| DST stereo DSF (3 rounds) | 18.61 (17.98-18.68) | | 18.77 (18.36-19.26) | **17.87** (17.56-17.90) |
+| DST 6 ch. DSF (3 rounds) | 60.07 (59.85-60.18) | | 59.57 (59.52-59.75) | **57.53** (57.32-57.66) |
+
+- **Earlier releases:** 0.4.1-rc.2 23.08 and 76.25 s, rc.3 23.10 and 75.21 s, 5 rounds in an
+  earlier run on the same rig. The slowdown first reported against rc.3 (#239) came from an
+  unpinned VM. Bisected with each binary over the same image, stereo WAV: just before #212
+  23.47 s, #212 22.54 s, #252 25.43 s.
+- **Locally** (the binaries on a FUSE mount, same pinning) #252 cost nothing: rc.3 20.51 s,
+  #212 19.64, #252 19.59, 0.6.0 19.61 s.
+- **Six channels** keep a gap of 4 % against 0.4.1, with ranges that don't overlap; it is under
+  the 10 % that needs explaining and was not chased.
+- **Bytes:** all 122 DSF and WAV files of the three test images compare equal (`cmp`) with 0.6.0's.
+
 ## History
 
 What each improvement changed, one line each, with the pull request that measured it (each
