@@ -7,6 +7,14 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Windows thumbnail pass: where the extra folder opens come from (part of #312).** Docs only. On
+  Windows 11 in a VM, the pass over 196 files sends 2,104 to 2,166 requests on 0.6.0 against 508 to 514
+  on 0.5.0 and 921 to 941 on 0.4.1; the 800 extra are `OPENDIR` and `RELEASEDIR` pairs. They come from
+  the container's `smb3 directory leases = no` (#205), not from the `opendir` change: with leases on,
+  0.6.0 counts 496. On a 5,040-file tree the pass took about 1.5 times as long (121 to 126 s against 80 to
+  86 s). `docs/deployment.md` says so, and that `SMB_EXTRA_GLOBAL=smb3 directory leases = yes` turns the
+  leases back on for a Windows-only share, at the cost the container's default avoids for the Linux kernel
+  client. No code or default changed.
 - **DST areas read faster on one thread: scarletbook is built in one codegen unit (#270).** Release
   builds now compile scarletbook with `codegen-units = 1`. Its DST decoder then runs in as many cycles
   as in the library's own builds, about 4 % fewer than before. Six-channel DST on one thread went from
@@ -49,6 +57,24 @@ All notable changes to sacdfs are recorded here. The format follows
   the churner replaced or removed, and `ENOENT` or `ESTALE` on an area's `cover.jpg` in the
   art-churn album after a cover removal, are counted as replaced sidecars. Every other errno, and
   these on any other path, still fail the soak; `scripts/test_soak.py` pins both.
+- **macOS: precomposed (NFC) lookups of accented names (part of #308).** Docs only. Names are
+  served precomposed and macOS lists them decomposed; the macOS SMB client answers a precomposed
+  lookup itself, without asking the server, once it has cached the folder's listing. All 111 names
+  with a differing NFC and NFD spelling failed that way, not 111 of 357 at random. The setting
+  `dir_cache_off=yes` in `nsmb.conf` fixed it on macOS 27.2 in a VM. `docs/deployment.md` (macOS)
+  says so. No code or Samba setting changed. Checked on macOS in a VM, not on Apple hardware.
+
+### Fixed
+- **WAV copies through the Linux kernel SMB client are about as fast as in 0.4.1 again (#271).**
+  Since 0.5.0 (#252, the player-first rules of #230), a one-reader copy of WAV files over SMB was
+  8 to 11 % slower than in 0.4.1. Samba serves the kernel client's 4 MiB reads concurrently, so
+  they reach sacdfs up to about 20 MiB out of order; each of those counted as a jump, the reader's
+  pace started again, and the copy kept switching between reading for throughput and playing,
+  losing its long read-ahead window. A jump is now a read more than 64 MiB from where the reader
+  got to, and the pace counts the bytes read. Stereo WAV over SMB: 0.6.0 24.91 s, now 22.28 s
+  (0.4.1: 23.02 s); six channels 83.95 → 78.42 s (0.4.1: 75.21 s). DSF over SMB had not slowed
+  down and gets 3 to 4 % faster. Local reads were not affected. Audio bytes are unchanged
+  ([performance](docs/performance.md#wav-copies-over-smb-271)).
 
 ## [0.6.0] - 2026-11-10
 
