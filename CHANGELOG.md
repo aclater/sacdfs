@@ -7,6 +7,14 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Windows thumbnail pass: where the extra folder opens come from (part of #312).** Docs only. On
+  Windows 11 in a VM, the pass over 196 files sends 2,104 to 2,166 requests on 0.6.0 against 508 to 514
+  on 0.5.0 and 921 to 941 on 0.4.1; the 800 extra are `OPENDIR` and `RELEASEDIR` pairs. They come from
+  the container's `smb3 directory leases = no` (#205), not from the `opendir` change: with leases on,
+  0.6.0 counts 496. On a 5,040-file tree the pass took about 1.5 times as long (121 to 126 s against 80 to
+  86 s). `docs/deployment.md` says so, and that `SMB_EXTRA_GLOBAL=smb3 directory leases = yes` turns the
+  leases back on for a Windows-only share, at the cost the container's default avoids for the Linux kernel
+  client. No code or default changed.
 - **sacdfs exits after a grace period on SIGTERM even while clients hold files open (#276).** This
   changes the lifecycle next to the read path, not the reads, and the next release needs a soak.
   The mount is still detached at once; sacdfs now serves the files still open for `--stop-grace`
