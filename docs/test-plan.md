@@ -398,6 +398,34 @@ identity match a host mount, and the corpus check passes 457 of 457. The aarch64
 **Not run on 0.5.0:** Windows 11 (the 0.4.1-rc.1 result stands), macOS, Roon and Plex at scale,
 foobar2000, JRiver, and the Tier 2 tools.
 
+## Results: 0.6.0-rc.1 gate
+
+What was run on 0.6.0-rc.1 (tag `v0.6.0-rc.1`), with 0.5.0 as the baseline. Anything missing here is untested on 0.6.0-rc.1.
+
+**Clients (Tier 1),** on the v0.6.0-rc.1 release binary and image, 0.5.0 as the baseline (details in [clients.md](clients.md#060-rc1-checks)).
+
+- Jellyfin 12.4.0, Navidrome 0.64.2, Lyrion 9.1.1, MPD 0.24.15 and MinimServer 2.2: the same tracks, albums, art and bytes as on 0.5.0. No ERROR or WARN lines in sacdfs's logs.
+- Linux NFS 4.2 and SMB 3.1.1: 22 of 22 checks on Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12 and Ubuntu 26.04. Ubuntu 24.04 passes 21 of 22 (the known `linux-modules-extra` non-ASCII SMB `stat` problem), as on 0.5.0.
+- FUSE requests per scripted-server session fell against 0.5.0 (Navidrome `dsf` 3,477 to 1,204, Lyrion 400 to 214, MPD 309 to 234, MinimServer 311 to 231, Jellyfin 1,900 to 1,713). Over SMB a first `ls -lR` takes 175 requests against 253, and `find` 163 against 241. Over NFS the per-kind counts for `ls -lR`, `find` and `getfattr -d -R` are identical to 0.5.0 (no extended-attribute storm: 1 GETXATTR, 238 LISTXATTR for `ls -lR`).
+- macOS 27.2 in a VM on Apple hardware (SMB, command-line tools, headless): mount, browse, read-only errors, no `._` or `.DS_Store` files, Quick Look thumbnails, byte-identical copies (a 6.9 GB album over rsync) and seeks across 4 GiB in an RF64 track all pass. Names are served decomposed (NFD) and opening a precomposed (NFC) spelling fails for 111 of 357 accented files, as macOS does not normalise names over SMB (#308). No Finder, DSD player or sound check. Details in [clients.md](clients.md#060-rc1-checks).
+- Not run: Windows 11 (no sacdfs Windows harness; the 0.4.1-rc.1 result stands).
+
+**Release artifacts.** The release workflow succeeded. The release is a pre-release with the x86_64, x86_64-v3 and aarch64 archives, each with a `.sha256` and an `.intoto.jsonl`, and `SHA256SUMS`; all three checksums verify and `gh attestation verify` passes on the x86_64 archive. Each archive now holds `sacdfs`, `sacdfs-ctl`, `sacdfs.service` and `sacdfs.conf.example` (new in this release) next to `COPYING`, `README.md` and `CHANGELOG.md`. The image `ghcr.io/aclater/sacdfs:0.6.0-rc.1` exists (an image index) and `:latest` still points at the 0.5.0 manifest. The x86_64 build targets glibc 2.17. In a UBI 7 container (glibc 2.17, no `fusermount`) the release binary mounts the corpus and its 914 file hashes equal those of a host mount (`cmp`), and the host corpus check passes 457 of 457 tracks.
+
+**Real-disc tests:** pending.
+
+**Byte comparison with 0.5.0.** A byte comparison of 466 DSF and WAV files from 12 discs (including 12 multichannel areas) between 0.5.0 and 0.6.0-rc.1 on separate index caches: all 466 hashes equal. RF64 tracks: pending.
+
+**Tree comparison and upgrade/rollback** (the whole library, 0.5.0 then 0.6.0-rc.1 then 0.5.0 again on the same index cache and tags directory, 13,948 entries): the trees are identical in name, type and size (0 differences, as the CHANGELOG states: names, sizes, times and bytes are unchanged), so all 13,948 names are unchanged. 0.5.0 started on the cache the release binary had used, and the rolled-back tree equals the first one. Audio identity across the three steps on a 3-disc sample: 154 DSF and WAV files hash the same on 0.5.0, 0.6.0-rc.1 and 0.5.0 again. Roon and Plex re-reads were not observed (see below).
+
+**Soak:** `scripts/soak.py --hours 2 --sample-paths` on two Linux machines, 0.6.0-rc.1 side by side with 0.5.0 on the same images and the same load (a busy host with other jobs running, and an idle one). On the busy host both builds were built from their tags; on the idle host the published x86_64 release binaries were used.
+- **Load.** 739 GB to 1.13 TB read per run, 38 to 39 deliberate stalls and 23 remounts per run. No stall or remount failed.
+- **Memory.** Flat: a second-half trend of at most +0.72 MiB/h (limit 4.9). The warm level is equal to 0.5.0's or 1 to 2 MiB lower (178.8 against 180.9 MiB, and 163.3 against 164.3), and the peak sits 5.7 to 7.3 MiB above the warm level (0.5.0: 5.5 to 5.6).
+- **Resources.** No thread spike (peaks 83 and 72 against 79 and 73 on 0.5.0, all under the spike line), at most 19 fds, and the cache stayed flat.
+- **The failed check.** The "unexpected read errors" check failed on both versions, with 2 to 6 errors per run. All of them are `ESTALE` on replaced art on the art-churn album (#279), the designed behaviour; none was on an audio file. This is not a regression.
+
+**Not run on 0.6.0-rc.1:** Roon and Plex at scale (the re-scan on upgrade and rollback in step 2 and 5 of [Upgrade and rollback](#upgrade-and-rollback) was run on the binary only, with no Roon or Plex), foobar2000, JRiver, and the Tier 2 tools.
+
 ## Soak memory steps (#247)
 
 Steps of 3 to 9 MiB in a soak's resident size, in both directions, appeared on 0.4.0, 0.4.1-rc.2
