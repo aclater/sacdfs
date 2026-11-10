@@ -39,3 +39,6 @@ jobs:
             --exclude-path 'tests/corpus/'
             '**/*.md'
           fail: true
+          # GitHub answers anonymous checks of github.com pages from Actions with 503 or 429
+          # often enough to fail unrelated pull requests; with the token lychee is not throttled.
+          token: ${{ secrets.GITHUB_TOKEN }}

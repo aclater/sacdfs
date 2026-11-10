@@ -4,7 +4,7 @@
      store listing: docs/install/store-apps.md. -->
 <Container version="2">
   <Name>sacdfs</Name>
-  <Repository>ghcr.io/aclater/sacdfs:0.5.0</Repository>
+  <Repository>ghcr.io/aclater/sacdfs:0.6.0</Repository>
   <Registry>https://github.com/aclater/sacdfs/pkgs/container/sacdfs</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -21,7 +21,7 @@ Needs the FUSE device and two capabilities (SYS_ADMIN to mount, DAC_READ_SEARCH 
   <WebUI/>
   <TemplateURL>https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/unraid/sacdfs.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/icon.png</Icon>
-  <ExtraParams>--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined --stop-timeout=20 --health-cmd=/usr/local/bin/healthcheck.sh --health-interval=30s --health-timeout=10s --health-start-period=300s --health-retries=3</ExtraParams>
+  <ExtraParams>--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined --stop-timeout=30 --health-cmd=/usr/local/bin/healthcheck.sh --health-interval=30s --health-timeout=10s --health-start-period=300s --health-retries=3</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DateInstalled/>
