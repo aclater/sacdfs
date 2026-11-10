@@ -691,7 +691,7 @@ fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
 /// order certain: unmounted, new mount, then the old one exits.
 #[test]
 fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
-    common::skip_without_fuse!();
+    common::skip_without_fuse!(exclusive);
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     let mut old = Mount::foreground(&image, &[]);
     let at = old.path();
@@ -728,7 +728,7 @@ fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
 /// service manager sends on stop. Several rounds: the number is reused in most, not all.
 #[test]
 fn a_late_signal_leaves_the_next_mount_alone() {
-    common::skip_without_fuse!();
+    common::skip_without_fuse!(exclusive);
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     for round in 0..6 {
         let mut old = Mount::foreground(&image, &[]);
@@ -1171,9 +1171,10 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
     set(&album, later - Duration::from_secs(1));
     // One step on (#185), as for any folder with an image below.
     let moved = later + sacdfs::ident::FILLED_STEP;
-    wait_for("the root to move", || mtime("") == moved);
+    // Each folder is its own cached attribute in the kernel, so each is waited for: the root
+    // moving first does not mean the others have, under load (#305).
     for p in &dirs[..3] {
-        assert_eq!(mtime(p), moved, "{p}");
+        wait_for(&format!("{p:?} to move"), || mtime(p) == moved);
     }
     // The image's own folders do not show the playlist: they keep their time.
     for p in &dirs[3..] {

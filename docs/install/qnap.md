@@ -1,95 +1,158 @@
-# sacdfs on QNAP
+# QNAP: install sacdfs
 
-**Release binary: works from 0.5.0, also started at boot by `autorun.sh`. Container Station: Compose file works.** Checked on QuTScloud 5.2.9 in a VM, not on QNAP hardware.
-QuTScloud wouldn't make a storage pool in the VM (see below), so the volume was an ext4 file system made by hand,
-and the Container Station package came from the App Center. QTS and QuTS hero weren't checked and may differ. The
-checks used the 0.5.0 release.
+sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that any player can read. This page installs it from the release file and starts it by itself whenever the NAS starts. About 15 minutes.
 
-## Release binary
+Checked on 0.6.0 on QuTScloud 5.2.9 (in a VM, not on QNAP hardware; QTS and QuTS hero may differ). Steps marked *(untested)* were not run.
 
-Follow [the NAS steps](nas-binary.md) as `admin`, which is root on QNAP (`id -u` prints `0`).
-In place of `/volume1`, use a shared folder: the examples here use `/share/Multimedia`.
+## What you need
+
+- A QNAP NAS with an Intel or AMD chip (`uname -m` in step 1 prints `x86_64`).
+- An administrator login over SSH. SSH is a way to type commands on the NAS from another computer.
+- A folder of SACD images on the NAS, in a QNAP shared folder. This page uses a folder `music` in the shared folder `Multimedia`; change the paths to yours.
+- About 100 MB free in the shared folder.
+
+## Steps
+
+1. **Log in over SSH as `admin`.** In QNAP's Control Panel, Network & File Services, Telnet / SSH, tick "Allow SSH connection" *(untested)*. On your computer (Windows: PowerShell; macOS: Terminal) type `ssh admin@your-nas-address`. On QNAP `admin` is root. Check:
+
+   ```sh
+   id -u && uname -m
+   ```
+
+   *You should see* `0` and `x86_64`.
+2. **Check that FUSE is there.** FUSE is the part of the system that lets sacdfs show files. QNAP has it.
+
+   ```sh
+   ls -l /dev/fuse
+   ```
+
+   *You should see* a line starting with `crw`.
+3. **Make the folders and go into the first.** Keep sacdfs in a shared folder: QNAP's system folders, `/root` included, are on a small RAM disk. `/share/CACHEDEV1_DATA/Multimedia/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs.
+
+   ```sh
+   mkdir -p /share/CACHEDEV1_DATA/Multimedia/sacdfs/cache /share/CACHEDEV1_DATA/Multimedia/sacd
+   cd /share/CACHEDEV1_DATA/Multimedia/sacdfs
+   ```
+4. **Download sacdfs and its checksum file.**
+
+   ```sh
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.0/sacdfs-0.6.0-x86_64-linux.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.0/sacdfs-0.6.0-x86_64-linux.tar.gz.sha256
+   ```
+
+   *You should see* two progress tables and no line starting `curl: (`.
+5. **Check the download.**
+
+   ```sh
+   sha256sum -c sacdfs-0.6.0-x86_64-linux.tar.gz.sha256
+   ```
+
+   *You should see* `sacdfs-0.6.0-x86_64-linux.tar.gz: OK`.
+6. **Unpack it and copy out the program and its start script.**
+
+   ```sh
+   tar -xzf sacdfs-0.6.0-x86_64-linux.tar.gz
+   cp sacdfs-0.6.0-x86_64-linux/sacdfs sacdfs-0.6.0-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/Multimedia/sacdfs/
+   /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs --version
+   ```
+
+   *You should see* `sacdfs 0.6.0`.
+7. **Write the settings file.** Change the first line to your images folder.
+
+   ```sh
+   cat > /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs.conf <<'EOF'
+   SACDFS_IMAGES=/share/CACHEDEV1_DATA/Multimedia/music
+   SACDFS_MOUNT=/share/CACHEDEV1_DATA/Multimedia/sacd
+   SACDFS_BIN=/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs
+   SACDFS_OPTIONS="--index-cache /share/CACHEDEV1_DATA/Multimedia/sacdfs/cache"
+   EOF
+   ```
+8. **Start sacdfs.**
+
+   ```sh
+   SACDFS_CONF=/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs.conf /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs-ctl start
+   ls /share/CACHEDEV1_DATA/Multimedia/sacd
+   ```
+
+   *You should see* `sacdfs started`, then one folder per image. Each holds `Stereo` and, on multichannel discs, `Multichannel`, with files like `01 - Title.dsf` and `01 - Title.wav`. sacdfs goes on running after you log out.
+9. **Switch on "run user defined processes".** QNAP only runs start-up scripts when this is on. Type:
+
+   ```sh
+   setcfg Misc Autorun TRUE -f /etc/config/uLinux.conf
+   ```
+
+   (The same switch is in the QNAP settings, Control Panel, System, Hardware, General, "Run user defined processes during startup" *(untested)*.)
+10. **Make it start with the NAS.** QNAP runs `autorun.sh` early at start-up, before the data volume is ready, so this script waits for the volume in the background and then starts sacdfs. The file lives on a small flash partition, which these commands open and close.
+
+    ```sh
+    mount $(/sbin/hal_app --get_boot_pd port_id=0)6 -t ext2 /tmp/config
+    cat > /tmp/config/autorun.sh <<'EOF'
+    #!/bin/sh
+    (
+      D=/share/CACHEDEV1_DATA/Multimedia/sacdfs
+      i=0
+      while [ ! -x $D/sacdfs-ctl ] && [ $i -lt 120 ]; do sleep 5; i=$((i + 1)); done
+      SACDFS_CONF=$D/sacdfs.conf $D/sacdfs-ctl start
+    ) > /tmp/sacdfs-autorun.log 2>&1 &
+    EOF
+    chmod +x /tmp/config/autorun.sh
+    umount /tmp/config
+    ```
+
+    QNAP has no shut-down hook; its own restart sends every program a polite stop signal, and sacdfs unmounts cleanly on it. (Never stop sacdfs with `kill -9`: it leaves a dead mount.)
+11. **Restart the NAS, and look again.**
+
+    ```sh
+    reboot
+    ```
+
+    Wait 5 to 10 minutes, log in again, and run `ls /share/CACHEDEV1_DATA/Multimedia/sacd`. *You should see* the same folders.
+
+To stop sacdfs by hand: `SACDFS_CONF=/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs.conf /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs-ctl stop`. Never use `kill -9`.
+
+## Check it worked
 
 ```sh
-mkdir -p /share/Multimedia/sacdfs /share/Multimedia/sacd
-/share/Multimedia/sacdfs/sacdfs --allow-other /share/Multimedia/music /share/Multimedia/sacd
+ls /share/CACHEDEV1_DATA/Multimedia/sacd
 ```
 
-- **Use 0.5.0 or later.** QuTScloud 5.2.9 has glibc 2.21. From 0.5.0 the release binaries
-  need glibc 2.17 ([binary.md](binary.md)). 0.4.1 and earlier stopped at start with
-  `` weak version `GLIBC_2.28' not found ``.
-- **Keep sacdfs in a shared folder.** QNAP's system folders, `/root` included, are on a
-  450 MB RAM disk.
-- **Check with `ls`.** `/share/Multimedia` is a link to the volume's real path, so
-  `/proc/mounts` lists the mount under that path (`/share/CACHEDEV1_DATA/...`), not under
-  `/share/Multimedia`.
+*You should see* your images as folders. To play, share the `sacd` folder with QNAP's own file sharing (SMB or NFS) and open it from your player; see [the player guides](README.md).
 
-What was checked on QuTScloud 5.2.9 (kernel 5.10). The VM had no storage pool (see below), so
-an ext4 filesystem on its data disk was mounted at `/share/CACHEDEV1_DATA`, with
-`/share/Multimedia` linked to a folder on it, the way QNAP lays out shared folders:
+## If something goes wrong
 
-| Check | Result |
-|---|---|
-| Steps 1 to 9 of [the NAS steps](nas-binary.md), as written, download included | All 22 files of two test images identical to the reference |
-| Logging out of SSH and back in | Still mounted, same files |
-| Earlier, with the pull request's build: QuTScloud's own NFS server (NFSv3, explicit `fsid=`), mounted on the same system | Same bytes as on a current Linux system, for two test images and a real DST disc |
+- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses 0.6.0).
+- **You see:** `sha256sum: ... no properly formatted SHA256 checksum lines found`, or `gzip: stdin: not in gzip format`. **Do this:** the download saved an error page. Delete the two downloaded files and run step 4 again later.
+- **You see:** `Permission denied` when a share or an app opens the folder. **Do this:** you started sacdfs without being root. Run `id -u` (it must print `0`), stop sacdfs (see above) and start it again.
 
-### Starting at boot with `autorun.sh`
+## Details
 
-The `autorun.sh` from [the NAS steps](nas-binary.md#starting-it-at-boot-with-the-nass-own-tools) was
-installed exactly as written there, with "run user defined processes" on (`Misc Autorun = TRUE`,
-set with `setcfg`, not with the menu, which wasn't seen), and the VM was restarted. The data volume
-was the by-hand ext4 file system, mounted early in each start by a `crontab` line (the stand-in for a
-volume QNAP mounts itself).
+### What was checked
 
-| Check | Result |
-|---|---|
-| Start at boot: `autorun.sh` after a VM restart, sacdfs not running before | sacdfs mounted by itself about 2.5 minutes after the VM started (the script waited for the volume), `sacdfs-ctl` said "started" |
-| Files after that start | All 16 files of two test images identical to the reference |
-| The setting after the restart | `Autorun = TRUE` was still there (the earlier check, made before the first-run setup, lost it at every restart) |
-| Stop: QNAP's own power-off of the VM (the power-button handler) with sacdfs running | `signal 15: unmounting` in the sacdfs log; the next start of the VM mounted the file system with no journal recovery message, sacdfs started again, the same 16 files identical |
+Checked on QuTScloud 5.2.9 (kernel 5.10) in a VM, not on QNAP hardware. QuTScloud wouldn't make a storage pool in the VM, so the data volume was an ext4 file system made by hand, mounted at `/share/CACHEDEV1_DATA` early in each start by a `crontab` line (the stand-in for a volume QNAP mounts itself), and the shared folder `Multimedia` was a folder on it.
 
-Two things to know. **QuTScloud finishes starting up slowly in the VM**: about 22 minutes after power-on, because
-it waits for a licence check that has no answer. `autorun.sh` ran after about 2.5 minutes, but a restart or
-power-off asked for in that time waits until the 22 minutes are over. The command-line restart (`reboot`,
-`qreboot`) did nothing visible during that wait either. So the stop above was a power-off, not a restart from the
-menu. And **the volume was not QNAP's**: the first-run setup partitions the disks but makes no volume, and
-`qcli_pool` stops with "read limitation error!" (details below).
+*0.6.0 run, from a clean system:* steps 1 (the `id -u` check only) to 11 as written, with the published 0.6.0 archive, using three images of the conformance corpus (22 DSF and WAV files). The checksum was `OK`, `--version` printed `sacdfs 0.6.0`, and all 22 files hashed identically to a reference read by a Linux host with the same release. After `reboot` (which QuTScloud in the VM only carried out about 22 minutes after the VM started; see below), `autorun.sh` had started sacdfs by itself when checked 9 minutes into the new start, with `Autorun = TRUE` still set and the same 22 files identical. Step 11 says to wait 5 minutes; the earlier 0.6.0-development check saw it after about 2.5 minutes, this check only looked at 9. Stopping on a restart wasn't looked at on this run.
 
-**Not checked:** a non-root user (QuTScloud has no `su`), SMB (no Samba server ran), sharing
-through QNAP's own shared-folder and NFS settings, a client on another machine, the "run user defined
-processes" menu, and a volume made by QNAP's Storage Manager. For stopping, see
-[the NAS steps](nas-binary.md#starting-it-at-boot-with-the-nass-own-tools).
+*Earlier versions:* with 0.5.0, steps 1 to 9 of the old guide (by hand) read all 22 files of two test images identical to the reference and survived logging out and in. With the pull request's build before that, QuTScloud's own NFS server (NFSv3, explicit `fsid=`), mounted on the same system, gave the same bytes as a current Linux system for two test images and a real DST disc. `autorun.sh` was checked on a 0.6.0 development build: `Autorun = TRUE` stayed set across restarts, sacdfs mounted by itself about 2.5 minutes after the VM started (16 files of two test images identical), and QNAP's power-off of the VM stopped it cleanly (`signal 15: unmounting`, file system clean at the next start).
 
-## Container Station
+**Not checked:** the QNAP web screens (including the "run user defined processes" menu), a non-root user (QuTScloud has no `su`), SMB (no Samba server ran), QNAP's own shared-folder and NFS settings, a client on another machine, and a volume made by QNAP's Storage Manager.
 
-**Compose file: works in the VM, with caveats.** Container Station 3.1.4 came from QNAP's App
-Center (`qpkg_cli -g container-station` downloads the package; `qpkg_cli -m <the downloaded file>`
-installed it, because `qpkg_cli -a` stayed "waiting for install"). It installed on the hand-made
-ext4 volume from above, not on a volume QNAP made: QuTScloud in the VM wouldn't make a storage pool
-(the first-run setup partitions the disks but makes no volume, and every `qcli_pool` call stops with
-"read limitation error!"; no licence was installed, and activating one needs a QNAP account).
-Container Station gave Docker 27.1.2 and Compose v5.1.1. Its Docker engine was not running after the
-install; `supervisorctl start docker` (Container Station's own supervisor) started it, because the web
-interface's first-run step, which presumably does that, wasn't used.
+### Options and reasons
 
-[deploy/nas-compose.yaml](../../deploy/nas-compose.yaml) ran as published, with only the images
-path changed to `/share/CACHEDEV1_DATA/Multimedia/music`, with `docker compose up -d` over SSH.
-QNAP's own file services use ports 445 and 2049, which is why the file publishes 10445 and 12049.
+- **`/share/CACHEDEV1_DATA/Multimedia` and not `/share/Multimedia`:** `/share/Multimedia` is a link to the volume's real path, so `/proc/mounts` lists the mount under `/share/CACHEDEV1_DATA/...`. The real path is also what exists first at start-up.
+- **Why the script waits:** `autorun.sh` runs before the data volume is mounted. It waits up to 10 minutes for `sacdfs-ctl` to appear.
+- **QuTScloud is slow in the VM:** about 22 minutes to finish starting, because it waits for a licence check that has no answer. `autorun.sh` ran after about 2.5 minutes, but a restart or power-off asked for sooner waits until the 22 minutes are over (`reboot` and `qreboot` did nothing visible meanwhile). A real QNAP isn't expected to do this. The volume was also not QNAP's: the first-run setup partitions the disks but makes no volume, and `qcli_pool` stops with "read limitation error!" (no licence installed; activating one needs a QNAP account).
+- **Every `sacdfs-ctl` command and setting:** [nas-binary.md](nas-binary.md#start-at-boot-and-stop-safely).
 
-| Check | Result |
-|---|---|
-| `docker compose up -d` with the published 0.5.0 image, pulled from the registry | Healthy 18 s after `up` (includes the pull) |
-| SMB on port 10445 (`smbclient` in a throwaway Alpine container on the host network), two test images | All 16 files identical to the reference |
-| `docker compose restart` | Healthy again after 17 s, the same 16 files identical |
-| `docker compose stop` | 0.3 s, exit status 0; `down` left no container |
+### Container route
 
-**Not checked:** the Container Station screens (this used the command line, not the web interface,
-so the menu names for creating an application from a Compose file are still unseen), NFS, a client on
-another machine, a volume made by QNAP's Storage Manager, and anything on hardware. In an application
-created from the file in the web interface, change the one marked line to the path of your images. Whether
-Container Station's web interface allows `/dev/fuse` and `SYS_ADMIN` wasn't checked: the command line did.
+Container Station 3.1.4 came from QNAP's App Center (`qpkg_cli -g container-station` downloads the package; `qpkg_cli -m <the downloaded file>` installed it, because `qpkg_cli -a` stayed "waiting for install") on the hand-made volume. It gave Docker 27.1.2 and Compose v5.1.1; its Docker engine wasn't running after the install, and `supervisorctl start docker` started it (the web interface's first-run step presumably does that; it wasn't used). [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml) ran as published, with only the images path changed, with `docker compose up -d` over SSH (QNAP's own file services use 445 and 2049, so the file publishes 10445 and 12049). With the published 0.5.0 image: healthy 18 s after `up` (pull included); SMB on 10445 (`smbclient` in a throwaway Alpine container on the host network) read all 16 files of two test images identical; `docker compose restart` healthy after 17 s; `docker compose stop` 0.3 s, exit status 0. Not checked: the Container Station screens, NFS, a client on another machine, and anything on hardware. See [docker-podman.md](docker-podman.md).
 
-Reports from real QNAP hardware are welcome: open an issue that mentions
-[#82](https://github.com/aclater/sacdfs/issues/82), with the system's version, how sacdfs was
-started, and what worked.
+### More problems
+
+- **You see:** `./sacdfs: not found`. **Do this:** use the full path, `/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs`.
+- **You see:** `sacdfs: the folder to mount on, ..., does not exist.` **Do this:** `mkdir -p /share/CACHEDEV1_DATA/Multimedia/sacd` (step 3).
+- **You see:** `umount: ... Device or resource busy`. **Do this:** something uses the folder (a share, an app, or a login whose current folder is inside it). Stop it or `cd /`, then try again.
+- **You see:** `... a sacdfs mount of this user's is still mounted there ...`. **Do this:** sacdfs already runs on that folder; `sacdfs-ctl stop` first.
+- **You see:** `Illegal instruction`. **Do this:** you used the `x86_64-v3` build on a CPU without AVX2; use the `x86_64` archive ([binary.md](binary.md#binaries)).
+
+Reports from real QNAP hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82), with the system's version, how sacdfs was started, and what worked.
