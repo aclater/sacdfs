@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Soak: designed art-churn errors no longer fail the verdict (#279).** `ESTALE` on a `cover-N.jpg`
+  the churner replaced or removed, and `ENOENT` or `ESTALE` on an area's `cover.jpg` in the
+  art-churn album after a cover removal, are counted as replaced sidecars. Every other errno, and
+  these on any other path, still fail the soak; `scripts/test_soak.py` pins both.
+
 ## [0.6.0] - 2026-11-10
 
 Tested as release candidate 0.6.0-rc.1 (2026-11-10). The final version carries only the version
