@@ -67,6 +67,17 @@ could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pac
   could inherit a stop test's file on the mount it was about to stop. The child then blocked in
   `exec`, the mount stayed busy, and the stop test failed to unmount it. They now hold the lock
   shared (`common::spawns_children!`).
+- **An unmount from outside no longer ends sacdfs with status 1 (#322).** When the mount was
+  unmounted or detached from outside (`fusermount3 -u`, `fusermount3 -u -z`, `umount -l`) while a
+  request was still queued, typically the release of a file just closed, the kernel could end the
+  connection as aborted instead of unmounted, and sacdfs exited with "Software caused connection
+  abort (os error 103)" and status 1: about one detach in ten when the last open file was closed
+  right after it. Under load a plain unmount right after a close can meet the same race, the
+  likely cause of the restart test's rare failure. sacdfs now takes that error as the end of the
+  connection, as it takes the usual one (before, only after its own detach on a signal): the
+  kernel returns it for no other reason, as sacdfs does not ask for `FUSE_ABORT_ERROR`. A new
+  integration test detaches 40 mounts from outside with a file open; without the fix it fails
+  within the first five. The restart test now prints the new sacdfs's log when it fails.
 - **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
   open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
   for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that

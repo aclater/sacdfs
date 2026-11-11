@@ -741,16 +741,20 @@ fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
         let whole = std::fs::read(&file).unwrap();
         let open = busy.then(|| std::fs::File::open(&file).unwrap());
         let cache = tempfile::tempdir().unwrap();
+        let new_log = tempfile::NamedTempFile::new().unwrap();
         let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
             .env("XDG_CACHE_HOME", cache.path())
+            .env("RUST_LOG", "debug")
             .arg("-f")
             .arg(&image)
             .arg(&at)
+            .stderr(new_log.reopen().unwrap())
             .spawn()
             .unwrap();
+        let log = || std::fs::read_to_string(new_log.path()).unwrap_or_default();
         // The new one waits: nothing is mounted over the old one.
         std::thread::sleep(Duration::from_millis(300));
-        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs exited (busy: {busy})");
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs exited (busy: {busy}): {}", log());
         assert_eq!(fuse_mounts_on(&at), 1, "mounted over the old mount (busy: {busy})");
         let mut old_child = old.child.take().unwrap();
         let st = Command::new("kill").arg("-TERM").arg(old_child.id().to_string()).status().unwrap();
@@ -772,12 +776,50 @@ fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
         }
         // The old one has exited; the new mount is still there and serving.
         std::thread::sleep(Duration::from_millis(200));
-        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (busy: {busy})");
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (busy: {busy}): {}", log());
         assert_eq!(fuse_mounts_on(&at), 1, "busy: {busy}");
         assert_eq!(std::fs::read(&file).unwrap(), whole, "busy: {busy}");
         unmount_retrying(&at);
-        assert!(wait_exit(&mut new, "the new sacdfs"));
+        assert!(wait_exit(&mut new, "the new sacdfs"), "the new sacdfs failed (busy: {busy}): {}", log());
         assert_eq!(fuse_mounts_on(&at), 0);
+    }
+}
+
+/// An unmount from outside is a clean stop: sacdfs exits with success (#322). The kernel can
+/// end the connection as aborted rather than unmounted when a request is still queued as the
+/// mount goes, which a detach (`fusermount3 -u -z`) followed by the close of the last open
+/// file brings about about one time in ten; sacdfs exited with status 1 then, and under load
+/// a plain `fusermount3 -u` right after a read did the same (the restart test above).
+#[test]
+fn an_unmount_from_outside_exits_cleanly() {
+    common::skip_without_fuse!();
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    let dir = tempfile::tempdir().unwrap();
+    let at = dir.path().canonicalize().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    for round in 0..40 {
+        let log_file = tempfile::NamedTempFile::new().unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
+            .env("RUST_LOG", "debug")
+            .arg("-f")
+            .arg(&image)
+            .arg(&at)
+            .stderr(log_file.reopen().unwrap())
+            .spawn()
+            .unwrap();
+        let log = || std::fs::read_to_string(log_file.path()).unwrap_or_default();
+        wait_for("the mount", || is_mounted(&at));
+        let file = at
+            .join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
+        let open = std::fs::File::open(&file).unwrap();
+        let mut buf = vec![0; 4096];
+        open.read_exact_at(&mut buf, 0).unwrap();
+        let st = Command::new("fusermount3").arg("-u").arg("-z").arg(&at).status().unwrap();
+        assert!(st.success(), "round {round}: fusermount3 -u -z: {st}");
+        drop(open);
+        assert!(wait_exit(&mut child, "sacdfs"), "round {round}: sacdfs failed: {}", log());
+        assert!(!is_mounted(&at), "round {round}");
     }
 }
 
