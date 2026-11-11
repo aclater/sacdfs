@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **CI builds and tests in Red Hat-derived containers.** The jobs that build or test sacdfs (lint,
+  tests on x86-64 and arm64, MSRV, coverage, fuzzing, the weekly memcheck)
+  run in a UBI 10 container (Fedora 44 for the lint job), pinned by digest, as a normal user, with
+  the FUSE tests mounting as before. cargo-deny and zizmor are installed in a UBI container,
+  pinned by version and hash, instead of running their vendors' images (cargo-deny's is Alpine).
+  CI only; nothing shipped changes ([development](docs/development.md#ci-containers)).
+
 ## [0.6.2-rc.1] - 2026-11-11
 
 ### Added
@@ -90,12 +98,6 @@ The pace change for WAV copies over SMB (#271, #323) was taken out before the re
 could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pace rules.
 
 ### Changed
-- **CI builds and tests in Red Hat-derived containers.** The jobs that build or test sacdfs (lint,
-  tests on x86-64 and arm64, MSRV, coverage, fuzzing, the weekly memcheck)
-  run in a UBI 10 container (Fedora 44 for the lint job), pinned by digest, as a normal user, with
-  the FUSE tests mounting as before. cargo-deny and zizmor are installed in a UBI container,
-  pinned by version and hash, instead of running their vendors' images (cargo-deny's is Alpine).
-  CI only; nothing shipped changes ([development](docs/development.md#ci-containers)).
 - **SMB directory leases stay off: why they can't be fresh (part of #325).** Docs and a comment in the
   container's entry point only; no code or default changed, so this needs no soak. Samba (4.24.7) breaks a
   directory lease only for a change made through Samba, never for a kernel change notification, and a FUSE
