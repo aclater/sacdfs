@@ -30,29 +30,18 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::Thread;
 use std::time::{Duration, Instant};
 
-use fuser::{
-    Errno, ReplyAttr, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyOpen,
-};
+use crate::vfs::Error;
 
 /// How long a request may wait by default before it fails.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// A reply that can be failed with an error.
+/// A reply that can be failed with an error. Each front end implements it for its replies
+/// (the FUSE front end for fuser's, in [`crate::fs`]). A reply dropped unanswered must
+/// answer [`Error::Io`] (fuser's do), so that a request whose job never ran is not left open.
 pub trait Fail: Send + 'static {
     /// Answers the request with `err`.
-    fn fail(self, err: Errno);
+    fn fail(self, err: Error);
 }
-
-macro_rules! fail_impl {
-    ($($t:ty),*) => {$(
-        impl Fail for $t {
-            fn fail(self, err: Errno) {
-                self.error(err);
-            }
-        }
-    )*};
-}
-fail_impl!(ReplyAttr, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyOpen);
 
 /// What a request asks for, for the log line of one that timed out.
 pub struct What {
@@ -132,7 +121,7 @@ impl<R: Fail> Watched for Slot<R> {
                 timeout.as_secs_f64()
             ),
         }
-        reply.fail(Errno::EIO);
+        reply.fail(Error::Io);
     }
 }
 
@@ -287,10 +276,10 @@ mod tests {
     use std::sync::mpsc;
 
     /// A fake reply that reports how it was answered.
-    struct Probe(mpsc::Sender<Option<Errno>>);
+    struct Probe(mpsc::Sender<Option<Error>>);
 
     impl Fail for Probe {
-        fn fail(self, err: Errno) {
+        fn fail(self, err: Error) {
             let _ = self.0.send(Some(err));
         }
     }
@@ -324,7 +313,7 @@ mod tests {
         let p = wd.watch(What::new("lookup", "inode 1"), Probe(tx));
         p.running();
         let got = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(got, Some(Errno::EIO));
+        assert_eq!(got, Some(Error::Io));
         let waited = t.elapsed();
         assert!(waited >= Duration::from_millis(200) && waited < Duration::from_secs(2), "{waited:?}");
         // The work finishing late finds no reply.
@@ -338,7 +327,7 @@ mod tests {
         let wd = Watchdog::new(Some(Duration::from_millis(100))).unwrap();
         let (tx, rx) = mpsc::channel();
         let _p = wd.watch(What::new("read", "inode 3"), Probe(tx));
-        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(Errno::EIO));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(Error::Io));
     }
 
     #[test]

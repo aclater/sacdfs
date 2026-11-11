@@ -27,5 +27,6 @@ pub mod tags_cli;
 pub mod track;
 pub mod tree;
 pub mod verify;
+pub mod vfs;
 pub mod watchdog;
 pub mod wav;

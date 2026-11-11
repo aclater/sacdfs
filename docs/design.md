@@ -1778,7 +1778,7 @@ everything:
   `read()` on the stalled image: 8 WAV clients at the default 30 s timeout reached 64 threads in
   362 s, 8 clients at a 2 s timeout in 23 to 26 s in either format, and 1 WAV client at 2 s in
   142 s; healthy reads then failed. Now each image's unfinished reads are counted
-  (`ImageReads` in `src/fs.rs`), with when each was asked for. Once 4 of them
+  (`ImageReads` in `src/vfs/image_reads.rs`), with when each was asked for. Once 4 of them
   (`HUNG_READS_PER_IMAGE`) are older than the request timeout, and so failed already, a new read
   of that image is answered `EIO` on fuser's thread at once and takes no request thread. When a
   blocked read finishes and fewer than 4 are left, the image is read again. *Why count only

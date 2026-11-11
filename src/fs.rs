@@ -10,17 +10,16 @@
 //! watched: one that waits longer than the request timeout is failed with `EIO`
 //! ([`crate::watchdog`], #72), and an image with several reads blocked past it has its new
 //! reads failed at once, so that clients retrying through a long hang can't take every read
-//! thread ([`HUNG_READS_PER_IMAGE`], #241).
+//! thread ([`vfs::HUNG_READS_PER_IMAGE`], #241).
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io;
 use std::os::unix::fs::FileExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use fuser::{
     AccessFlags, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo,
@@ -31,6 +30,7 @@ use fuser::{
 use crate::engine::Engine;
 use crate::track::Reader;
 use crate::tree::{Entry, Node, ROOT, SidecarFile, Tree};
+use crate::vfs::{self, ImageReads, ShareSize, Workers};
 use crate::watchdog::{self, Fail, Watchdog, What};
 
 /// How long the kernel may cache entries and attributes: the tree never changes.
@@ -44,302 +44,32 @@ const STATFS_REFRESH: Duration = Duration::from_secs(60);
 /// `read_ahead_kb`, so reads through the page cache arrive 128 KiB at a time (#210).
 pub const MAX_READ: u32 = 1 << 20;
 
-type Job = Box<dyn FnOnce() + Send>;
-
-/// Most threads a pool of [`Workers`] grows to. *Why 64:* the kernel sends at most 64
-/// background requests (read-ahead) at once (`max_background`, set in `init`), plus the
-/// few synchronous ones of its callers; past that, a request waits for a thread, and the
-/// watchdog fails it if it waits too long. Each thread costs a stack of address space,
-/// mostly untouched, and nothing while it is parked.
-///
-/// *The limit this sets (#241):* the watchdog replies `EIO` but can't free a thread blocked
-/// on the source, so a client retrying through a long hang takes one more thread each time,
-/// and the blocked reads needn't be simultaneous. At 64, reads of every image would wait and
-/// fail until the source answered: [`HUNG_READS_PER_IMAGE`] stops one image's reads short of
-/// that.
-pub const MAX_POOL_THREADS: usize = 64;
-
-/// A thread above a pool's core count that has had no job for this long ends.
-const SPARE_IDLE: Duration = Duration::from_secs(10);
-
-/// Sets `n` to `f` of its value, unless `f` says `None`; whether it was set. (A loop
-/// rather than `fetch_update`, deprecated in newer Rust, or `try_update`, newer than the
-/// MSRV.)
-fn update(n: &AtomicUsize, f: impl Fn(usize) -> Option<usize>) -> bool {
-    let mut cur = n.load(Ordering::SeqCst);
-    loop {
-        let Some(new) = f(cur) else { return false };
-        match n.compare_exchange_weak(cur, new, Ordering::SeqCst, Ordering::SeqCst) {
-            Ok(_) => return true,
-            Err(now) => cur = now,
-        }
+/// The errno for a core error.
+fn errno(e: vfs::Error) -> Errno {
+    match e {
+        vfs::Error::NotFound => Errno::ENOENT,
+        vfs::Error::NoMemory => Errno::ENOMEM,
+        vfs::Error::NotDir => Errno::ENOTDIR,
+        vfs::Error::IsDir => Errno::EISDIR,
+        vfs::Error::ReadOnly => Errno::EROFS,
+        vfs::Error::Access => Errno::EACCES,
+        vfs::Error::Stale => Errno::ESTALE,
+        vfs::Error::BadHandle => Errno::EBADF,
+        vfs::Error::Io => Errno::EIO,
+        vfs::Error::Os(n) => Errno::from_i32(n),
     }
 }
 
-/// A pool of threads taking jobs from a queue, `core` of them at least, growing up to
-/// `max` when a job is queued and no thread is idle.
-///
-/// *Why it grows (#63, #72):* a thread whose job blocks on a stalled source (a hung NFS
-/// share) is lost until the source answers, maybe for hours. A fixed pool would lose its
-/// threads one by one, and then every request, of any source, would queue behind them. A
-/// spare thread is started instead, so other requests keep being served; the bound keeps a
-/// hung source from making threads without end, and the watchdog fails what then waits.
-/// [`HUNG_READS_PER_IMAGE`] keeps one hung image from reaching that bound (#241).
-///
-/// Not a rayon pool: a rayon worker waiting for another pool (here, the DST decoders)
-/// runs other jobs of its own pool meanwhile, and a second read of the same file would
-/// then wait, on the same thread, for the lock the first one holds.
-#[derive(Debug, Clone)]
-pub struct Workers {
-    tx: Sender<Job>,
-    inner: Arc<WorkersInner>,
-}
-
-#[derive(Debug)]
-struct WorkersInner {
-    rx: Mutex<Receiver<Job>>,
-    name: String,
-    core: usize,
-    max: usize,
-    /// Threads alive.
-    threads: AtomicUsize,
-    /// Threads waiting for a job.
-    idle: AtomicUsize,
-    /// Jobs sent and not yet taken.
-    queued: AtomicUsize,
-    /// Used to number new threads.
-    started: AtomicUsize,
-    /// When a job last found no idle thread, in ms since `epoch`: a spare thread ends
-    /// after a job once that is [`SPARE_IDLE`] ago.
-    busy_ms: AtomicU64,
-    epoch: Instant,
-}
-
-impl WorkersInner {
-    fn now_ms(&self) -> u64 {
-        u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(u64::MAX)
-    }
-}
-
-impl Workers {
-    /// `n` threads named `name-<i>`, growing to [`MAX_POOL_THREADS`] (at least `n`).
-    pub fn new(n: usize, name: &str) -> io::Result<Workers> {
-        Self::with_max(n, MAX_POOL_THREADS, name)
-    }
-
-    /// `core` threads named `name-<i>` (at least one), growing to `max` when busy.
-    pub fn with_max(core: usize, max: usize, name: &str) -> io::Result<Workers> {
-        let core = core.max(1);
-        let (tx, rx) = channel::<Job>();
-        let inner = Arc::new(WorkersInner {
-            rx: Mutex::new(rx),
-            name: name.to_owned(),
-            core,
-            max: max.max(core),
-            threads: AtomicUsize::new(0),
-            idle: AtomicUsize::new(0),
-            queued: AtomicUsize::new(0),
-            started: AtomicUsize::new(0),
-            busy_ms: AtomicU64::new(0),
-            epoch: Instant::now(),
-        });
-        for _ in 0..core {
-            inner.threads.fetch_add(1, Ordering::SeqCst);
-            Self::start(&inner)?;
-        }
-        Ok(Workers { tx, inner })
-    }
-
-    /// Starts one thread, already counted in `threads`.
-    fn start(inner: &Arc<WorkersInner>) -> io::Result<()> {
-        let i = inner.started.fetch_add(1, Ordering::Relaxed);
-        let me = inner.clone();
-        let spawned = std::thread::Builder::new().name(format!("{}-{i}", inner.name)).spawn(move || {
-            loop {
-                me.idle.fetch_add(1, Ordering::SeqCst);
-                let job = match me.rx.lock() {
-                    Ok(r) => r.recv_timeout(SPARE_IDLE),
-                    Err(_) => Err(RecvTimeoutError::Disconnected),
-                };
-                me.idle.fetch_sub(1, Ordering::SeqCst);
-                match job {
-                    Ok(job) => {
-                        me.queued.fetch_sub(1, Ordering::SeqCst);
-                        if catch_unwind(AssertUnwindSafe(job)).is_err() {
-                            log::error!("a request thread job panicked");
-                        }
-                        // *Why here too:* only the thread holding the queue waits with a
-                        // timeout; the others wait for the queue's lock. While jobs keep
-                        // coming more often than SPARE_IDLE, none of them times out, and
-                        // spare threads would stay for good.
-                        let quiet = me.now_ms().saturating_sub(me.busy_ms.load(Ordering::SeqCst))
-                            >= SPARE_IDLE.as_millis() as u64;
-                        if quiet && me.queued.load(Ordering::SeqCst) == 0 {
-                            let core = me.core;
-                            if update(&me.threads, |t: usize| (t > core).then(|| t - 1)) {
-                                return;
-                            }
-                        }
-                    }
-                    // A spare thread with nothing to do ends; the core ones stay.
-                    Err(RecvTimeoutError::Timeout) => {
-                        let core = me.core;
-                        let fewer = |t: usize| (t > core).then(|| t - 1);
-                        if update(&me.threads, fewer) {
-                            return;
-                        }
-                    }
-                    Err(RecvTimeoutError::Disconnected) => {
-                        me.threads.fetch_sub(1, Ordering::SeqCst);
-                        return;
-                    }
-                }
+macro_rules! fail_impl {
+    ($($t:ty),*) => {$(
+        impl Fail for $t {
+            fn fail(self, err: vfs::Error) {
+                self.error(errno(err));
             }
-        });
-        if let Err(e) = spawned {
-            inner.threads.fetch_sub(1, Ordering::SeqCst);
-            return Err(e);
         }
-        Ok(())
-    }
-
-    /// Runs `job` on one of the threads; starts one more if none is free and the pool is
-    /// below its bound.
-    pub fn spawn(&self, job: impl FnOnce() + Send + 'static) {
-        let inner = &self.inner;
-        inner.queued.fetch_add(1, Ordering::SeqCst);
-        if self.tx.send(Box::new(job)).is_err() {
-            inner.queued.fetch_sub(1, Ordering::SeqCst);
-            return;
-        }
-        if inner.queued.load(Ordering::SeqCst) <= inner.idle.load(Ordering::SeqCst) {
-            return;
-        }
-        inner.busy_ms.store(inner.now_ms(), Ordering::SeqCst);
-        let max = inner.max;
-        let more = |t: usize| (t < max).then_some(t + 1);
-        if !update(&inner.threads, more) {
-            return;
-        }
-        match Self::start(inner) {
-            Ok(()) => log::debug!("{}: every thread busy: {} now", inner.name, self.threads()),
-            Err(e) => log::warn!("{}: no spare thread: {e}", inner.name),
-        }
-    }
-
-    /// Threads alive now.
-    pub fn threads(&self) -> usize {
-        self.inner.threads.load(Ordering::SeqCst)
-    }
+    )*};
 }
-
-/// How many reads of one image may be unfinished past the request timeout before its new
-/// reads fail at once with `EIO` (#241).
-///
-/// *Why a cap on these:* the watchdog answers a read that took too long, but its thread stays
-/// blocked until the source answers, and a client retrying through a long hang took one more
-/// read thread each time, until every one was blocked and reads of healthy images failed too.
-/// A read unfinished past the timeout has failed already, so counting only those never fails
-/// a read that could still have been answered in time, however many readers a slow image
-/// has. Past the cap, an image's new reads fail at once instead of after the timeout, and
-/// take no thread. *Why 4:* a few such reads can be one slow moment (a disk's retry, a
-/// share's reconnect) and must not cut the image off at once, while 4 per hung image leave
-/// most of the 64 read threads ([`MAX_POOL_THREADS`]) to the others. *Rejected:* a cap on
-/// all reads of an image, which would fail a busy healthy image's parallel reads; and
-/// cancellable reads of the source, which blocking reads of a hung share can't be.
-pub const HUNG_READS_PER_IMAGE: usize = 4;
-
-/// The reads of each image asked for and not finished, to fail at once the new reads of an
-/// image whose source hangs rather than give them a thread to block on it (#241): see
-/// [`HUNG_READS_PER_IMAGE`]. Read-ahead isn't counted: a hang starts at most one per reader,
-/// as only a read that succeeded starts one.
-#[derive(Debug)]
-struct ImageReads {
-    /// The request timeout: a read older than this has failed, and its thread is stuck.
-    /// `None`: requests are never failed, so a client has nothing to retry and none is.
-    timeout: Option<Duration>,
-    /// Per image ([`crate::disc::Disc::id`]): its unfinished reads, by token, and when each
-    /// was asked for.
-    running: Mutex<HashMap<u32, Running>>,
-    next: AtomicU64,
-}
-
-#[derive(Debug, Default)]
-struct Running {
-    reads: Vec<(u64, Instant)>,
-    /// Its new reads are failed at once: logged when this starts and when it ends.
-    refusing: bool,
-    /// The image file, for that log.
-    path: std::path::PathBuf,
-}
-
-impl Running {
-    fn hung(&self, timeout: Duration) -> usize {
-        self.reads.iter().filter(|(_, t)| t.elapsed() >= timeout).count()
-    }
-}
-
-/// A read counted in [`ImageReads`] until it finishes.
-struct ImageRead {
-    reads: Arc<ImageReads>,
-    image: u32,
-    token: u64,
-}
-
-impl ImageReads {
-    fn new(timeout: Option<Duration>) -> Arc<ImageReads> {
-        Arc::new(ImageReads { timeout, running: Mutex::new(HashMap::new()), next: AtomicU64::new(1) })
-    }
-
-    fn running(&self) -> std::sync::MutexGuard<'_, HashMap<u32, Running>> {
-        self.running.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// Counts a read of image `id` (file `path`) from now until the returned guard drops,
-    /// unless the image has [`HUNG_READS_PER_IMAGE`] reads unfinished past the timeout
-    /// already: then `None`, and the read is to fail with `EIO` at once.
-    fn start(self: &Arc<Self>, id: u32, path: &std::path::Path) -> Option<ImageRead> {
-        let mut running = self.running();
-        let image = running.entry(id).or_default();
-        let hung = match self.timeout {
-            Some(t) if image.reads.len() >= HUNG_READS_PER_IMAGE => image.hung(t),
-            _ => 0,
-        };
-        if let (Some(timeout), true) = (self.timeout, hung >= HUNG_READS_PER_IMAGE) {
-            if !image.refusing {
-                image.refusing = true;
-                path.clone_into(&mut image.path);
-                log::warn!(
-                    "{}: {hung} reads still blocked after the {} s request timeout: failing its \
-                     new reads with EIO at once until they finish, so that it takes no more \
-                     read threads",
-                    path.display(),
-                    timeout.as_secs_f64()
-                );
-            }
-            return None;
-        }
-        let token = self.next.fetch_add(1, Ordering::Relaxed);
-        image.reads.push((token, Instant::now()));
-        Some(ImageRead { reads: self.clone(), image: id, token })
-    }
-}
-
-impl Drop for ImageRead {
-    fn drop(&mut self) {
-        let mut running = self.reads.running();
-        let Some(image) = running.get_mut(&self.image) else { return };
-        image.reads.retain(|(t, _)| *t != self.token);
-        let hung = self.reads.timeout.map_or(0, |t| image.hung(t));
-        if image.refusing && hung < HUNG_READS_PER_IMAGE {
-            log::warn!("{}: its blocked reads finish: reading it again", image.path.display());
-            image.refusing = false;
-        }
-        if image.reads.is_empty() {
-            running.remove(&self.image);
-        }
-    }
-}
+fail_impl!(ReplyAttr, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyOpen);
 
 /// The filesystem.
 #[derive(Debug)]
@@ -403,51 +133,6 @@ fn read_plain(file: &std::fs::File, offset: u64, size: u32) -> io::Result<Vec<u8
     }
     buf.truncate(got);
     Ok(buf)
-}
-
-/// The share's size, as `statfs` reports it: see [`SacdFs::statfs`].
-#[derive(Debug, Clone, Copy)]
-struct ShareSize {
-    blocks: u64,
-    frsize: u32,
-    read: Instant,
-    /// Read from the source's filesystem, for want of images: read again now and then.
-    refresh: bool,
-    refreshing: bool,
-}
-
-impl ShareSize {
-    /// The images' total, in blocks of 64 KiB; with no images, what [`ShareSize::of_source`]
-    /// says, so that this is never a 0-byte filesystem (#62).
-    fn of_images(bytes: u64, source: &std::path::Path) -> ShareSize {
-        if bytes == 0 {
-            return ShareSize::of_source(source);
-        }
-        let frsize = 1 << 16;
-        ShareSize {
-            blocks: bytes.div_ceil(u64::from(frsize)),
-            frsize,
-            read: Instant::now(),
-            refresh: false,
-            refreshing: false,
-        }
-    }
-
-    /// `statvfs` of `path`; 0 blocks if it fails.
-    fn of_source(path: &std::path::Path) -> ShareSize {
-        let (blocks, frsize) = statvfs(path).unwrap_or_else(|e| {
-            log::debug!("{}: statvfs: {e}", path.display());
-            (0, 1 << 16)
-        });
-        ShareSize { blocks, frsize, read: Instant::now(), refresh: true, refreshing: false }
-    }
-}
-
-/// The total size of the filesystem holding `path`, in blocks of the returned size.
-fn statvfs(path: &std::path::Path) -> io::Result<(u64, u32)> {
-    let st = nix::sys::statvfs::statvfs(path).map_err(io::Error::from)?;
-    let frsize = if st.fragment_size() > 0 { st.fragment_size() } else { st.block_size() };
-    Ok((st.blocks(), u32::try_from(frsize).unwrap_or(1 << 16).max(1)))
 }
 
 /// The attributes of a negative entry: only the inode number 0 counts.
@@ -1165,90 +850,5 @@ impl Filesystem for SacdFs {
         };
         let files = self.shared.tree.len() as u64;
         reply.statfs(size.blocks, 0, 0, files, 0, 1 << 16, 255, size.frsize);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::mpsc;
-
-    /// An image's new reads fail at once only once [`HUNG_READS_PER_IMAGE`] of its reads are
-    /// unfinished past the timeout; reads younger than that, however many, and other images'
-    /// reads go on, and the image reads again once one finishes (#241).
-    #[test]
-    fn an_image_with_reads_hung_past_the_timeout_refuses_new_ones() {
-        let path = std::path::Path::new("hung.iso");
-        let reads = ImageReads::new(Some(Duration::from_millis(100)));
-        let mut hung: Vec<_> = (0..HUNG_READS_PER_IMAGE).map(|_| reads.start(1, path).unwrap()).collect();
-        // Many reads in time, none refused.
-        let young: Vec<_> = (0..20).map(|_| reads.start(1, path).unwrap()).collect();
-        drop(young);
-        std::thread::sleep(Duration::from_millis(150));
-        assert!(reads.start(1, path).is_none(), "a hung image's read was let through");
-        assert!(reads.start(2, path).is_some(), "another image's read was refused");
-        hung.pop();
-        let again = reads.start(1, path).expect("refused after a blocked read finished");
-        drop((hung, again));
-        assert!(reads.running().is_empty());
-        // No timeout: nothing is refused.
-        let reads = ImageReads::new(None);
-        let _all: Vec<_> = (0..2 * HUNG_READS_PER_IMAGE).map(|_| reads.start(1, path).unwrap()).collect();
-    }
-
-    #[test]
-    fn a_pool_grows_past_a_stalled_job_and_shrinks_back() {
-        let pool = Workers::with_max(2, 4, "test-pool").unwrap();
-        assert_eq!(pool.threads(), 2);
-        // Three jobs that stall until released: more than the core threads.
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let release_rx = Arc::new(Mutex::new(release_rx));
-        for _ in 0..3 {
-            let r = release_rx.clone();
-            pool.spawn(move || {
-                let _ = r.lock().unwrap().recv();
-            });
-        }
-        // Another job still runs, on a spare thread.
-        let (done_tx, done_rx) = mpsc::channel();
-        pool.spawn(move || done_tx.send(()).unwrap());
-        done_rx.recv_timeout(Duration::from_secs(5)).expect("a free job ran");
-        assert!(pool.threads() <= 4);
-        // Bounded: with every thread stalled, a job waits.
-        for _ in 0..3 {
-            let r = release_rx.clone();
-            pool.spawn(move || {
-                let _ = r.lock().unwrap().recv();
-            });
-        }
-        assert_eq!(pool.threads(), 4);
-        drop(release_tx);
-    }
-
-    /// Spare threads end once the pool has been less busy for [`SPARE_IDLE`], even while
-    /// jobs keep coming (a mount being read): else the pool only ever grows, to its
-    /// busiest moment (a stall, a burst of read-ahead), and keeps that many threads.
-    #[test]
-    fn spare_threads_end_under_a_steady_trickle_of_jobs() {
-        let pool = Workers::with_max(1, 4, "test-trickle").unwrap();
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let release_rx = Arc::new(Mutex::new(release_rx));
-        for _ in 0..4 {
-            let r = release_rx.clone();
-            pool.spawn(move || {
-                let _ = r.lock().unwrap().recv();
-            });
-        }
-        assert_eq!(pool.threads(), 4);
-        drop(release_tx);
-        // One quick job every second, far less than one thread can do.
-        let deadline = Instant::now() + SPARE_IDLE * 3;
-        while Instant::now() < deadline && pool.threads() > 1 {
-            let (tx, rx) = mpsc::channel();
-            pool.spawn(move || tx.send(()).unwrap());
-            rx.recv_timeout(Duration::from_secs(5)).expect("the job ran");
-            std::thread::sleep(Duration::from_secs(1));
-        }
-        assert_eq!(pool.threads(), 1, "spare threads kept under a trickle of jobs");
     }
 }
