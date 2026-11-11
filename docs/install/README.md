@@ -2,7 +2,7 @@
 
 ## The installer: one line
 
-From the release after 0.6.0, an installer finds out what it runs on and sets sacdfs up the way
+From the release after 0.6.1, an installer finds out what it runs on and sets sacdfs up the way
 the guide for that system does. Log in to the NAS or Linux computer over SSH, and type (change
 the path to the folder that holds your SACD images, the `.iso` files):
 

@@ -31,7 +31,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    Set `a` to that.
 
    ```sh
-   v=0.6.0 a=x86_64
+   v=0.6.1 a=x86_64
    cd ~
    curl -fLO "https://github.com/aclater/sacdfs/releases/download/v$v/sacdfs-$v-$a-linux.tar.gz"
    curl -fLO "https://github.com/aclater/sacdfs/releases/download/v$v/sacdfs-$v-$a-linux.tar.gz.sha256"
@@ -43,7 +43,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
    ```
 
-   *You should see* `sacdfs-0.6.0-x86_64-linux.tar.gz: OK`.
+   *You should see* `sacdfs-0.6.1-x86_64-linux.tar.gz: OK`.
 
 4. **Unpack it and put the program in your own `bin` folder.**
 
@@ -54,7 +54,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    ~/.local/bin/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.6.0`.
+   *You should see* `sacdfs 0.6.1`.
 
 5. **Make an empty folder to mount on, and start sacdfs.** While it runs, this folder shows the
    DSF and WAV files; anything already in it is hidden.
@@ -111,7 +111,7 @@ Each [release](https://github.com/aclater/sacdfs/releases) has three builds:
 
 Each archive holds `sacdfs`, `sacdfs-ctl`, `sacdfs.service`, `sacdfs.conf.example`, `COPYING`,
 `README.md` and `CHANGELOG.md` (0.5.0 and earlier: no `sacdfs-ctl`, `sacdfs.service` or
-`sacdfs.conf.example`). From the release after 0.6.0 it also holds the installer, `install.sh`,
+`sacdfs.conf.example`). From the release after 0.6.1 it also holds the installer, `install.sh`,
 and `nas-compose.yaml`: `sudo sh install.sh --iso-dir ...` in the unpacked folder uses the files
 next to it and downloads nothing ([the installer](README.md#the-installer-one-line)). The
 installer is also a release asset of its own, `install.sh`, with its `.sha256` and attestation.
@@ -131,7 +131,7 @@ clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributi
 **With `gh` instead of `curl`,** and checking where it was built:
 
 ```sh
-v=0.6.0 a=x86_64          # or a=x86_64-v3, or a=aarch64
+v=0.6.1 a=x86_64          # or a=x86_64-v3, or a=aarch64
 gh release download "v$v" -R aclater/sacdfs -p "sacdfs-$v-$a-linux.tar.gz*"
 sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
 gh attestation verify "sacdfs-$v-$a-linux.tar.gz" -R aclater/sacdfs
