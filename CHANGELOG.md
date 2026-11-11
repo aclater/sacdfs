@@ -6,30 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-- **WAV copies through the Linux kernel SMB client keep their pace again, and a player beside
-  starting copies stays first (#271).** Samba serves the kernel client's 4 MiB reads concurrently,
-  so they reach sacdfs up to 56 MiB out of order; since 0.5.0 each of those restarted the reader's
-  pace, and a copy kept switching between reading for throughput and playing. A jump is now a read
-  more than 64 MiB away, as in the withdrawn #323. Unlike #323, a reader whose reads land out of
-  order (behind a network client, whose own read-ahead keeps a player 8 to 16 MiB ahead) reads for
-  throughput only once it is 32 MiB ahead of playing time, and until then lets a player that was
-  there before it go first. Beside a 6-channel player at real time, four copies starting together no
-  longer stall it (0 of 16 runs over 100 ms, worst 14.8 ms, against 4 of 16 and up to 1.4 s with
-  #323; 0.6.0: 0 of 8, 15.0 ms), and finish 4 % (4 cores) to 11 % (2 cores) sooner than on 0.6.0.
-  **Slower:** one copy beside a player takes 5 to 8 % longer than on 0.6.0, which counted that copy
-  as a player most of the time; it now gets the player-first rules of #230 throughout. One reader
-  copying a whole area over SMB is as fast as 0.4.1 again: stereo WAV 22.86 s (0.6.0 25.22 s, 0.4.1
-  23.06 s), six channels 73.84 s (81.41 s, 75.60 s). Local reads take no new rule (and were not
-  affected by #323's). The change decides only when frames are decoded ahead, not what they hold.
-  Needs a soak in the next release
-  ([performance](docs/performance.md#a-player-beside-copies-starting-together-271)).
+## [0.6.2-rc.1] - 2026-11-11
 
-## [0.6.1] - 2026-11-11
-
-Tested on main against 0.6.0; the results are in docs/test-plan.md ("Results: 0.6.1 gate").
-The pace change for WAV copies over SMB (#271, #323) was taken out before the release because it
-could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pace rules.
 ### Added
 - **Installer: one line sets sacdfs up (part of #340).** `install.sh`, plain POSIX sh that runs under
   BusyBox, finds out what it runs on (Synology DSM, QNAP, ASUSTOR ADM, TerraMaster TOS, UGREEN,
@@ -48,21 +26,68 @@ could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pac
   containers; a new CI workflow (`installer.yml`) runs those containers and the runner's systemd and
   Compose routes on every change to `deploy/` ([install guide](docs/install/README.md#the-installer-one-line)).
 
+### Changed
+- **A platform-neutral core, split from the Linux FUSE front end (part of #22).** The first step of
+  native macOS and Windows support. `docs/design.md` ("The core and its front ends") describes the
+  API the front ends call, what stays Linux-only, and the decisions the Windows and macOS front
+  ends build on (handles, threads, name rules, end-of-file reads). The code moved with no change in
+  behaviour: every request handler is now in `sacdfs::vfs::Volume`, which answers through replies
+  the front end supplies, and the FUSE front end (`src/fuse.rs`, formerly `src/fs.rs`) only converts
+  fuser's types. A new test (`tests/vfs.rs`) reads every file of a DSD and a DST image through the
+  core without a mount and checks it against the reader. These changes touch the structure of the
+  read path, so the release that includes them needs the full gate and a soak.
+
 ### Fixed
+- **WAV copies through the Linux kernel SMB client keep their pace again, and a player beside
+  starting copies stays first (#271).** Samba serves the kernel client's 4 MiB reads concurrently,
+  so they reach sacdfs up to 56 MiB out of order; since 0.5.0 each of those restarted the reader's
+  pace, and a copy kept switching between reading for throughput and playing. A jump is now a read
+  more than 64 MiB away, as in the withdrawn #323. Unlike #323, a reader whose reads land out of
+  order (behind a network client, whose own read-ahead keeps a player 8 to 16 MiB ahead) reads for
+  throughput only once it is 32 MiB ahead of playing time, and until then lets a player that was
+  there before it go first. Beside a 6-channel player at real time, four copies starting together no
+  longer stall it (0 of 16 runs over 100 ms, worst 14.8 ms, against 4 of 16 and up to 1.4 s with
+  #323; 0.6.0: 0 of 8, 15.0 ms), and finish 4 % (4 cores) to 11 % (2 cores) sooner than on 0.6.0.
+  **Slower:** one copy beside a player takes 5 to 8 % longer than on 0.6.0, which counted that copy
+  as a player most of the time; it now gets the player-first rules of #230 throughout. One reader
+  copying a whole area over SMB is as fast as 0.4.1 again: stereo WAV 22.86 s (0.6.0 25.22 s, 0.4.1
+  23.06 s), six channels 73.84 s (81.41 s, 75.60 s). Local reads take no new rule (and were not
+  affected by #323's). The change decides only when frames are decoded ahead, not what they hold.
+  Needs a soak in the next release
+  ([performance](docs/performance.md#a-player-beside-copies-starting-together-271)).
 - **`sacdfs-ctl start` could report a start that worked as a failure.** It looked at the new process's
   name right after starting it; before `setsid` had started sacdfs, the name was still the shell's, so a
   slow first start (seen right after the binary was replaced) gave "sacdfs did not mount", removed the
   pid file, and left sacdfs running untracked. It now waits on the process itself. It also uses
   `kill -s TERM` and `kill -s KILL`, the POSIX spelling.
+- **An unmount from outside no longer ends sacdfs with status 1 (#322).** When the mount was
+  unmounted or detached from outside (`fusermount3 -u`, `fusermount3 -u -z`, `umount -l`) while a
+  request was still queued, typically the release of a file just closed, the kernel could end the
+  connection as aborted instead of unmounted, and sacdfs exited with "Software caused connection
+  abort (os error 103)" and status 1: about one detach in ten when the last open file was closed
+  right after it. Under load a plain unmount right after a close can meet the same race, the
+  likely cause of the restart test's rare failure. sacdfs now takes that error as the end of the
+  connection, as it takes the usual one (before, only after its own detach on a signal): the
+  kernel returns it for no other reason, as sacdfs does not ask for `FUSE_ABORT_ERROR`. A new
+  integration test detaches 40 mounts from outside with a file open; without the fix it fails
+  within the first five. The restart test now prints the new sacdfs's log when it fails.
+- **A stop signal right after the start is no longer lost (#334).** Lifecycle change. A SIGTERM,
+  SIGINT or SIGHUP that arrived in the microseconds while sacdfs set up its signal handlers was
+  dropped by the signal library: sacdfs neither died nor stopped, mounted, and ran on until
+  killed (a service stopped right after its start). The handlers now go in with those signals
+  blocked, before any thread exists, so such a signal waits and stops sacdfs without mounting.
+  They also go in earlier, right after the fork into the background instead of just before the
+  mount: a signal in between now ends sacdfs with status 0 and "stopped by signal before
+  mounting" (the background parent still reports it as a failed start) rather than killing it.
+  A new test (`tests/stop_signals.rs`, no libtest harness) sends SIGTERM into the registration
+  2000 times; about 2 % were lost before. The mount test that found it now prints sacdfs's log
+  and what each of its threads waits on when sacdfs does not stop.
 
-### Documentation
-- **What a player's import costs over SMB, and the settings that change it (part of #266).**
-  Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
-  use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
-  file's header and tags. `cache=none` on the client mount, or `oplocks = no` on the share,
-  brings it down to the direct mount's cost; `smb2 max read = 262144` halves it. Copies and
-  playback were measured with each. The defaults are unchanged
-  ([performance](docs/performance.md#a-players-import-over-smb-266), Navidrome guide).
+## [0.6.1] - 2026-11-11
+
+Tested on main against 0.6.0; the results are in docs/test-plan.md ("Results: 0.6.1 gate").
+The pace change for WAV copies over SMB (#271, #323) was taken out before the release because it
+could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pace rules.
 
 ### Changed
 - **SMB directory leases stay off: why they can't be fresh (part of #325).** Docs and a comment in the
@@ -75,15 +100,6 @@ could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pac
   in 0.4 to 1.7 s on Linux and 5.1 s on Windows. `docs/deployment.md` now says that turning leases on for
   Windows makes Windows miss new images too, and that a Linux kernel client mounted with `nohandlecache`
   stays fresh with leases on (1.6 s).
-- **A platform-neutral core, split from the Linux FUSE front end (part of #22).** The first step of
-  native macOS and Windows support. `docs/design.md` ("The core and its front ends") describes the
-  API the front ends call, what stays Linux-only, and the decisions the Windows and macOS front
-  ends build on (handles, threads, name rules, end-of-file reads). The code moved with no change in
-  behaviour: every request handler is now in `sacdfs::vfs::Volume`, which answers through replies
-  the front end supplies, and the FUSE front end (`src/fuse.rs`, formerly `src/fs.rs`) only converts
-  fuser's types. A new test (`tests/vfs.rs`) reads every file of a DSD and a DST image through the
-  core without a mount and checks it against the reader. These changes touch the structure of the
-  read path, so the release that includes them needs the full gate and a soak.
 - **Windows thumbnail pass: where the extra folder opens come from (part of #312).** Docs only. On
   Windows 11 in a VM, the pass over 196 files sends 2,104 to 2,166 requests on 0.6.0 against 508 to 514
   on 0.5.0 and 921 to 941 on 0.4.1; the 800 extra are `OPENDIR` and `RELEASEDIR` pairs. They come from
@@ -128,28 +144,6 @@ could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pac
   could inherit a stop test's file on the mount it was about to stop. The child then blocked in
   `exec`, the mount stayed busy, and the stop test failed to unmount it. They now hold the lock
   shared (`common::spawns_children!`).
-- **An unmount from outside no longer ends sacdfs with status 1 (#322).** When the mount was
-  unmounted or detached from outside (`fusermount3 -u`, `fusermount3 -u -z`, `umount -l`) while a
-  request was still queued, typically the release of a file just closed, the kernel could end the
-  connection as aborted instead of unmounted, and sacdfs exited with "Software caused connection
-  abort (os error 103)" and status 1: about one detach in ten when the last open file was closed
-  right after it. Under load a plain unmount right after a close can meet the same race, the
-  likely cause of the restart test's rare failure. sacdfs now takes that error as the end of the
-  connection, as it takes the usual one (before, only after its own detach on a signal): the
-  kernel returns it for no other reason, as sacdfs does not ask for `FUSE_ABORT_ERROR`. A new
-  integration test detaches 40 mounts from outside with a file open; without the fix it fails
-  within the first five. The restart test now prints the new sacdfs's log when it fails.
-- **A stop signal right after the start is no longer lost (#334).** Lifecycle change. A SIGTERM,
-  SIGINT or SIGHUP that arrived in the microseconds while sacdfs set up its signal handlers was
-  dropped by the signal library: sacdfs neither died nor stopped, mounted, and ran on until
-  killed (a service stopped right after its start). The handlers now go in with those signals
-  blocked, before any thread exists, so such a signal waits and stops sacdfs without mounting.
-  They also go in earlier, right after the fork into the background instead of just before the
-  mount: a signal in between now ends sacdfs with status 0 and "stopped by signal before
-  mounting" (the background parent still reports it as a failed start) rather than killing it.
-  A new test (`tests/stop_signals.rs`, no libtest harness) sends SIGTERM into the registration
-  2000 times; about 2 % were lost before. The mount test that found it now prints sacdfs's log
-  and what each of its threads waits on when sacdfs does not stop.
 - **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
   open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
   for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that
@@ -1271,7 +1265,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.2-rc.1...HEAD
+[0.6.2-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2-rc.1
 [0.6.1]: https://github.com/aclater/sacdfs/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/aclater/sacdfs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0
