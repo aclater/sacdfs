@@ -1310,7 +1310,24 @@ decoding them twice.
   Bounded in bytes, so that six-channel files at 352.8 kHz don't take 50 MB per reader.
 - **A player goes first (#230).** A reader that, since it last jumped, has read 4 MiB at more
   than 1.5 times the file's byte rate reads for *throughput*; any other that has been reading
-  for 0.5 s is a *player*. While a player is active, readers for throughput give up the
+  for 0.5 s is a *player*. A jump here is a read more than 64 MiB from the furthest byte read
+  so far, and the pace counts the bytes read, but no further than the reader got (#271). A
+  reader behind a network client (one of its reads has landed more than 2 MiB behind the
+  furthest byte read) reads for throughput only once it is also 32 MiB ahead of playing time.
+  *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a straight
+  copy over SMB reaches sacdfs up to 56 MiB out of order (measured). With the sequential gaps
+  below as the test, such a copy kept starting its pace again, counted as a player most of the
+  time, lost its long read-ahead window and was 8 to 11 % slower than in 0.4.1. *Why counting
+  bytes:* a player that seeks forward less than 64 MiB has not read what it skipped. *Why 32 MiB
+  ahead behind a client:* the client reads ahead of the application; the kernel SMB client
+  fetches a player's first 4 to 8 MiB at once and keeps it 8 to 16 MiB ahead. Measured from its
+  start, such a player read faster than 1.5 times its rate for its first 3 to 7 s, counted as
+  reading for throughput and lost its priority: four copies starting beside it made it stall for
+  0.15 to 1.5 s in half the runs. A copy gets 32 MiB ahead within 1 to 4 s on four cores, 8 to
+  13 s on two, and reads for throughput the rest of the way. *Why only behind a client:* through
+  the kernel's FUSE read-ahead a local reader's reads land at most 0.5 MiB behind, its lead is
+  small, and a scanner reading short files locally would otherwise count as a player for most
+  of each one. While a player is active, readers for throughput give up the
   frames they have passed (they go first from the cache, the oldest first, all but the last
   1 MiB), share a quarter of the cache whatever that leaves them (at least 16 frames), and
   read ahead in slices of 8 frames per decoder thread, waiting up to 50 ms before each for
