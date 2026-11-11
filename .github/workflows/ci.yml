@@ -22,14 +22,29 @@ jobs:
   lint:
     name: fmt + clippy
     runs-on: ubuntu-latest
+    container:
+      # Fedora 44, pinned by digest: UBI has no ShellCheck.
+      image: registry.fedoraproject.org/fedora@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc shadow-utils util-linux ShellCheck systemd && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install "$RUST_STABLE" --profile minimal -c rustfmt,clippy && rustup default "$RUST_STABLE"
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE" rustfmt,clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
+          prefix-key: v0-rust-fedora44
+      - name: The restored cache to the build user
+        shell: bash
+        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
       - run: cargo fmt --all --check
       - name: NAS start/stop files (deploy/sacdfs-ctl, deploy/systemd/sacdfs.service)
         run: |
@@ -44,19 +59,31 @@ jobs:
   test:
     name: tests
     runs-on: ubuntu-latest
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh. FUSE: the device and the right to mount.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+      options: --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 python3 && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
-      - name: Install fusermount3
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends fuse3
-          ls -l /dev/fuse
+          prefix-key: v0-rust-ubi10
+      - name: The restored cache to the build user
+        shell: bash
+        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
+      - run: ls -l /dev/fuse
       - name: Tests (FUSE tests required)
         env:
           SACDFS_FUSE_TESTS: "1"
@@ -76,19 +103,31 @@ jobs:
   test-arm64:
     name: tests (arm64)
     runs-on: ubuntu-24.04-arm
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh. FUSE: the device and the right to mount.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+      options: --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 python3 && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
-      - name: Install fusermount3
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends fuse3
-          ls -l /dev/fuse
+          prefix-key: v0-rust-ubi10
+      - name: The restored cache to the build user
+        shell: bash
+        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
+      - run: ls -l /dev/fuse
       - name: Tests (FUSE tests required)
         env:
           SACDFS_FUSE_TESTS: "1"
@@ -101,14 +140,29 @@ jobs:
   readme-options:
     name: readme options
     runs-on: ubuntu-latest
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc python3 && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
+          prefix-key: v0-rust-ubi10
+      - name: The restored cache to the build user
+        shell: bash
+        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
       - run: cargo build --locked --quiet
       - name: The options table (docs/options.md) matches sacdfs --help
         run: target/debug/sacdfs --help | python3 -I .github/scripts/check-readme-options.py docs/options.md
@@ -119,13 +173,21 @@ jobs:
     # outside the repository). See scripts/check-private-names.sh.
     name: no private names
     runs-on: ubuntu-latest
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
     steps:
+      - name: Packages
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core findutils && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
       - name: Scan files and commit identities
+        shell: bash
         env:
           PRIVATE_NAMES: ${{ vars.PRIVATE_NAMES }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: bash scripts/check-private-names.sh
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          bash scripts/check-private-names.sh

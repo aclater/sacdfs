@@ -227,7 +227,11 @@ jobs:
           # The installer (#340), stamped with this version, and the Compose file it uses.
           sed "s/^DEFAULT_VERSION=[^ ]*/DEFAULT_VERSION=$VERSION/" deploy/install.sh > "dist/$pkg/install.sh"
           chmod 0755 "dist/$pkg/install.sh"
-          install -m 0644 deploy/nas-compose.yaml "dist/$pkg/"
+          # The Compose file names this release's image, or the container route would run whatever
+          # version main's copy names (0.6.2-rc.1 shipped one naming 0.6.1).
+          sed "s#ghcr.io/aclater/sacdfs:[^ ]*\$#ghcr.io/aclater/sacdfs:$VERSION#" deploy/nas-compose.yaml > "dist/$pkg/nas-compose.yaml"
+          grep -q "image: ghcr.io/aclater/sacdfs:$VERSION\$" "dist/$pkg/nas-compose.yaml"
+          chmod 0644 "dist/$pkg/nas-compose.yaml"
           # Reproducible: fixed order, owner and times (the commit's), no gzip timestamp.
           mtime=$(git log -1 --format=%ct)
           tar -C dist --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$mtime" \
