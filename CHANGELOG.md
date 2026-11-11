@@ -20,8 +20,9 @@ All notable changes to sacdfs are recorded here. The format follows
   **Slower:** one copy beside a player takes 5 to 8 % longer than on 0.6.0, which counted that copy
   as a player most of the time; it now gets the player-first rules of #230 throughout. One reader
   copying a whole area over SMB is as fast as 0.4.1 again: stereo WAV 22.86 s (0.6.0 25.22 s, 0.4.1
-  23.06 s), six channels 73.84 s (81.41 s, 75.60 s). Local reads keep 0.6.0's rules. The change
-  decides only when frames are decoded ahead, not what they hold. Needs a soak in the next release
+  23.06 s), six channels 73.84 s (81.41 s, 75.60 s). Local reads take no new rule (and were not
+  affected by #323's). The change decides only when frames are decoded ahead, not what they hold.
+  Needs a soak in the next release
   ([performance](docs/performance.md#a-player-beside-copies-starting-together-271)).
 
 ## [0.6.1] - 2026-11-11
