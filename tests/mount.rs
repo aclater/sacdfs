@@ -1100,9 +1100,49 @@ fn a_held_open_file_does_not_keep_sacdfs_after_sigterm() {
     assert!(held.read_exact_at(&mut first, 0).is_err());
 }
 
+/// What each thread of process `pid` is doing, from `/proc` (state, kernel wait channel,
+/// system call), and its stacks from `eu-stack` when `SACDFS_TEST_EU_STACK` is set and no
+/// thread waits on a FUSE request (ptrace would wait for it too).
+fn threads_of(pid: u32) -> String {
+    let mut out = String::new();
+    let mut fuse_wait = false;
+    let mut tasks: Vec<_> = std::fs::read_dir(format!("/proc/{pid}/task"))
+        .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+        .unwrap_or_default();
+    tasks.sort();
+    for t in tasks {
+        let read = |f: &str| std::fs::read_to_string(t.join(f)).unwrap_or_default().trim().to_owned();
+        let stat = read("stat");
+        let state = stat.rsplit(") ").next().and_then(|r| r.split(' ').next()).unwrap_or("?").to_owned();
+        let wchan = read("wchan");
+        fuse_wait |= state == "D" || wchan.contains("request_wait_answer");
+        let syscall = read("syscall");
+        let nr = syscall.split(' ').next().unwrap_or("");
+        out += &format!(
+            "{} {} {state} {wchan} syscall {nr}\n",
+            t.file_name().unwrap().to_string_lossy(),
+            read("comm")
+        );
+    }
+    if std::env::var_os("SACDFS_TEST_EU_STACK").is_some() {
+        if fuse_wait {
+            out += "(no eu-stack: a thread waits on FUSE)\n";
+        } else if let Ok(o) =
+            Command::new("timeout").args(["10", "eu-stack", "-p", &pid.to_string()]).output()
+        {
+            out += &String::from_utf8_lossy(&o.stdout);
+            out += &String::from_utf8_lossy(&o.stderr);
+        }
+    }
+    out
+}
+
 /// A SIGTERM at any moment of the start leaves no dead mount behind (#57): sacdfs either
 /// stops before mounting, or mounts and then unmounts. Before, the handlers were set up
 /// after mounting, and a SIGTERM in between killed it with the mount in place.
+/// Under load it also caught a SIGTERM lost while the handlers went in (#334): sacdfs mounted
+/// and ran on. `tests/stop_signals.rs` aims at that window; here a sacdfs that does not stop
+/// is reported with its log and what its threads wait on.
 #[test]
 fn a_sigterm_right_after_start_leaves_no_mount() {
     common::skip_without_fuse!();
@@ -1111,12 +1151,14 @@ fn a_sigterm_right_after_start_leaves_no_mount() {
     let at = dir.path().canonicalize().unwrap();
     let cache = tempfile::tempdir().unwrap();
     for i in 0..60u64 {
+        let log = tempfile::NamedTempFile::new().unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
             .env("XDG_CACHE_HOME", cache.path())
+            .env("RUST_LOG", "debug")
             .arg("-f")
             .arg(&image)
             .arg(&at)
-            .stderr(Stdio::null())
+            .stderr(log.reopen().unwrap())
             .spawn()
             .unwrap();
         // 0 to 29.5 ms after the start, spread over the start-up.
@@ -1126,10 +1168,18 @@ fn a_sigterm_right_after_start_leaves_no_mount() {
         let start = Instant::now();
         while child.try_wait().unwrap().is_none() {
             if start.elapsed() > Duration::from_secs(10) {
+                let threads = threads_of(child.id());
+                let mounts = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+                let mounts: Vec<_> = mounts.lines().filter(|l| l.contains(" - fuse")).collect();
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = Command::new("fusermount3").arg("-u").arg("-z").arg(&at).status();
-                panic!("sacdfs did not stop after SIGTERM ({i})");
+                let log = std::fs::read_to_string(log.path()).unwrap_or_default();
+                panic!(
+                    "sacdfs did not stop after SIGTERM ({i}, {} s)\nthreads:\n{threads}\nfuse mounts:\n{}\nlog:\n{log}",
+                    start.elapsed().as_secs(),
+                    mounts.join("\n")
+                );
             }
             std::thread::sleep(Duration::from_millis(5));
         }

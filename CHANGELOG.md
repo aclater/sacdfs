@@ -78,6 +78,17 @@ could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pac
   kernel returns it for no other reason, as sacdfs does not ask for `FUSE_ABORT_ERROR`. A new
   integration test detaches 40 mounts from outside with a file open; without the fix it fails
   within the first five. The restart test now prints the new sacdfs's log when it fails.
+- **A stop signal right after the start is no longer lost (#334).** Lifecycle change. A SIGTERM,
+  SIGINT or SIGHUP that arrived in the microseconds while sacdfs set up its signal handlers was
+  dropped by the signal library: sacdfs neither died nor stopped, mounted, and ran on until
+  killed (a service stopped right after its start). The handlers now go in with those signals
+  blocked, before any thread exists, so such a signal waits and stops sacdfs without mounting.
+  They also go in earlier, right after the fork into the background instead of just before the
+  mount: a signal in between now ends sacdfs with status 0 and "stopped by signal before
+  mounting" (the background parent still reports it as a failed start) rather than killing it.
+  A new test (`tests/stop_signals.rs`, no libtest harness) sends SIGTERM into the registration
+  2000 times; about 2 % were lost before. The mount test that found it now prints sacdfs's log
+  and what each of its threads waits on when sacdfs does not stop.
 - **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
   open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
   for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that
