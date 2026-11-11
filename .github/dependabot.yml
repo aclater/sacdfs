@@ -37,3 +37,15 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: container
+  # Tools CI installs from PyPI by hash (.github/requirements), such as zizmor.
+  - package-ecosystem: pip
+    directory: /.github/requirements
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      ci-tools:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
