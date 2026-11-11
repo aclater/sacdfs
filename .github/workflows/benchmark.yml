@@ -57,6 +57,19 @@ jobs:
           git worktree add -q "$RUNNER_TEMP/base" HEAD^1
           CARGO_TARGET_DIR="$PWD/target" cargo build --locked --release --manifest-path "$RUNNER_TEMP/base/Cargo.toml"
           cp target/release/sacdfs "$RUNNER_TEMP/sacdfs-base"
+      - name: DEBUG mount
+        continue-on-error: true
+        run: |
+          set -x
+          id; cat /proc/self/attr/current || true; ls -l /dev/fuse /usr/bin/fusermount3
+          d=$(mktemp -d); ls -ld "$d"
+          "$RUNNER_TEMP/sacdfs-head" --no-index-cache --format dsf tests/corpus/images/dst-features-2ch-6ch.iso "$d" || true
+          ls "$d" || true; fusermount3 -u "$d" || true
+          mkdir -p "$HOME/dbg"
+          "$RUNNER_TEMP/sacdfs-head" tests/corpus/images "$HOME/dbg" || true
+          ls "$HOME/dbg" | head -3 || true; fusermount3 -u "$HOME/dbg" || true
+          "$RUNNER_TEMP/sacdfs-head" tests/corpus/images "$d" || true
+          ls "$d" | head -3 || true; fusermount3 -u "$d" || true
       - name: Compare
         run: |
           python3 -I scripts/bench_compare.py --base "$RUNNER_TEMP/sacdfs-base" --head "$RUNNER_TEMP/sacdfs-head" \
