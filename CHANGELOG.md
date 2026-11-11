@@ -13,6 +13,10 @@ All notable changes to sacdfs are recorded here. The format follows
   the FUSE tests mounting as before. cargo-deny and zizmor are installed in a UBI container,
   pinned by version and hash, instead of running their vendors' images (cargo-deny's is Alpine).
   CI only; nothing shipped changes ([development](docs/development.md#ci-containers)).
+### Fixed
+- **The release archive's Compose file names that release's image.** `nas-compose.yaml` in the
+  archive is now stamped with the release version, as `install.sh` is. In 0.6.2-rc.1 it named
+  0.6.1, so the installer's container route ran 0.6.1 unless given `--version`.
 
 ## [0.6.2-rc.1] - 2026-11-11
 
