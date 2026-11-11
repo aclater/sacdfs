@@ -1,0 +1,70 @@
+# The installer, deploy/install.sh (#340): lint it as POSIX sh, then run it the way users do,
+# piped from the release URL into sh (a local server with the published layout), through a dry
+# run, an install, a second run that must change nothing, and an uninstall:
+#   - in containers: BusyBox only (sh is BusyBox ash, BusyBox wget), BusyBox with no C library
+#     (the script must refuse before changing anything), Fedora 44, and UBI 7 (glibc 2.17);
+#   - on the runner as root: with the systemd unit, and with Docker Compose.
+# See deploy/ci-install-test.sh.
+name: installer
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/installer.yml"
+      - "deploy/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/installer.yml"
+      - "deploy/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: POSIX sh lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck, checkbashisms, and a parse by dash and BusyBox sh
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends devscripts busybox-static dash
+          shellcheck -s sh deploy/install.sh deploy/ci-install-steps.sh deploy/sacdfs-ctl
+          checkbashisms -p deploy/install.sh deploy/ci-install-steps.sh deploy/sacdfs-ctl
+          dash -n deploy/install.sh
+          busybox sh -n deploy/install.sh
+          # No terminal, no --iso-dir: an error that shows the usage, never a prompt.
+          ! dash deploy/install.sh </dev/null 2>err.txt
+          grep -q 'Usage: sh install.sh --iso-dir' err.txt
+          busybox sh deploy/install.sh --help | grep -q -- '--dry-run'
+
+  run:
+    name: ${{ matrix.mode }}
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [containers, host-systemd, host-compose]
+    env:
+      MODE: ${{ matrix.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: fusermount3 (the reference read)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - name: Run (deploy/ci-install-test.sh)
+        run: deploy/ci-install-test.sh "$MODE"

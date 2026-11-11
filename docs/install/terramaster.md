@@ -4,6 +4,8 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
 Checked on 0.6.0 on TOS 7.0 (in a VM, not on TerraMaster hardware). Steps marked *(untested)* were not run.
 
+From the release after 0.6.0, [the installer](README.md#the-installer-one-line) does these steps for you in one line; this page is the way to do them by hand.
+
 ## What you need
 
 - A TerraMaster NAS with an Intel or AMD chip (`uname -m` in step 1 prints `x86_64`).
