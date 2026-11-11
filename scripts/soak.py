@@ -356,9 +356,11 @@ def staller(args, image):
                     failed = True
                     break
                 time.sleep(0.5)
-            count("stalls")
-            if not failed:
-                count("stall_fails")
+            # A stall cut short by the end of the run proves nothing either way (#349).
+            if failed or not STOP.is_set():
+                count("stalls")
+                if not failed:
+                    count("stall_fails")
             # Release the stuck opens: a writer comes and goes, so they see an empty FIFO.
             for _ in range(20):
                 try:
