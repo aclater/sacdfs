@@ -427,6 +427,42 @@ What was run on 0.6.0-rc.1 (tag `v0.6.0-rc.1`), with 0.5.0 as the baseline. Anyt
 
 **Not run on 0.6.0-rc.1:** Roon and Plex at scale (the re-scan on upgrade and rollback in step 2 and 5 of [Upgrade and rollback](#upgrade-and-rollback) was run on the binary only, with no Roon or Plex), foobar2000, JRiver, and the Tier 2 tools.
 
+## Results: 0.6.1 gate (on main)
+
+Run on main with #276, #323, #327 and the #279 soak classifier, against 0.6.0, both built from
+source with the same toolchain. #323 was then taken out (#338) because of the player result below;
+0.6.1 is that main without #323. Anything not listed here is untested for 0.6.1.
+
+**Soak:** `scripts/soak.py --hours 2 --sample-paths` on two Linux machines (an idle 32-thread
+desktop and a 12-core laptop), main side by side with 0.6.0 on the same images and the same load.
+- **Load.** 735 GB to 1.16 TB read per run, 38 to 39 deliberate stalls and 23 remounts per run. No
+  stall or remount failed. main read 2 to 3 % more than 0.6.0 in the same time.
+- **Memory.** Flat: a second-half trend of at most +0.99 MiB/h on main (limit 4.9; 0.6.0 +1.31).
+  Warm level 160.6 and 180.5 MiB against 163.6 and 181.2 on 0.6.0; peak 3.7 to 7.9 MiB above it.
+- **Resources.** Threads peaked at 76 and 75 (0.6.0: 74 and 76), under the spike line; at most 18
+  fds; the cache stayed flat.
+- **Read errors.** main passed the "unexpected read errors" check on both machines. The art-churn
+  errors of #279 (ESTALE on replaced covers, 1 to 4 per run) are now counted as replaced sidecars.
+  On one machine 0.6.0 failed the check with one EIO on a 6-channel WAV of an unchanged image, with
+  no line in sacdfs's log; it was not seen on main or in the other runs (#339).
+
+**Stop with files open (#276),** on the binary on two Linux machines, one file held open and read:
+the mount leaves the mount table at once; sacdfs serves the open file for the grace period and
+exits with status 0 after 10.0 s (default), 3, 5 and 30 s (`--stop-grace`); the client then gets
+EIO. `--stop-grace 0` waits for the file to close, as 0.6.0 does. No dead mount, and a remount
+lists and reads.
+
+**A player beside whole-file copies (#230),** over the Linux kernel SMB client (SMB 3.1.1,
+loopback), the container pinned to 2 or 4 cores, a 6-channel WAV player at real time and 1 or 4
+copies of other tracks. The player held 1.00x real time in every run, and its worst read was 12 to
+21 ms on both versions in every cell but one: with four copies on 4 cores, main with #323 had one
+read of 149 to 1,385 ms in 4 of 16 runs, against none in 8 runs of 0.6.0 and none in 8 runs of
+main without #323. #323 was taken out of 0.6.1 for this (#338); #271 stays open.
+
+**Not run for 0.6.1:** the 0.5.0 baseline, Tier 1 clients, real-disc tests, the stop check inside
+the container and over SMB/NFS, the player check over NFS or on a NAS's CPU. The code that changed
+since 0.6.0 is #276's stop path and #327's build profile; the rest of sacdfs is 0.6.0's.
+
 ## Soak memory steps (#247)
 
 Steps of 3 to 9 MiB in a soak's resident size, in both directions, appeared on 0.4.0, 0.4.1-rc.2
