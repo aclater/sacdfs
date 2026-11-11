@@ -20,7 +20,7 @@ use fuser::{Config, MountOption, Session, SessionACL};
 
 use sacdfs::disc::Tuning;
 use sacdfs::engine::{Engine, default_threads};
-use sacdfs::fs::{MAX_READ, SacdFs};
+use sacdfs::fuse::{MAX_READ, SacdFs};
 use sacdfs::index_cache::{self, IndexCache};
 use sacdfs::memory;
 use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
