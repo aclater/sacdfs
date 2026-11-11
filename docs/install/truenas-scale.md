@@ -19,7 +19,7 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.6.0
+       image: ghcr.io/aclater/sacdfs:0.6.1
        restart: unless-stopped
        devices:
          - /dev/fuse

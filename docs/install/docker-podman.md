@@ -4,7 +4,8 @@ This starts sacdfs in a container on a Linux computer. It shares your SACD discs
 NFS, so any player on your network can see them as DSF and WAV files. About 10 minutes.
 
 Checked on sacdfs 0.6.0 with rootful Podman and with Docker on Fedora 45. Steps marked
-*(untested)* were not run on 0.6.0. See [Details](#details).
+*(untested)* were not run on 0.6.0. Steps 1 to 3 and the check were run again on 0.6.1 with rootless
+Podman (SMB only); step 4 was not. See [Details](#details).
 
 ## What you need
 
@@ -37,7 +38,7 @@ Checked on sacdfs 0.6.0 with rootful Podman and with Docker on Fedora 45. Steps 
      -v sacdfs-cache:/cache \
      --health-cmd /usr/local/bin/healthcheck.sh --health-interval 30s \
      --health-timeout 10s --health-start-period 300s --health-retries 3 \
-     ghcr.io/aclater/sacdfs:0.6.0
+     ghcr.io/aclater/sacdfs:0.6.1
    ```
 
    Docker:
@@ -49,7 +50,7 @@ Checked on sacdfs 0.6.0 with rootful Podman and with Docker on Fedora 45. Steps 
      -p 445:445 -p 2049:2049 \
      -v /srv/music:/images:ro \
      -v sacdfs-cache:/cache \
-     ghcr.io/aclater/sacdfs:0.6.0
+     ghcr.io/aclater/sacdfs:0.6.1
    ```
 
    *You should see* a long hexadecimal ID. On Debian or Ubuntu, write `--security-opt apparmor=unconfined`
@@ -167,6 +168,13 @@ mount again after a restart: [SMB and restarts](../deployment.md#smb-and-restart
 
 ### What was checked
 
+- **0.6.1, rootless Podman 6.1.3** on Fedora 45 (SELinux), as a normal user: step 1 for the
+  [other ports](#other-ports), step 2's Podman block without `sudo`, with `-p 10445:445` and the
+  [rootless options](#options) (`-e NFS=0`, no NFS port), step 3, and the log check: healthy after
+  about 30 s, `3 image files` and `mounted` in the log. Read over SMB 3 with `smbclient` (not a kernel
+  mount, so not step 4), all 30 DSF and WAV files of three test images were identical to the 0.6.1
+  release binary's own mount. `podman stop` took 1.5 s and the container was healthy again after
+  `podman start`. Not run on 0.6.1: rootful Podman, Docker, NFS, and the three problems.
 - **0.6.0, steps 1 to 4 as written** with rootful Podman 6.1.3 on Fedora 45 (SELinux): healthy after
   about 40 s. NFS 4.2 and SMB 3.1.1 clients on the same host read all 22 files of two test images,
   identical to a reference made with the release binary. `podman restart` and `podman stop` each took
