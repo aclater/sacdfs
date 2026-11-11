@@ -19,10 +19,28 @@ jobs:
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest; cargo from UBI, for `cargo metadata`.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+    env:
+      # The release binary (static), pinned by version and SHA-256, in place of the
+      # cargo-deny action, which runs it in an Alpine container image.
+      DENY_VERSION: 0.20.2
+      DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
     steps:
+      - name: Packages
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core cargo && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25  # v2.1.1
-        with:
-          command: check advisories bans licenses sources
+      - name: cargo-deny
+        shell: bash
+        run: |
+          deny="cargo-deny-$DENY_VERSION-x86_64-unknown-linux-musl"
+          curl -sSfL --proto =https --tlsv1.2 -o "$RUNNER_TEMP/$deny.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$deny.tar.gz"
+          echo "$DENY_SHA256  $RUNNER_TEMP/$deny.tar.gz" | sha256sum -c
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/$deny.tar.gz"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cargo --version
+          "$RUNNER_TEMP/$deny/cargo-deny" --log-level warn --all-features check advisories bans licenses sources

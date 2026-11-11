@@ -15,6 +15,31 @@ leaks are usually of this kind, not a missing `free`. There are four tools for f
 The weekly runs are in `.github/workflows/leaks.yml` (Mondays, and on demand from the
 Actions tab).
 
+## CI containers
+
+CI builds and tests sacdfs in Red Hat-derived containers: GitHub's hosted Linux runners are Ubuntu
+only, so each job that builds or tests the code runs in a `container:` of UBI 10 (Fedora 44 for the
+lint job, for ShellCheck), pinned by digest, and the runner only hosts it.
+`.github/scripts/ci-container-setup.sh` installs Rust (rustup, pinned by version and SHA-256) and a
+user `ci` with the runner's uid; the steps run as `ci` through `defaults.run.shell`, so the FUSE
+tests mount through `fusermount3` as a normal user, as they would on a desktop. The FUSE jobs give
+the container `/dev/fuse` and `CAP_SYS_ADMIN`. Tools that came as other images are installed in
+the container instead: cargo-deny as its release binary and zizmor from PyPI, each pinned by version
+and hash. Jobs that drive Docker on the host stay on the runner: the container share test (the image
+itself is built on UBI 10 and Fedora 44), the release's image and UBI 7 checks, and the NFS export
+job, which loads `nfsd` and runs its server in a Fedora container. The informational benchmark
+and the weekly soak also stay on the runner: in a container on GitHub's runner their release
+build's `fusermount3` mounts were refused ("Permission denied") while the test jobs' mounts worked;
+cause not found.
+
+To run a job's tests the same way locally:
+
+```sh
+podman run --rm -it --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD:/src:Z" -w /src \
+    registry.access.redhat.com/ubi10/ubi:10.3 bash
+# then: dnf -y install git-core gcc fuse3 python3, install Rust, and run cargo test as a normal user
+```
+
 ## The no-growth test
 
 `tests/no_growth.rs` mounts the filesystem in its own process, on a `fuser` background
@@ -61,8 +86,8 @@ python3 scripts/soak.py --sacdfs target/release/sacdfs --images DIR --hours 2 --
 
 `DIR` holds `.iso` images, at least two; real discs give realistic reads. The script builds
 a library of links to them in a work directory (under `/var/tmp` by default; `--work DIR`
-to choose; on the GitHub Ubuntu runner a mount under `/var/tmp` was refused with "Permission
-denied" and one under the runner's home worked, so the weekly run uses `--work`) and mounts it with
+to choose; on the GitHub runner a mount under `/var/tmp` was refused with "Permission
+denied" and one under the runner's temporary directory worked, so the weekly run uses `--work`) and mounts it with
 `--tags`. If the mount fails, the soak prints sacdfs's stderr and log. Then:
 
 - **Readers** (`--readers 4`) read the mounted files, in three patterns: long stretches from

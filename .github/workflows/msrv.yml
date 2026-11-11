@@ -21,12 +21,27 @@ jobs:
   msrv:
     name: msrv (1.85)
     runs-on: ubuntu-latest
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install "$RUST_MSRV" --profile minimal
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_MSRV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
+          prefix-key: v0-rust-ubi10
+      - name: The restored cache to the build user
+        shell: bash
+        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
       - run: cargo +"$RUST_MSRV" check --all-targets --locked

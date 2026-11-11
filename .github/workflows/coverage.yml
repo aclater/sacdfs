@@ -27,21 +27,33 @@ jobs:
     permissions:
       contents: read
       id-token: write   # Codecov upload with GitHub's OIDC token
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh. FUSE: the device and the right to mount.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+      options: --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 python3 findutils gnupg2 && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install "$RUST_STABLE" --profile minimal -c llvm-tools-preview && rustup default "$RUST_STABLE"
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE" llvm-tools-preview
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
+          prefix-key: v0-rust-ubi10
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91  # v2.87.31
         with:
           tool: cargo-llvm-cov
-      - name: Install fusermount3
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends fuse3
+      - name: The restored cache to the build user
+        shell: bash
+        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
       - name: Tests under coverage
         env:
           SACDFS_FUSE_TESTS: "1"
