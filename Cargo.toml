@@ -1,6 +1,6 @@
 [package]
 name = "sacdfs"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Read-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand"
@@ -58,6 +58,11 @@ tempfile = "3"
 
 [[bench]]
 name = "pcm"
+harness = false
+
+# One process per trial, and no libtest thread that could take the signal (#334).
+[[test]]
+name = "stop_signals"
 harness = false
 
 [lints.rust]
