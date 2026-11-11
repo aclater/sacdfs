@@ -2,5 +2,7 @@
 target
 .git
 tests
+# Except the one test whose target Cargo.toml declares (no libtest harness, #334).
+!tests/stop_signals.rs
 docs
 fuzz

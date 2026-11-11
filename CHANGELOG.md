@@ -6,7 +6,23 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-11
+
+Tested on main against 0.6.0; the results are in docs/test-plan.md ("Results: 0.6.1 gate").
+The pace change for WAV copies over SMB (#271, #323) was taken out before the release because it
+could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pace rules.
+
 ### Changed
+- **SMB directory leases stay off: why they can't be fresh (part of #325).** Docs and a comment in the
+  container's entry point only; no code or default changed, so this needs no soak. Samba (4.24.7) breaks a
+  directory lease only for a change made through Samba, never for a kernel change notification, and a FUSE
+  file system can't raise one for an entry it adds; so neither FUSE invalidations from sacdfs nor
+  `kernel change notify = yes` keep a leased listing fresh. Measured on 0.6.0: with leases on, a new image
+  didn't show within 155 s on the Linux kernel client (also with `kernel change notify = yes`, and also on
+  a plain folder shared by the same Samba) nor on Windows 11 listing every second; with leases off it showed
+  in 0.4 to 1.7 s on Linux and 5.1 s on Windows. `docs/deployment.md` now says that turning leases on for
+  Windows makes Windows miss new images too, and that a Linux kernel client mounted with `nohandlecache`
+  stays fresh with leases on (1.6 s).
 - **A platform-neutral core, split from the Linux FUSE front end (part of #22).** The first step of
   native macOS and Windows support. `docs/design.md` ("The core and its front ends") describes the
   API the front ends call, what stays Linux-only, and the decisions the Windows and macOS front
@@ -21,6 +37,12 @@ All notable changes to sacdfs are recorded here. The format follows
   86 s). `docs/deployment.md` says so, and that `SMB_EXTRA_GLOBAL=smb3 directory leases = yes` turns the
   leases back on for a Windows-only share, at the cost the container's default avoids for the Linux kernel
   client. No code or default changed.
+- **DST areas read faster on one thread: scarletbook is built in one codegen unit (#270).** Release
+  builds now compile scarletbook with `codegen-units = 1`. Its DST decoder then runs in as many cycles
+  as in the library's own builds, about 4 % fewer than before. Six-channel DST on one thread went from
+  1.11-1.15× to 0.99× of the library on a NAS-class CPU, which meets the 1.1× target.
+  Audio bytes are unchanged. A clean release build takes about 10 s longer. Details are in
+  docs/performance.md, "One codegen unit for scarletbook".
 - **sacdfs exits after a grace period on SIGTERM even while clients hold files open (#276).** This
   changes the lifecycle next to the read path, not the reads, and the next release needs a soak.
   The mount is still detached at once; sacdfs now serves the files still open for `--stop-grace`
@@ -39,7 +61,40 @@ All notable changes to sacdfs are recorded here. The format follows
   history moved to Details. The NAS and player guides follow in later pull requests.
 - **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
 - **NAS install guides rewritten (part of #310).** Each vendor guide (Synology, QNAP, ASUSTOR, TerraMaster, UGREEN, ReadyNAS) is one page with one path, the 0.6.0 release archive and the vendor's own start-at-boot method, followed as written on 0.6.0 in the NAS VMs; TrueNAS SCALE, Unraid and OpenMediaVault keep their facts in the same layout, marked untested on 0.6.0. `nas-binary.md` is the short generic guide; test history, options and the longer troubleshooting moved to each page's Details. Found while checking: TOS has no `/usr/local/bin`, so the unit steps make it.
+
 ### Fixed
+- **Mount tests: a failing stop test no longer hangs the run (#335).** Tests only. The two tests
+  that stop a daemon (`SIGSTOP`) now hold it in a guard that, when the test fails, resumes it
+  (`SIGCONT`), stops and reaps it, and prints its debug log: a failed assertion no longer leaves
+  a stopped daemon that blocks the rest of the run. The cause of those failures under load was
+  the #305 race through tests outside the lock: `bad_arguments_fail_cleanly`,
+  `start_up_messages_name_the_fix` and `a_source_or_cache_under_the_mount_point_is_refused`
+  need no FUSE but spawn sacdfs, so they did not take the shared lock, and a child they forked
+  could inherit a stop test's file on the mount it was about to stop. The child then blocked in
+  `exec`, the mount stayed busy, and the stop test failed to unmount it. They now hold the lock
+  shared (`common::spawns_children!`).
+- **An unmount from outside no longer ends sacdfs with status 1 (#322).** When the mount was
+  unmounted or detached from outside (`fusermount3 -u`, `fusermount3 -u -z`, `umount -l`) while a
+  request was still queued, typically the release of a file just closed, the kernel could end the
+  connection as aborted instead of unmounted, and sacdfs exited with "Software caused connection
+  abort (os error 103)" and status 1: about one detach in ten when the last open file was closed
+  right after it. Under load a plain unmount right after a close can meet the same race, the
+  likely cause of the restart test's rare failure. sacdfs now takes that error as the end of the
+  connection, as it takes the usual one (before, only after its own detach on a signal): the
+  kernel returns it for no other reason, as sacdfs does not ask for `FUSE_ABORT_ERROR`. A new
+  integration test detaches 40 mounts from outside with a file open; without the fix it fails
+  within the first five. The restart test now prints the new sacdfs's log when it fails.
+- **A stop signal right after the start is no longer lost (#334).** Lifecycle change. A SIGTERM,
+  SIGINT or SIGHUP that arrived in the microseconds while sacdfs set up its signal handlers was
+  dropped by the signal library: sacdfs neither died nor stopped, mounted, and ran on until
+  killed (a service stopped right after its start). The handlers now go in with those signals
+  blocked, before any thread exists, so such a signal waits and stops sacdfs without mounting.
+  They also go in earlier, right after the fork into the background instead of just before the
+  mount: a signal in between now ends sacdfs with status 0 and "stopped by signal before
+  mounting" (the background parent still reports it as a failed start) rather than killing it.
+  A new test (`tests/stop_signals.rs`, no libtest harness) sends SIGTERM into the registration
+  2000 times; about 2 % were lost before. The mount test that found it now prints sacdfs's log
+  and what each of its threads waits on when sacdfs does not stop.
 - **Mount tests no longer hang under load (#305).** A child forked by one test holds a copy of the
   open files of the other tests' threads until it execs, and closing a file on a FUSE mount waits
   for its daemon. While a test held a daemon stopped (`SIGSTOP`), such a child, and the test that
@@ -47,12 +102,10 @@ All notable changes to sacdfs are recorded here. The format follows
   test holds a shared lock for its whole run (`common::skip_without_fuse!`), and they hold it
   exclusive (`skip_without_fuse!(exclusive)`). The folder-times test also waits for each folder to
   move, not only the root, which failed one run in four under load.
-### Fixed
 - **Real-disc tests: a truncated image fails (#294).** Before the tests run, each image is checked
   against its own TOC (every area's TOC copies and audio must lie inside the file); a copy cut
   short fails the run with "truncated: ...". A test on truncated copies of a corpus image runs in
   CI. A corrupt image of the right size is still not caught.
-### Fixed
 - **Soak: designed art-churn errors no longer fail the verdict (#279).** `ESTALE` on a `cover-N.jpg`
   the churner replaced or removed, and `ENOENT` or `ESTALE` on an area's `cover.jpg` in the
   art-churn album after a cover removal, are counted as replaced sidecars. Every other errno, and
@@ -63,6 +116,15 @@ All notable changes to sacdfs are recorded here. The format follows
   with a differing NFC and NFD spelling failed that way, not 111 of 357 at random. The setting
   `dir_cache_off=yes` in `nsmb.conf` fixed it on macOS 27.2 in a VM. `docs/deployment.md` (macOS)
   says so. No code or Samba setting changed. Checked on macOS in a VM, not on Apple hardware.
+
+### Documentation
+- **What a player's import costs over SMB, and the settings that change it (part of #266).**
+  Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
+  use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
+  file's header and tags. `cache=none` on the client mount, or `oplocks = no` on the share,
+  brings it down to the direct mount's cost; `smb2 max read = 262144` halves it. Copies and
+  playback were measured with each. The defaults are unchanged
+  ([performance](docs/performance.md#a-players-import-over-smb-266), Navidrome guide).
 
 ## [0.6.0] - 2026-11-10
 
@@ -1154,7 +1216,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/aclater/sacdfs/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/aclater/sacdfs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1

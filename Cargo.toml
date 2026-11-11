@@ -1,6 +1,6 @@
 [package]
 name = "sacdfs"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Read-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand"
@@ -60,6 +60,11 @@ tempfile = "3"
 name = "pcm"
 harness = false
 
+# One process per trial, and no libtest thread that could take the signal (#334).
+[[test]]
+name = "stop_signals"
+harness = false
+
 [lints.rust]
 missing_debug_implementations = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
@@ -73,6 +78,14 @@ panic = "warn"
 
 [profile.release]
 overflow-checks = true
+
+# scarletbook in one codegen unit (#270). *Why:* split into cargo's default 16, its DST decoder ran
+# about 4 % more cycles than in the library's own builds (instructions within 1 %), and 6-channel
+# DST on one thread read up to 1.24x the library on a NAS-class CPU. In one unit the decoder's
+# cycles match the library's. *Only scarletbook:* one unit for the whole binary decoded no faster
+# and builds slower; fat LTO ran 14 % more instructions and 8 % more cycles, so it isn't used.
+[profile.release.package.scarletbook]
+codegen-units = 1
 
 # DST decoding in unoptimised test builds is slow.
 [profile.test]
