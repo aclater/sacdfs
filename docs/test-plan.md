@@ -471,7 +471,7 @@ What was run on 0.6.2-rc.1 (tag `v0.6.2-rc.1`), with 0.6.1 as the baseline. Anyt
 
 **glibc 2.17.** The x86_64 binary needs no symbol newer than `GLIBC_2.17`. In a UBI 7 container (RHEL 7.9, glibc 2.17) it mounts the conformance corpus and its 914 file hashes equal those of a host mount of the same binary and of the 0.6.1 binary.
 
-**Real-disc tests:** running on the rc commit (40 real images, 12 multichannel); result to follow.
+**Real-disc tests:** `scripts/real-discs.sh` passes 3 of 3 (0 skipped, exit 0) on 40 real images (12 multichannel), run on the v0.6.2-rc.1 commit: DSF head reads pass (289 s), 318,436 random-range positions equal across the 40 images (582 s), and all 52 areas' 613 WAV files equal the area stream at 176.4 kHz (7,827 s). 0.6.0-rc.1 took 4,413 s for the WAV test on a different set of 40 images, on a host with less other load, so the times don't compare; this run was niced on a host shared with other gate jobs.
 
 **Byte comparison with 0.6.1.** 468 DSF and WAV files (234 each) from 12 real discs, 6 of them multichannel (138 multichannel files), mounted by the 0.6.1 and 0.6.2-rc.1 release binaries on separate index caches: all 468 hashes equal. No WARN or ERROR lines in either log beyond the expected clipping and missing-frame notes.
 
