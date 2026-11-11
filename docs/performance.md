@@ -1005,6 +1005,11 @@ On the shared host (5 rounds) the DSF worst read was 23.3 ms and 27.9 ms and the
 
 ## WAV copies over SMB (#271)
 
+> **Withdrawn before release.** The change measured here (#323) was taken out again before 0.6.1:
+> with four whole-file copies starting at once on four cores, a player beside them stalled once for
+> 0.15 to 1.4 s in 4 of 16 runs, against none on 0.6.0 and none with the change reverted. Released
+> versions keep 0.6.0's pace rules. The figures below are kept for the follow-up in #271.
+
 A one-reader copy of WAV files through the Linux kernel SMB client was 8 to 11 % slower in 0.5.0
 and 0.6.0 than in 0.4.1. The cause was #252: Samba serves the client's 4 MiB reads concurrently, so
 they reach sacdfs up to about 20 MiB out of order. Each read outside the sequential gaps started

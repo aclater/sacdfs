@@ -6,14 +6,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-### Documentation
-- **What a player's import costs over SMB, and the settings that change it (part of #266).**
-  Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
-  use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
-  file's header and tags. `cache=none` on the client mount, or `oplocks = no` on the share,
-  brings it down to the direct mount's cost; `smb2 max read = 262144` halves it. Copies and
-  playback were measured with each. The defaults are unchanged
-  ([performance](docs/performance.md#a-players-import-over-smb-266), Navidrome guide).
+## [0.6.1] - 2026-11-11
+
+Tested on main against 0.6.0; the results are in docs/test-plan.md ("Results: 0.6.1 gate").
+The pace change for WAV copies over SMB (#271, #323) was taken out before the release because it
+could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pace rules.
 
 ### Changed
 - **SMB directory leases stay off: why they can't be fresh (part of #325).** Docs and a comment in the
@@ -58,7 +55,18 @@ All notable changes to sacdfs are recorded here. The format follows
   history moved to Details. The NAS and player guides follow in later pull requests.
 - **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
 - **NAS install guides rewritten (part of #310).** Each vendor guide (Synology, QNAP, ASUSTOR, TerraMaster, UGREEN, ReadyNAS) is one page with one path, the 0.6.0 release archive and the vendor's own start-at-boot method, followed as written on 0.6.0 in the NAS VMs; TrueNAS SCALE, Unraid and OpenMediaVault keep their facts in the same layout, marked untested on 0.6.0. `nas-binary.md` is the short generic guide; test history, options and the longer troubleshooting moved to each page's Details. Found while checking: TOS has no `/usr/local/bin`, so the unit steps make it.
+
 ### Fixed
+- **Mount tests: a failing stop test no longer hangs the run (#335).** Tests only. The two tests
+  that stop a daemon (`SIGSTOP`) now hold it in a guard that, when the test fails, resumes it
+  (`SIGCONT`), stops and reaps it, and prints its debug log: a failed assertion no longer leaves
+  a stopped daemon that blocks the rest of the run. The cause of those failures under load was
+  the #305 race through tests outside the lock: `bad_arguments_fail_cleanly`,
+  `start_up_messages_name_the_fix` and `a_source_or_cache_under_the_mount_point_is_refused`
+  need no FUSE but spawn sacdfs, so they did not take the shared lock, and a child they forked
+  could inherit a stop test's file on the mount it was about to stop. The child then blocked in
+  `exec`, the mount stayed busy, and the stop test failed to unmount it. They now hold the lock
+  shared (`common::spawns_children!`).
 - **An unmount from outside no longer ends sacdfs with status 1 (#322).** When the mount was
   unmounted or detached from outside (`fusermount3 -u`, `fusermount3 -u -z`, `umount -l`) while a
   request was still queued, typically the release of a file just closed, the kernel could end the
@@ -77,12 +85,10 @@ All notable changes to sacdfs are recorded here. The format follows
   test holds a shared lock for its whole run (`common::skip_without_fuse!`), and they hold it
   exclusive (`skip_without_fuse!(exclusive)`). The folder-times test also waits for each folder to
   move, not only the root, which failed one run in four under load.
-### Fixed
 - **Real-disc tests: a truncated image fails (#294).** Before the tests run, each image is checked
   against its own TOC (every area's TOC copies and audio must lie inside the file); a copy cut
   short fails the run with "truncated: ...". A test on truncated copies of a corpus image runs in
   CI. A corrupt image of the right size is still not caught.
-### Fixed
 - **Soak: designed art-churn errors no longer fail the verdict (#279).** `ESTALE` on a `cover-N.jpg`
   the churner replaced or removed, and `ENOENT` or `ESTALE` on an area's `cover.jpg` in the
   art-churn album after a cover removal, are counted as replaced sidecars. Every other errno, and
@@ -94,17 +100,14 @@ All notable changes to sacdfs are recorded here. The format follows
   `dir_cache_off=yes` in `nsmb.conf` fixed it on macOS 27.2 in a VM. `docs/deployment.md` (macOS)
   says so. No code or Samba setting changed. Checked on macOS in a VM, not on Apple hardware.
 
-### Fixed
-- **WAV copies through the Linux kernel SMB client are about as fast as in 0.4.1 again (#271).**
-  Since 0.5.0 (#252, the player-first rules of #230), a one-reader copy of WAV files over SMB was
-  8 to 11 % slower than in 0.4.1. Samba serves the kernel client's 4 MiB reads concurrently, so
-  they reach sacdfs up to about 20 MiB out of order; each of those counted as a jump, the reader's
-  pace started again, and the copy kept switching between reading for throughput and playing,
-  losing its long read-ahead window. A jump is now a read more than 64 MiB from where the reader
-  got to, and the pace counts the bytes read. Stereo WAV over SMB: 0.6.0 24.91 s, now 22.28 s
-  (0.4.1: 23.02 s); six channels 83.95 → 78.42 s (0.4.1: 75.21 s). DSF over SMB had not slowed
-  down and gets 3 to 4 % faster. Local reads were not affected. Audio bytes are unchanged
-  ([performance](docs/performance.md#wav-copies-over-smb-271)).
+### Documentation
+- **What a player's import costs over SMB, and the settings that change it (part of #266).**
+  Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
+  use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
+  file's header and tags. `cache=none` on the client mount, or `oplocks = no` on the share,
+  brings it down to the direct mount's cost; `smb2 max read = 262144` halves it. Copies and
+  playback were measured with each. The defaults are unchanged
+  ([performance](docs/performance.md#a-players-import-over-smb-266), Navidrome guide).
 
 ## [0.6.0] - 2026-11-10
 
@@ -1196,7 +1199,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/aclater/sacdfs/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/aclater/sacdfs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1

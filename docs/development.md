@@ -233,6 +233,10 @@ ends, and `common::skip_without_fuse!(exclusive)` holds it exclusive, with no ot
 progress. A test that stops a daemon (`SIGSTOP`) needs the second form: a child forked by any other
 test thread inherits that thread's open files on a FUSE mount until it execs, and its exec then
 blocks on closing a file whose daemon is stopped.
+A test that needs no FUSE but spawns processes holds the lock shared too, with
+`common::spawns_children!()` (#335): its children are just as able to inherit such a file. A
+test that stops a daemon keeps it in a `Daemon` guard (tests/mount.rs), which resumes, stops and
+reaps it if the test fails, and prints its log, so that a failure cannot leave it stopped.
 
 The `tests`, `tests (arm64)`, `coverage`, `nfs export` and `file handles (arm64)` jobs save cargo's output and then run
 `scripts/check_skips.py`, as a step of the same job. It writes the job summary: how many tests ran
