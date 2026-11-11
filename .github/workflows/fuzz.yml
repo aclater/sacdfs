@@ -28,29 +28,43 @@ jobs:
     name: fuzz
     runs-on: ubuntu-latest
     timeout-minutes: ${{ github.event_name == 'schedule' && 90 || 20 }}
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc gcc-c++ && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install "$RUST_NIGHTLY" --profile minimal && rustup default "$RUST_NIGHTLY"
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_NIGHTLY"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           workspaces: |
             . -> target
             fuzz -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
-      - run: cargo install cargo-fuzz --locked --version 0.13.2
+          prefix-key: v0-rust-ubi10
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         if: github.event_name == 'schedule'
         with:
           path: fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: fuzz-corpus-
+      - name: The restored cache to the build user
+        shell: bash
+        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
+      - run: cargo install cargo-fuzz --locked --version 0.13.2
       - name: Every target, four at a time (a runner's cores)
         env:
           SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && 1200 || 60 }}
         run: fuzz/run.sh "$SECONDS_PER_TARGET" 4 | tee -a "$GITHUB_STEP_SUMMARY"
-        shell: bash
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         if: github.event_name == 'schedule' && !cancelled()
         with:
