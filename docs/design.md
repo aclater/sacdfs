@@ -1570,6 +1570,127 @@ the share is read-only and gvfs's `can-write` comes only from this attribute. Th
 result on a mount with no write bits. *Trade-off:* folders get it too, as Samba can't separate them; a
 plain `cp` on the Linux client keeps the missing write bit; and Windows and macOS haven't been tested.
 
+## The core and its front ends (#22, piece A)
+
+sacdfs is split in two: a **core** that knows nothing of FUSE, and a **front end** per platform that
+takes requests from the operating system and hands them to the core. Today the only front end is
+Linux FUSE (fuser). The split is the first step of native macOS and Windows support
+([#22](https://github.com/aclater/sacdfs/issues/22)): a WinFsp front end (Windows, piece B) and a
+FUSE-T or macFUSE front end (macOS, piece C) call the same core, and the core's tests cover all of
+them. *Why split first:* the tree, attributes, reads, caching, PCM, tags and the lookup worker were
+never Linux-specific, but the code that answers requests mixed them with fuser's types, so a second
+front end would have copied it. *No behaviour change:* the Linux mount answers every request as
+before, with the same bytes, the same errors and on the same threads.
+
+### What is in the core
+
+`sacdfs::vfs` is the API a front end calls. Its centre is `Volume`, which holds the tree, the
+engine, the open files, the request pools, the watchdog and the per-image read count, and answers
+these requests, by inode number:
+
+| Request | Answer |
+|---|---|
+| `lookup(parent, name)` | `Lookup::Found` (TTL, attributes, generation) or `Lookup::Missing` (a negative entry and how long it holds) |
+| `getattr(ino, fh)` | TTL and attributes; a file open since its image was removed is answered from its handle (#153) |
+| `open(ino)` | a file handle (a `u64`) |
+| `read(ino, fh, offset, size)` | the bytes, fewer only at the end of the file |
+| `release(fh)` | closes the handle |
+| `opendir(ino)` | whether the cached listing is still the directory's (`keep_cache`) |
+| `readdir(ino)` | the listing (`.`, `..` and the entries, borrowed, not copied) |
+| `readdir_plus(ino, offset)` | the entries from `offset`, each with what its `lookup` would answer |
+| `access(ino, write, execute)` | allowed, or read-only, or not executable |
+| `statfs()` | the volume's size and file count |
+
+Each answer goes through a **reply** the front end supplies: a `Reply<T>` takes the result, a
+`DataReply` the bytes of a read, and both can be failed with a `vfs::Error`. The core decides on
+which thread a request runs, exactly as described in [Concurrency](#concurrency): what is in
+memory is answered on the caller's thread, what may read the source on a request pool, under the
+watchdog. The core's errors are named (`NotFound`, `NoMemory`, `NotDir`, `IsDir`, `ReadOnly`,
+`Access`, `Stale`, `BadHandle`, `Io`) plus `Os(code)`, a source file's own error as the operating
+system gave it; each front end maps them to its platform's codes (errno for FUSE, `NTSTATUS` for
+WinFsp).
+
+Also in the core, unchanged: the tree (`tree`, `names`, `ident`, `sidecar`), reading (`track`,
+`engine`, `dsf`, `wav`, `pcm`, `disc`, `handles`, `index_cache`), tags and lookups (`tags`,
+`lookup`), memory (`memory`), the request pools (`vfs::Workers`), the watchdog (`watchdog`, whose
+replies are now any `Fail`, not fuser's types) and the hung-image read cap (`vfs::ImageReads`,
+#241).
+
+### What stays in the Linux front end
+
+`sacdfs::fuse` (fuser) and `main.rs`:
+
+- the `Filesystem` callbacks, each a few lines that convert fuser's types and call `Volume`;
+- `INIT`: `max_readahead`, `max_background`, `readdirplus`, export support;
+- the FUSE caching flags: `FOPEN_KEEP_CACHE` on files, `FOPEN_CACHE_DIR` on folders;
+- extended attributes: `getxattr` answers `ENOSYS` and `listxattr` an empty list (#174), a
+  policy about how the Linux kernel and Samba behave;
+- the decoding of open flags (a write open is `ReadOnly`) and access masks;
+- the mount: options, `allow_other`, the mount helper checks (`startup`), the daemon (fork,
+  `setsid`, the readiness pipe, `sd_notify`), signals, unmounting and detaching, the mount table
+  checks (#51, #54) and the stop grace (#276).
+
+### Decisions for the other front ends
+
+These are decided now, so that pieces B and C fit the API rather than change it. Each follows a
+pitfall in #22.
+
+- **Handles.** The core hands out a `u64` per open file, never reused while the mount runs, and
+  identifies files and folders by inode number. A front end with per-open contexts (WinFsp's
+  `FileContext`) stores both there. A front end with a path API walks the path with `lookup` from
+  the root, one component at a time, and caches what it found; the core offers no path lookup.
+  *Why:* the inode numbers are the files' identity across restarts (see [File identity](#file-identity-and-nfs-export));
+  WinFsp's file IDs and macOS inode numbers can be the same numbers. *Alternative:* the libfuse
+  path API that WinFsp and FUSE-T also offer; it would put path resolution, and its caching, in
+  every front end's C layer.
+- **Threads.** The core owns its threads. A reply can be given on any thread, once, and the
+  watchdog fails one that waits too long, whatever the front end. A front end whose callbacks
+  must answer before they return (WinFsp, and the libfuse API under FUSE-T) waits for its reply
+  on a one-shot channel; one that can answer later (WinFsp's `STATUS_PENDING` for reads) passes
+  its own reply. A reply dropped without an answer must answer `Io`, as fuser's do, so that a
+  request whose job never ran is not left open. *Why:* the stall protections (#63, #72, #241) are about the source, not the
+  kernel interface, and would otherwise be rebuilt per platform.
+- **Names: case and normalisation.** The core stays case-sensitive and byte-exact, and serves
+  names precomposed (NFC), as on Linux today. Windows (case-insensitive de-duplication, reserved
+  names such as `CON` and `COM1`, `<>:"/\|?*`, trailing dots and spaces, 255 *characters*) and
+  macOS (lookups that arrive decomposed, NFD) need name rules chosen when the tree is built: a
+  `NameRules` given to the tree by the front end, which the tree uses both to make names unique
+  and to fold a name it is asked to look up. Linux keeps today's rules. *Why in the tree, not the
+  front end:* folding at lookup only works if no two names in a folder fold to the same key, which
+  only the code that makes the names can promise. *Not done in piece A:* it changes names, so it
+  lands with B and C, with tests per rule set.
+- **Reads at the end of a file.** The core answers a read at or past the end with no bytes, as
+  FUSE on Linux expects. macFUSE 5.4 and FSKit fail an empty read reply with `EIO`, so the macOS
+  front end must answer it with what its API takes for end of file. *Why:* a front-end
+  convention, not a core one.
+- **Volume statistics.** `statfs` gives 64-bit block counts; a front end that can't carry them
+  (macOS clips at 2^32−1) scales the block size instead.
+- **Generations.** The core gives each entry a generation that changes when an image changes; a
+  front end without generations (WinFsp) ignores it, and macOS is to be tested for
+  "vnode changed generation".
+- **Owners.** `Attr` carries the uid and gid given at construction; WinFsp maps them to its
+  own security descriptor.
+
+### What the core still needs from Linux
+
+The core is built and tested on Linux only so far. These calls are Unix- or Linux-only and stay
+as they are in piece A, because changing them would change behaviour on Linux; pieces B and C put
+each behind a small platform layer, with the Linux branch unchanged:
+
+- confined opening of sidecar files under SOURCE: `openat` with `O_PATH`, `readlinkat`
+  (`sidecar`); `O_PATH` is Linux-only, so macOS needs its own branch too;
+- reading a sidecar at an offset, `read_at` (`vfs`), and the image files' device and inode numbers
+  (`handles`);
+- the seek index's file modes and `O_NOFOLLOW` (`index_cache`);
+- path bytes for keys (`OsStrExt` in `ident`, `tags`, `fallback`);
+- the lookup worker's idle CPU and I/O priority (`setpriority`, `ioprio_set`, `lookup::worker`);
+- the memory limit from cgroups (`memory`), absent elsewhere;
+- `mallopt` and `malloc_trim` (`engine`, glibc only, already off elsewhere);
+- `sacdfs verify` (`FileExt`, `OsStrExt`).
+
+The split's pull requests: this note, then the moves, each "Part of #22". They change the
+structure of the read path, so the release that includes them runs the full gate and a soak.
+
 ## Concurrency
 
 fuser reads requests from the kernel on 4 threads, and they only hand requests over: what
