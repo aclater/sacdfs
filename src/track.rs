@@ -169,6 +169,32 @@ const SEQ_GAP_AHEAD: u64 = 1 << 20;
 /// sequential (the kernel sends read-ahead requests concurrently, slightly out of order).
 const SEQ_GAP_BEHIND: u64 = 8 << 20;
 
+/// A read this far from the furthest byte read so far, either way, is a jump for the reader's
+/// pace ([`Traffic`]): it is measured again from there. *Why this far (#271):* Samba serves a
+/// kernel SMB client's 4 MiB reads concurrently, so a straight copy's reads reach sacdfs up to
+/// about 20 MiB out of order (measured). With the sequential gaps above as the test, a copy over
+/// SMB kept starting its pace again, lost its long read-ahead window and was 8 to 11 % slower
+/// than in 0.4.1. *Why that is safe:* the pace counts the bytes read, so a player that seeks
+/// less far than this still reads at its own rate.
+const PACE_JUMP: u64 = 64 << 20;
+
+/// A read landing more than this far behind the furthest byte read so far shows that a network
+/// client with its own read-ahead stands between the application and sacdfs ([`PACE_LEAD`]).
+/// *Why this far:* through the kernel's FUSE read-ahead a local reader's reads land at most
+/// 0.5 MiB behind (measured); through Samba a player's land 3 to 11 MiB behind, a copy's up to
+/// 56 MiB, from its first second.
+const NETWORK_REORDER: u64 = 2 << 20;
+
+/// A reader behind a network client ([`NETWORK_REORDER`]) reads for throughput only once it is
+/// this far ahead of playing time, as well as faster than a player. *Why (#271):* the client
+/// reads ahead of the application. The Linux kernel SMB client keeps a player 8 to 16 MiB ahead
+/// (measured), and fetches the first 4 to 8 MiB at once, so measured from its start a player
+/// looked like a copy for its first 3 to 7 s. Counted as reading for throughput, it gave up its
+/// place: four copies starting beside it made it stall for up to 1.4 s. A copy gets this far ahead
+/// within 1 to 4 s on four cores. *Why only behind a network client:* a scanner reading files
+/// locally would count as a player for most of a short file.
+const PACE_LEAD: u64 = 32 << 20;
+
 /// Reads that end within this many bytes of where a file's first read of audio started
 /// start no read-ahead: that is the kernel's own read-ahead of a first read (128 KiB, then
 /// 128 KiB more in the background, whatever `max_readahead` says), which a tagger reading a
@@ -681,6 +707,13 @@ struct Seq {
     audio_reads: u64,
     /// When the reader last jumped, and where to: what its pace is measured from.
     pace_from: Option<(std::time::Instant, u64)>,
+    /// Bytes of audio read since then ([`PACE_JUMP`]).
+    paced: u64,
+    /// The furthest byte read since then.
+    pace_end: u64,
+    /// Whether a read has landed far behind the others: a network client reads ahead
+    /// ([`NETWORK_REORDER`]).
+    networked: bool,
     /// When the first read of audio came, and where it started.
     started: Option<(std::time::Instant, u64)>,
     /// Frames below this one (file index) are given up already ([`Engine::give_up`]).
@@ -818,12 +851,18 @@ impl Reader {
     }
 
     /// Whether the reader, since it last jumped, has read at least [`FAST_AFTER`] bytes at more
-    /// than [`PLAYER_FACTOR`] times the file's byte rate. *Why since it last jumped:* a player
-    /// that seeks forward has not read what it skipped.
-    fn reads_for_throughput(&self, s: &Seq, end: u64, now: std::time::Instant) -> bool {
-        let Some((t, off)) = s.pace_from else { return false };
+    /// than [`PLAYER_FACTOR`] times the file's byte rate, and, behind a network client, is
+    /// [`PACE_LEAD`] ahead of playing time. *Why since it last jumped:* a player that seeks has
+    /// a new pace to measure. *Why the bytes it read, but no further than it got:* a player
+    /// that seeks forward has not read what it skipped (#271), and one whose client reads a
+    /// range twice has not got further.
+    fn reads_for_throughput(&self, s: &Seq, now: std::time::Instant) -> bool {
+        let Some((t, from)) = s.pace_from else { return false };
         let secs = now.saturating_duration_since(t).as_secs_f64();
-        faster_than_a_player(end.saturating_sub(off), secs, self.file.byte_rate())
+        let read = s.paced.min(s.pace_end.saturating_sub(from));
+        let rate = self.file.byte_rate();
+        faster_than_a_player(read, secs, rate)
+            && (!s.networked || read as f64 > rate * secs + PACE_LEAD as f64)
     }
 
     fn plan_read_ahead(&self, engine: &Engine, offset: u64, end: u64, k0: u32, k1: u32) -> Option<ReadAhead> {
@@ -839,14 +878,28 @@ impl Reader {
         let sequential = s.audio_reads > 1
             && (offset <= s.max_end.saturating_add(SEQ_GAP_AHEAD)
                 && offset.saturating_add(SEQ_GAP_BEHIND) >= s.max_end);
+        // A jump, for the reader's pace, is a read far from where it got to: farther than an
+        // SMB server's concurrent reads land out of order (#271).
+        let jumped = s.pace_from.is_none()
+            || offset > s.max_end.saturating_add(PACE_JUMP)
+            || offset.saturating_add(PACE_JUMP) < s.max_end;
+        if !jumped && offset.saturating_add(NETWORK_REORDER) < s.pace_end {
+            s.networked = true;
+        }
         s.max_end = s.max_end.max(end);
         if !sequential {
             s.ahead_until = 0;
+        }
+        if jumped {
             s.given_up = k0;
             s.pace_from = Some((std::time::Instant::now(), offset));
+            s.paced = 0;
+            s.pace_end = offset;
         }
+        s.paced = s.paced.saturating_add(end.saturating_sub(offset));
+        s.pace_end = s.pace_end.max(end);
         let now = std::time::Instant::now();
-        let throughput = self.reads_for_throughput(&s, end, now);
+        let throughput = self.reads_for_throughput(&s, now);
         let traffic = engine.traffic();
         self.counted.get_or_init(|| traffic.clone());
         self.throughput.store(throughput, Ordering::Relaxed);
@@ -960,6 +1013,8 @@ mod tests {
             s.started = Some((std::time::Instant::now() - ago, 0));
             s.max_end = FAST_AFTER;
             s.pace_from = s.started;
+            s.paced = FAST_AFTER;
+            s.pace_end = FAST_AFTER;
         }
         reader
     }
@@ -1007,6 +1062,80 @@ mod tests {
         assert!(!faster_than_a_player(32 << 20, 10.0, rate), "real time");
         assert!(!faster_than_a_player(47_000_000, 10.0, rate), "catching up");
         assert!(faster_than_a_player(48_000_000, 10.0, rate));
+    }
+
+    /// A copy over SMB reads out of order, several MiB either way, and still reads for
+    /// throughput; a real jump measures its pace again (#271).
+    #[test]
+    fn reads_out_of_order_keep_the_pace() {
+        let tree = corpus();
+        let f = longest_dsf(&tree);
+        let engine = Engine::new(4, 32 << 20).unwrap();
+        let reader = Reader::new(f.clone());
+        let read = |off: u64| {
+            reader.plan_read_ahead(&engine, off, off + (128 << 10), 0, 1);
+        };
+        // Samba's concurrent 4 MiB reads, as sacdfs saw them: each 4 MiB block in 128 KiB
+        // pieces, blocks arriving out of order by up to 4 blocks.
+        let block = 4u64 << 20;
+        for b in [0u64, 2, 1, 3, 5, 4, 7, 6, 8, 11, 9, 10] {
+            for i in 0..32 {
+                read(b * block + i * (128 << 10));
+            }
+        }
+        let s = reader.seq.lock().unwrap();
+        assert_eq!(s.pace_from.map(|(_, o)| o), Some(0), "no jump within the client's reads");
+        assert_eq!(s.paced, 12 * block);
+        drop(s);
+        assert!(reader.throughput.load(Ordering::Relaxed), "a copy reads for throughput");
+
+        read(12 * block + PACE_JUMP + 1);
+        let s = reader.seq.lock().unwrap();
+        assert_eq!(s.pace_from.map(|(_, o)| o), Some(12 * block + PACE_JUMP + 1), "a jump");
+        assert_eq!(s.paced, 128 << 10);
+        drop(s);
+        assert!(!reader.throughput.load(Ordering::Relaxed), "too early to tell after a jump");
+    }
+
+    /// Behind a network client, a player whose client fetched ahead in a burst still plays; a
+    /// copy reads for throughput once it is far enough ahead of playing time (#271).
+    #[test]
+    fn behind_a_network_client_a_player_is_not_a_copy() {
+        let tree = corpus();
+        let f = longest_dsf(&tree);
+        let rate = f.byte_rate();
+        let reader = Reader::new(f.clone());
+        let now = std::time::Instant::now();
+        let secs = 2.0;
+        let seq = |read: u64, end: u64, networked: bool| Seq {
+            pace_from: Some((now - std::time::Duration::from_secs_f64(secs), 0)),
+            paced: read,
+            pace_end: end,
+            networked,
+            ..Seq::default()
+        };
+        let playing = (rate * secs) as u64;
+        // Two seconds of playing and the 16 MiB a kernel SMB client keeps ahead of it.
+        let player = playing + (16 << 20);
+        assert!(reader.reads_for_throughput(&seq(player, player, false), now), "locally, a copy");
+        assert!(!reader.reads_for_throughput(&seq(player, player, true), now), "behind a client, a player");
+        let copy = playing + PACE_LEAD + (1 << 20);
+        assert!(reader.reads_for_throughput(&seq(copy, copy, true), now), "far ahead: a copy");
+        // Ranges read twice don't take a reader further.
+        assert!(!reader.reads_for_throughput(&seq(copy, player, true), now), "read twice");
+
+        // Reads in order, as through the kernel's FUSE read-ahead, are not a network client's;
+        // one landing 3 MiB behind is.
+        let engine = Engine::new(4, 32 << 20).unwrap();
+        let read = |off: u64| {
+            reader.plan_read_ahead(&engine, off, off + (128 << 10), 0, 1);
+        };
+        for i in 0..64 {
+            read(i * (128 << 10));
+        }
+        assert!(!reader.seq.lock().unwrap().networked);
+        read(5 << 20);
+        assert!(reader.seq.lock().unwrap().networked);
     }
 
     /// Readers not playing wait for a player's decoding, but not for long if it never ends.
