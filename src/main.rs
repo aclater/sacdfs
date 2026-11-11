@@ -500,8 +500,6 @@ fn run(args: Args) -> io::Result<()> {
     });
     let at = mountpoint.clone();
     let mine = own.clone();
-    let detached = Arc::new(AtomicBool::new(false));
-    let detached_by_signal = detached.clone();
     let stop_tree = tags_tree.clone();
     let stop_grace = args.stop_grace;
     std::thread::Builder::new().name("sacdfs-signals".to_owned()).spawn(move || {
@@ -517,7 +515,6 @@ fn run(args: Args) -> io::Result<()> {
                 );
             } else {
                 log::info!("signal {sig}: unmounting");
-                detached_by_signal.store(true, Ordering::Relaxed);
                 if let Err(e) = unmount(&at) {
                     // Busy (open files, or an NFS server exporting the mount): detach it, as
                     // fusermount3 does for users other than root. sacdfs then serves the files
@@ -637,9 +634,13 @@ fn run(args: Args) -> io::Result<()> {
     let (calls, bytes) = sacdfs::disc::total_reads();
     log::info!("image reads for audio: {calls} calls, {bytes} bytes");
     match result {
-        // After a detach, the kernel can end the connection as aborted rather than
-        // unmounted once the last open file is closed: the stop that was asked for.
-        Err(e) if e.raw_os_error() == Some(libc::ECONNABORTED) && detached.load(Ordering::Relaxed) => {
+        // The connection ended: the same end as the ENODEV that fuser takes for one (#322).
+        // When a connection ends (an unmount, ours after a signal or one from outside such as
+        // `fusermount3 -u` or `umount -l`), the kernel shuts its processing queue before its
+        // input queue, and a read of /dev/fuse that takes a request still queued in between
+        // (the RELEASE of a file just closed, often) fails with ECONNABORTED instead. Nothing
+        // else returns it here: that is only for FUSE_ABORT_ERROR, which is not asked for.
+        Err(e) if e.raw_os_error() == Some(libc::ECONNABORTED) => {
             log::debug!("connection ended after the unmount: {e}");
             Ok(())
         }
