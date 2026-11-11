@@ -1229,7 +1229,9 @@ gone, and the container no longer offers directory leases:
   Samba otherwise checks every folder it reopens for an automount point, and there are none in the share.
 - **No directory leases:** the container sets `smb3 directory leases = no`. With leases, the Linux kernel
   client keeps a folder's listing for as long as it keeps using that folder, and Samba can't tell it that
-  the folder changed, because images and art change behind Samba's back. A new image didn't show in the
+  the folder changed: Samba breaks a directory lease only for a change made through Samba itself, and
+  images and art change behind its back (why no setting fixes that: "Why leases can't be fresh" below,
+  #325). A new image didn't show in the
   share's top folder while that folder was listed every few seconds, still not after 70 s, and showed after
   45 s without a listing. Without leases it showed 3 s after it was added, as it did through `smbclient`.
   The cost: about 2 % more SMB2 requests from the kernel client for a repeated `ls -lR` (9,024 against
@@ -1290,10 +1292,52 @@ log, the container on six cores, the same pass) it took 121 to 126 s on 0.6.0, 8
 81 to 82 s on 0.5.0 (a first round on a loaded machine, 224 s and 143 s on 0.6.0, is left out), with 58,820 requests on 0.6.0 against 17,560 with leases and 18,876 on 0.5.0 (one run each,
 counted with the request log on). Nothing is wrong with the answers; the extra time is the folder opens and closes.
 
-If the share is used from Windows (or another client that holds folders open), and not from the Linux
-kernel client, turn the leases back on: `SMB_EXTRA_GLOBAL=smb3 directory leases = yes` (it comes after the
-container's own line, so it wins; checked). The trade-off is the one above: with leases, the Linux
-kernel client doesn't show a new image or changed art in a folder it keeps using. macOS was not measured.
+If new images are rare and you can live with them showing late, turn the leases back on for Windows:
+`SMB_EXTRA_GLOBAL=smb3 directory leases = yes` (it comes after the container's own line, so it wins;
+checked). The trade-off is not only the Linux kernel client's: with leases, **Windows doesn't show a new
+image either** while it keeps the folder (measured below), and the Linux kernel client doesn't show a new
+image or changed art in a folder it keeps using. A Linux kernel client can opt out on its own side: mount
+with `nohandlecache` and it shows a new image at its next listing, leases or not. macOS was not measured.
+
+**Why leases can't be fresh (#325).** The goal was leases on and a new image shown within seconds. Neither
+sacdfs nor a Samba setting can do it:
+
+- *Samba breaks a directory lease only for a change made through Samba* (a create, delete, rename or
+  set-info over SMB). Its kernel change notification (`kernel change notify`, inotify) only answers the
+  change-notify requests clients make; it never breaks a lease (Samba 4.24.7, `source3/smbd/notify.c`:
+  `contend_dirleases` is called from `notify_fname`, which only Samba's own file operations call). This
+  holds for any folder Samba shares, not only sacdfs.
+- *A FUSE file system can't raise a kernel change notification* for an entry it adds: the kernel's FUSE
+  notifications (`notify_inval_entry`, `notify_inval_inode` and the others) drop the kernel's caches and
+  raise none (Linux 7.2, `fs/fuse/notify.c`). And sacdfs notices a new image when its folder is read,
+  which a client serving the folder from its lease doesn't do.
+
+So no FUSE invalidation in sacdfs was built. It would need Samba to break directory leases on kernel
+change notification, and even then sacdfs couldn't raise one.
+
+Measured on 0.6.0, the container's Samba 4.24.7, 8 images (196 files) in a fresh container each time. A
+new album folder was added to the source, in the share's top folder and in an artist folder, while the
+client listed both every second; the time is from the addition to the first listing that showed it. Linux:
+the kernel client of Fedora 45 (kernel 7.2.15, SMB 3.1.1), with `smbclient` listing the top folder
+alongside. Windows: Windows 11 in a VM (not on the vendor's hardware), `Get-ChildItem` on the mapped drive.
+
+| New image shows after | Linux kernel client | `smbclient` | Windows 11 |
+|---|---|---|---|
+| 0.6.0 default (leases off) | 0.4 to 1.7 s | 0.4 to 1.7 s | 5.1 s |
+| Leases on | not within 155 s | 1.5 s | not within 155 s |
+| Leases on, `kernel change notify = yes` | not within 155 s | 1.5 s | not run |
+| Leases on, client mounts with `nohandlecache` | 1.6 s | 1.6 s | n/a |
+| Leases on, `kernel change notify = yes`, a plain folder (not sacdfs) | not within 155 s | 0.4 s | not run |
+
+The last row is the control: the same Samba sharing an ordinary folder. There Samba did see the change (a
+change-notify request on that folder reported the new folder at once, and none did on the sacdfs share),
+and the Linux client still kept its old listing.
+Listed only every 30 s instead, Windows with leases showed the new image at the second listing after it
+was added, 58 s later (the Linux default and leases-on rows twice, the rest once).
+
+The cost of leases off, from #312, re-counted for #325 in the same Windows VM (thumbnail pass over the
+196 files, requests to sacdfs, two runs each): 2,082 and 2,103 with leases off, 495 and 481 with leases
+on.
 
 **If you run your own Samba** on a sacdfs mount instead of the container, put the container's settings in
 `smb.conf`. In `[global]`:

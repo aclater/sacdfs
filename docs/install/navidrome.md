@@ -59,6 +59,7 @@ Open **Albums**. Each disc is an album; a multichannel area is its own album, "A
 - **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit up to 512 MiB).
 - **Share the folder that holds the mount, with `ro,rslave`.** Sharing the mount point itself leaves the container on a dead mount after sacdfs restarts. `label=disable` is for SELinux hosts.
 - **`ND_MUSICFOLDER`** points Navidrome at the music folder; its default is `/music`.
+- **Navidrome on another Linux machine, through a kernel SMB mount:** add `cache=none` to that mount's options. A scan then makes sacdfs read and decode what a direct mount does: 18 MB for 122 files against 64 MB by default, and a fifth of the CPU. With a LAN-like 0.5 ms round trip, a copy through such a mount took 3 % longer, and a player's reads took one round trip each (measured with the equivalent share setting `oplocks = no`: median 0.7 ms, worst 5.3 ms) ([performance](../performance.md#a-players-import-over-smb-266)). Checked on 0.6.0 on one machine, with the delay added; not on a NAS.
 - Keep the default "(Multichannel)" album suffix if you want Stereo and Multichannel as separate albums.
 
 ### More problems

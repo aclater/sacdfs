@@ -389,7 +389,52 @@ narrows it.
 An earlier round on scarletbook 0.5.8 (against its own `bench dsf`, with 0.4.0 and 0.4.1-rc.3) gave the
 same picture: -2 %, +13 %, +21 % and +19 %, where 0.4.0 was +29 %, +45 %, +35 % and +25 %. Six
 channels on one thread stay over 20 % behind the library. Grouping shorter batches (from 4 frames per
-thread instead of 8) made no difference there (522 against 522 s), so the cause is still open.
+thread instead of 8) made no difference there (522 against 522 s). The cause was how scarletbook was
+compiled: see the next section.
+
+### One codegen unit for scarletbook (#270)
+
+**Where the time went.** With one decoder thread, a profile of a straight `cp` (6-channel DST, disc 1 of the
+table below, a 16-core Zen 5 machine) put 99 % of the decoder thread's time in scarletbook's DST decoder (96 % in its inner
+loop). The decoder thread was busy for 101 of the read's 102 s. The request threads (demultiplexing,
+DSF packing, copies to the reply) used 2.6 s of CPU between them, on other cores, off the critical path.
+So the cache, the read size, the copies and the packing cost nothing that a one-thread read waits
+for. The decoder itself ran slower than in the library's `bench`:
+
+| Build (6-channel DST area, one thread) | Decoder cycles (G) | Instructions (G) | Against the library's cycles |
+|---|---|---|---|
+| Library (`bench dsf`, scarletbook 0.5.9 kit) | 475.2 | 2125 | 1.00 |
+| 0.6.0 as released (cargo's default 16 codegen units) | 495.6 | 2136 | 1.043 |
+| Overflow checks off | about the same as 0.6.0 (wall 103.4 against 102.1 s) | | |
+| Fat LTO and one codegen unit, whole binary | 514.2 | 2427 | 1.082 |
+| One codegen unit, whole binary | 473.7 | 2097 | 0.997 |
+| **One codegen unit, scarletbook only (this change)** | **475.7** | **2097** | **1.001** |
+
+Instructions differ by under 2 %, cycles by 4 %: split into 16 units, the same decoder loop ran
+slower. Wall seconds on that machine, one round: library 93.9, 0.6.0 102.1 (1.087×), this change
+94.2 (taken outside the benchmark lock, while another job held it). scarletbook's own release builds already use one codegen unit. Release builds of
+sacdfs now do the same for scarletbook only (`[profile.release.package.scarletbook]` in `Cargo.toml`).
+A clean release build takes about 10 s longer (57 against 48 s on 32 threads). The audio bytes are
+the same as 0.6.0's (`cmp` of every file of both areas).
+
+**On a NAS-class CPU** (the 12-thread i5-1235U above, in a container on the NAS, the image in its ZFS
+cache, output to a RAM disk, under the benchmark lock): `cp` of an area out of a fresh mount against
+scarletbook 0.5.9's `bench dsf`, wall seconds, medians of alternating rounds (range). 0.5.0 and 0.6.0
+are the release binaries; this change is built with the same compiler (rustc 1.99.1). Peak RSS of
+sacdfs in MiB, median of the runs (one run each of 0.6.0 and this change peaked at 56 and 54 MiB).
+The 1.24× in #270 was another disc, which is no longer in the lab; these two discs measured 1.11× and
+1.15× with 0.6.0.
+
+| Area | Threads | Rounds | Library | 0.5.0 | 0.6.0 | This change | Against the library: 0.6.0 → this change | Peak RSS, 0.6.0 → this change |
+|---|---|---|---|---|---|---|---|---|
+| DST 6 ch., disc 1 (42 min) | 1 | 3 | 232.56 (232.03-232.60) | 258.03 (257.50-259.80) | 258.66 (257.95-258.66) | **229.46** (229.39-229.83) | 1.112 → **0.987** | 41 → 41 |
+| DST 6 ch., disc 2 (76 min) | 1 | 2 | 487.07 (486.60-487.55) | 562.52 (1 round) | 561.76 (560.04-563.48) | **484.11** (483.65-484.56) | 1.153 → **0.994** | 41 → 41 |
+| DST 6 ch., disc 1 | 12 | 2 | 36.05 | | 43.15 | **39.88** | 1.197 → **1.106** | 47 → 47 |
+| DST stereo, disc 1 | 1 | 2 | 88.96 | | 89.57 | **88.96** | 1.007 → **1.000** | 37 → 37 |
+
+**On a second machine** (a laptop with a 12-core Ryzen AI 9 HX 370, busy with other work, load 2 to 15,
+so walls are noisy): the decoder thread's user-mode cycles on disc 1, medians of 3 alternating rounds:
+library 475.2 G, 0.5.0 509.0 G, 0.6.0 506.2 G (1.065×), **this change 476.3 G (1.002×)**.
 
 **Pinned to P-cores** (sacdfs and the readers on 6 logical CPUs of 3 P-cores of an Intel i9-13900H,
 `taskset -c 2-7`, so all threads means 6 here), `cat` of a whole area out of a fresh local mount to
@@ -958,6 +1003,77 @@ On the shared host (5 rounds) the DSF worst read was 23.3 ms and 27.9 ms and the
 - *Jellyfin's LUFS task* (reads 40 GiB of the 22 GiB library): 478 s on 0.4.0 and 508 s on rc.1
   (+6 %, one run each, quiet host); first scan 52.5 s on both.
 
+## WAV copies over SMB (#271)
+
+> **Withdrawn before release.** The change measured here (#323) was taken out again before 0.6.1:
+> with four whole-file copies starting at once on four cores, a player beside them stalled once for
+> 0.15 to 1.4 s in 4 of 16 runs, against none on 0.6.0 and none with the change reverted. Released
+> versions keep 0.6.0's pace rules. The figures below are kept for the follow-up in #271.
+
+A one-reader copy of WAV files through the Linux kernel SMB client was 8 to 11 % slower in 0.5.0
+and 0.6.0 than in 0.4.1. The cause was #252: Samba serves the client's 4 MiB reads concurrently, so
+they reach sacdfs up to about 20 MiB out of order. Each read outside the sequential gaps started
+the reader's pace again, so the copy kept switching between reading for throughput and playing
+and lost its long read-ahead window ([design](design.md#read-ahead)). An instrumented 0.6.0 counted
+14,965 restarts and 3,291 switches for one stereo area; with the fix there is one of each per file.
+
+**How measured:** bare metal (Ryzen AI 9 HX 370, on mains, `performance` profile). The container
+was pinned to the 4 Zen 5 cores, and `cat` to the Zen 5c cores. The kernel client (SMB 3.1.1,
+`rsize` 4 MiB) mounted the container's share over loopback. One reader `cat` of every file of an
+area of one DST disc to `/dev/null`, a fresh container per run without an index cache, builds
+alternating; medians (range), seconds:
+
+| One reader, kernel CIFS | 0.4.1 | 0.5.0 | 0.6.0 | This fix |
+|---|---|---|---|---|
+| DST stereo WAV, 4.4 GB (4 rounds) | 23.02 (22.55-23.20) | 25.09 (24.87-25.41), **+9.0 %** | 24.91 (24.72-25.05), **+8.2 %** | **22.28** (22.05-24.32), -3.2 % |
+| DST 6 ch. WAV, 13.7 GB (4 rounds) | 75.21 (74.45-75.93) | 84.06 (81.97-85.16), **+11.8 %** | 83.95 (82.12-85.73), **+11.6 %** | **78.42** (78.24-81.78), +4.3 % |
+| DST stereo DSF (3 rounds) | 18.61 (17.98-18.68) | | 18.77 (18.36-19.26) | **17.87** (17.56-17.90) |
+| DST 6 ch. DSF (3 rounds) | 60.07 (59.85-60.18) | | 59.57 (59.52-59.75) | **57.53** (57.32-57.66) |
+
+- **Earlier releases:** 0.4.1-rc.2 23.08 and 76.25 s, rc.3 23.10 and 75.21 s, 5 rounds in an
+  earlier run on the same rig. The slowdown first reported against rc.3 (#239) came from an
+  unpinned VM. Bisected with each binary over the same image, stereo WAV: just before #212
+  23.47 s, #212 22.54 s, #252 25.43 s.
+- **Locally** (the binaries on a FUSE mount, same pinning) #252 cost nothing: rc.3 20.51 s,
+  #212 19.64, #252 19.59, 0.6.0 19.61 s.
+- **Six channels** keep a gap of 4 % against 0.4.1, with ranges that don't overlap; it is under
+  the 10 % that needs explaining and was not chased.
+- **Bytes:** all 122 DSF and WAV files of the three test images compare equal (`cmp`) with 0.6.0's.
+
+## A player's import over SMB (#266)
+
+A player's library scan reads each file's header and tags. Through a Linux kernel SMB mount, the
+client reads ahead around those reads: about 525 KB per file reached sacdfs, against 150 KB
+through a direct mount. The extra bytes are audio, so sacdfs decodes them.
+
+sacdfs can't avoid this. It already serves a WAV file's header and tags without decoding, and
+starts no read-ahead of its own in a file's first 1 MiB ([design](design.md#read-ahead)). What it
+decodes is what the client asked for. What changes it is how the share or the mount caches.
+
+**How measured:** 0.6.0, Navidrome 0.64.2 importing 122 DSF and WAV files of three discs.
+- **Rig:** sacdfs in a fresh container per run, pinned to 4 Zen 5 cores. The kernel SMB 3.1.1 client mounted the share on the same machine, with 0.5 ms added to each round trip (`tc netem` on the container's bridge).
+- **Copy:** one reader `cat` of a DST stereo area's WAV files (4.4 GB), medians of 2.
+- **Player:** 32 KiB reads of a 6-channel WAV at its real-time rate for 30 s.
+
+| Setting | Bytes sacdfs served for the import | sacdfs CPU for the import | Copy (s) | Player read, median / worst (ms) |
+|---|---|---|---|---|
+| Direct mount, no SMB | 18.3 MB | 0.32 s | | |
+| Default share and mount (client `rsize` 4 MiB) | 64.0 MB | 1.61 s | 21.42 | 0.04 / 3.2 |
+| Share: `smb2 max read = 1048576` | 48.0 MB | 1.16 s | 19.86 | |
+| Share: `smb2 max read = 262144` | 32.1 MB | 0.64 s | 19.74 | 0.04 / 2.4 |
+| Share: `oplocks = no` | 18.3 MB | 0.31 s | 21.79 | 0.69 / 5.3 |
+| Client mount: `cache=none` | 18.3 MB | 0.32 s | 22.02 | |
+
+- **Which settings matter:**
+  - `smb2 leases = no` alone changed nothing.
+  - `aio read size = 0` changed nothing.
+  - A client `rsize=131072` did what `smb2 max read = 262144` does.
+  - A client `rasize=1048576` did what `smb2 max read = 1048576` does.
+- **`oplocks = no` and `cache=none`:** the client then caches nothing and reads exactly what the player asks for, as a direct mount does. A copy costs the same, since it is limited by decoding. Each player read waits one round trip (here +0.5 ms), well inside the 50 ms target.
+- **A smaller maximum read:** it halves the import's cost. Copies were 8 % faster here, because the client's requests arrive at sacdfs less out of order. Without the added delay, a smaller maximum read was faster again (stereo WAV 19.96 s at 256 KiB against 22.08 s by default; 6 channels 65.23 against 78.97 s; with the fix of #271).
+- **Defaults unchanged:** the import costs about 13 ms of sacdfs CPU per file. A full scan of 10,000 files is two to four minutes of CPU, once. The settings change every client of the share, and macOS and Windows clients, a real network and a NAS CPU were not measured with them.
+- **For a Linux machine that mounts the share only for a player's library, `cache=none` on that mount** makes its imports cost what a direct mount costs. It leaves other clients alone.
+
 ## History
 
 What each improvement changed, one line each, with the pull request that measured it (each
@@ -988,6 +1104,7 @@ against its own "before", on the code of its day).
 | #240 | Listings kept to a budget under a memory limit; only the last 16 covers kept | No limit, 1,600 images, fresh index cache, 11 alternating rounds under a lock, listing and stating every file, median (min to max): first pass 2.485 s (2.13 to 4.00) against 0.4.1-rc.3 built the same way 2.489 s (2.30 to 2.68), and 0.4.0 2.504 s; second pass 0.613 s (0.30 to 0.75) against 0.660 s (0.37 to 0.99) and 0.564 s; anonymous memory 81 MiB against 88 and 87: no cost beyond the spread. Under 256 MiB with tags and a 400 KiB cover per disc, 9 rounds, with the mapping of large blocks against without: WAV 3.69 s against 3.71, DSF 4.89 s against 4.89, 200 random reads 2.27 s against 2.23, listing 8 images 0.36 s against 0.27. With 40 images, the build without it failed new opens with `ENOMEM`. Memory under a limit: [deployment](deployment.md#under-a-memory-limit) |
 | #239 | WAV reads demultiplex on the request thread (#238) | bytes unchanged (109 WAV and 109 DSF files equal 0.4.0's and 0.4.1-rc.2's). Reads of healthy discs during a hang, 4 decoder threads, 30 s timeout, 8 clients on the hung image: rc.2 2 `EIO` of 6 reads, worst 60.9 s; this change 0 of 33,595, worst 152 ms. WAV straight reads and seeks, against rc.2: no difference beyond the noise (most medians within 3%, worst −4.9% on 6-channel DST with one reader, whose runs spread by more than that). Local: the hang figures are a single run of each case, the speed figures 5 rounds. Peak memory, 2 decoder threads, 2 images, 16 to 64 fast 6-channel WAV readers, 5 rounds: median 4 to 16 MiB above rc.2, worst 109 MiB against 94 MiB, nothing killed at 256 or 512 MiB. A long hang with retrying clients can still fill the read threads (#241) |
 | #257 | A hung image's new reads fail at once once 4 are blocked past the timeout (#241) | Corpus reads through a fresh mount, 11 alternating rounds under a lock against main, median: DST stereo DSF 0.790 → 0.791 s, DST 6 ch. DSF 1.162 → 1.164 s, plain DSD DSF 0.449 → 0.456 s, 16 parallel readers of DSF and WAV 6.358 → 6.311 s: no difference beyond the noise (ranges overlap). Hang with 8 retrying clients, 2 decoder threads, 2 s timeout: read threads 64 after 23.6 s → at most 8 in 60 s; healthy reads during it 4 of 4 `EIO` → 4 of 4 answered |
+| #327 | scarletbook built in one codegen unit (#270) | bytes unchanged; decoder thread cycles on one thread, 6-channel DST: 1.043× → 1.001× the library's; on a NAS-class CPU (i5-1235U), 6 ch. one thread 1.112× → 0.987× (42 min) and 1.153× → 0.994× (76 min), 12 threads 1.197× → 1.106×, stereo one thread 1.007× → 1.000× the library ([above](#one-codegen-unit-for-scarletbook-270)) |
 
 ## The CI benchmark
 

@@ -233,6 +233,16 @@ ends, and `common::skip_without_fuse!(exclusive)` holds it exclusive, with no ot
 progress. A test that stops a daemon (`SIGSTOP`) needs the second form: a child forked by any other
 test thread inherits that thread's open files on a FUSE mount until it execs, and its exec then
 blocks on closing a file whose daemon is stopped.
+A test that needs no FUSE but spawns processes holds the lock shared too, with
+`common::spawns_children!()` (#335): its children are just as able to inherit such a file. A
+test that stops a daemon keeps it in a `Daemon` guard (tests/mount.rs), which resumes, stops and
+reaps it if the test fails, and prints its log, so that a failure cannot leave it stopped.
+
+When `a_sigterm_right_after_start_leaves_no_mount` finds a sacdfs that does not stop, it prints
+sacdfs's debug log and each thread's state, kernel wait channel and system call from `/proc`
+(#334); with `SACDFS_TEST_EU_STACK=1` also their stacks from `eu-stack`, unless a thread waits on
+a FUSE request, which ptrace would wait for too. `tests/stop_signals.rs` has no libtest harness
+(`harness = false`): its trials must not have a libtest thread that could take their signal.
 
 The `tests`, `tests (arm64)`, `coverage`, `nfs export` and `file handles (arm64)` jobs save cargo's output and then run
 `scripts/check_skips.py`, as a step of the same job. It writes the job summary: how many tests ran

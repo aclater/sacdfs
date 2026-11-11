@@ -73,6 +73,8 @@ struct Mount {
     /// The persistent seek index's directory (`XDG_CACHE_HOME`), so that tests never
     /// write to the user's.
     _cache: tempfile::TempDir,
+    /// sacdfs's debug log, for the mounts of [`Mount::foreground_logged`].
+    log: Option<tempfile::NamedTempFile>,
 }
 
 impl Mount {
@@ -81,17 +83,24 @@ impl Mount {
     }
 
     fn foreground(source: &Path, extra: &[&str]) -> Mount {
+        Mount::start(source, extra, None)
+    }
+
+    /// [`Mount::foreground`] with sacdfs's debug log kept, for a [`Daemon`] to print.
+    fn foreground_logged(source: &Path) -> Mount {
+        Mount::start(source, &[], Some(tempfile::NamedTempFile::new().unwrap()))
+    }
+
+    fn start(source: &Path, extra: &[&str], log: Option<tempfile::NamedTempFile>) -> Mount {
         let dir = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
-            .env("XDG_CACHE_HOME", cache.path())
-            .arg("-f")
-            .args(extra)
-            .arg(source)
-            .arg(dir.path())
-            .spawn()
-            .unwrap();
-        let m = Mount { child: Some(child), dir, _cache: cache };
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_sacdfs"));
+        cmd.env("XDG_CACHE_HOME", cache.path()).arg("-f").args(extra).arg(source).arg(dir.path());
+        if let Some(log) = &log {
+            cmd.env("RUST_LOG", "debug").stderr(log.reopen().unwrap());
+        }
+        let child = cmd.spawn().unwrap();
+        let m = Mount { child: Some(child), dir, _cache: cache, log };
         let p = m.path();
         wait_for("the mount", || is_mounted(&p));
         m
@@ -496,6 +505,8 @@ fn format_and_rate_options() {
 
 #[test]
 fn bad_arguments_fail_cleanly() {
+    // No FUSE needed, but it spawns sacdfs: see `common::spawns_children!` (#335).
+    common::spawns_children!();
     let dir = tempfile::tempdir().unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
         .arg("/nonexistent/source")
@@ -548,6 +559,8 @@ fn bad_arguments_fail_cleanly() {
 /// The first messages a NAS user meets say what is wrong and what to type (#282).
 #[test]
 fn start_up_messages_name_the_fix() {
+    // No FUSE needed, but it spawns sacdfs: see `common::spawns_children!` (#335).
+    common::spawns_children!();
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("sacd");
     let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
@@ -625,6 +638,90 @@ fn wait_exit(child: &mut Child, what: &str) -> bool {
     }
 }
 
+/// A sacdfs that a test stops with SIGSTOP. When the guard goes, also when an assertion
+/// fails, the process is resumed (SIGCONT), then stopped and reaped as any other is
+/// ([`common::stop_gracefully`]) unless it has exited already (#335). A daemon left stopped
+/// blocks everything that touches its mount, and with it any later test whose forked child
+/// briefly holds a descriptor on that mount (#305): the rest of the run hangs. When the test
+/// fails, the guard prints sacdfs's debug log.
+struct Daemon {
+    child: Child,
+    name: &'static str,
+    log: Option<tempfile::NamedTempFile>,
+}
+
+impl Daemon {
+    /// The sacdfs of `mount`, taken from it (the mount keeps its directories).
+    fn of(mount: &mut Mount, name: &'static str) -> Daemon {
+        Daemon { child: mount.child.take().unwrap(), name, log: mount.log.take() }
+    }
+
+    /// Starts `sacdfs -f image at` with its debug log kept.
+    fn spawn(name: &'static str, image: &Path, at: &Path, cache: &Path) -> Daemon {
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache)
+            .env("RUST_LOG", "debug")
+            .arg("-f")
+            .arg(image)
+            .arg(at)
+            .stderr(log.reopen().unwrap())
+            .spawn()
+            .unwrap();
+        Daemon { child, name, log: Some(log) }
+    }
+
+    fn pid(&self) -> String {
+        self.child.id().to_string()
+    }
+
+    /// Sends `signal` (`STOP`, `CONT`, `TERM`) to the daemon.
+    fn signal(&self, signal: &str) {
+        let st = Command::new("kill").arg(format!("-{signal}")).arg(self.pid()).status().unwrap();
+        assert!(st.success(), "kill -{signal} {}: {st}", self.pid());
+    }
+}
+
+impl std::ops::Deref for Daemon {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        &self.child
+    }
+}
+
+impl std::ops::DerefMut for Daemon {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.child
+    }
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let exited = self.child.try_wait().ok().flatten();
+        if std::thread::panicking() {
+            let state = match exited {
+                Some(s) => format!("exited, {s}"),
+                None => std::fs::read_to_string(format!("/proc/{}/stat", self.pid()))
+                    .ok()
+                    .and_then(|st| {
+                        st.rsplit(") ").next().and_then(|t| t.split(' ').next()).map(str::to_owned)
+                    })
+                    .map_or_else(|| "running".to_owned(), |st| format!("running, state {st}")),
+            };
+            let log = self.log.as_ref().map(|l| {
+                std::fs::read_to_string(l.path())
+                    .unwrap_or_else(|e| format!("cannot read {}: {e}", l.path().display()))
+            });
+            eprintln!("{} sacdfs (pid {}, {state}) log:\n{}", self.name, self.pid(), log.unwrap_or_default());
+        }
+        if exited.is_some() {
+            return;
+        }
+        let _ = Command::new("kill").arg("-CONT").arg(self.pid()).status();
+        common::stop_gracefully(&mut self.child);
+    }
+}
+
 /// A sacdfs restarted on the same mount point while the previous one is still there (a
 /// service manager or a script restarting it) waits for it to go instead of mounting over
 /// it, and the previous one's unmount, or its detach while a file is open, leaves the new
@@ -644,16 +741,20 @@ fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
         let whole = std::fs::read(&file).unwrap();
         let open = busy.then(|| std::fs::File::open(&file).unwrap());
         let cache = tempfile::tempdir().unwrap();
+        let new_log = tempfile::NamedTempFile::new().unwrap();
         let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
             .env("XDG_CACHE_HOME", cache.path())
+            .env("RUST_LOG", "debug")
             .arg("-f")
             .arg(&image)
             .arg(&at)
+            .stderr(new_log.reopen().unwrap())
             .spawn()
             .unwrap();
+        let log = || std::fs::read_to_string(new_log.path()).unwrap_or_default();
         // The new one waits: nothing is mounted over the old one.
         std::thread::sleep(Duration::from_millis(300));
-        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs exited (busy: {busy})");
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs exited (busy: {busy}): {}", log());
         assert_eq!(fuse_mounts_on(&at), 1, "mounted over the old mount (busy: {busy})");
         let mut old_child = old.child.take().unwrap();
         let st = Command::new("kill").arg("-TERM").arg(old_child.id().to_string()).status().unwrap();
@@ -675,12 +776,50 @@ fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
         }
         // The old one has exited; the new mount is still there and serving.
         std::thread::sleep(Duration::from_millis(200));
-        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (busy: {busy})");
+        assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (busy: {busy}): {}", log());
         assert_eq!(fuse_mounts_on(&at), 1, "busy: {busy}");
         assert_eq!(std::fs::read(&file).unwrap(), whole, "busy: {busy}");
         unmount_retrying(&at);
-        assert!(wait_exit(&mut new, "the new sacdfs"));
+        assert!(wait_exit(&mut new, "the new sacdfs"), "the new sacdfs failed (busy: {busy}): {}", log());
         assert_eq!(fuse_mounts_on(&at), 0);
+    }
+}
+
+/// An unmount from outside is a clean stop: sacdfs exits with success (#322). The kernel can
+/// end the connection as aborted rather than unmounted when a request is still queued as the
+/// mount goes, which a detach (`fusermount3 -u -z`) followed by the close of the last open
+/// file brings about about one time in ten; sacdfs exited with status 1 then, and under load
+/// a plain `fusermount3 -u` right after a read did the same (the restart test above).
+#[test]
+fn an_unmount_from_outside_exits_cleanly() {
+    common::skip_without_fuse!();
+    let image = corpus().join("images/dsd-stereo-mch-2048.iso");
+    let dir = tempfile::tempdir().unwrap();
+    let at = dir.path().canonicalize().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    for round in 0..40 {
+        let log_file = tempfile::NamedTempFile::new().unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+            .env("XDG_CACHE_HOME", cache.path())
+            .env("RUST_LOG", "debug")
+            .arg("-f")
+            .arg(&image)
+            .arg(&at)
+            .stderr(log_file.reopen().unwrap())
+            .spawn()
+            .unwrap();
+        let log = || std::fs::read_to_string(log_file.path()).unwrap_or_default();
+        wait_for("the mount", || is_mounted(&at));
+        let file = at
+            .join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
+        let open = std::fs::File::open(&file).unwrap();
+        let mut buf = vec![0; 4096];
+        open.read_exact_at(&mut buf, 0).unwrap();
+        let st = Command::new("fusermount3").arg("-u").arg("-z").arg(&at).status().unwrap();
+        assert!(st.success(), "round {round}: fusermount3 -u -z: {st}");
+        drop(open);
+        assert!(wait_exit(&mut child, "sacdfs"), "round {round}: sacdfs failed: {}", log());
+        assert!(!is_mounted(&at), "round {round}");
     }
 }
 
@@ -693,25 +832,18 @@ fn a_restart_on_the_same_path_survives_the_old_sacdfs() {
 fn an_exiting_sacdfs_leaves_the_next_mount_alone() {
     common::skip_without_fuse!(exclusive);
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
-    let mut old = Mount::foreground(&image, &[]);
+    let mut old = Mount::foreground_logged(&image);
     let at = old.path();
     let file =
         at.join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
     let whole = std::fs::read(&file).unwrap();
-    let mut old_child = old.child.take().unwrap();
-    let pid = old_child.id().to_string();
-    assert!(Command::new("kill").arg("-STOP").arg(&pid).status().unwrap().success());
+    let mut old_child = Daemon::of(&mut old, "the old");
+    old_child.signal("STOP");
     unmount_retrying(&at);
     let cache = tempfile::tempdir().unwrap();
-    let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
-        .env("XDG_CACHE_HOME", cache.path())
-        .arg("-f")
-        .arg(&image)
-        .arg(&at)
-        .spawn()
-        .unwrap();
+    let mut new = Daemon::spawn("the new", &image, &at, cache.path());
     wait_for("the new mount", || std::fs::read(&file).is_ok_and(|d| d == whole));
-    assert!(Command::new("kill").arg("-CONT").arg(&pid).status().unwrap().success());
+    old_child.signal("CONT");
     assert!(wait_exit(&mut old_child, "the old sacdfs"));
     std::thread::sleep(Duration::from_millis(200));
     assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped");
@@ -731,26 +863,19 @@ fn a_late_signal_leaves_the_next_mount_alone() {
     common::skip_without_fuse!(exclusive);
     let image = corpus().join("images/dsd-stereo-mch-2048.iso");
     for round in 0..6 {
-        let mut old = Mount::foreground(&image, &[]);
+        let mut old = Mount::foreground_logged(&image);
         let at = old.path();
         let file = at
             .join(files_under(&at).into_iter().find(|p| p.extension().is_some_and(|e| e == "dsf")).unwrap());
         let whole = std::fs::read(&file).unwrap();
-        let mut old_child = old.child.take().unwrap();
-        let pid = old_child.id().to_string();
-        assert!(Command::new("kill").arg("-STOP").arg(&pid).status().unwrap().success());
+        let mut old_child = Daemon::of(&mut old, "the old");
+        old_child.signal("STOP");
         unmount_retrying(&at);
         let cache = tempfile::tempdir().unwrap();
-        let mut new = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
-            .env("XDG_CACHE_HOME", cache.path())
-            .arg("-f")
-            .arg(&image)
-            .arg(&at)
-            .spawn()
-            .unwrap();
+        let mut new = Daemon::spawn("the new", &image, &at, cache.path());
         wait_for("the new mount", || std::fs::read(&file).is_ok_and(|d| d == whole));
-        assert!(Command::new("kill").arg("-TERM").arg(&pid).status().unwrap().success());
-        assert!(Command::new("kill").arg("-CONT").arg(&pid).status().unwrap().success());
+        old_child.signal("TERM");
+        old_child.signal("CONT");
         assert!(wait_exit(&mut old_child, "the old sacdfs"));
         std::thread::sleep(Duration::from_millis(200));
         assert!(new.try_wait().unwrap().is_none(), "the new sacdfs stopped (round {round})");
@@ -862,6 +987,8 @@ fn refused(args: &[&Path], mountpoint: &Path) -> String {
 /// through its own mount and hang, beyond the reach of SIGKILL.
 #[test]
 fn a_source_or_cache_under_the_mount_point_is_refused() {
+    // No FUSE needed, but it spawns sacdfs: see `common::spawns_children!` (#335).
+    common::spawns_children!();
     let top = tempfile::tempdir().unwrap();
     let x = top.path().canonicalize().unwrap().join("X");
     let sub = x.join("sub");
@@ -973,9 +1100,49 @@ fn a_held_open_file_does_not_keep_sacdfs_after_sigterm() {
     assert!(held.read_exact_at(&mut first, 0).is_err());
 }
 
+/// What each thread of process `pid` is doing, from `/proc` (state, kernel wait channel,
+/// system call), and its stacks from `eu-stack` when `SACDFS_TEST_EU_STACK` is set and no
+/// thread waits on a FUSE request (ptrace would wait for it too).
+fn threads_of(pid: u32) -> String {
+    let mut out = String::new();
+    let mut fuse_wait = false;
+    let mut tasks: Vec<_> = std::fs::read_dir(format!("/proc/{pid}/task"))
+        .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+        .unwrap_or_default();
+    tasks.sort();
+    for t in tasks {
+        let read = |f: &str| std::fs::read_to_string(t.join(f)).unwrap_or_default().trim().to_owned();
+        let stat = read("stat");
+        let state = stat.rsplit(") ").next().and_then(|r| r.split(' ').next()).unwrap_or("?").to_owned();
+        let wchan = read("wchan");
+        fuse_wait |= state == "D" || wchan.contains("request_wait_answer");
+        let syscall = read("syscall");
+        let nr = syscall.split(' ').next().unwrap_or("");
+        out += &format!(
+            "{} {} {state} {wchan} syscall {nr}\n",
+            t.file_name().unwrap().to_string_lossy(),
+            read("comm")
+        );
+    }
+    if std::env::var_os("SACDFS_TEST_EU_STACK").is_some() {
+        if fuse_wait {
+            out += "(no eu-stack: a thread waits on FUSE)\n";
+        } else if let Ok(o) =
+            Command::new("timeout").args(["10", "eu-stack", "-p", &pid.to_string()]).output()
+        {
+            out += &String::from_utf8_lossy(&o.stdout);
+            out += &String::from_utf8_lossy(&o.stderr);
+        }
+    }
+    out
+}
+
 /// A SIGTERM at any moment of the start leaves no dead mount behind (#57): sacdfs either
 /// stops before mounting, or mounts and then unmounts. Before, the handlers were set up
 /// after mounting, and a SIGTERM in between killed it with the mount in place.
+/// Under load it also caught a SIGTERM lost while the handlers went in (#334): sacdfs mounted
+/// and ran on. `tests/stop_signals.rs` aims at that window; here a sacdfs that does not stop
+/// is reported with its log and what its threads wait on.
 #[test]
 fn a_sigterm_right_after_start_leaves_no_mount() {
     common::skip_without_fuse!();
@@ -984,12 +1151,14 @@ fn a_sigterm_right_after_start_leaves_no_mount() {
     let at = dir.path().canonicalize().unwrap();
     let cache = tempfile::tempdir().unwrap();
     for i in 0..60u64 {
+        let log = tempfile::NamedTempFile::new().unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
             .env("XDG_CACHE_HOME", cache.path())
+            .env("RUST_LOG", "debug")
             .arg("-f")
             .arg(&image)
             .arg(&at)
-            .stderr(Stdio::null())
+            .stderr(log.reopen().unwrap())
             .spawn()
             .unwrap();
         // 0 to 29.5 ms after the start, spread over the start-up.
@@ -999,10 +1168,18 @@ fn a_sigterm_right_after_start_leaves_no_mount() {
         let start = Instant::now();
         while child.try_wait().unwrap().is_none() {
             if start.elapsed() > Duration::from_secs(10) {
+                let threads = threads_of(child.id());
+                let mounts = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+                let mounts: Vec<_> = mounts.lines().filter(|l| l.contains(" - fuse")).collect();
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = Command::new("fusermount3").arg("-u").arg("-z").arg(&at).status();
-                panic!("sacdfs did not stop after SIGTERM ({i})");
+                let log = std::fs::read_to_string(log.path()).unwrap_or_default();
+                panic!(
+                    "sacdfs did not stop after SIGTERM ({i}, {} s)\nthreads:\n{threads}\nfuse mounts:\n{}\nlog:\n{log}",
+                    start.elapsed().as_secs(),
+                    mounts.join("\n")
+                );
             }
             std::thread::sleep(Duration::from_millis(5));
         }
