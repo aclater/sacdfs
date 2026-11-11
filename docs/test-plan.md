@@ -463,6 +463,54 @@ main without #323. #323 was taken out of 0.6.1 for this (#338); #271 stays open.
 the container and over SMB/NFS, the player check over NFS or on a NAS's CPU. The code that changed
 since 0.6.0 is #276's stop path and #327's build profile; the rest of sacdfs is 0.6.0's.
 
+## Results: 0.6.2-rc.1 gate
+
+What was run on 0.6.2-rc.1 (tag `v0.6.2-rc.1`), with 0.6.1 as the baseline. Anything missing here is untested on 0.6.2-rc.1.
+
+**Release artifacts.** The release workflow succeeded. The release is a pre-release with the x86_64, x86_64-v3 and aarch64 archives and, new in this release, `install.sh`, each with a `.sha256` and an `.intoto.jsonl`, and `SHA256SUMS`. All four checksums verify, each against its `.sha256` and against `SHA256SUMS`, and `gh attestation verify` passes on each of the four assets, by repository and with its own `.intoto.jsonl` (one provenance names all four). The released `install.sh` says `DEFAULT_VERSION=0.6.2-rc.1`, and each archive holds a byte-identical copy of it next to `nas-compose.yaml`, `sacdfs`, `sacdfs-ctl`, `sacdfs.service`, `sacdfs.conf.example`, `COPYING`, `README.md` and `CHANGELOG.md`. `--version` prints `sacdfs 0.6.2-rc.1` for all three binaries (aarch64 under `qemu-user`) and inside the image on both architectures. The image `ghcr.io/aclater/sacdfs:0.6.2-rc.1` is an image index with amd64 and arm64; `:latest` is still the 0.6.1 index. crates.io: the workflow skips its publish job for any version with a `-` (as it did for 0.6.0-rc.1), so no candidate is on crates.io; the newest there is 0.6.1.
+
+**glibc 2.17.** The x86_64 binary needs no symbol newer than `GLIBC_2.17`. In a UBI 7 container (RHEL 7.9, glibc 2.17) it mounts the conformance corpus and its 914 file hashes equal those of a host mount of the same binary and of the 0.6.1 binary.
+
+**Real-disc tests:** running on the rc commit (40 real images, 12 multichannel); result to follow.
+
+**Byte comparison with 0.6.1.** 468 DSF and WAV files (234 each) from 12 real discs, 6 of them multichannel (138 multichannel files), mounted by the 0.6.1 and 0.6.2-rc.1 release binaries on separate index caches: all 468 hashes equal. No WARN or ERROR lines in either log beyond the expected clipping and missing-frame notes.
+
+**Upgrade and rollback** on a Fedora 45 laptop (SELinux enforcing), 0.6.1 then 0.6.2-rc.1 then 0.6.1 again on the same index cache, with three real discs and three corpus images:
+- *Release binary with the shipped systemd unit* (`/etc/default/sacdfs`, `Type=notify`): every start reached READY, `systemctl stop` ended with status 0 and the mount gone, and each version started on the cache the other had written. Tree (107 entries: names, types, sizes) and the hashes of 44 files are identical across the three steps.
+- *Compose* with `deploy/nas-compose.yaml` (Docker Compose, the image tag changed and `up -d`): healthy after 7 to 18 s each time, the same tree and the same 44 hashes inside the container (and equal to the systemd route), and SMB answered on port 10445 with all six folders.
+
+Not checked on this candidate: Roon and Plex re-reads on upgrade, the whole library tree.
+
+**Installer from the real release** (Part of #340). Each run took the installer from this release on GitHub, in two forms: the one-liner `curl -fsSL https://github.com/aclater/sacdfs/releases/download/v0.6.2-rc.1/install.sh | sh -s -- --iso-dir ...`, and download, `sha256sum -c install.sh.sha256`, run the file. It downloaded the release archive from GitHub and checked it. Each run was the whole cycle: a dry run that changed nothing, the install, 22 DSF and WAV files of three corpus images identical to a reference, a second run that changed nothing, `--uninstall` back to the start (and a second `--uninstall` with nothing to remove), and the images folder unchanged.
+
+| System | Route | One-liner | Download, check, run |
+|---|---|---|---|
+| Fedora 45, as root through `sudo` (SELinux enforcing) | `--method systemd` | pass | pass |
+| Fedora 45, as root through `sudo` | `--method compose` (Docker Compose) | pass (the 0.6.1 image, see below); with `--version 0.6.2-rc.1` pass | pass (the 0.6.1 image) |
+| UBI 7 container (glibc 2.17) | `sacdfs-ctl` | pass | pass |
+| BusyBox-only container (no curl) | `sacdfs-ctl` | **fail**: BusyBox wget can't fetch from GitHub (see below) | pass with `install.sh` and the archive downloaded and checked outside, then `--archive` |
+| Synology DSM 7.4.1, checked in a VM, not on the vendor's hardware | `sacdfs-ctl`, Task Scheduler tasks | pass | pass |
+| QNAP QuTScloud 5.2.9, checked in a VM, not on the vendor's hardware (a hand-made ext4 volume) | `sacdfs-ctl`, `autorun.sh` | pass | pass |
+
+- The container route takes the image named in the archive's `nas-compose.yaml`, which still says 0.6.1, so without `--version` this candidate's installer runs the 0.6.1 image while its binary routes install 0.6.2-rc.1. The final release needs `nas-compose.yaml` to name its own version, or the release workflow to set it as it sets `DEFAULT_VERSION`.
+- BusyBox 1.37's own TLS in the BusyBox-only test image fails against GitHub and other HTTPS sites (`TLS error from peer (alert code 20): bad MAC`), so `wget -q -O - ... | sh` gets an empty script, and `sh` exits 0 having done nothing. The Synology and QNAP VMs have curl, so they were not affected.
+- On the first Synology run the uninstall was counted as a failure by the test itself: it counted `fusectl` as a FUSE mount, and the first use of FUSE mounts it. The uninstall had removed everything. The later runs counted only `fuse` and `fuse.*` mounts.
+- `--uninstall` on QNAP leaves "Run user defined processes" switched on.
+
+Not run: the `latest/download` address (it serves 0.6.1, which has no installer, until a final release carries one), the other NAS VMs, aarch64, restarts.
+
+### Soak
+
+*(coordinator)*
+
+### Clients
+
+*(coordinator)*
+
+### Windows and macOS
+
+*(coordinator)*
+
 ## Soak memory steps (#247)
 
 Steps of 3 to 9 MiB in a soak's resident size, in both directions, appeared on 0.4.0, 0.4.1-rc.2

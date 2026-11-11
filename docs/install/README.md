@@ -11,7 +11,8 @@ curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh
 ```
 
 Leave out `sudo` if you are already root (`id -u` prints `0`; on QNAP the `admin` login is). Without
-`curl` (BusyBox systems): `wget -q -O - <the same address> | sh -s -- --iso-dir ...`. Add
+`curl` (BusyBox systems): `wget -q -O - <the same address> | sh -s -- --iso-dir ...` (untested on a
+NAS: in a BusyBox 1.37 test image its `wget` could not connect to GitHub, and nothing ran). Add
 `--dry-run` first to see every change it would make, and make none.
 
 **To read it before you run it,** download it, check it, and run it:
@@ -26,9 +27,10 @@ sudo sh install.sh --iso-dir /volume1/music
 ```
 
 `gh attestation verify install.sh -R aclater/sacdfs` also shows that this repository's release
-workflow built it. *(Untested: no release carries the installer yet. Downloading it from GitHub
-and the attestation were not run; everything below was, with the script served from a local
-copy of the release layout.)*
+workflow built it. *(Checked on 0.6.2-rc.1 with that release's own address,
+`https://github.com/aclater/sacdfs/releases/download/v0.6.2-rc.1/install.sh`, in both forms
+above, and the attestation passes. The `latest` address serves the installer only once a
+final release carries it; 0.6.1 does not. See [the 0.6.2-rc.1 results](../test-plan.md#results-062-rc1-gate).)*
 
 **What it does:**
 
