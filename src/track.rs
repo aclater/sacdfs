@@ -205,9 +205,10 @@ const NETWORK_REORDER: u64 = 2 << 20;
 /// reads ahead of the application. The Linux kernel SMB client keeps a player 8 to 16 MiB ahead
 /// (measured), and fetches the first 4 to 8 MiB at once, so measured from its start a player
 /// looked like a copy for its first 3 to 7 s. Counted as reading for throughput, it gave up its
-/// place: four copies starting beside it made it stall for up to 1.4 s. A copy gets this far ahead
-/// within 1 to 4 s on four cores. *Why only behind a network client:* a scanner reading files
-/// locally would count as a player for most of a short file.
+/// place: four copies starting beside it made it stall for up to 1.5 s. A copy gets this far ahead
+/// within 1 to 4 s on four cores, 8 to 13 s on two; until then it is unsure ([`Pace::Unsure`]).
+/// *Why only behind a network client:* a scanner reading files locally would be unsure for most
+/// of a short file.
 const PACE_LEAD: u64 = 32 << 20;
 
 /// Reads that end within this many bytes of where a file's first read of audio started

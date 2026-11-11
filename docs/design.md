@@ -1310,24 +1310,8 @@ decoding them twice.
   Bounded in bytes, so that six-channel files at 352.8 kHz don't take 50 MB per reader.
 - **A player goes first (#230).** A reader that, since it last jumped, has read 4 MiB at more
   than 1.5 times the file's byte rate reads for *throughput*; any other that has been reading
-  for 0.5 s is a *player*. A jump here is a read more than 64 MiB from the furthest byte read
-  so far, and the pace counts the bytes read, but no further than the reader got (#271). A
-  reader behind a network client (one of its reads has landed more than 2 MiB behind the
-  furthest byte read) reads for throughput only once it is also 32 MiB ahead of playing time.
-  *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a straight
-  copy over SMB reaches sacdfs up to 56 MiB out of order (measured). With the sequential gaps
-  below as the test, such a copy kept starting its pace again, counted as a player most of the
-  time, lost its long read-ahead window and was 8 to 11 % slower than in 0.4.1. *Why counting
-  bytes:* a player that seeks forward less than 64 MiB has not read what it skipped. *Why 32 MiB
-  ahead behind a client:* the client reads ahead of the application; the kernel SMB client
-  fetches a player's first 4 to 8 MiB at once and keeps it 8 to 16 MiB ahead. Measured from its
-  start, such a player read faster than 1.5 times its rate for its first 3 to 7 s, counted as
-  reading for throughput and lost its priority: four copies starting beside it made it stall for
-  0.15 to 1.5 s in half the runs. A copy gets 32 MiB ahead within 1 to 4 s on four cores, 8 to
-  13 s on two, and reads for throughput the rest of the way. *Why only behind a client:* through
-  the kernel's FUSE read-ahead a local reader's reads land at most 0.5 MiB behind, its lead is
-  small, and a scanner reading short files locally would otherwise count as a player for most
-  of each one. While a player is active, readers for throughput give up the
+  for 0.5 s is a *player* (behind a network client, see the next point). While a player is
+  active, readers for throughput give up the
   frames they have passed (they go first from the cache, the oldest first, all but the last
   1 MiB), share a quarter of the cache whatever that leaves them (at least 16 frames), and
   read ahead in slices of 8 frames per decoder thread, waiting up to 50 ms before each for
@@ -1347,6 +1331,35 @@ decoding them twice.
   priorities and a pace cap on scanners (not tried: the first is larger, the second slows a
   scan with no player). *Trade-off:* beside a player a scanner runs 5 to 13 % slower, and a
   player's first 0.5 s is not protected.
+- **The pace behind a network client (#271).** A jump, for the pace, is a read more than
+  64 MiB from the furthest byte read so far, and the pace counts the bytes read since, but no
+  further than the reader got. A reader one of whose reads has landed more than 2 MiB behind
+  the furthest byte read is behind a network client. Such a reader reads for throughput once
+  it is also 32 MiB ahead of playing time. Until then it is *unsure*: it plays if no player has
+  been reading since before it, and otherwise reads for throughput, letting that player go
+  first. *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a
+  straight copy over SMB reaches sacdfs up to 56 MiB out of order (measured). With the
+  sequential gaps below as the test, such a copy kept starting its pace again, counted as a
+  player more than half the time, lost its long read-ahead window and was 8 to 11 % slower than
+  in 0.4.1. *Why counting bytes, no further than it got:* a player that seeks forward less than
+  64 MiB has not read what it skipped, and a client that reads a range twice has not got
+  further. *Why 32 MiB ahead:* the client reads ahead of the application. The kernel SMB client
+  fetches a player's first 4 to 8 MiB at once and keeps it 8 to 16 MiB ahead, so measured from
+  its start such a player read faster than 1.5 times its rate for its first 3 to 7 s. With only
+  64 MiB jumps (#323, withdrawn), it counted as reading for throughput all that time, and four
+  copies starting 1 s after it stalled it for 0.15 to 1.5 s in 7 of 22 runs. A copy is 32 MiB
+  ahead after 1 to 4 s on four cores, 8 to 13 s on two. *Why an earlier player goes first:* in
+  their first seconds a copy and a player whose client read ahead look the same. Counted as
+  players, the four starting copies still stalled the player beside them in 3 of 16 runs, so a
+  reader that is unsure lets a player that was there before it go first. *Why only behind a
+  client:* through the kernel's FUSE read-ahead a local reader's reads land at most 0.5 MiB
+  behind, and a scanner reading short files locally would be unsure for most of each one.
+  *Trade-off:* behind a network client, a player is not protected until one of its reads
+  lands out of order (about 1.2 s with the kernel SMB client, as in 0.6.0), and one that starts
+  while unsure copies are reading waits for them to get 32 MiB ahead; copies that start
+  together let the first of them play until it is 32 MiB ahead. A local reader that seeks back
+  less than 64 MiB counts as behind a network client from then on, which can only make it more
+  of a player.
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
