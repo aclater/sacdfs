@@ -12,7 +12,7 @@
 # three. sacdfs links only glibc and libgcc_s, which Fedora's newer glibc runs.
 
 # Build stage: UBI 10 and RHEL's Rust (AppStream).
-FROM registry.access.redhat.com/ubi10/ubi:latest@sha256:0e8ccad7d35f5fd756f4f2202f018b8d3c3e8bb9af8e627d874239381a00ab41 AS build
+FROM registry.access.redhat.com/ubi10/ubi:latest@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba AS build
 RUN dnf -y --setopt=install_weak_deps=False install cargo gcc && dnf clean all
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
