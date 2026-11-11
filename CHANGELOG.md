@@ -6,6 +6,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The release archive's Compose file names that release's image.** `nas-compose.yaml` in the
+  archive is now stamped with the release version, as `install.sh` is. In 0.6.2-rc.1 it named
+  0.6.1, so the installer's container route ran 0.6.1 unless given `--version`.
+
 ## [0.6.2-rc.1] - 2026-11-11
 
 ### Added
