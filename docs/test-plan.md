@@ -405,7 +405,7 @@ What was run on 0.6.0-rc.1 (tag `v0.6.0-rc.1`), with 0.5.0 as the baseline. Anyt
 
 **Clients (Tier 1),** on the v0.6.0-rc.1 release binary and image, 0.5.0 as the baseline (details in [clients.md](clients.md#060-rc1-checks)).
 
-- Jellyfin 12.4.0, Navidrome 0.64.2, Lyrion 9.1.1, MPD 0.24.15 and MinimServer 2.2: the same tracks, albums, art and bytes as on 0.5.0. No ERROR or WARN lines in sacdfs's logs.
+- Jellyfin 12.4.0, Navidrome 0.64.2, Lyrion 9.1.1, MPD 0.24.15 and MinimServer 2.2: the same tracks, albums, art and bytes as on 0.5.0. No ERROR or WARN lines in sacdfs's logs. *(Lyrion, MPD and MinimServer: unverified, see the correction under "Results: 0.6.2-rc.1 gate".)*
 - Linux NFS 4.2 and SMB 3.1.1: 22 of 22 checks on Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12 and Ubuntu 26.04. Ubuntu 24.04 passes 21 of 22 (the known `linux-modules-extra` non-ASCII SMB `stat` problem), as on 0.5.0.
 - FUSE requests per scripted-server session fell against 0.5.0 (Navidrome `dsf` 3,477 to 1,204, Lyrion 400 to 214, MPD 309 to 234, MinimServer 311 to 231, Jellyfin 1,900 to 1,713). Over SMB a first `ls -lR` takes 175 requests against 253, and `find` 163 against 241. Over NFS the per-kind counts for `ls -lR`, `find` and `getfattr -d -R` are identical to 0.5.0 (no extended-attribute storm: 1 GETXATTR, 238 LISTXATTR for `ls -lR`).
 - macOS 27.2 in a VM on Apple hardware (SMB, command-line tools, headless): mount, browse, read-only errors, no `._` or `.DS_Store` files, Quick Look thumbnails, byte-identical copies (a 6.9 GB album over rsync) and seeks across 4 GiB in an RF64 track all pass. Names are served precomposed (NFC) and macOS lists them decomposed (NFD); a precomposed lookup of the 111 names whose two spellings differ fails while the macOS client has the folder's listing cached, without a request to the server, and works with `dir_cache_off=yes` in `nsmb.conf` (#308). No Finder, DSD player or sound check. Details in [clients.md](clients.md#060-rc1-checks).
@@ -462,6 +462,131 @@ main without #323. #323 was taken out of 0.6.1 for this (#338); #271 stays open.
 **Not run for 0.6.1:** the 0.5.0 baseline, Tier 1 clients, real-disc tests, the stop check inside
 the container and over SMB/NFS, the player check over NFS or on a NAS's CPU. The code that changed
 since 0.6.0 is #276's stop path and #327's build profile; the rest of sacdfs is 0.6.0's.
+
+## Results: 0.6.2-rc.1 gate
+
+What was run on 0.6.2-rc.1 (tag `v0.6.2-rc.1`), with 0.6.1 as the baseline. Anything missing here is untested on 0.6.2-rc.1.
+
+**Release artifacts.** The release workflow succeeded. The release is a pre-release with the x86_64, x86_64-v3 and aarch64 archives and, new in this release, `install.sh`, each with a `.sha256` and an `.intoto.jsonl`, and `SHA256SUMS`. All four checksums verify, each against its `.sha256` and against `SHA256SUMS`, and `gh attestation verify` passes on each of the four assets, by repository and with its own `.intoto.jsonl` (one provenance names all four). The released `install.sh` says `DEFAULT_VERSION=0.6.2-rc.1`, and each archive holds a byte-identical copy of it next to `nas-compose.yaml`, `sacdfs`, `sacdfs-ctl`, `sacdfs.service`, `sacdfs.conf.example`, `COPYING`, `README.md` and `CHANGELOG.md`. `--version` prints `sacdfs 0.6.2-rc.1` for all three binaries (aarch64 under `qemu-user`) and inside the image on both architectures. The image `ghcr.io/aclater/sacdfs:0.6.2-rc.1` is an image index with amd64 and arm64; `:latest` is still the 0.6.1 index. crates.io: the workflow skips its publish job for any version with a `-` (as it did for 0.6.0-rc.1), so no candidate is on crates.io; the newest there is 0.6.1.
+
+**glibc 2.17.** The x86_64 binary needs no symbol newer than `GLIBC_2.17`. In a UBI 7 container (RHEL 7.9, glibc 2.17) it mounts the conformance corpus and its 914 file hashes equal those of a host mount of the same binary and of the 0.6.1 binary.
+
+**Real-disc tests:** `scripts/real-discs.sh` passes 3 of 3 (0 skipped, exit 0) on 40 real images (12 multichannel), run on the v0.6.2-rc.1 commit: DSF head reads pass (289 s), 318,436 random-range positions equal across the 40 images (582 s), and all 52 areas' 613 WAV files equal the area stream at 176.4 kHz (7,827 s). 0.6.0-rc.1 took 4,413 s for the WAV test on a different set of 40 images, on a host with less other load, so the times don't compare; this run was niced on a host shared with other gate jobs.
+
+**Byte comparison with 0.6.1.** 468 DSF and WAV files (234 each) from 12 real discs, 6 of them multichannel (138 multichannel files), mounted by the 0.6.1 and 0.6.2-rc.1 release binaries on separate index caches: all 468 hashes equal. No WARN or ERROR lines in either log beyond the expected clipping and missing-frame notes.
+
+**Upgrade and rollback** on a Fedora 45 laptop (SELinux enforcing), 0.6.1 then 0.6.2-rc.1 then 0.6.1 again on the same index cache, with three real discs and three corpus images:
+- *Release binary with the shipped systemd unit* (`/etc/default/sacdfs`, `Type=notify`): every start reached READY, `systemctl stop` ended with status 0 and the mount gone, and each version started on the cache the other had written. Tree (107 entries: names, types, sizes) and the hashes of 44 files are identical across the three steps.
+- *Compose* with `deploy/nas-compose.yaml` (Docker Compose, the image tag changed and `up -d`): healthy after 7 to 18 s each time, the same tree and the same 44 hashes inside the container (and equal to the systemd route), and SMB answered on port 10445 with all six folders.
+
+Not checked on this candidate: Roon and Plex re-reads on upgrade, the whole library tree.
+
+**Installer from the real release** (Part of #340). Each run took the installer from this release on GitHub, in two forms: the one-liner `curl -fsSL https://github.com/aclater/sacdfs/releases/download/v0.6.2-rc.1/install.sh | sh -s -- --iso-dir ...`, and download, `sha256sum -c install.sh.sha256`, run the file. It downloaded the release archive from GitHub and checked it. Each run was the whole cycle: a dry run that changed nothing, the install, 22 DSF and WAV files of three corpus images identical to a reference, a second run that changed nothing, `--uninstall` back to the start (and a second `--uninstall` with nothing to remove), and the images folder unchanged.
+
+| System | Route | One-liner | Download, check, run |
+|---|---|---|---|
+| Fedora 45, as root through `sudo` (SELinux enforcing) | `--method systemd` | pass | pass |
+| Fedora 45, as root through `sudo` | `--method compose` (Docker Compose) | pass (the 0.6.1 image, see below); with `--version 0.6.2-rc.1` pass | pass (the 0.6.1 image) |
+| UBI 7 container (glibc 2.17) | `sacdfs-ctl` | pass | pass |
+| BusyBox-only container (no curl) | `sacdfs-ctl` | **fail**: BusyBox wget can't fetch from GitHub (see below) | pass with `install.sh` and the archive downloaded and checked outside, then `--archive` |
+| Synology DSM 7.4.1, checked in a VM, not on the vendor's hardware | `sacdfs-ctl`, Task Scheduler tasks | pass | pass |
+| QNAP QuTScloud 5.2.9, checked in a VM, not on the vendor's hardware (a hand-made ext4 volume) | `sacdfs-ctl`, `autorun.sh` | pass | pass |
+
+- The container route takes the image named in the archive's `nas-compose.yaml`, which still says 0.6.1, so without `--version` this candidate's installer runs the 0.6.1 image while its binary routes install 0.6.2-rc.1. Fixed on main for the final release: the release workflow now sets the image in the archive's `nas-compose.yaml` to the release version, as it sets `DEFAULT_VERSION` (#351).
+- BusyBox 1.37's own TLS in the BusyBox-only test image fails against GitHub and other HTTPS sites (`TLS error from peer (alert code 20): bad MAC`), so `wget -q -O - ... | sh` gets an empty script, and `sh` exits 0 having done nothing. Filed as #352. The Synology and QNAP VMs have curl, so they were not affected.
+- On the first Synology run the uninstall was counted as a failure by the test itself: it counted `fusectl` as a FUSE mount, and the first use of FUSE mounts it. The uninstall had removed everything. The later runs counted only `fuse` and `fuse.*` mounts. The test on main now does the same (#351).
+- `--uninstall` on QNAP leaves "Run user defined processes" switched on (#353).
+
+Not run: the `latest/download` address (it serves 0.6.1, which has no installer, until a final release carries one), the other NAS VMs, aarch64, restarts.
+
+### Soak
+
+`scripts/soak.py --hours 2 --sample-paths --warmup 600` on two Linux machines (an idle 32-thread desktop and a 12-core laptop), 0.6.2-rc.1 side by side with 0.6.1 on the same five images and the same load, both built from their tags with the same toolchain.
+
+| | Desktop 0.6.1 | Desktop rc.1 | Laptop 0.6.1 | Laptop rc.1 |
+|---|---|---|---|---|
+| Verdict | pass | pass | pass | pass (see below) |
+| Read | 1.129 TB | 1.142 TB | 738.0 GB | 759.8 GB |
+| Warm resident size | 180.6 MiB | 181.3 MiB | 164.5 MiB | 161.8 MiB |
+| Peak above warm | +7.2 MiB | +10.5 MiB | +6.7 MiB | +6.4 MiB |
+| Second-half trend (limit 4.9 MiB/h) | +0.34 MiB/h | +1.73 MiB/h | −1.05 MiB/h | +0.63 MiB/h |
+| Threads, peak | 77 | 77 | 74 | 77 |
+| Open files, max | 18 | 18 | 18 | 18 |
+| Stalls / remounts | 39 / 23 | 39 / 23 | 39 / 23 | 39 / 23 |
+| Unexpected read errors | 0 | 0 | 0 | 0 |
+| Replaced covers (ESTALE, #279) | 6 | 2 | 2 | 1 |
+
+- No remount failed, and the watchdog failed every stall. On the laptop, one stall began 3 s before the run ended, and the soak script counted it as failed. That was a script fault, not sacdfs, and it is fixed on main (#349).
+- The desktop rc's memory trend and peak are the highest of the four runs, but within the limits, and the laptop shows the opposite order. Medians by period differ by 1 MiB or less.
+- No unexplained EIO (#339) appeared. Log messages are the same kinds on both versions; only the module names changed with the core split (#22).
+
+**Stop checks** on the published x86_64 binary and on a source build, on two Linux machines:
+- **SIGTERM with a file held open (#276):** the mount left the mount table at once. sacdfs exited with status 0 after 10.0 s (the default grace), and the holder then got EIO. A remount listed and read.
+- **SIGTERM 0 to 40 ms after the start (#334):** 200 trials per machine. Every one exited within 43 ms; none hung and none left a mount. 0.6.1 also passed this check, because the race is too narrow to hit from outside. The release's own `tests/stop_signals.rs` sent 2000 signals while the handlers went in and caught all 2000.
+- **An outside `fusermount3 -u` while idle (#333, #322):** 100 trials per machine, with exit status 0 every time, within 11 ms. 0.6.1 also passed.
+
+Not run: a soak of the published binaries, and the stop checks inside the container or over SMB or NFS.
+
+### Clients
+
+On the v0.6.2-rc.1 release binary and image, with 0.6.1 as the baseline, run side by side.
+
+- **Tier 1 scripted servers** (Small library: 5 images, 93 tracks):
+  - Jellyfin 12.4.0, Navidrome, Lyrion, MPD 0.24.18 and MinimServer 2.2 show the same tracks (93), albums (7), art and bytes as on 0.6.1, with `dsf` and with `dsf,wav`.
+  - Navidrome's restart, full rescan, rename and removal checks match 0.6.1.
+  - There are no ERROR or WARN lines in sacdfs's logs, and FUSE requests per session are within 1 % of 0.6.1.
+  - Jellyfin's art count varies with its online metadata service: a busy reply drops the downloaded art of one album that has no local art. This happens on both releases.
+  - Not run: Jellyfin with WAV-only extraction.
+- **Linux NFS 4.2 and SMB 3.1.1:** 22 of 22 checks on Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12 and Ubuntu 26.04. Ubuntu 24.04 passes 21 of 22, the known non-ASCII SMB `stat` problem, as on 0.6.1.
+  - Requests per workload are identical to 0.6.1: over NFS kind for kind (`ls -lR` 1,734, `find` 194, `getfattr -d -R` 2,031), and over SMB in total (`ls -lR` 159, `find` 155).
+- **Bytes:** the whole Small-library tree (191 files, 59.0 GB, `dsf,wav`) is identical to 0.6.1's by `cmp`, both on the mount and through the Linux SMB client.
+- **A player beside copies (#230, #271).** The Linux SMB client on loopback, with a 6-channel player at real time and whole-file copies of other tracks. A fresh container per run, builds alternating.
+
+| Server CPU, copies | Runs with a read over 100 ms (0.6.1 / rc.1) | Worst read, ms (0.6.1 / rc.1) | Copies, median (0.6.1 / rc.1) |
+|---|---|---|---|
+| 4 cores, 1 copy (6 rounds) | 0 / 0 | 31.1 / 30.5 | 22.9 s / 25.9 s (+13 %) |
+| 4 cores, 4 copies (6 rounds) | 2 / 1 | 1,240 / 634 | 142.7 s / 120.9 s (−15 %) |
+| 2 fast cores, 4 copies (4 rounds) | 1 / 0 | 142 / 34 | 147.6 s / 137.5 s (−7 %) |
+| 2 slow cores, 1 copy (6 rounds) | 0 / 0 | 54.8 / 57.8 | 45.8 s / 47.9 s (+5 %) |
+| 2 slow cores, 4 copies (6 rounds) | **6 / 6** | **4,066 / 12,460** | 285 s / 342 s (+20 %) |
+
+  - **2 slow cores, 4 copies:** these two cores can't decode four copies at real time, and both releases stall the player in every run. 0.6.2-rc.1 stalls it about three times longer (#357). In every case where 0.6.1 kept the player under 100 ms, 0.6.2-rc.1 does too, with an equal or smaller worst read.
+  - **One copy beside the player** takes 5 to 13 % longer than on 0.6.1: this is the cost #346 accepted.
+  - **Over NFS 4.2** (measured here for the first time): one copy beside the player stays under 52 ms on both releases. Four copies stall both briefly: worst 174 ms on 4 cores (0.6.1 184 ms) and 549 ms on 2 slow cores (0.6.1 412 ms).
+- **One reader copying a whole area over SMB is faster than on 0.6.1:** stereo WAV 30.75 s (0.6.1 33.75 s), and six channels 102.4 s (109.3 s).
+
+Not run: Roon and Plex at scale, and the Tier 2 tools.
+
+**Correction to the 0.6.0-rc.1 gate.** Re-running the Tier 1 harness showed that its archived Lyrion, MPD and MinimServer runs for 0.6.0-rc.1 did not back the counts published under "Results: 0.6.0-rc.1 gate": a broken script and missing settings left them empty. Treat those three servers' 0.6.0-rc.1 results as unverified. They pass on 0.6.1 and 0.6.2-rc.1, as above.
+
+### Windows and macOS
+
+**Windows 11** (Explorer shell, PowerShell, Robocopy), checked on Windows 11 in a VM, not on the vendor's hardware. SMB 3.1.1, against the published 0.6.2-rc.1 and 0.6.1 images side by side. The tree is 6 real discs (3 multichannel): 230 files, 107.7 GB.
+
+| Check | 0.6.1 | 0.6.2-rc.1 |
+|---|---|---|
+| Recursive listing, cold (250 entries) / repeated | 107 / 0 requests | 107 / 0 requests |
+| Names that need SFM mapping (18), and 30 non-ASCII names: open and read 1 MiB | 30 of 30 | 30 of 30, same requests |
+| Shell tags: WAV title, artist, album and length | 115 of 115 (DSF none, as before) | the same |
+| Thumbnail pass over 250 items | 157 requests, no storm | 173 requests, no storm |
+| 8 kinds of write attempt | all refused, folder unchanged | the same |
+| Robocopy `/MIR`, 230 files | 230 copied, 0 failures | 230 copied, 0 failures, all SHA-256 equal to the server's files |
+| Second `/MIR` pass | skips all 230 | the same |
+| Open handle across a server restart | network error, then reopens at once | the same |
+| RF64 (4.74 GB, 5 channels, 352.8 kHz): read past 4 GiB | correct | same bytes |
+
+**#271 with the Windows client:**
+- **One Robocopy copy alone** (5 rounds, medians):
+  - a 740 MB stereo WAV took 1.637 s, against 1.549 s on 0.6.1, within noise;
+  - a 1.62 GB 6-channel WAV took 12.70 s, against 13.61 s on 0.6.1 (6.7 % faster).
+- **A real-time 6-channel reader beside Robocopy copies** (4 runs per cell):
+  - **1 copy:** no read over 100 ms on either release (worst 26 ms; 0.6.1 31 ms). The copy took 12 % longer.
+  - **4 copies:** reads over 100 ms in 3 of 4 runs (1 or 2 reads each, worst 250 ms), against 4 of 4 on 0.6.1 (worst 494 ms). The copies took 10 % longer.
+  - The reader kept up with real time in every run.
+
+Not run on Windows: large-icon view in a real Explorer window, CJK names, foobar2000, JRiver.
+
+**macOS:** not run on 0.6.2-rc.1. The Apple hardware that hosts the macOS VM was not available.
 
 ## Soak memory steps (#247)
 
