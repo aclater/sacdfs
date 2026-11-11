@@ -17,7 +17,7 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 - **CI builds and tests in Red Hat-derived containers.** The jobs that build or test sacdfs (lint,
-  tests on x86-64 and arm64, MSRV, coverage, fuzzing, the benchmark, the weekly memcheck and soak)
+  tests on x86-64 and arm64, MSRV, coverage, fuzzing, the weekly memcheck and soak)
   run in a UBI 10 container (Fedora 44 for the lint job), pinned by digest, as a normal user, with
   the FUSE tests mounting as before. cargo-deny and zizmor are installed in a UBI container,
   pinned by version and hash, instead of running their vendors' images (cargo-deny's is Alpine).

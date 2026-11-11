@@ -29,25 +29,13 @@ jobs:
   benchmark:
     name: benchmark (informational)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    container:
-      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh. FUSE: the device and the right to mount.
-      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
-      options: --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined
-    defaults:
-      run:
-        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
+    timeout-minutes: 10
     steps:
-      - name: Packages
-        shell: bash
-        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 python3 && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 2  # a pull request's checkout is its merge commit: the first parent is the base
-      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
-        shell: bash
-        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
       - name: Build head
         run: |
           cargo build --locked --release
@@ -57,19 +45,10 @@ jobs:
           git worktree add -q "$RUNNER_TEMP/base" HEAD^1
           CARGO_TARGET_DIR="$PWD/target" cargo build --locked --release --manifest-path "$RUNNER_TEMP/base/Cargo.toml"
           cp target/release/sacdfs "$RUNNER_TEMP/sacdfs-base"
-      - name: DEBUG mount
-        continue-on-error: true
+      - name: Install fusermount3
         run: |
-          set -x
-          id; cat /proc/self/attr/current || true; ls -l /dev/fuse /usr/bin/fusermount3
-          d=$(mktemp -d); ls -ld "$d"
-          "$RUNNER_TEMP/sacdfs-head" --no-index-cache --format dsf tests/corpus/images/dst-features-2ch-6ch.iso "$d" || true
-          ls "$d" || true; fusermount3 -u "$d" || true
-          mkdir -p "$HOME/dbg"
-          "$RUNNER_TEMP/sacdfs-head" tests/corpus/images "$HOME/dbg" || true
-          ls "$HOME/dbg" | head -3 || true; fusermount3 -u "$HOME/dbg" || true
-          "$RUNNER_TEMP/sacdfs-head" tests/corpus/images "$d" || true
-          ls "$d" | head -3 || true; fusermount3 -u "$d" || true
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
       - name: Compare
         run: |
           python3 -I scripts/bench_compare.py --base "$RUNNER_TEMP/sacdfs-base" --head "$RUNNER_TEMP/sacdfs-head" \
