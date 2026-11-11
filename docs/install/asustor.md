@@ -4,6 +4,8 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
 Checked on 0.6.0 on ADM 5.1.4 (in a VM, not on ASUSTOR hardware). Steps marked *(untested)* were not run.
 
+From the release after 0.6.0, [the installer](README.md#the-installer-one-line) does these steps for you in one line; this page is the way to do them by hand.
+
 ## What you need
 
 - An ASUSTOR NAS with an Intel or AMD chip (`uname -m` in step 1 prints `x86_64`).

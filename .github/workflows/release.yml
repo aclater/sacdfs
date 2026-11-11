@@ -5,7 +5,11 @@
 #     #244), sacdfs-<version>-x86_64-linux.tar.gz (generic x86-64),
 #     sacdfs-<version>-x86_64-v3-linux.tar.gz (x86-64-v3: AVX2 CPUs) and
 #     sacdfs-<version>-aarch64-linux.tar.gz, each with COPYING,
-#     README.md, CHANGELOG.md, sacdfs-ctl, sacdfs.service and sacdfs.conf.example, a .sha256 checksum and a build provenance attestation;
+#     README.md, CHANGELOG.md, sacdfs-ctl, sacdfs.service, sacdfs.conf.example, install.sh and
+#     nas-compose.yaml, a .sha256 checksum and a build provenance attestation;
+#   - the installer, install.sh (#340), with this version as its default, also as an asset of
+#     its own with a .sha256 checksum and an attestation, so that
+#     releases/latest/download/install.sh is the newest release's;
 #   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
 #     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
 #   - the crate on crates.io (#155), for final versions only (no hyphen: not 0.4.0-rc.1),
@@ -101,6 +105,23 @@ jobs:
         with:
           name: notes
           path: notes.md
+          retention-days: 7
+      # The installer (#340), its default version set to this release's: one-liner users get
+      # the release it came with unless they pass --version.
+      - name: The installer, stamped with this version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p installer
+          sed "s/^DEFAULT_VERSION=[^ ]*/DEFAULT_VERSION=$VERSION/" deploy/install.sh > installer/install.sh
+          grep -q "^DEFAULT_VERSION=$VERSION " installer/install.sh
+          sh -n installer/install.sh
+          (cd installer && sha256sum install.sh > install.sh.sha256 && cat install.sh.sha256)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: installer
+          path: installer/
+          if-no-files-found: error
           retention-days: 7
 
   # Linux binaries linked against glibc 2.17's symbols (#244), so that they run on RHEL 7 era
@@ -203,6 +224,10 @@ jobs:
           # without systemd, the systemd unit and the settings file both read.
           install -m 0755 deploy/sacdfs-ctl "dist/$pkg/"
           install -m 0644 deploy/systemd/sacdfs.service deploy/sacdfs.conf.example "dist/$pkg/"
+          # The installer (#340), stamped with this version, and the Compose file it uses.
+          sed "s/^DEFAULT_VERSION=[^ ]*/DEFAULT_VERSION=$VERSION/" deploy/install.sh > "dist/$pkg/install.sh"
+          chmod 0755 "dist/$pkg/install.sh"
+          install -m 0644 deploy/nas-compose.yaml "dist/$pkg/"
           # Reproducible: fixed order, owner and times (the commit's), no gzip timestamp.
           mtime=$(git log -1 --format=%ct)
           tar -C dist --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$mtime" \
@@ -301,6 +326,10 @@ jobs:
           pattern: bin-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: installer
+          path: dist
       - name: Summary
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
@@ -343,25 +372,31 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: notes
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: installer
+          path: dist
       - name: Checksums
         run: |
           cd dist
           sha256sum -c ./*.sha256
-          cat ./*.tar.gz.sha256 > SHA256SUMS
+          cat ./*.tar.gz.sha256 install.sh.sha256 > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
         id: attest
         if: github.ref_type == 'tag'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
-          subject-path: dist/*.tar.gz
+          subject-path: |
+            dist/*.tar.gz
+            dist/install.sh
       # The attestation also goes on the release as <asset>.intoto.jsonl (one bundle covers
       # both), so it can be checked offline; each copy is verified first.
       - name: Provenance bundles
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
-          for f in dist/*.tar.gz; do
+          for f in dist/*.tar.gz dist/install.sh; do
             cp "$BUNDLE" "$f.intoto.jsonl"
             gh attestation verify "$f" --bundle "$f.intoto.jsonl" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
@@ -382,6 +417,8 @@ jobs:
             echo
             echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic CPU; amd64 and arm64)."
             echo
+            echo "Installer: \`install.sh\` finds the system and sets sacdfs up (docs/install/README.md): \`curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /path/to/images\`."
+            echo
             echo "Verify a download: \`sha256sum -c <asset>.sha256\` and \`gh attestation verify <asset> -R $GITHUB_REPOSITORY\`; the image: \`gh attestation verify oci://$IMAGE:$VERSION -R $GITHUB_REPOSITORY\`. See the README, \"Install\"."
             echo
             echo "Built from $GITHUB_SHA."
@@ -390,7 +427,7 @@ jobs:
           [[ "$VERSION" == *-* ]] && pre=(--prerelease)
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
             --title "sacdfs $VERSION" --notes-file release-notes.md \
-            dist/*.tar.gz dist/*.sha256 dist/*.intoto.jsonl dist/SHA256SUMS
+            dist/*.tar.gz dist/*.sha256 dist/*.intoto.jsonl dist/SHA256SUMS dist/install.sh
 
   image-publish:
     name: publish image

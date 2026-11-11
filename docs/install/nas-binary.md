@@ -4,6 +4,8 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
 Checked on 0.6.0 on a Linux system with UGREEN's kernel (in a VM, not on a vendor's hardware): steps 1 to 7 and 9, and the systemd lines of [Start at boot and stop safely](#start-at-boot-and-stop-safely). Step 8 (start at boot) is checked per system in the guides listed above, not here. Steps marked *(untested)* were not run.
 
+From the release after 0.6.0, [the installer](README.md#the-installer-one-line) does these steps for you in one line; this page is the way to do them by hand.
+
 ## What you need
 
 - **An SSH login with administrator rights.** SSH is a way to type commands on the NAS from another computer. Turn it on in your NAS's settings, then log in from a terminal (Windows: PowerShell; macOS: Terminal) with `ssh youradmin@your-nas-address`. Your NAS maker's help covers the settings page.

@@ -11,6 +11,39 @@ All notable changes to sacdfs are recorded here. The format follows
 Tested on main against 0.6.0; the results are in docs/test-plan.md ("Results: 0.6.1 gate").
 The pace change for WAV copies over SMB (#271, #323) was taken out before the release because it
 could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pace rules.
+### Added
+- **Installer: one line sets sacdfs up (part of #340).** `install.sh`, plain POSIX sh that runs under
+  BusyBox, finds out what it runs on (Synology DSM, QNAP, ASUSTOR ADM, TerraMaster TOS, UGREEN,
+  ReadyNAS, OpenMediaVault, TrueNAS, Unraid or plain Linux) and does what that system's guide does:
+  the Compose file where Docker or Podman with Compose answers; otherwise the release binary with the
+  systemd unit, or with `sacdfs-ctl` and the NAS's own boot hook (Task Scheduler, `autorun.sh`,
+  `init.d`). On TrueNAS and Unraid it only points to their app screens.
+  `curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /path`.
+  It checks every download against the release's checksum, tries the binary before installing, never
+  writes under `--iso-dir`, changes nothing on a second run, and has `--dry-run` and `--uninstall`. Not
+  root, it stops before any change and prints the line to run with `sudo`. The whole script is in
+  functions called from its last line, so a download cut short runs nothing. Each release carries it
+  as an asset (checksum and attestation) and in the archives, with `nas-compose.yaml`. Checked through
+  its whole cycle on DSM 7.4.1, QuTScloud 5.2.9, ADM 5.1.4, TOS 7.0, ReadyNAS OS 6.10.10 and Debian 12 on
+  UGREEN's kernel in VMs, on Fedora 45 (systemd and Compose), and in BusyBox, Fedora 44 and UBI 7
+  containers; a new CI workflow (`installer.yml`) runs those containers and the runner's systemd and
+  Compose routes on every change to `deploy/` ([install guide](docs/install/README.md#the-installer-one-line)).
+
+### Fixed
+- **`sacdfs-ctl start` could report a start that worked as a failure.** It looked at the new process's
+  name right after starting it; before `setsid` had started sacdfs, the name was still the shell's, so a
+  slow first start (seen right after the binary was replaced) gave "sacdfs did not mount", removed the
+  pid file, and left sacdfs running untracked. It now waits on the process itself. It also uses
+  `kill -s TERM` and `kill -s KILL`, the POSIX spelling.
+
+### Documentation
+- **What a player's import costs over SMB, and the settings that change it (part of #266).**
+  Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
+  use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
+  file's header and tags. `cache=none` on the client mount, or `oplocks = no` on the share,
+  brings it down to the direct mount's cost; `smb2 max read = 262144` halves it. Copies and
+  playback were measured with each. The defaults are unchanged
+  ([performance](docs/performance.md#a-players-import-over-smb-266), Navidrome guide).
 
 ### Changed
 - **SMB directory leases stay off: why they can't be fresh (part of #325).** Docs and a comment in the

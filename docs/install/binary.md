@@ -111,7 +111,10 @@ Each [release](https://github.com/aclater/sacdfs/releases) has three builds:
 
 Each archive holds `sacdfs`, `sacdfs-ctl`, `sacdfs.service`, `sacdfs.conf.example`, `COPYING`,
 `README.md` and `CHANGELOG.md` (0.5.0 and earlier: no `sacdfs-ctl`, `sacdfs.service` or
-`sacdfs.conf.example`).
+`sacdfs.conf.example`). From the release after 0.6.0 it also holds the installer, `install.sh`,
+and `nas-compose.yaml`: `sudo sh install.sh --iso-dir ...` in the unpacked folder uses the files
+next to it and downloads nothing ([the installer](README.md#the-installer-one-line)). The
+installer is also a release asset of its own, `install.sh`, with its `.sha256` and attestation.
 
 **What it needs.** glibc 2.17 or later (0.4.1 and earlier needed 2.28); every release build is
 checked in CI to need no newer symbol. As a user other than root, FUSE 3's `fusermount3`, or from

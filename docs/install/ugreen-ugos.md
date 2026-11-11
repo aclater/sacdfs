@@ -4,6 +4,8 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
 **Not tested on UGOS Pro.** Checked on 0.6.0 on a Linux system with UGREEN's kernel (in a VM, not UGOS Pro and not UGREEN hardware). Steps marked *(untested)* were not run.
 
+From the release after 0.6.0, [the installer](README.md#the-installer-one-line) does these steps for you in one line; this page is the way to do them by hand.
+
 ## What you need
 
 - A UGREEN NAS running UGOS Pro with an Intel or AMD chip (`uname -m` in step 1 prints `x86_64`).
