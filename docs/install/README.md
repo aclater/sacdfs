@@ -2,7 +2,7 @@
 
 ## The installer: one line
 
-From the release after 0.6.1, an installer finds out what it runs on and sets sacdfs up the way
+Since 0.6.2, an installer finds out what it runs on and sets sacdfs up the way
 the guide for that system does. Log in to the NAS or Linux computer over SSH, and type (change
 the path to the folder that holds your SACD images, the `.iso` files):
 
@@ -29,8 +29,8 @@ sudo sh install.sh --iso-dir /volume1/music
 `gh attestation verify install.sh -R aclater/sacdfs` also shows that this repository's release
 workflow built it. *(Checked on 0.6.2-rc.1 with that release's own address,
 `https://github.com/aclater/sacdfs/releases/download/v0.6.2-rc.1/install.sh`, in both forms
-above, and the attestation passes. The `latest` address serves the installer only once a
-final release carries it; 0.6.1 does not. See [the 0.6.2-rc.1 results](../test-plan.md#results-062-rc1-gate).)*
+above, and the attestation passes; see [the 0.6.2-rc.1 results](../test-plan.md#results-062-rc1-gate).
+The `latest` address serves 0.6.2's installer.)*
 
 **What it does:**
 

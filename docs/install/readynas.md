@@ -4,7 +4,7 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
 Checked on 0.6.0 on ReadyNAS OS 6.10.10 (in a VM, not on the vendor's hardware). Steps marked *(untested)* were not run.
 
-From the release after 0.6.1, [the installer](README.md#the-installer-one-line) does these steps for you in one line; this page is the way to do them by hand.
+Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps for you in one line; this page is the way to do them by hand.
 
 ## What you need
 
@@ -38,29 +38,29 @@ From the release after 0.6.1, [the installer](README.md#the-installer-one-line) 
 4. **Download sacdfs and its checksum file.**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.1/sacdfs-0.6.1-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.1/sacdfs-0.6.1-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.2/sacdfs-0.6.2-x86_64-linux.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.2/sacdfs-0.6.2-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
 5. **Check the download.**
 
    ```sh
-   sha256sum -c sacdfs-0.6.1-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.6.2-x86_64-linux.tar.gz.sha256
    ```
 
-   *You should see* `sacdfs-0.6.1-x86_64-linux.tar.gz: OK`.
+   *You should see* `sacdfs-0.6.2-x86_64-linux.tar.gz: OK`.
 6. **Unpack it and put the program and the start-up unit in place.** The unit is the file that tells systemd (the part of the system that starts services) how to run sacdfs.
 
    ```sh
-   tar -xzf sacdfs-0.6.1-x86_64-linux.tar.gz
+   tar -xzf sacdfs-0.6.2-x86_64-linux.tar.gz
    mkdir -p /usr/local/bin
-   cp sacdfs-0.6.1-x86_64-linux/sacdfs /usr/local/bin/sacdfs
-   cp sacdfs-0.6.1-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
+   cp sacdfs-0.6.2-x86_64-linux/sacdfs /usr/local/bin/sacdfs
+   cp sacdfs-0.6.2-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
    /usr/local/bin/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.6.1`.
+   *You should see* `sacdfs 0.6.2`.
 7. **Write the settings file.** Change the first line to your images folder.
 
    ```sh
