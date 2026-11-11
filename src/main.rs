@@ -14,14 +14,13 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 mod mount_opts;
 mod startup;
+mod stop_signals;
 
 use fuser::{Config, MountOption, Session, SessionACL};
-use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
-use signal_hook::iterator::Signals;
 
 use sacdfs::disc::Tuning;
 use sacdfs::engine::{Engine, default_threads};
-use sacdfs::fs::{MAX_READ, SacdFs};
+use sacdfs::fuse::{MAX_READ, SacdFs};
 use sacdfs::index_cache::{self, IndexCache};
 use sacdfs::memory;
 use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
@@ -410,6 +409,11 @@ fn run(args: Args) -> io::Result<()> {
     } else {
         Some(daemonize(keeps_stderr(args.log_file.is_some(), std::env::var_os("JOURNAL_STREAM").is_some()))?)
     };
+    // The signal handlers go in before mounting (#57), and before any thread exists, which
+    // keeps a signal that arrives as they go in from being lost (#334): see stop_signals.rs.
+    // A SIGINT, SIGTERM or SIGHUP from here on is held until the check below, before
+    // mounting, or the signal thread, after: either way no dead mount is left behind.
+    let mut signals = stop_signals::catch()?;
     sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
 
     // Opening the images of a directory listing runs on rayon's global pool.
@@ -464,10 +468,9 @@ fn run(args: Args) -> io::Result<()> {
         config.acl = SessionACL::All;
     }
     config.n_threads = Some(4);
-    // The signal handlers go in before mounting (#57): a SIGINT, SIGTERM or SIGHUP from
-    // here on is held until the signal thread below handles it, which unmounts. Registered
-    // after mounting, as before, a signal in between killed sacdfs and left a dead mount.
-    let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
+    // A signal since the handlers went in: not mounting. One from here on waits for the
+    // signal thread below, which unmounts. With the handlers set up after mounting, as
+    // before #57, a signal in between killed sacdfs and left a dead mount.
     if let Some(sig) = signals.pending().next() {
         log::info!("signal {sig} before mounting: not mounting");
         if let Some(n) = notify {
@@ -497,8 +500,6 @@ fn run(args: Args) -> io::Result<()> {
     });
     let at = mountpoint.clone();
     let mine = own.clone();
-    let detached = Arc::new(AtomicBool::new(false));
-    let detached_by_signal = detached.clone();
     let stop_tree = tags_tree.clone();
     let stop_grace = args.stop_grace;
     std::thread::Builder::new().name("sacdfs-signals".to_owned()).spawn(move || {
@@ -514,7 +515,6 @@ fn run(args: Args) -> io::Result<()> {
                 );
             } else {
                 log::info!("signal {sig}: unmounting");
-                detached_by_signal.store(true, Ordering::Relaxed);
                 if let Err(e) = unmount(&at) {
                     // Busy (open files, or an NFS server exporting the mount): detach it, as
                     // fusermount3 does for users other than root. sacdfs then serves the files
@@ -634,9 +634,13 @@ fn run(args: Args) -> io::Result<()> {
     let (calls, bytes) = sacdfs::disc::total_reads();
     log::info!("image reads for audio: {calls} calls, {bytes} bytes");
     match result {
-        // After a detach, the kernel can end the connection as aborted rather than
-        // unmounted once the last open file is closed: the stop that was asked for.
-        Err(e) if e.raw_os_error() == Some(libc::ECONNABORTED) && detached.load(Ordering::Relaxed) => {
+        // The connection ended: the same end as the ENODEV that fuser takes for one (#322).
+        // When a connection ends (an unmount, ours after a signal or one from outside such as
+        // `fusermount3 -u` or `umount -l`), the kernel shuts its processing queue before its
+        // input queue, and a read of /dev/fuse that takes a request still queued in between
+        // (the RELEASE of a file just closed, often) fails with ECONNABORTED instead. Nothing
+        // else returns it here: that is only for FUSE_ABORT_ERROR, which is not asked for.
+        Err(e) if e.raw_os_error() == Some(libc::ECONNABORTED) => {
             log::debug!("connection ended after the unmount: {e}");
             Ok(())
         }

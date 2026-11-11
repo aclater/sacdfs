@@ -882,6 +882,17 @@ gocryptfs, ratarmount and others):
   SIGHUP does what SIGTERM does: sacdfs has nothing to reload, and a foreground sacdfs whose
   terminal closes should not leave a mount behind; the daemon is in its own session, so a
   terminal closing doesn't reach it.
+- **The handlers go in with the signals blocked, before any thread exists** (#334). *Why:*
+  signal-hook installs a handler before it records where the handler sends the signal, and a
+  signal that arrives in between is dropped: it neither ends the process nor reaches sacdfs's
+  signal thread. A sacdfs stopped right after its start then mounted and ran on until killed
+  (3 of 200 loaded runs of the mount test, each 60 starts and stops). Blocked, a signal waits
+  and is delivered to the complete handler when the block is lifted (`src/stop_signals.rs`). The
+  block holds for the calling thread only, so this runs right after the fork into the
+  background, before the first thread: no other thread could take the signal. A signal from
+  there to the mount stops sacdfs without mounting (exit 0) instead of killing it.
+  `tests/stop_signals.rs` sends SIGTERM into the registration 2000 times: without the block
+  about 2 % were lost, with it none.
 
 **Cost.** Mounting hashes every source directory and image name once and keeps one map entry
 per directory and image (tens of bytes each). The node table is a hash map by inode number.
@@ -1299,7 +1310,8 @@ decoding them twice.
   Bounded in bytes, so that six-channel files at 352.8 kHz don't take 50 MB per reader.
 - **A player goes first (#230).** A reader that, since it last jumped, has read 4 MiB at more
   than 1.5 times the file's byte rate reads for *throughput*; any other that has been reading
-  for 0.5 s is a *player*. While a player is active, readers for throughput give up the
+  for 0.5 s is a *player* (behind a network client, see the next point). While a player is
+  active, readers for throughput give up the
   frames they have passed (they go first from the cache, the oldest first, all but the last
   1 MiB), share a quarter of the cache whatever that leaves them (at least 16 frames), and
   read ahead in slices of 8 frames per decoder thread, waiting up to 50 ms before each for
@@ -1319,6 +1331,35 @@ decoding them twice.
   priorities and a pace cap on scanners (not tried: the first is larger, the second slows a
   scan with no player). *Trade-off:* beside a player a scanner runs 5 to 13 % slower, and a
   player's first 0.5 s is not protected.
+- **The pace behind a network client (#271).** A jump, for the pace, is a read more than
+  64 MiB from the furthest byte read so far, and the pace counts the bytes read since, but no
+  further than the reader got. A reader one of whose reads has landed more than 2 MiB behind
+  the furthest byte read is behind a network client. Such a reader reads for throughput once
+  it is also 32 MiB ahead of playing time. Until then it is *unsure*: it plays if no player has
+  been reading since before it, and otherwise reads for throughput, letting that player go
+  first. *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a
+  straight copy over SMB reaches sacdfs up to 56 MiB out of order (measured). With the
+  sequential gaps below as the test, such a copy kept starting its pace again, counted as a
+  player more than half the time, lost its long read-ahead window and was 8 to 11 % slower than
+  in 0.4.1. *Why counting bytes, no further than it got:* a player that seeks forward less than
+  64 MiB has not read what it skipped, and a client that reads a range twice has not got
+  further. *Why 32 MiB ahead:* the client reads ahead of the application. The kernel SMB client
+  fetches a player's first 4 to 8 MiB at once and keeps it 8 to 16 MiB ahead, so measured from
+  its start such a player read faster than 1.5 times its rate for its first 3 to 7 s. With only
+  64 MiB jumps (#323, withdrawn), it counted as reading for throughput all that time, and four
+  copies starting 1 s after it stalled it for 0.15 to 1.5 s in 7 of 22 runs. A copy is 32 MiB
+  ahead after 1 to 4 s on four cores, 8 to 13 s on two. *Why an earlier player goes first:* in
+  their first seconds a copy and a player whose client read ahead look the same. Counted as
+  players, the four starting copies still stalled the player beside them in 3 of 16 runs, so a
+  reader that is unsure lets a player that was there before it go first. *Why only behind a
+  client:* through the kernel's FUSE read-ahead a local reader's reads land at most 0.5 MiB
+  behind, and a scanner reading short files locally would be unsure for most of each one.
+  *Trade-off:* behind a network client, a player is not protected until one of its reads
+  lands out of order (about 1.2 s with the kernel SMB client, as in 0.6.0), and one that starts
+  while unsure copies are reading waits for them to get 32 MiB ahead; copies that start
+  together let the first of them play until it is 32 MiB ahead. A local reader that seeks back
+  less than 64 MiB counts as behind a network client from then on, which can only make it more
+  of a player.
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
@@ -1559,6 +1600,127 @@ the share is read-only and gvfs's `can-write` comes only from this attribute. Th
 result on a mount with no write bits. *Trade-off:* folders get it too, as Samba can't separate them; a
 plain `cp` on the Linux client keeps the missing write bit; and Windows and macOS haven't been tested.
 
+## The core and its front ends (#22, piece A)
+
+sacdfs is split in two: a **core** that knows nothing of FUSE, and a **front end** per platform that
+takes requests from the operating system and hands them to the core. Today the only front end is
+Linux FUSE (fuser). The split is the first step of native macOS and Windows support
+([#22](https://github.com/aclater/sacdfs/issues/22)): a WinFsp front end (Windows, piece B) and a
+FUSE-T or macFUSE front end (macOS, piece C) call the same core, and the core's tests cover all of
+them. *Why split first:* the tree, attributes, reads, caching, PCM, tags and the lookup worker were
+never Linux-specific, but the code that answers requests mixed them with fuser's types, so a second
+front end would have copied it. *No behaviour change:* the Linux mount answers every request as
+before, with the same bytes, the same errors and on the same threads.
+
+### What is in the core
+
+`sacdfs::vfs` is the API a front end calls. Its centre is `Volume`, which holds the tree, the
+engine, the open files, the request pools, the watchdog and the per-image read count, and answers
+these requests, by inode number:
+
+| Request | Answer |
+|---|---|
+| `lookup(parent, name)` | `Lookup::Found` (TTL, attributes, generation) or `Lookup::Missing` (a negative entry and how long it holds) |
+| `getattr(ino, fh)` | TTL and attributes; a file open since its image was removed is answered from its handle (#153) |
+| `open(ino)` | a file handle (a `u64`) |
+| `read(ino, fh, offset, size)` | the bytes, fewer only at the end of the file |
+| `release(fh)` | closes the handle |
+| `opendir(ino)` | whether the cached listing is still the directory's (`keep_cache`) |
+| `readdir(ino)` | the listing (`.`, `..` and the entries, borrowed, not copied) |
+| `readdir_plus(ino, offset)` | the entries from `offset`, each with what its `lookup` would answer |
+| `access(ino, write, execute)` | allowed, or read-only, or not executable |
+| `statfs()` | the volume's size and file count |
+
+Each answer goes through a **reply** the front end supplies: a `Reply<T>` takes the result, a
+`DataReply` the bytes of a read, and both can be failed with a `vfs::Error`. The core decides on
+which thread a request runs, exactly as described in [Concurrency](#concurrency): what is in
+memory is answered on the caller's thread, what may read the source on a request pool, under the
+watchdog. The core's errors are named (`NotFound`, `NoMemory`, `NotDir`, `IsDir`, `ReadOnly`,
+`Access`, `Stale`, `BadHandle`, `Io`) plus `Os(code)`, a source file's own error as the operating
+system gave it; each front end maps them to its platform's codes (errno for FUSE, `NTSTATUS` for
+WinFsp).
+
+Also in the core, unchanged: the tree (`tree`, `names`, `ident`, `sidecar`), reading (`track`,
+`engine`, `dsf`, `wav`, `pcm`, `disc`, `handles`, `index_cache`), tags and lookups (`tags`,
+`lookup`), memory (`memory`), the request pools (`vfs::Workers`), the watchdog (`watchdog`, whose
+replies are now any `Fail`, not fuser's types) and the hung-image read cap (`vfs::ImageReads`,
+#241).
+
+### What stays in the Linux front end
+
+`sacdfs::fuse` (fuser) and `main.rs`:
+
+- the `Filesystem` callbacks, each a few lines that convert fuser's types and call `Volume`;
+- `INIT`: `max_readahead`, `max_background`, `readdirplus`, export support;
+- the FUSE caching flags: `FOPEN_KEEP_CACHE` on files, `FOPEN_CACHE_DIR` on folders;
+- extended attributes: `getxattr` answers `ENOSYS` and `listxattr` an empty list (#174), a
+  policy about how the Linux kernel and Samba behave;
+- the decoding of open flags (a write open is `ReadOnly`) and access masks;
+- the mount: options, `allow_other`, the mount helper checks (`startup`), the daemon (fork,
+  `setsid`, the readiness pipe, `sd_notify`), signals, unmounting and detaching, the mount table
+  checks (#51, #54) and the stop grace (#276).
+
+### Decisions for the other front ends
+
+These are decided now, so that pieces B and C fit the API rather than change it. Each follows a
+pitfall in #22.
+
+- **Handles.** The core hands out a `u64` per open file, never reused while the mount runs, and
+  identifies files and folders by inode number. A front end with per-open contexts (WinFsp's
+  `FileContext`) stores both there. A front end with a path API walks the path with `lookup` from
+  the root, one component at a time, and caches what it found; the core offers no path lookup.
+  *Why:* the inode numbers are the files' identity across restarts (see [File identity](#file-identity-and-nfs-export));
+  WinFsp's file IDs and macOS inode numbers can be the same numbers. *Alternative:* the libfuse
+  path API that WinFsp and FUSE-T also offer; it would put path resolution, and its caching, in
+  every front end's C layer.
+- **Threads.** The core owns its threads. A reply can be given on any thread, once, and the
+  watchdog fails one that waits too long, whatever the front end. A front end whose callbacks
+  must answer before they return (WinFsp, and the libfuse API under FUSE-T) waits for its reply
+  on a one-shot channel; one that can answer later (WinFsp's `STATUS_PENDING` for reads) passes
+  its own reply. A reply dropped without an answer must answer `Io`, as fuser's do, so that a
+  request whose job never ran is not left open. *Why:* the stall protections (#63, #72, #241) are about the source, not the
+  kernel interface, and would otherwise be rebuilt per platform.
+- **Names: case and normalisation.** The core stays case-sensitive and byte-exact, and serves
+  names precomposed (NFC), as on Linux today. Windows (case-insensitive de-duplication, reserved
+  names such as `CON` and `COM1`, `<>:"/\|?*`, trailing dots and spaces, 255 *characters*) and
+  macOS (lookups that arrive decomposed, NFD) need name rules chosen when the tree is built: a
+  `NameRules` given to the tree by the front end, which the tree uses both to make names unique
+  and to fold a name it is asked to look up. Linux keeps today's rules. *Why in the tree, not the
+  front end:* folding at lookup only works if no two names in a folder fold to the same key, which
+  only the code that makes the names can promise. *Not done in piece A:* it changes names, so it
+  lands with B and C, with tests per rule set.
+- **Reads at the end of a file.** The core answers a read at or past the end with no bytes, as
+  FUSE on Linux expects. macFUSE 5.4 and FSKit fail an empty read reply with `EIO`, so the macOS
+  front end must answer it with what its API takes for end of file. *Why:* a front-end
+  convention, not a core one.
+- **Volume statistics.** `statfs` gives 64-bit block counts; a front end that can't carry them
+  (macOS clips at 2^32−1) scales the block size instead.
+- **Generations.** The core gives each entry a generation that changes when an image changes; a
+  front end without generations (WinFsp) ignores it, and macOS is to be tested for
+  "vnode changed generation".
+- **Owners.** `Attr` carries the uid and gid given at construction; WinFsp maps them to its
+  own security descriptor.
+
+### What the core still needs from Linux
+
+The core is built and tested on Linux only so far. These calls are Unix- or Linux-only and stay
+as they are in piece A, because changing them would change behaviour on Linux; pieces B and C put
+each behind a small platform layer, with the Linux branch unchanged:
+
+- confined opening of sidecar files under SOURCE: `openat` with `O_PATH`, `readlinkat`
+  (`sidecar`); `O_PATH` is Linux-only, so macOS needs its own branch too;
+- reading a sidecar at an offset, `read_at` (`vfs`), and the image files' device and inode numbers
+  (`handles`);
+- the seek index's file modes and `O_NOFOLLOW` (`index_cache`);
+- path bytes for keys (`OsStrExt` in `ident`, `tags`, `fallback`);
+- the lookup worker's idle CPU and I/O priority (`setpriority`, `ioprio_set`, `lookup::worker`);
+- the memory limit from cgroups (`memory`), absent elsewhere;
+- `mallopt` and `malloc_trim` (`engine`, glibc only, already off elsewhere);
+- `sacdfs verify` (`FileExt`, `OsStrExt`).
+
+The split's pull requests: this note, then the moves, each "Part of #22". They change the
+structure of the read path, so the release that includes them runs the full gate and a soak.
+
 ## Concurrency
 
 fuser reads requests from the kernel on 4 threads, and they only hand requests over: what
@@ -1646,7 +1808,7 @@ everything:
   `read()` on the stalled image: 8 WAV clients at the default 30 s timeout reached 64 threads in
   362 s, 8 clients at a 2 s timeout in 23 to 26 s in either format, and 1 WAV client at 2 s in
   142 s; healthy reads then failed. Now each image's unfinished reads are counted
-  (`ImageReads` in `src/fs.rs`), with when each was asked for. Once 4 of them
+  (`ImageReads` in `src/vfs/image_reads.rs`), with when each was asked for. Once 4 of them
   (`HUNG_READS_PER_IMAGE`) are older than the request timeout, and so failed already, a new read
   of that image is answered `EIO` on fuser's thread at once and takes no request thread. When a
   blocked read finishes and fewer than 4 are left, the image is read again. *Why count only

@@ -4,6 +4,8 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
 Checked on 0.6.0 on a Linux system with UGREEN's kernel (in a VM, not on a vendor's hardware): steps 1 to 7 and 9, and the systemd lines of [Start at boot and stop safely](#start-at-boot-and-stop-safely). Step 8 (start at boot) is checked per system in the guides listed above, not here. Steps marked *(untested)* were not run.
 
+From the release after 0.6.1, [the installer](README.md#the-installer-one-line) does these steps for you in one line; this page is the way to do them by hand.
+
 ## What you need
 
 - **An SSH login with administrator rights.** SSH is a way to type commands on the NAS from another computer. Turn it on in your NAS's settings, then log in from a terminal (Windows: PowerShell; macOS: Terminal) with `ssh youradmin@your-nas-address`. Your NAS maker's help covers the settings page.
@@ -30,27 +32,27 @@ Checked on 0.6.0 on a Linux system with UGREEN's kernel (in a VM, not on a vendo
 3. **Download sacdfs and its checksum file.**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.0/sacdfs-0.6.0-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.0/sacdfs-0.6.0-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.1/sacdfs-0.6.1-x86_64-linux.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.1/sacdfs-0.6.1-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
 4. **Check the download.**
 
    ```sh
-   sha256sum -c sacdfs-0.6.0-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.6.1-x86_64-linux.tar.gz.sha256
    ```
 
-   *You should see* `sacdfs-0.6.0-x86_64-linux.tar.gz: OK`.
+   *You should see* `sacdfs-0.6.1-x86_64-linux.tar.gz: OK`.
 5. **Unpack it and copy out the program and its start script.** (Use `cp`: on TerraMaster `install` is a different tool.)
 
    ```sh
-   tar -xzf sacdfs-0.6.0-x86_64-linux.tar.gz
-   cp sacdfs-0.6.0-x86_64-linux/sacdfs sacdfs-0.6.0-x86_64-linux/sacdfs-ctl /volume1/sacdfs/
+   tar -xzf sacdfs-0.6.1-x86_64-linux.tar.gz
+   cp sacdfs-0.6.1-x86_64-linux/sacdfs sacdfs-0.6.1-x86_64-linux/sacdfs-ctl /volume1/sacdfs/
    /volume1/sacdfs/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.6.0`.
+   *You should see* `sacdfs 0.6.1`.
 6. **Write the settings file.** Change the first line to your images folder.
 
    ```sh
@@ -124,9 +126,9 @@ Both routes read one settings file (`SACDFS_IMAGES`, `SACDFS_MOUNT`, `SACDFS_OPT
 
 ```sh
 mkdir -p /usr/local/bin
-cp sacdfs-0.6.0-x86_64-linux/sacdfs /usr/local/bin/sacdfs
-cp sacdfs-0.6.0-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
-cp sacdfs-0.6.0-x86_64-linux/sacdfs.conf.example /etc/default/sacdfs   # then edit the two paths
+cp sacdfs-0.6.1-x86_64-linux/sacdfs /usr/local/bin/sacdfs
+cp sacdfs-0.6.1-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
+cp sacdfs-0.6.1-x86_64-linux/sacdfs.conf.example /etc/default/sacdfs   # then edit the two paths
 systemctl daemon-reload
 systemctl enable --now sacdfs
 systemctl is-active sacdfs

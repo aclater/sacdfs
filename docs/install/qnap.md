@@ -4,6 +4,8 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
 Checked on 0.6.0 on QuTScloud 5.2.9 (in a VM, not on QNAP hardware; QTS and QuTS hero may differ). Steps marked *(untested)* were not run.
 
+From the release after 0.6.1, [the installer](README.md#the-installer-one-line) does these steps for you in one line; this page is the way to do them by hand.
+
 ## What you need
 
 - A QNAP NAS with an Intel or AMD chip (`uname -m` in step 1 prints `x86_64`).
@@ -36,27 +38,27 @@ Checked on 0.6.0 on QuTScloud 5.2.9 (in a VM, not on QNAP hardware; QTS and QuTS
 4. **Download sacdfs and its checksum file.**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.0/sacdfs-0.6.0-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.0/sacdfs-0.6.0-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.1/sacdfs-0.6.1-x86_64-linux.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.1/sacdfs-0.6.1-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
 5. **Check the download.**
 
    ```sh
-   sha256sum -c sacdfs-0.6.0-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.6.1-x86_64-linux.tar.gz.sha256
    ```
 
-   *You should see* `sacdfs-0.6.0-x86_64-linux.tar.gz: OK`.
+   *You should see* `sacdfs-0.6.1-x86_64-linux.tar.gz: OK`.
 6. **Unpack it and copy out the program and its start script.**
 
    ```sh
-   tar -xzf sacdfs-0.6.0-x86_64-linux.tar.gz
-   cp sacdfs-0.6.0-x86_64-linux/sacdfs sacdfs-0.6.0-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/Multimedia/sacdfs/
+   tar -xzf sacdfs-0.6.1-x86_64-linux.tar.gz
+   cp sacdfs-0.6.1-x86_64-linux/sacdfs sacdfs-0.6.1-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/Multimedia/sacdfs/
    /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.6.0`.
+   *You should see* `sacdfs 0.6.1`.
 7. **Write the settings file.** Change the first line to your images folder.
 
    ```sh
@@ -120,7 +122,7 @@ ls /share/CACHEDEV1_DATA/Multimedia/sacd
 
 ## If something goes wrong
 
-- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses 0.6.0).
+- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses 0.6.1).
 - **You see:** `sha256sum: ... no properly formatted SHA256 checksum lines found`, or `gzip: stdin: not in gzip format`. **Do this:** the download saved an error page. Delete the two downloaded files and run step 4 again later.
 - **You see:** `Permission denied` when a share or an app opens the folder. **Do this:** you started sacdfs without being root. Run `id -u` (it must print `0`), stop sacdfs (see above) and start it again.
 

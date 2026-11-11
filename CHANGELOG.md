@@ -6,14 +6,88 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-### Documentation
-- **What a player's import costs over SMB, and the settings that change it (part of #266).**
-  Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
-  use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
-  file's header and tags. `cache=none` on the client mount, or `oplocks = no` on the share,
-  brings it down to the direct mount's cost; `smb2 max read = 262144` halves it. Copies and
-  playback were measured with each. The defaults are unchanged
-  ([performance](docs/performance.md#a-players-import-over-smb-266), Navidrome guide).
+## [0.6.2-rc.1] - 2026-11-11
+
+### Added
+- **Installer: one line sets sacdfs up (part of #340).** `install.sh`, plain POSIX sh that runs under
+  BusyBox, finds out what it runs on (Synology DSM, QNAP, ASUSTOR ADM, TerraMaster TOS, UGREEN,
+  ReadyNAS, OpenMediaVault, TrueNAS, Unraid or plain Linux) and does what that system's guide does:
+  the Compose file where Docker or Podman with Compose answers; otherwise the release binary with the
+  systemd unit, or with `sacdfs-ctl` and the NAS's own boot hook (Task Scheduler, `autorun.sh`,
+  `init.d`). On TrueNAS and Unraid it only points to their app screens.
+  `curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /path`.
+  It checks every download against the release's checksum, tries the binary before installing, never
+  writes under `--iso-dir`, changes nothing on a second run, and has `--dry-run` and `--uninstall`. Not
+  root, it stops before any change and prints the line to run with `sudo`. The whole script is in
+  functions called from its last line, so a download cut short runs nothing. Each release carries it
+  as an asset (checksum and attestation) and in the archives, with `nas-compose.yaml`. Checked through
+  its whole cycle on DSM 7.4.1, QuTScloud 5.2.9, ADM 5.1.4, TOS 7.0, ReadyNAS OS 6.10.10 and Debian 12 on
+  UGREEN's kernel in VMs, on Fedora 45 (systemd and Compose), and in BusyBox, Fedora 44 and UBI 7
+  containers; a new CI workflow (`installer.yml`) runs those containers and the runner's systemd and
+  Compose routes on every change to `deploy/` ([install guide](docs/install/README.md#the-installer-one-line)).
+
+### Changed
+- **A platform-neutral core, split from the Linux FUSE front end (part of #22).** The first step of
+  native macOS and Windows support. `docs/design.md` ("The core and its front ends") describes the
+  API the front ends call, what stays Linux-only, and the decisions the Windows and macOS front
+  ends build on (handles, threads, name rules, end-of-file reads). The code moved with no change in
+  behaviour: every request handler is now in `sacdfs::vfs::Volume`, which answers through replies
+  the front end supplies, and the FUSE front end (`src/fuse.rs`, formerly `src/fs.rs`) only converts
+  fuser's types. A new test (`tests/vfs.rs`) reads every file of a DSD and a DST image through the
+  core without a mount and checks it against the reader. These changes touch the structure of the
+  read path, so the release that includes them needs the full gate and a soak.
+
+### Fixed
+- **WAV copies through the Linux kernel SMB client keep their pace again, and a player beside
+  starting copies stays first (#271).** Samba serves the kernel client's 4 MiB reads concurrently,
+  so they reach sacdfs up to 56 MiB out of order; since 0.5.0 each of those restarted the reader's
+  pace, and a copy kept switching between reading for throughput and playing. A jump is now a read
+  more than 64 MiB away, as in the withdrawn #323. Unlike #323, a reader whose reads land out of
+  order (behind a network client, whose own read-ahead keeps a player 8 to 16 MiB ahead) reads for
+  throughput only once it is 32 MiB ahead of playing time, and until then lets a player that was
+  there before it go first. Beside a 6-channel player at real time, four copies starting together no
+  longer stall it (0 of 16 runs over 100 ms, worst 14.8 ms, against 4 of 16 and up to 1.4 s with
+  #323; 0.6.0: 0 of 8, 15.0 ms), and finish 4 % (4 cores) to 11 % (2 cores) sooner than on 0.6.0.
+  **Slower:** one copy beside a player takes 5 to 8 % longer than on 0.6.0, which counted that copy
+  as a player most of the time; it now gets the player-first rules of #230 throughout. One reader
+  copying a whole area over SMB is as fast as 0.4.1 again: stereo WAV 22.86 s (0.6.0 25.22 s, 0.4.1
+  23.06 s), six channels 73.84 s (81.41 s, 75.60 s). Local reads take no new rule (and were not
+  affected by #323's). The change decides only when frames are decoded ahead, not what they hold.
+  Needs a soak in the next release
+  ([performance](docs/performance.md#a-player-beside-copies-starting-together-271)).
+- **`sacdfs-ctl start` could report a start that worked as a failure.** It looked at the new process's
+  name right after starting it; before `setsid` had started sacdfs, the name was still the shell's, so a
+  slow first start (seen right after the binary was replaced) gave "sacdfs did not mount", removed the
+  pid file, and left sacdfs running untracked. It now waits on the process itself. It also uses
+  `kill -s TERM` and `kill -s KILL`, the POSIX spelling.
+- **An unmount from outside no longer ends sacdfs with status 1 (#322).** When the mount was
+  unmounted or detached from outside (`fusermount3 -u`, `fusermount3 -u -z`, `umount -l`) while a
+  request was still queued, typically the release of a file just closed, the kernel could end the
+  connection as aborted instead of unmounted, and sacdfs exited with "Software caused connection
+  abort (os error 103)" and status 1: about one detach in ten when the last open file was closed
+  right after it. Under load a plain unmount right after a close can meet the same race, the
+  likely cause of the restart test's rare failure. sacdfs now takes that error as the end of the
+  connection, as it takes the usual one (before, only after its own detach on a signal): the
+  kernel returns it for no other reason, as sacdfs does not ask for `FUSE_ABORT_ERROR`. A new
+  integration test detaches 40 mounts from outside with a file open; without the fix it fails
+  within the first five. The restart test now prints the new sacdfs's log when it fails.
+- **A stop signal right after the start is no longer lost (#334).** Lifecycle change. A SIGTERM,
+  SIGINT or SIGHUP that arrived in the microseconds while sacdfs set up its signal handlers was
+  dropped by the signal library: sacdfs neither died nor stopped, mounted, and ran on until
+  killed (a service stopped right after its start). The handlers now go in with those signals
+  blocked, before any thread exists, so such a signal waits and stops sacdfs without mounting.
+  They also go in earlier, right after the fork into the background instead of just before the
+  mount: a signal in between now ends sacdfs with status 0 and "stopped by signal before
+  mounting" (the background parent still reports it as a failed start) rather than killing it.
+  A new test (`tests/stop_signals.rs`, no libtest harness) sends SIGTERM into the registration
+  2000 times; about 2 % were lost before. The mount test that found it now prints sacdfs's log
+  and what each of its threads waits on when sacdfs does not stop.
+
+## [0.6.1] - 2026-11-11
+
+Tested on main against 0.6.0; the results are in docs/test-plan.md ("Results: 0.6.1 gate").
+The pace change for WAV copies over SMB (#271, #323) was taken out before the release because it
+could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pace rules.
 
 ### Changed
 - **CI builds and tests in Red Hat-derived containers.** The jobs that build or test sacdfs (lint,
@@ -64,6 +138,7 @@ All notable changes to sacdfs are recorded here. The format follows
   history moved to Details. The NAS and player guides follow in later pull requests.
 - **Player install guides rewritten (part of #310).** Roon, Plex, Jellyfin, Navidrome, Lyrion and MPD now follow the common guide shape (what you need, numbered steps, check, three problems, Details), start from the Docker/Podman and Linux client guides, and were run on 0.6.0 for Jellyfin, Navidrome, Lyrion and MPD. Lyrion no longer needs the root settings with the SMB mount, and MPD needs no cover renaming.
 - **NAS install guides rewritten (part of #310).** Each vendor guide (Synology, QNAP, ASUSTOR, TerraMaster, UGREEN, ReadyNAS) is one page with one path, the 0.6.0 release archive and the vendor's own start-at-boot method, followed as written on 0.6.0 in the NAS VMs; TrueNAS SCALE, Unraid and OpenMediaVault keep their facts in the same layout, marked untested on 0.6.0. `nas-binary.md` is the short generic guide; test history, options and the longer troubleshooting moved to each page's Details. Found while checking: TOS has no `/usr/local/bin`, so the unit steps make it.
+
 ### Fixed
 - **Mount tests: a failing stop test no longer hangs the run (#335).** Tests only. The two tests
   that stop a daemon (`SIGSTOP`) now hold it in a guard that, when the test fails, resumes it
@@ -82,12 +157,10 @@ All notable changes to sacdfs are recorded here. The format follows
   test holds a shared lock for its whole run (`common::skip_without_fuse!`), and they hold it
   exclusive (`skip_without_fuse!(exclusive)`). The folder-times test also waits for each folder to
   move, not only the root, which failed one run in four under load.
-### Fixed
 - **Real-disc tests: a truncated image fails (#294).** Before the tests run, each image is checked
   against its own TOC (every area's TOC copies and audio must lie inside the file); a copy cut
   short fails the run with "truncated: ...". A test on truncated copies of a corpus image runs in
   CI. A corrupt image of the right size is still not caught.
-### Fixed
 - **Soak: designed art-churn errors no longer fail the verdict (#279).** `ESTALE` on a `cover-N.jpg`
   the churner replaced or removed, and `ENOENT` or `ESTALE` on an area's `cover.jpg` in the
   art-churn album after a cover removal, are counted as replaced sidecars. Every other errno, and
@@ -98,6 +171,15 @@ All notable changes to sacdfs are recorded here. The format follows
   with a differing NFC and NFD spelling failed that way, not 111 of 357 at random. The setting
   `dir_cache_off=yes` in `nsmb.conf` fixed it on macOS 27.2 in a VM. `docs/deployment.md` (macOS)
   says so. No code or Samba setting changed. Checked on macOS in a VM, not on Apple hardware.
+
+### Documentation
+- **What a player's import costs over SMB, and the settings that change it (part of #266).**
+  Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
+  use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
+  file's header and tags. `cache=none` on the client mount, or `oplocks = no` on the share,
+  brings it down to the direct mount's cost; `smb2 max read = 262144` halves it. Copies and
+  playback were measured with each. The defaults are unchanged
+  ([performance](docs/performance.md#a-players-import-over-smb-266), Navidrome guide).
 
 ## [0.6.0] - 2026-11-10
 
@@ -1189,7 +1271,9 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.2-rc.1...HEAD
+[0.6.2-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2-rc.1
+[0.6.1]: https://github.com/aclater/sacdfs/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/aclater/sacdfs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1

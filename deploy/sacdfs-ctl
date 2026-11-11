@@ -110,7 +110,9 @@ start_unlocked() {
             echo "sacdfs started (pid $(cat "$PIDFILE")) on $SACDFS_MOUNT; log: $LOG"
             return 0
         fi
-        running_pid >/dev/null || break
+        # The process itself, not running_pid: until setsid has exec'd sacdfs, its name is
+        # still the shell's or setsid's, and a cold start (a new binary) was taken for a failure.
+        [ -d "/proc/$(cat "$PIDFILE")" ] || break
         sleep 1
         i=$((i + 1))
     done
@@ -131,7 +133,7 @@ stop_unlocked() {
         fi
         return 0
     fi
-    kill -TERM "$pid"
+    kill -s TERM "$pid"
     i=0
     while [ "$i" -lt "$WAIT" ]; do
         if [ ! -d "/proc/$pid" ] && [ -z "$(mount_type)" ]; then
@@ -144,7 +146,7 @@ stop_unlocked() {
     done
     echo "sacdfs did not stop within ${WAIT}s (a file on it is probably still open); forcing it" >&2
     [ -n "$(mount_type)" ] && umount -l "$SACDFS_MOUNT"
-    [ -d "/proc/$pid" ] && kill -KILL "$pid"
+    [ -d "/proc/$pid" ] && kill -s KILL "$pid"
     sleep 1
     rm -f "$PIDFILE"
     [ -z "$(mount_type)" ]
