@@ -1008,7 +1008,9 @@ On the shared host (5 rounds) the DSF worst read was 23.3 ms and 27.9 ms and the
 > **Withdrawn before release.** The change measured here (#323) was taken out again before 0.6.1:
 > with four whole-file copies starting at once on four cores, a player beside them stalled once for
 > 0.15 to 1.4 s in 4 of 16 runs, against none on 0.6.0 and none with the change reverted. Released
-> versions keep 0.6.0's pace rules. The figures below are kept for the follow-up in #271.
+> versions keep 0.6.0's pace rules. The figures below are kept for the follow-up in #271, which
+> brings the change back with a player-safe pace behind a network client; see
+> [A player beside copies starting together](#a-player-beside-copies-starting-together-271) below.
 
 A one-reader copy of WAV files through the Linux kernel SMB client was 8 to 11 % slower in 0.5.0
 and 0.6.0 than in 0.4.1. The cause was #252: Samba serves the client's 4 MiB reads concurrently, so
@@ -1039,6 +1041,69 @@ alternating; medians (range), seconds:
 - **Six channels** keep a gap of 4 % against 0.4.1, with ranges that don't overlap; it is under
   the 10 % that needs explaining and was not chased.
 - **Bytes:** all 122 DSF and WAV files of the three test images compare equal (`cmp`) with 0.6.0's.
+
+### A player beside copies starting together (#271)
+
+**Cause of the stall with #323.** An instrumented build logged every reader's switch between
+playing and reading for throughput. The kernel SMB client fetches a player's first 4 to 8 MiB at
+once and then keeps it 8 to 16 MiB ahead, so measured from where it started, the player read
+faster than 1.5 times its rate for its first 3 to 7 s. With #323 nothing restarted that
+measurement, so the player counted as reading for throughput all that time: in every run it
+switched at 0.5 s and only became a player again 2.5 to 7 s later. With no player counted, the
+four copies starting 1 s after it had none of the #230 rules applied to them; the player's reads
+took 100 to 300 ms each behind the copies' read-ahead, and once the client's read-ahead ran out
+one read stalled (149 to 1,485 ms, in 3 of 6 instrumented runs). 0.6.0 escaped it because every
+out-of-order read restarted the player's pace, which also made each copy count as a player more
+than half the time.
+
+**The change.** A reader whose reads land more than 2 MiB out of order is behind a network
+client; it reads for throughput only once it is also 32 MiB ahead of playing time, and until then
+it is *unsure* and plays only if no player has been reading since before it
+([design](design.md#read-ahead)). A first version without the last rule still stalled the
+player in 3 of 16 runs (221 to 771 ms): the starting copies counted as players for their first 1
+to 3 s and competed with it on equal terms.
+
+**How measured:** the same rig as above. A real-time 6-channel WAV player (128 KiB reads at
+3,175,200 B/s, from 15 % into a track nobody else reads) starts 1 s before 1 or 4 whole-file
+copies (`cat` to `/dev/null`) of other 6-channel WAV tracks through the kernel client (SMB
+3.1.1, loopback); a fresh container per run, pinned to 2 or 4 cores with 256 or 512 MiB, builds
+interleaved. Player: runs with a read over 100 ms, and the worst read. Copies: seconds until all
+end, median (range).
+
+| Cell | Runs (0.6.0 / #323 / this) | Reads over 100 ms | Worst read, ms | Copies, s |
+|---|---|---|---|---|
+| 4 copies, 4 cores | 8 / 16 / 16 | 0.6.0: 0 runs; #323: **4**; this: 0 | 15.0 / **1,385** / 14.8 | 72.45 (70.93-74.71) / 69.20 / **69.56** (66.21-71.99), -4.0 % |
+| 4 copies, 2 cores | 3 / 3 / 3 | 0 / 0 / 0 | 18.9 / 20.3 / 18.7 | 153.53 (153.33-153.54) / 139.09 / **136.18** (131.14-136.55), -11.3 % |
+| 1 copy, 4 cores | 9 / 6 / 9 | 0 / 0 / 0 | 14.1 / 12.6 / 13.3 | 11.18 (10.92-11.69) / 10.48 / **12.07** (11.47-12.80), **+8.0 %** |
+| 1 copy, 2 cores | 9 / 6 / 9 | 0 / 0 / 0 | 20.2 / 19.7 / 20.5 | 22.05 (20.77-23.31) / 22.48 / **23.25** (21.39-24.42), **+5.4 %** |
+| 1 copy alone, 4 cores | 9 / 6 / 9 | | | 10.02 (9.42-10.63) / 9.52 / **9.69** (9.18-10.24), -3.3 % |
+| 1 copy alone, 2 cores | 9 / 6 / 9 | | | 17.63 (17.29-18.94) / 18.06 / **18.27** (17.35-19.31), +3.6 % |
+
+The #323 column for 4 copies on 4 cores is the 0.6.1 gate's 16 runs; its other cells are from
+that gate's 3 runs and from 6 runs interleaved with this change.
+
+- **The player:** no read over 100 ms in any run of any cell, and the worst read within 15 % of
+  0.6.0's in each.
+- **Copies beside a player are slower with one copy (regression).** Now that the player counts as
+  one from about 1.2 s, the copy gets the #230 rules for the whole run: 8.0 % slower than 0.6.0
+  on 4 cores, 5.4 % on 2. 0.6.0 escaped them for more than half of each copy (it counted the copy
+  as a player), #323 for the player's first 3 to 7 s. It is the cost #230 accepted for scanners
+  beside a player (5 to 13 %); with four copies the gain from keeping the long read-ahead window
+  outweighs it.
+- **One copy alone, 2 cores:** +3.6 %, with ranges that overlap; #323 measured +2.4 % in the same
+  runs. Not chased.
+
+**The original #271 case, one reader copying a whole area** (same harness as the table above,
+4 rounds, medians (range), seconds):
+
+| One reader, kernel CIFS | 0.4.1 | 0.6.0 | This change |
+|---|---|---|---|
+| DST stereo WAV, 4.4 GB | 23.06 (21.97-23.08) | 25.22 (24.42-25.65), **+9.4 %** | **22.86** (22.13-22.96), -0.9 % |
+| DST 6 ch. WAV, 13.7 GB | 75.60 (75.15-76.06) | 81.41 (81.19-82.13), **+7.7 %** | **73.84** (73.54-74.32), -2.3 % |
+
+Percentages against 0.4.1. Measured on main before the core split (#22) with this change; the
+change was then rebased with no conflict in `src/track.rs`. Audio bytes were not compared in
+these runs: the change only decides when frames are decoded ahead, not what they hold.
 
 ## A player's import over SMB (#266)
 
