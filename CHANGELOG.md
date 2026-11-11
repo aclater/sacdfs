@@ -6,6 +6,24 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **WAV copies through the Linux kernel SMB client keep their pace again, and a player beside
+  starting copies stays first (#271).** Samba serves the kernel client's 4 MiB reads concurrently,
+  so they reach sacdfs up to 56 MiB out of order; since 0.5.0 each of those restarted the reader's
+  pace, and a copy kept switching between reading for throughput and playing. A jump is now a read
+  more than 64 MiB away, as in the withdrawn #323. Unlike #323, a reader whose reads land out of
+  order (behind a network client, whose own read-ahead keeps a player 8 to 16 MiB ahead) reads for
+  throughput only once it is 32 MiB ahead of playing time, and until then lets a player that was
+  there before it go first. Beside a 6-channel player at real time, four copies starting together no
+  longer stall it (0 of 16 runs over 100 ms, worst 14.8 ms, against 4 of 16 and up to 1.4 s with
+  #323; 0.6.0: 0 of 8, 15.0 ms), and finish 4 % (4 cores) to 11 % (2 cores) sooner than on 0.6.0.
+  **Slower:** one copy beside a player takes 5 to 8 % longer than on 0.6.0, which counted that copy
+  as a player most of the time; it now gets the player-first rules of #230 throughout. One reader
+  copying a whole area over SMB is as fast as 0.4.1 again: stereo WAV 22.86 s (0.6.0 25.22 s, 0.4.1
+  23.06 s), six channels 73.84 s (81.41 s, 75.60 s). Local reads keep 0.6.0's rules. The change
+  decides only when frames are decoded ahead, not what they hold. Needs a soak in the next release
+  ([performance](docs/performance.md#a-player-beside-copies-starting-together-271)).
+
 ## [0.6.1] - 2026-11-11
 
 Tested on main against 0.6.0; the results are in docs/test-plan.md ("Results: 0.6.1 gate").
