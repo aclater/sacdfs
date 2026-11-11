@@ -58,30 +58,18 @@ jobs:
     name: soak (corpus, 20 min)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    container:
-      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh. FUSE: the device and the right to mount.
-      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
-      options: --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined
-    defaults:
-      run:
-        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
-      - name: Packages
-        shell: bash
-        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 python3 procps-ng && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
-        shell: bash
-        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: false
-          prefix-key: v0-rust-ubi10
-      - name: The restored cache to the build user
-        shell: bash
-        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
       - run: cargo build --locked --release
       - name: Soak
         run: |
@@ -89,9 +77,9 @@ jobs:
           for i in dsd-stereo-mch-2048 dst-features-2ch-6ch dst-features-4ch album-set-disc-2-of-3; do
             ln -s "$PWD/tests/corpus/images/$i.iso" target/soak-images/
           done
-          # The work directory is where the soak mounts: under the runner's temporary directory,
-          # as before the job moved into a container (on the runner itself, fusermount3 was
-          # refused a mount under /var/tmp, probably by Ubuntu's AppArmor profile).
+          # The work directory is where the soak mounts. Not the default under /var/tmp: on this
+          # runner fusermount3 is refused a mount there ("Permission denied"; probably Ubuntu's
+          # AppArmor profile for it, not checked); under the runner's home it mounts.
           python3 -I scripts/soak.py --sacdfs target/release/sacdfs --images target/soak-images \
             --work "$RUNNER_TEMP/soak-work" --sample-paths --hours 0.33 --interval 30 --warmup 300 --cache-mb 16 --out target/soak.tsv
       - name: Soak logs (sacdfs's stderr and log, from the work directory)

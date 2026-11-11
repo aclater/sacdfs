@@ -28,8 +28,9 @@ the container instead: cargo-deny as its release binary and zizmor from PyPI, ea
 and hash. Jobs that drive Docker on the host stay on the runner: the container share test (the image
 itself is built on UBI 10 and Fedora 44), the release's image and UBI 7 checks, and the NFS export
 job, which loads `nfsd` and runs its server in a Fedora container. The informational benchmark
-also stays on the runner: in a container on GitHub's runner its `fusermount3` mounts were refused
-("Permission denied") while the test jobs' mounts worked, cause not found.
+and the weekly soak also stay on the runner: in a container on GitHub's runner their release
+build's `fusermount3` mounts were refused ("Permission denied") while the test jobs' mounts worked;
+cause not found.
 
 To run a job's tests the same way locally:
 
