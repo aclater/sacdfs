@@ -118,6 +118,8 @@ most when the images are on a network share, where each read is a round trip.
 If files are still open, or an NFS server still exports the mount, the mount is detached
 instead, as `umount -l` would: it disappears at once, the open files still read, and sacdfs
 stops when the last one is closed, or when `--stop-grace` seconds (10 by default) have passed.
+Unmounted from outside, sacdfs exits with status 0 too (before #322 a detach could end it with
+"Software caused connection abort" and status 1).
 
 ### Stopping with files open
 

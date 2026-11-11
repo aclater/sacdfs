@@ -882,6 +882,17 @@ gocryptfs, ratarmount and others):
   SIGHUP does what SIGTERM does: sacdfs has nothing to reload, and a foreground sacdfs whose
   terminal closes should not leave a mount behind; the daemon is in its own session, so a
   terminal closing doesn't reach it.
+- **The handlers go in with the signals blocked, before any thread exists** (#334). *Why:*
+  signal-hook installs a handler before it records where the handler sends the signal, and a
+  signal that arrives in between is dropped: it neither ends the process nor reaches sacdfs's
+  signal thread. A sacdfs stopped right after its start then mounted and ran on until killed
+  (3 of 200 loaded runs of the mount test, each 60 starts and stops). Blocked, a signal waits
+  and is delivered to the complete handler when the block is lifted (`src/stop_signals.rs`). The
+  block holds for the calling thread only, so this runs right after the fork into the
+  background, before the first thread: no other thread could take the signal. A signal from
+  there to the mount stops sacdfs without mounting (exit 0) instead of killing it.
+  `tests/stop_signals.rs` sends SIGTERM into the registration 2000 times: without the block
+  about 2 % were lost, with it none.
 
 **Cost.** Mounting hashes every source directory and image name once and keeps one map entry
 per directory and image (tens of bytes each). The node table is a hash map by inode number.
@@ -1450,8 +1461,13 @@ changes (#205, after 0.5.0):
   kernel client kept a leased folder's listing for as long as it went on using it: a new image did not
   show while its folder was listed every few seconds, and showed after 45 s without a listing. *Trade-off:*
   about 2 % more SMB2 requests from that client for a repeated `ls -lR` (5 % for `find`), none more to
-  sacdfs. *Why not `kernel change notify`:* it watches with inotify, which reports changes made through
-  the kernel, not those a FUSE daemon makes itself (from how inotify works; not tried).
+  sacdfs. *Why not `kernel change notify`, or FUSE invalidations from sacdfs (#325):* Samba breaks a
+  directory lease only for changes made through Samba; inotify answers change-notify requests and never
+  breaks a lease, and FUSE has no way to raise inotify for an entry the daemon adds. Tried: with leases
+  and `kernel change notify = yes`, the Linux client missed a new image for over 155 s on the sacdfs
+  share and on a plain folder shared by the same Samba ([deployment](deployment.md#what-a-listing-costs-over-smb)).
+  Windows misses it too with leases on, so leases stay off, at the cost of about four folder opens per
+  file in a Windows thumbnail pass (#312).
 
 *Measured* with fuser's request log through the container's Samba 4.24.7 (the Linux kernel client in a
 VM, 93 images with their art, 357 folders, 2,484 entries): an `ls -lR` repeated 30 s later costs 2,776

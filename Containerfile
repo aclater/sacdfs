@@ -19,6 +19,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY src src
 COPY benches benches
 COPY examples examples
+# Cargo.toml declares this test's target (no libtest harness, #334), and cargo wants the file of
+# every declared target, even to build only the binary.
+COPY tests/stop_signals.rs tests/stop_signals.rs
 # Generic x86-64 by default, set explicitly: RHEL 10's Rust targets x86-64-v3 (AVX2) unless
 # told otherwise, and many NAS CPUs (Atom, Celeron, Pentium Silver) have no AVX2. The PCM
 # converter still uses AVX2 where the CPU has it (runtime dispatch, #23). Pass
