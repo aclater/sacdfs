@@ -45,6 +45,12 @@ fn snapshot(lib: &Path, engine: &Engine) -> Snapshot {
         .collect()
 }
 
+/// `tags::install` sets a process-wide store; the tests here must not overlap while one is set.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn library() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let lib = dir.path().join("lib");
@@ -63,6 +69,7 @@ fn sha(path: &Path) -> Vec<u8> {
 
 #[test]
 fn import_then_serve() {
+    let _g = serial();
     let (dir, lib) = library();
     let engine = Engine::new(2, 32 << 20).unwrap();
     let before = snapshot(&lib, &engine);
@@ -220,6 +227,7 @@ fn frame(tag: &mut Vec<u8>, id: &[u8; 4], body: &[u8]) {
 
 #[test]
 fn key_command_and_mount_with_tags() {
+    let _g = serial();
     let (dir, lib) = library();
     let tags_dir = dir.path().join("tags");
     fs::create_dir_all(&tags_dir).unwrap();
@@ -283,6 +291,7 @@ fn key_command_and_mount_with_tags() {
 /// wasn't, with what could be done done and the rows written, and 1 when it couldn't run.
 #[test]
 fn import_exit_status() {
+    let _g = serial();
     let (dir, lib) = library();
     fs::remove_file(lib.join(format!("{OTHER}.iso"))).unwrap();
     let image = lib.join(format!("{TAGGED}.iso"));
