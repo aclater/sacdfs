@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-11
+
+Tested as release candidate 0.6.2-rc.1; the results are in docs/test-plan.md ("Results: 0.6.2-rc.1
+gate"). On top of rc.1, the release archive's Compose file now names the release's own image, and CI
+runs in Red Hat-derived containers. Everything else is in the 0.6.2-rc.1 section below. Known: with
+a CPU too slow to decode several copies at real time, a player beside four copies over SMB stalls
+longer than on 0.6.1 (#357); it stalls on 0.6.1 too.
+
 ### Changed
 - **CI builds and tests in Red Hat-derived containers.** The jobs that build or test sacdfs (lint,
   tests on x86-64 and arm64, MSRV, coverage, fuzzing, the weekly memcheck)
@@ -13,6 +21,11 @@ All notable changes to sacdfs are recorded here. The format follows
   the FUSE tests mounting as before. cargo-deny and zizmor are installed in a UBI container,
   pinned by version and hash, instead of running their vendors' images (cargo-deny's is Alpine).
   CI only; nothing shipped changes ([development](docs/development.md#ci-containers)).
+
+### Fixed
+- **The release archive's Compose file names that release's image.** `nas-compose.yaml` in the
+  archive is now stamped with the release version, as `install.sh` is. In 0.6.2-rc.1 it named
+  0.6.1, so the installer's container route ran 0.6.1 unless given `--version`.
 
 ## [0.6.2-rc.1] - 2026-11-11
 
@@ -1273,7 +1286,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.2-rc.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2
 [0.6.2-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2-rc.1
 [0.6.1]: https://github.com/aclater/sacdfs/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/aclater/sacdfs/compare/v0.5.0...v0.6.0
