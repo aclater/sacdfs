@@ -912,7 +912,7 @@ impl Reader {
     }
 
     /// Notes that a read arrived, as soon as it does and before it waits for a thread: it is in
-    /// progress until the result drops, after its reply ([`CLIENT_PAUSE`], [`Seen::lately`]).
+    /// progress until the result drops, after its reply (`CLIENT_PAUSE`, `Seen::lately`).
     pub fn arrived(self: &Arc<Self>) -> Arrival {
         self.arrived_at(std::time::Instant::now())
     }
