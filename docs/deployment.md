@@ -1070,6 +1070,16 @@ sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,guest,vers=3.1.1
 sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,uid=$(id -u)
 ```
 
+**Add `rsize=262144` to an SMB mount that a player scans or that copies files** (#266). The
+kernel client's reads are then 256 KiB at most and its read-ahead 512 KiB (by default 4 and 8 MiB),
+so it fetches far less audio around a tag reader's reads. On a
+NAS, a header-and-tags scan then made sacdfs serve 262 KB per file instead of 1,835 KB and used
+about a seventh of the CPU, copies of WAV files ran at 101 to 109 MB/s instead of 51 to 81, and a
+player's reads were unchanged. `cache=none` cuts a scan further (99 KB per file), but then every
+read waits a round trip. If every client is Linux, the share can do it for all of them instead:
+`SMB_EXTRA_GLOBAL=smb2 max read = 262144` (same scan figures). Measured on 0.6.2 with a Linux 6.19 client
+([performance](performance.md#client-settings-on-a-nas-062)).
+
 File managers open `smb://nas/sacd` directly.
 
 #### On other ports

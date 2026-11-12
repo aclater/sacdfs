@@ -41,7 +41,10 @@ on 0.4.0. See [Details](#details).
 
    *You should see* nothing: the prompt comes back. If the server has a user name and password
    (`SMB_USER`), use [a password file](#a-password-for-smb) instead of `guest`. If the server uses
-   other ports, add [the ports](#on-other-ports).
+   other ports, add [the ports](#on-other-ports). If a music player scans the share, or you copy
+   from it, add `,rsize=262144` to the SMB options: a scan then costs the server about a seventh,
+   and copies were faster (measured on 0.6.2,
+   [why](../deployment.md#linux)).
 
 4. **To mount at every start,** add **one** of these lines to the end of `/etc/fstab` (open it with
    `sudo nano /etc/fstab`), then type `sudo systemctl daemon-reload && sudo mount -a`:
