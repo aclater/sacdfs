@@ -1360,6 +1360,27 @@ decoding them twice.
   together let the first of them play until it is 32 MiB ahead. A local reader that seeks back
   less than 64 MiB counts as behind a network client from then on, which can only make it more
   of a player.
+- **On a server too slow for all its readers (#357).** Behind a network client, a reader that
+  reads no faster than a player still reads for throughput while a player has been reading since
+  before it, until its client *pauses*: a read arrives after none of its reads was in progress
+  for 0.5 s. A read is in progress from its arrival, before it waits for a thread, until its
+  reply. A player also counts while it waits for a read, and for 5 s after it was last heard
+  from (other readers: 1 s). *Why:* on a server that cannot decode the copies and a player at
+  real time (four 6-channel copies on 2 slow cores), every reader reads at about the rate the
+  server allows, so pace can't tell a copy from a player. From their first seconds, or from their
+  start, the copies counted as players: the player had no precedence, and five readers each read
+  ahead a player's 2 s window, which a 16 MiB cache could not hold. Frames evicted before they
+  were read were converted again, 62 % of all conversions, and the player's worst read was 3
+  times 0.6.1's. *Why a pause tells them apart:* the kernel SMB client fetches a player's audio
+  in bursts about a second apart, answered in milliseconds when the server keeps up, while a
+  copy's client always has reads outstanding (instrumented runs: no copy paused, the player
+  paused about once every 3 s). *Why a player counts while it waits, and for 5 s:* a player
+  stalled for more than a second dropped off the list, so the copies counted as players again
+  and stalled it longer; its requests can also wait in the client or the SMB server, with none
+  at sacdfs. *Trade-off:* a second player that starts while another plays, on a server too slow
+  for both, reads behind the first until its client pauses; a reader whose client pauses once
+  counts as a player until it jumps; and copies beside a player that has just stopped or paused,
+  without closing its file, keep the player-first rules for up to 5 s.
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.

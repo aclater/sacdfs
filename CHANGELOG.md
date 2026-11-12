@@ -6,6 +6,16 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A player beside copies on a server too slow for them all no longer stalls longer than in
+  0.6.1 (#357).** Behind a network client, copies reading at about a player's rate counted as
+  players, so the player lost its precedence and every reader read ahead a player's window,
+  which overflowed the cache: most frames were converted twice. A reader behind a network client
+  now keeps reading for throughput while an earlier player reads, until its client pauses, and a
+  player counts while it waits for a read. Over SMB, four copies beside a player on 2 slow cores:
+  see [performance](docs/performance.md#a-player-beside-copies-on-a-slow-server-357) for the
+  figures. Audio bytes are unchanged: only when frames are decoded ahead changes.
+
 ## [0.6.2] - 2026-11-11
 
 Tested as release candidate 0.6.2-rc.1; the results are in docs/test-plan.md ("Results: 0.6.2-rc.1

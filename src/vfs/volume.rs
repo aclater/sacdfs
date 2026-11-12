@@ -388,6 +388,8 @@ impl Volume {
             reply.fail(Error::Io);
             return;
         };
+        // In progress from now, while it may wait for a thread, until after its reply (#357).
+        let arrival = reader.arrived();
         let engine = self.engine.clone();
         let pool = self.requests.clone();
         let what = What::new("read", ReadOf { reader: reader.clone(), offset, size });
@@ -400,6 +402,7 @@ impl Volume {
             match result {
                 Ok(Ok((data, ahead))) => {
                     reply.data(&data);
+                    drop(arrival);
                     crate::track::give_back(data);
                     if let Some(ahead) = ahead {
                         pool.spawn(move || {
