@@ -7,7 +7,8 @@ the guide for that system does. Log in to the NAS or Linux computer over SSH, an
 the path to the folder that holds your SACD images, the `.iso` files):
 
 ```sh
-curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /volume1/music
+curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
+  | sudo sh -s -- --iso-dir /volume1/music
 ```
 
 Leave out `sudo` if you are already root (`id -u` prints `0`; on QNAP the `admin` login is). Add

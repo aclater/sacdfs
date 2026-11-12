@@ -15,7 +15,8 @@ player or music server. Nothing is extracted: keep the ISOs, delete the extracte
 On your NAS or Linux computer, over SSH (use the folder that holds your `.iso` files):
 
 ```sh
-curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /volume1/music
+curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
+  | sudo sh -s -- --iso-dir /volume1/music
 ```
 
 It works out what it runs on and sets sacdfs up to match. Add `--dry-run` to see what it would
