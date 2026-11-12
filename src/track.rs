@@ -1070,11 +1070,11 @@ impl Reader {
         let traffic = engine.traffic();
         // An unsure reader behind a network client may be a copy starting or a player whose
         // client read ahead: it plays only if no player has been reading since before it (#271).
-        // So does a slow one whose client has not paused: on a server too slow for all, a copy
-        // reads no faster than a player (#357).
+        // So does a slow one whose client has not paused, once it has read enough to judge: on a
+        // server too slow for all, a copy reads no faster than a player (#357).
         let after_a_player = || s.pace_from.is_some_and(|(t, _)| traffic.players.any_before(self.id, t, now));
         let throughput = match self.pace(&s, now) {
-            Pace::Slow => s.networked && !s.paused && after_a_player(),
+            Pace::Slow => s.networked && !s.paused && s.paced >= FAST_AFTER && after_a_player(),
             Pace::Fast => true,
             Pace::Unsure => after_a_player(),
         };
@@ -1373,6 +1373,7 @@ mod tests {
             let mut s = copy.seq.lock().unwrap();
             s.pace_from = Some((std::time::Instant::now() - std::time::Duration::from_secs(30), 0));
             s.started = s.pace_from;
+            s.paced = s.paced.max(FAST_AFTER);
             assert_eq!(copy.pace(&s, std::time::Instant::now()), Pace::Slow);
         };
         read(4 << 20);
@@ -1400,6 +1401,19 @@ mod tests {
         slow();
         read(512 << 10);
         assert!(copy.player.load(Ordering::Relaxed), "until it jumps");
+
+        // A reader starting behind a network client is not judged before it read 4 MiB.
+        let starting = Arc::new(Reader::new(f.clone()));
+        {
+            let mut s = starting.seq.lock().unwrap();
+            s.started = Some((std::time::Instant::now() - PLAYER_AFTER, 0));
+        }
+        for off in [2u64 << 20, 0] {
+            let _arrival = starting.arrived();
+            starting.plan_read_ahead(&engine, off, off + (128 << 10), 0, 1);
+        }
+        assert!(starting.seq.lock().unwrap().networked);
+        assert!(starting.player.load(Ordering::Relaxed), "too early to tell: a player");
     }
 
     /// A reader on the list counts while it is heard from lately or waits for a read (#357).
