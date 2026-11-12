@@ -3,7 +3,8 @@
 ## The installer: one line
 
 Since 0.6.2, an installer finds out what it runs on and sets sacdfs up the way
-the guide for that system does. Log in to the NAS or Linux computer over SSH, and type (change
+the guide for that system does. It runs on Linux only, so not on a Mac or Windows PC: those
+play the discs over the network. Log in to the NAS or Linux computer over SSH, and type (change
 the path to the folder that holds your SACD images, the `.iso` files):
 
 ```sh

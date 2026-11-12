@@ -7,6 +7,11 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Installer: on macOS, or any system other than Linux, it now stops at once and says sacdfs
+  runs on Linux only.** Before, it reported "Linux detected", downloaded the Linux release and
+  stopped only when that binary failed to run, with a hint about glibc. It changed nothing then
+  either. Now it stops before any download, and points to playing the discs from a Linux NAS
+  or computer over the network.
 - **Installer: a download cut short now fails with an error (#352).** If the script piped into
   `sh` ends before its last line, it stops with status 1 and says the download was cut short,
   instead of exiting 0 having done nothing. The install guide now gives the `wget` form as
