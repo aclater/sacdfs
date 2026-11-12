@@ -3,7 +3,8 @@
 # run, an install, a second run that must change nothing, and an uninstall:
 #   - in containers: BusyBox only (sh is BusyBox ash, BusyBox wget), BusyBox with no C library
 #     (the script must refuse before changing anything), Fedora 44, and UBI 7 (glibc 2.17);
-#   - on the runner as root: with the systemd unit, and with Docker Compose.
+#   - on the runner as root: with the systemd unit, and with Docker Compose;
+#   - in the BusyBox and Fedora containers, a failed or cut-short download must fail loudly (#352).
 # See deploy/ci-install-test.sh.
 name: installer
 
@@ -38,8 +39,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends devscripts busybox-static dash
-          shellcheck -s sh deploy/install.sh deploy/ci-install-steps.sh deploy/sacdfs-ctl
-          checkbashisms -p deploy/install.sh deploy/ci-install-steps.sh deploy/sacdfs-ctl
+          shellcheck -s sh deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/sacdfs-ctl
+          checkbashisms -p deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/sacdfs-ctl
           dash -n deploy/install.sh
           busybox sh -n deploy/install.sh
           # No terminal, no --iso-dir: an error that shows the usage, never a prompt.

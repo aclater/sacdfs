@@ -6,6 +6,17 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Installer: a download cut short now fails with an error (#352).** If the script piped into
+  `sh` ends before its last line, it stops with status 1 and says the download was cut short,
+  instead of exiting 0 having done nothing. The install guide now gives the `wget` form as
+  download, then run (`wget -O install.sh … && sh install.sh …`), so a failed download stops
+  before `sh`: piped into `sh`, an empty download still exits 0, which no script can detect. CI
+  checks both in the BusyBox and Fedora containers.
+- **Installer: `--uninstall` on QNAP switches "Run user defined processes" off again when the
+  installer switched it on (#353).** The installer records that it did, and `--uninstall` switches
+  it off only then, and only if `autorun.sh` runs nothing else; otherwise it says why it left it on.
+
 ## [0.6.2] - 2026-11-11
 
 Tested as release candidate 0.6.2-rc.1; the results are in docs/test-plan.md ("Results: 0.6.2-rc.1

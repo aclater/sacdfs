@@ -15,6 +15,10 @@
 # shows every change and makes none; nothing is ever written under --iso-dir.
 # docs/install/README.md says what was checked where.
 
+# A download cut short (a pipe into sh that ends early) must not look like success: until
+# main, on the last line, clears it, this makes any end of the script an error (#352).
+trap 'printf "install.sh: the script ended before its last line: the download was cut short, and nothing was changed. Download it again.\n" >&2; exit 1' EXIT
+
 DEFAULT_VERSION=0.6.0 # set to the release's version when the release packs this file
 REPO=aclater/sacdfs
 # Where releases are downloaded from: GitHub, or a mirror with the same layout
@@ -488,6 +492,9 @@ hook_install() {
         qnap)
             if [ "$(getcfg Misc Autorun -f /etc/config/uLinux.conf 2>/dev/null)" != TRUE ]; then
                 run setcfg Misc Autorun TRUE -f /etc/config/uLinux.conf
+                # Remembered, so that --uninstall switches it off again, and only then (#353).
+                say "# Written by install.sh (sacdfs): it switched on QNAP's \"Run user defined processes\"; --uninstall switches it off." >"$TMP/autorun-mark"
+                put "$TMP/autorun-mark" "$AUTORUN_MARK" 0644
             else
                 say "  run user defined processes: already on"
             fi
@@ -510,7 +517,21 @@ hook_remove() {
             done
             ;;
         asustor) remove /usr/local/etc/init.d/K01sacdfs /usr/local/etc/init.d/S99sacdfs ;;
-        qnap) qnap_autorun remove ;;
+        qnap)
+            qnap_autorun remove
+            # "Run user defined processes": off again only if this script switched it on and
+            # autorun.sh holds nothing else to run (#353).
+            if [ "$(getcfg Misc Autorun -f /etc/config/uLinux.conf 2>/dev/null)" = TRUE ]; then
+                if [ ! -f "$AUTORUN_MARK" ]; then
+                    say "  run user defined processes: left on (this installer didn't switch it on)"
+                elif grep -v '^[[:space:]]*#' "$TMP/autorun.sh" | grep -q '[^[:space:]]'; then
+                    say "  run user defined processes: left on (autorun.sh runs other things too)"
+                else
+                    run setcfg Misc Autorun FALSE -f /etc/config/uLinux.conf
+                fi
+            fi
+            remove "$AUTORUN_MARK"
+            ;;
     esac
 }
 qnap_autorun() {
@@ -645,6 +666,8 @@ parse_args() {
 }
 
 main() {
+    # The whole script arrived (see the trap at the top).
+    trap - EXIT
     # SELF: this script's file, when it runs from one; empty when it is piped into sh.
     SELF='' SRC=''
     case $0 in */install.sh | install.sh) [ -f "$0" ] && SELF=$0 ;; esac
@@ -820,6 +843,8 @@ main() {
     # two marker lines is ours; whatever else the file holds stays.
     BEGIN_MARK="# sacdfs install.sh: begin"
     END_MARK="# sacdfs install.sh: end"
+    # There when this script switched autorun on (see hook_install).
+    AUTORUN_MARK=$PREFIX/qnap-autorun-switched-on
 
     # ---------------------------------------------------------------------------------------
 
