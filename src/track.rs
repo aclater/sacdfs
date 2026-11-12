@@ -2,7 +2,7 @@
 
 //! A track shown as a DSF or WAV file, and reading byte ranges of it.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use scarletbook::Track;
@@ -65,27 +65,75 @@ const YIELD_MAX: std::time::Duration = std::time::Duration::from_millis(50);
 /// paused needs no share of the cache, and it gets one back at its next read.
 const FAST_READER_IDLE: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// A player not heard from for this long, with no read in progress, no longer counts
+/// ([`Traffic`]). *Why longer than [`FAST_READER_IDLE`] (#357):* on a server too slow for a
+/// player and the copies beside it, the player's client could go more than a second without a
+/// read reaching sacdfs, while its own requests waited in the client or in the SMB server. The
+/// copies then counted as players for a while, read ahead as players and stalled it for longer.
+const PLAYER_IDLE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// A list of readers at the moment: those reading for throughput, which share what the cache can
 /// hold ahead of them, or the players ([`Traffic`]). Asked once per read; the list is as long as
 /// the readers.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FastReaders {
-    /// Each reader, when it was last heard from, and since when its pace is measured.
-    seen: Mutex<Vec<(u64, std::time::Instant, std::time::Instant)>>,
+    seen: Mutex<Vec<Seen>>,
+    /// How long one not heard from, with no read in progress, still counts.
+    idle: std::time::Duration,
+}
+
+impl Default for FastReaders {
+    fn default() -> Self {
+        Self::with_idle(FAST_READER_IDLE)
+    }
+}
+
+/// A reader on a [`FastReaders`] list.
+#[derive(Debug)]
+struct Seen {
+    id: u64,
+    /// When it was last heard from.
+    at: std::time::Instant,
+    /// Since when its pace is measured.
+    since: std::time::Instant,
+    /// Its reads in progress, if counted ([`Reader::arrived`]).
+    reads: Option<Arc<AtomicU32>>,
+}
+
+impl Seen {
+    /// Whether it still counts: heard from lately, or waiting for a read. *Why a read in
+    /// progress counts (#357):* a player that waits seconds for a read is still playing. Left
+    /// to expire, it let the copies beside it count as players and read ahead as one, which
+    /// stalled it longer.
+    fn lately(&self, now: std::time::Instant, idle: std::time::Duration) -> bool {
+        now.saturating_duration_since(self.at) < idle
+            || self.reads.as_ref().is_some_and(|r| r.load(Ordering::Relaxed) > 0)
+    }
 }
 
 impl FastReaders {
-    /// Notes that reader `id` is fast now, and says how many are.
-    fn note(&self, id: u64, now: std::time::Instant) -> usize {
-        self.note_since(id, now, now)
+    /// An empty list whose readers count for `idle` after they were last heard from.
+    fn with_idle(idle: std::time::Duration) -> Self {
+        FastReaders { seen: Mutex::default(), idle }
     }
 
-    /// Notes that reader `id`, whose pace is measured since `since`, is on the list now, and
-    /// says how many are.
-    fn note_since(&self, id: u64, now: std::time::Instant, since: std::time::Instant) -> usize {
+    /// Notes that reader `id` is fast now, and says how many are.
+    fn note(&self, id: u64, now: std::time::Instant) -> usize {
+        self.note_since(id, now, now, None)
+    }
+
+    /// Notes that reader `id`, whose pace is measured since `since` and whose reads in
+    /// progress are `reads`, is on the list now, and says how many are.
+    fn note_since(
+        &self,
+        id: u64,
+        now: std::time::Instant,
+        since: std::time::Instant,
+        reads: Option<Arc<AtomicU32>>,
+    ) -> usize {
         let mut seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
-        seen.retain(|(i, t, _)| *i != id && now.saturating_duration_since(*t) < FAST_READER_IDLE);
-        seen.push((id, now, since));
+        seen.retain(|r| r.id != id && r.lately(now, self.idle));
+        seen.push(Seen { id, at: now, since, reads });
         seen.len()
     }
 
@@ -93,20 +141,22 @@ impl FastReaders {
     /// `since` ([`Reader::pace`]).
     fn any_before(&self, id: u64, since: std::time::Instant, now: std::time::Instant) -> bool {
         let seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
-        seen.iter()
-            .any(|(i, t, s)| *i != id && *s < since && now.saturating_duration_since(*t) < FAST_READER_IDLE)
+        seen.iter().any(|r| r.id != id && r.since < since && r.lately(now, self.idle))
     }
 
     /// Reader `id` closed. *Why not left to expire:* a `cp` opens the next file at once, and
     /// would count as several readers, with a short window, for its whole run.
     fn forget(&self, id: u64) {
-        self.seen.lock().unwrap_or_else(|p| p.into_inner()).retain(|(i, _, _)| *i != id);
+        self.seen.lock().unwrap_or_else(|p| p.into_inner()).retain(|r| r.id != id);
     }
 
-    /// Whether any reader has been heard from lately.
+    /// Whether any reader has been heard from in the last [`FAST_READER_IDLE`], or waits for a
+    /// read. *Why not the list's own `idle`:* a player's client fetches in bursts about a second
+    /// apart, and the #230 rules need not hold the readers beside it between them; only which
+    /// reader goes first does ([`FastReaders::any_before`]).
     fn any(&self, now: std::time::Instant) -> bool {
         let seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
-        seen.iter().any(|(_, t, _)| now.saturating_duration_since(*t) < FAST_READER_IDLE)
+        seen.iter().any(|r| r.lately(now, FAST_READER_IDLE))
     }
 }
 
@@ -135,7 +185,7 @@ fn faster_than_a_player(read: u64, secs: f64, byte_rate: f64) -> bool {
 ///    waits for a slice, not for a window of frames.
 ///
 /// With no player active they do none of this, so a scan alone costs what it did.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Traffic {
     /// Readers for throughput. Their read-ahead windows share a quarter of the cache.
     fast: FastReaders,
@@ -144,6 +194,17 @@ pub struct Traffic {
     /// Players' requests decoding now.
     decoding: Mutex<usize>,
     done: Condvar,
+}
+
+impl Default for Traffic {
+    fn default() -> Self {
+        Traffic {
+            fast: FastReaders::default(),
+            players: FastReaders::with_idle(PLAYER_IDLE),
+            decoding: Mutex::default(),
+            done: Condvar::default(),
+        }
+    }
 }
 
 impl Traffic {
@@ -210,6 +271,13 @@ const NETWORK_REORDER: u64 = 2 << 20;
 /// *Why only behind a network client:* a scanner reading files locally would be unsure for most
 /// of a short file.
 const PACE_LEAD: u64 = 32 << 20;
+
+/// A read arriving after the reader had none in progress for this long shows that its client
+/// paused: what is behind it is paced by playback ([`Seq::paused`]). *Why this long (#357):* the
+/// Linux kernel SMB client fetches a player's audio in bursts about a second apart, each answered
+/// in milliseconds when the server keeps up; a copy's client keeps several reads outstanding, so
+/// one is always in progress.
+const CLIENT_PAUSE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Reads that end within this many bytes of where a file's first read of audio started
 /// start no read-ahead: that is the kernel's own read-ahead of a first read (128 KiB, then
@@ -746,6 +814,37 @@ struct Seq {
     started: Option<(std::time::Instant, u64)>,
     /// Frames below this one (file index) are given up already ([`Engine::give_up`]).
     given_up: u32,
+    /// Whether its client has paused since it last jumped ([`CLIENT_PAUSE`]). *Why (#357):*
+    /// on a server too slow for a player and the copies beside it, every reader reads at about
+    /// the rate the server allows, so pace alone can't tell a copy from a player: copies counted
+    /// as players after their first seconds, or from their start. The player then had no
+    /// precedence, and every reader read ahead a player's window, which overflowed a small cache:
+    /// frames evicted before they were read were converted again. The player's worst read was 3
+    /// times 0.6.1's. A copy's client never pauses; a player's does whenever the server keeps up.
+    paused: bool,
+}
+
+/// A reader's reads in progress, from their arrival to their reply ([`Reader::arrived`]).
+#[derive(Debug, Default)]
+struct Flight {
+    /// Since when none has been in progress, if one ever was.
+    idle_from: Option<std::time::Instant>,
+    /// Whether one arrived after none had been in progress for [`CLIENT_PAUSE`], since this
+    /// was last asked ([`Reader::paused`]).
+    paused: bool,
+}
+
+/// A read of a [`Reader`] in progress, until it drops ([`Reader::arrived`]).
+#[derive(Debug)]
+pub struct Arrival(Arc<Reader>);
+
+impl Drop for Arrival {
+    fn drop(&mut self) {
+        let mut f = self.0.flight.lock().unwrap_or_else(|p| p.into_inner());
+        if self.0.reads.fetch_sub(1, Ordering::Relaxed) == 1 {
+            f.idle_from = Some(std::time::Instant::now());
+        }
+    }
 }
 
 /// An open file: the file and its own demultiplexer state (and, for a WAV file, its last
@@ -756,6 +855,9 @@ pub struct Reader {
     pub file: Arc<TrackFile>,
     stream: Mutex<Stream>,
     seq: Mutex<Seq>,
+    /// Reads in progress ([`Reader::arrived`]).
+    reads: Arc<AtomicU32>,
+    flight: Mutex<Flight>,
     id: u64,
     /// Where it was counted, if it was.
     counted: OnceLock<Arc<Traffic>>,
@@ -781,6 +883,8 @@ impl Reader {
             file,
             stream: Mutex::new(Stream::default()),
             seq: Mutex::new(Seq::default()),
+            reads: Arc::default(),
+            flight: Mutex::new(Flight::default()),
             id: NEXT_READER.fetch_add(1, Ordering::Relaxed),
             counted: OnceLock::new(),
             throughput: AtomicBool::new(false),
@@ -805,6 +909,28 @@ impl Reader {
         // not make the file decode (and convert) its first seconds in the background.
         let ahead = if k0 < k1 { self.plan_read_ahead(engine, offset, end, k0, k1) } else { None };
         Ok((data, ahead))
+    }
+
+    /// Notes that a read arrived, as soon as it does and before it waits for a thread: it is in
+    /// progress until the result drops, after its reply (`CLIENT_PAUSE`, `Seen::lately`).
+    pub fn arrived(self: &Arc<Self>) -> Arrival {
+        self.arrived_at(std::time::Instant::now())
+    }
+
+    fn arrived_at(self: &Arc<Self>, now: std::time::Instant) -> Arrival {
+        let mut f = self.flight.lock().unwrap_or_else(|p| p.into_inner());
+        if self.reads.fetch_add(1, Ordering::Relaxed) == 0
+            && f.idle_from.is_some_and(|t| now.saturating_duration_since(t) >= CLIENT_PAUSE)
+        {
+            f.paused = true;
+        }
+        drop(f);
+        Arrival(self.clone())
+    }
+
+    /// Whether the reader's client has paused since this was last asked ([`Flight::paused`]).
+    fn paused(&self) -> bool {
+        std::mem::take(&mut self.flight.lock().unwrap_or_else(|p| p.into_inner()).paused)
     }
 
     /// Decodes the frames of `ahead` into the cache, if they are not there already.
@@ -925,6 +1051,7 @@ impl Reader {
             s.ahead_until = 0;
         }
         if jumped {
+            s.paused = false;
             s.given_up = k0;
             s.pace_from = Some((std::time::Instant::now(), offset));
             s.paced = 0;
@@ -936,14 +1063,20 @@ impl Reader {
         if let Some((_, from)) = s.pace_from.as_mut() {
             *from = (*from).min(offset);
         }
+        if self.paused() {
+            s.paused = true;
+        }
         let now = std::time::Instant::now();
         let traffic = engine.traffic();
         // An unsure reader behind a network client may be a copy starting or a player whose
         // client read ahead: it plays only if no player has been reading since before it (#271).
+        // So does a slow one whose client has not paused, once it has read enough to judge: on a
+        // server too slow for all, a copy reads no faster than a player (#357).
+        let after_a_player = || s.pace_from.is_some_and(|(t, _)| traffic.players.any_before(self.id, t, now));
         let throughput = match self.pace(&s, now) {
-            Pace::Slow => false,
+            Pace::Slow => s.networked && !s.paused && s.paced >= FAST_AFTER && after_a_player(),
             Pace::Fast => true,
-            Pace::Unsure => s.pace_from.is_some_and(|(t, _)| traffic.players.any_before(self.id, t, now)),
+            Pace::Unsure => after_a_player(),
         };
         self.counted.get_or_init(|| traffic.clone());
         self.throughput.store(throughput, Ordering::Relaxed);
@@ -955,7 +1088,7 @@ impl Reader {
         }
         if player {
             let since = s.pace_from.map_or(now, |(t, _)| t);
-            traffic.players.note_since(self.id, now, since);
+            traffic.players.note_since(self.id, now, since, Some(self.reads.clone()));
         } else {
             traffic.players.forget(self.id);
         }
@@ -1213,13 +1346,112 @@ mod tests {
 
         let traffic = engine.traffic();
         let now = std::time::Instant::now();
-        traffic.players.note_since(u64::MAX - 1, now, now);
+        traffic.players.note_since(u64::MAX - 1, now, now, None);
         read(8 << 20);
         assert!(!copy.throughput.load(Ordering::Relaxed), "a player since after it: not held back");
 
-        traffic.players.note_since(u64::MAX, now, since - std::time::Duration::from_secs(5));
+        traffic.players.note_since(u64::MAX, now, since - std::time::Duration::from_secs(5), None);
         read((8 << 20) + (128 << 10));
         assert!(copy.throughput.load(Ordering::Relaxed), "a player since before it goes first");
+    }
+
+    /// Behind a network client, a reader that reads no faster than a player still lets an
+    /// earlier player go first, until its client pauses (#357).
+    #[test]
+    fn a_slow_copy_lets_an_earlier_player_go_first_until_its_client_pauses() {
+        let tree = corpus();
+        let f = longest_dsf(&tree);
+        let engine = Engine::new(4, 32 << 20).unwrap();
+        let copy = Arc::new(Reader::new(f.clone()));
+        let read = |off: u64| {
+            let _arrival = copy.arrived();
+            copy.plan_read_ahead(&engine, off, off + (128 << 10), 0, 1);
+        };
+        // The copy, behind a network client (a read landing 4 MiB behind another), and so
+        // slow that it reads no faster than a player.
+        let slow = || {
+            let mut s = copy.seq.lock().unwrap();
+            s.pace_from = Some((std::time::Instant::now() - std::time::Duration::from_secs(30), 0));
+            s.started = s.pace_from;
+            s.paced = s.paced.max(FAST_AFTER);
+            assert_eq!(copy.pace(&s, std::time::Instant::now()), Pace::Slow);
+        };
+        read(4 << 20);
+        read(0);
+        assert!(copy.seq.lock().unwrap().networked);
+        slow();
+        read(128 << 10);
+        assert!(copy.player.load(Ordering::Relaxed), "no player before it: it plays");
+
+        // A player since before it: the copy lets it go first, however slowly it reads.
+        let traffic = engine.traffic();
+        let player = u64::MAX;
+        let early = std::time::Instant::now() - std::time::Duration::from_secs(60);
+        traffic.players.note_since(player, std::time::Instant::now(), early, None);
+        slow();
+        read(256 << 10);
+        assert!(copy.throughput.load(Ordering::Relaxed), "a player before it goes first");
+        assert!(!copy.player.load(Ordering::Relaxed));
+
+        // Its client pauses: what is behind it is paced by playback, so it plays.
+        copy.flight.lock().unwrap().idle_from = Some(std::time::Instant::now() - CLIENT_PAUSE);
+        slow();
+        read(384 << 10);
+        assert!(copy.player.load(Ordering::Relaxed), "paused: a player");
+        slow();
+        read(512 << 10);
+        assert!(copy.player.load(Ordering::Relaxed), "until it jumps");
+
+        // A reader starting behind a network client is not judged before it read 4 MiB.
+        let starting = Arc::new(Reader::new(f.clone()));
+        {
+            let mut s = starting.seq.lock().unwrap();
+            s.started = Some((std::time::Instant::now() - PLAYER_AFTER, 0));
+        }
+        for off in [2u64 << 20, 0] {
+            let _arrival = starting.arrived();
+            starting.plan_read_ahead(&engine, off, off + (128 << 10), 0, 1);
+        }
+        assert!(starting.seq.lock().unwrap().networked);
+        assert!(starting.player.load(Ordering::Relaxed), "too early to tell: a player");
+    }
+
+    /// A reader on the list counts while it is heard from lately or waits for a read (#357).
+    #[test]
+    fn a_player_waiting_for_a_read_still_counts() {
+        let r = FastReaders::default();
+        let t0 = std::time::Instant::now();
+        let reads = Arc::new(AtomicU32::new(1));
+        r.note_since(1, t0, t0, Some(reads.clone()));
+        let later = t0 + FAST_READER_IDLE * 10;
+        assert!(r.any(later), "waiting for a read");
+        assert!(r.any_before(2, t0 + FAST_READER_IDLE, later));
+        reads.store(0, Ordering::Relaxed);
+        assert!(!r.any(later), "not heard from, nothing in progress");
+    }
+
+    /// Reads in progress count from their arrival until the result drops; a pause is a read
+    /// arriving after none was in progress for [`CLIENT_PAUSE`].
+    #[test]
+    fn a_pause_is_a_time_with_no_read_in_progress() {
+        let tree = corpus();
+        let reader = Arc::new(Reader::new(longest_dsf(&tree)));
+        let t0 = std::time::Instant::now();
+        let a = reader.arrived_at(t0);
+        let b = reader.arrived_at(t0);
+        drop(a);
+        assert_eq!(reader.reads.load(Ordering::Relaxed), 1);
+        drop(reader.arrived_at(t0 + CLIENT_PAUSE * 4));
+        assert!(!reader.paused(), "one was in progress all along");
+        drop(b);
+        assert_eq!(reader.reads.load(Ordering::Relaxed), 0);
+        let idle_from = reader.flight.lock().unwrap().idle_from.unwrap();
+        drop(reader.arrived_at(idle_from + CLIENT_PAUSE / 2));
+        assert!(!reader.paused(), "too short a gap");
+        let idle_from = reader.flight.lock().unwrap().idle_from.unwrap();
+        drop(reader.arrived_at(idle_from + CLIENT_PAUSE));
+        assert!(reader.paused());
+        assert!(!reader.paused(), "asked once");
     }
 
     /// Readers not playing wait for a player's decoding, but not for long if it never ends.
