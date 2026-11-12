@@ -150,10 +150,13 @@ impl FastReaders {
         self.seen.lock().unwrap_or_else(|p| p.into_inner()).retain(|r| r.id != id);
     }
 
-    /// Whether any reader has been heard from lately.
+    /// Whether any reader has been heard from in the last [`FAST_READER_IDLE`], or waits for a
+    /// read. *Why not the list's own `idle`:* a player's client fetches in bursts about a second
+    /// apart, and the #230 rules need not hold the readers beside it between them; only which
+    /// reader goes first does ([`FastReaders::any_before`]).
     fn any(&self, now: std::time::Instant) -> bool {
         let seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
-        seen.iter().any(|r| r.lately(now, self.idle))
+        seen.iter().any(|r| r.lately(now, FAST_READER_IDLE))
     }
 }
 
