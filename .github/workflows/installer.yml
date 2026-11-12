@@ -47,6 +47,11 @@ jobs:
           ! dash deploy/install.sh </dev/null 2>err.txt
           grep -q 'Usage: sh install.sh --iso-dir' err.txt
           busybox sh deploy/install.sh --help | grep -q -- '--dry-run'
+          # Not Linux (macOS reports Darwin): stop before any download or change, root or not.
+          mkdir -p fakebin && printf '#!/bin/sh\necho Darwin\n' >fakebin/uname && chmod +x fakebin/uname
+          ! PATH="$PWD/fakebin:$PATH" dash deploy/install.sh --iso-dir . 2>err.txt
+          grep -q 'runs on Linux only, and this system is Darwin: nothing was changed' err.txt
+          ! grep -q 'downloading' err.txt
 
   run:
     name: ${{ matrix.mode }}

@@ -12,7 +12,8 @@ player or music server. Nothing is extracted: keep the ISOs, delete the extracte
 
 ## Install
 
-On your NAS or Linux computer, over SSH (use the folder that holds your `.iso` files):
+sacdfs runs on Linux: a NAS or a Linux computer. Log in to it over SSH and run (with the folder
+that holds your `.iso` files); Macs and PCs then play from it over the network.
 
 ```sh
 curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \

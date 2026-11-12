@@ -678,6 +678,14 @@ main() {
         [ -f "$here/sacdfs-ctl" ] && SRC=$here
     fi
     parse_args "$@"
+    # sacdfs is Linux only. Stop on anything else before downloading or changing a thing (on
+    # macOS the Linux binary was downloaded, then failed its check with a glibc hint).
+    os=$(uname -s)
+    if [ "$os" != Linux ]; then
+        die "sacdfs runs on Linux only, and this system is $os: nothing was changed.
+Run the installer on your NAS or Linux computer (over SSH), then play the discs from this
+computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md#mounting-the-shares-on-clients"
+    fi
     [ -n "$PLATFORM" ] || PLATFORM=$(detect_platform)
     case $PLATFORM in
         synology) NAME="Synology DSM" GUIDE=synology.md ;;
