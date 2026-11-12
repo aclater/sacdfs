@@ -588,6 +588,71 @@ Not run on Windows: large-icon view in a real Explorer window, CJK names, foobar
 
 **macOS:** not run on 0.6.2-rc.1. The Apple hardware that hosts the macOS VM was not available.
 
+## Results: Installer on 0.6.2
+
+The installer of the 0.6.2 release (Part of #340), taken from GitHub's `latest` address, which
+serves 0.6.2's `install.sh` (`DEFAULT_VERSION=0.6.2`; its attestation passes), in two forms: the
+one-liner `curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sh -s -- --iso-dir ...`,
+and download, `sha256sum -c install.sh.sha256`, `sh install.sh`. It downloaded the 0.6.2 archive
+from GitHub and checked it. Each run was the whole cycle of `deploy/ci-install-steps.sh`: a dry run
+that changed nothing, the install, all 28 DSF and WAV files of three corpus images identical to a
+reference read by the 0.6.2 x86-64 binary on a Linux host, a second run that changed nothing,
+`--uninstall` back to the start, a second `--uninstall` with nothing to remove, and the images
+folder unchanged. All runs as root.
+
+| System | Route | One-liner | Download, check, run |
+|---|---|---|---|
+| Synology DSM 7.4.1, checked in a VM, not on the vendor's hardware | `sacdfs-ctl`, Task Scheduler tasks | pass | pass |
+| QNAP QuTScloud 5.2.9, checked in a VM, not on the vendor's hardware (a hand-made ext4 volume) | `sacdfs-ctl`, `autorun.sh` | pass | pass |
+| ASUSTOR ADM 5.1.4, checked in a VM, not on the vendor's hardware | `sacdfs-ctl`, `init.d` | pass | pass |
+| TerraMaster TOS 7.0, checked in a VM, not on the vendor's hardware (a volume made by TOS) | systemd | pass | pass |
+| ReadyNAS OS 6.10.10, checked in a VM, not on the vendor's hardware (a volume made by the vendor's tool) | systemd | pass | pass (see below) |
+| Debian 12 with UGREEN's kernel, in a VM (not UGOS Pro) | systemd | pass | pass |
+| OpenMediaVault 8.6.1 on Debian 13, in a VM (a file system made and mounted by OpenMediaVault) | systemd | pass | pass |
+| TrueNAS SCALE 25.10, on a NAS running it, as a normal user | points to the Apps screen | pass | pass |
+| Fedora 44 for aarch64, in a container under `qemu-user` on an x86-64 host | `sacdfs-ctl` | pass | pass |
+
+- **ReadyNAS:** in the first round, the download-check-run cycle passed every step but the last:
+  the images-folder check reported a difference, and the difference itself was not kept. The VM was
+  rolled back and both forms run again, with the difference saved: both passed, with the images'
+  hashes unchanged. The cause of the first report is not known; the installer never writes under
+  `--iso-dir`, and the one-liner cycle in the same round passed.
+- **TrueNAS:** both forms, `--dry-run` and `--uninstall` print the pointer to the Apps screen and
+  `truenas-scale.md`, exit 0 and create nothing. The pointer comes before the root check, so it was
+  run as a normal user; nothing else was run on that NAS.
+- **aarch64:** the installer downloaded and checked the aarch64 archive, and the aarch64 binary
+  under `qemu-user` showed the same 28 files, identical to the x86-64 reference.
+- **The `wget` form** of the install guide (`wget -O install.sh ... && sh install.sh ...`) as a dry
+  run with each system's own `wget` (GNU Wget): pass on QNAP, Synology, TerraMaster, ReadyNAS,
+  Debian on UGREEN's kernel and OpenMediaVault. ASUSTOR has no `wget`.
+- The VMs' storage: QNAP's volume was made by hand (QuTScloud makes none without a licence);
+  Synology, ASUSTOR and Debian on UGREEN's kernel used a plain data disk, not a volume made by the
+  vendor's storage manager.
+
+**The fixes in this pull request** (#352, #353), on the branch:
+- **Cut-short and failed downloads (#352):** `deploy/ci-install-fetch-steps.sh` in the BusyBox and
+  Fedora 44 test containers. The installer piped into `sh` and cut before its last line, or in the
+  middle, stops with status 1 and says the download was cut short, with nothing changed (0.6.2's
+  installer cut before its last line exits 0). Download, then run, with a download that fails (TLS
+  against a plain HTTP server, as BusyBox's TLS fails against GitHub; and a missing file) stops
+  before `sh` with `wget`'s or `curl`'s status. With the real GitHub address, BusyBox 1.37's `wget`
+  fails with `TLS error from peer (alert code 20): bad MAC`, and `wget -O install.sh ... && sh install.sh`
+  stops with status 1, where `wget -q -O - ... | sh` exits 0. The truncation check also passes with
+  dash and bash. The whole container cycle (BusyBox, BusyBox without a C library, Fedora 44, UBI 7)
+  still passes.
+- **QNAP autorun (#353),** on QuTScloud 5.2.9, checked in a VM, not on the vendor's hardware, with
+  this branch's `install.sh --version 0.6.2`:
+  - switched off before the install: the install switches it on and records that; `--uninstall`
+    (and its dry run) switches it off again;
+  - switched on before the install: it stays on after `--uninstall`, which says so;
+  - switched off before, and a line of the user's added to `autorun.sh` after the install:
+    `--uninstall` removes only sacdfs's lines and leaves the setting on, saying why;
+  - the whole cycle above with the branch's script: pass, and the setting is off at the end.
+
+Not run: Unraid (no image here; it runs from a licensed USB stick), QTS and UGOS Pro themselves,
+the container route on a NAS, restarts, aarch64 hardware, and the `wget` one-liner piped into `sh`
+on a NAS.
+
 ## Soak memory steps (#247)
 
 Steps of 3 to 9 MiB in a soak's resident size, in both directions, appeared on 0.4.0, 0.4.1-rc.2

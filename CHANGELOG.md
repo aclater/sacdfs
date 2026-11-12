@@ -7,6 +7,15 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Installer: a download cut short now fails with an error (#352).** If the script piped into
+  `sh` ends before its last line, it stops with status 1 and says the download was cut short,
+  instead of exiting 0 having done nothing. The install guide now gives the `wget` form as
+  download, then run (`wget -O install.sh … && sh install.sh …`), so a failed download stops
+  before `sh`: piped into `sh`, an empty download still exits 0, which no script can detect. CI
+  checks both in the BusyBox and Fedora containers.
+- **Installer: `--uninstall` on QNAP switches "Run user defined processes" off again when the
+  installer switched it on (#353).** The installer records that it did, and `--uninstall` switches
+  it off only then, and only if `autorun.sh` runs nothing else; otherwise it says why it left it on.
 - **Tag tests no longer race on the tags store.** Tests only. `tags::install` sets one store for the
   whole process; in `tests/fallback.rs` and `tests/tags.rs` the test that sets it could overlap the
   others, and one CI run on arm64 read a title from it on a disc that has none. The tests in each of

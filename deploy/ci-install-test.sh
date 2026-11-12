@@ -6,7 +6,8 @@
 # <url>/download/v<version>/<archive>); the archive is the published release binary repacked
 # with this tree's deploy files, as release.yml packs it. Then deploy/ci-install-steps.sh runs
 # in each target: dry run, install, a second run that changes nothing, the files against a
-# reference, uninstall, the images folder untouched.
+# reference, uninstall, the images folder untouched. In the BusyBox and Fedora containers,
+# deploy/ci-install-fetch-steps.sh also checks that failed and cut-short downloads fail loudly.
 #
 #   deploy/ci-install-test.sh containers    # BusyBox, Fedora, UBI 7 containers
 #   deploy/ci-install-test.sh nas-sim       # simulated NAS layouts (github.com/aclater/nas-sim)
@@ -54,6 +55,11 @@ tar -C "$work/pkg" -czf "$rel/download/v$version/$pkg.tar.gz" "$pkg"
 (cd "$rel/download/v$version" && sha256sum "$pkg.tar.gz" >"$pkg.tar.gz.sha256")
 install -m 0644 "$here/install.sh" "$rel/download/v$version/install.sh"
 install -m 0644 "$here/install.sh" "$rel/latest/download/install.sh"
+# Downloads cut short, for deploy/ci-install-fetch-steps.sh (#352): all but the last line, and
+# the first half.
+mkdir -p "$rel/cut" "$rel/half"
+sed '$d' "$here/install.sh" >"$rel/cut/install.sh"
+head -c "$(($(wc -c <"$here/install.sh") / 2))" "$here/install.sh" >"$rel/half/install.sh"
 python3 -I -m http.server --bind 127.0.0.1 --directory "$work/srv" "$port" >"$work/http.log" 2>&1 &
 server=$!
 for _ in $(seq 50); do curl -fsS -o /dev/null "$url/latest/download/install.sh" && break; sleep 0.2; done
@@ -87,6 +93,16 @@ target() { # NAME IMAGE EXPECT [ISO_DIR [run options...]]
     fi
     echo "::endgroup::"
 }
+fetchtarget() { # NAME IMAGE: failed and cut-short downloads (#352)
+    echo "::group::$1 (failed downloads)"
+    if "$rt" run --rm "${opts[@]}" -v "$work/music:/music:ro" \
+        -v "$here/ci-install-fetch-steps.sh:/fetch.sh:ro" "$2" sh /fetch.sh "$url" /music; then
+        echo "$1 failed downloads: pass"
+    else
+        failed+=("$1-downloads")
+    fi
+    echo "::endgroup::"
+}
 
 case $mode in
     containers)
@@ -96,9 +112,11 @@ case $mode in
         "$rt" build -q --target busybox -t sacdfs-ci-busybox -f "$work/Containerfile.busybox" "$work" >/dev/null
         "$rt" build -q --target busybox-nolibc -t sacdfs-ci-busybox-nolibc -f "$work/Containerfile.busybox" "$work" >/dev/null
         target busybox sacdfs-ci-busybox install
+        fetchtarget busybox sacdfs-ci-busybox
         # The same BusyBox, statically linked, and no C library: the binary can't load there.
         target busybox-nolibc sacdfs-ci-busybox-nolibc refuse
         target fedora-44 "$FEDORA" install
+        fetchtarget fedora-44 "$FEDORA"
         # UBI 7: glibc 2.17, the oldest the binary supports; bash's sh.
         target ubi7 "$UBI7" install
         ;;
