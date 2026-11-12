@@ -26,6 +26,13 @@ const TEXT: &str = "dsd-stereo-mch-2048.iso";
 const IN_FOLDERS: &str = "Some One/2001 - An Album [SACD]/Some One - An Album.iso";
 
 /// A library with `image` of the corpus at `path`.
+/// `tags::install` sets a process-wide store, so the test that installs one must not overlap the
+/// others, which expect none (one run on arm64 read "Real Title" from it). Every test holds this.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn library(items: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let lib = dir.path().join("lib");
@@ -53,6 +60,7 @@ fn files(t: &Tree) -> BTreeMap<String, Arc<TrackFile>> {
 
 #[test]
 fn a_disc_without_text_gets_names_and_new_times() {
+    let _g = serial();
     let (_dir, lib) = library(&[(NO_TEXT, IN_FOLDERS), (TEXT, "Other/2002 - Named/Other - Named.iso")]);
     let t = tree(&lib);
     let all = files(&t);
@@ -90,6 +98,7 @@ fn a_disc_without_text_gets_names_and_new_times() {
 
 #[test]
 fn titles_stay_per_area_and_the_multichannel_suffix_applies() {
+    let _g = serial();
     let (_dir, lib) = library(&[("master-no-text-sector.iso", "x - 2001 - y.iso")]);
     let all = files(&tree(&lib));
     assert!(all.keys().any(|p| p.contains("Multichannel")) && all.keys().any(|p| p.contains("Stereo")));
@@ -107,6 +116,7 @@ fn titles_stay_per_area_and_the_multichannel_suffix_applies() {
 /// The audio does not depend on the tag: the same bytes at every path, whatever it gives.
 #[test]
 fn the_audio_is_the_same_under_every_name() {
+    let _g = serial();
     let (_dir, a) = library(&[(NO_TEXT, IN_FOLDERS)]);
     let (_dir2, b) = library(&[(NO_TEXT, "plain.iso")]);
     let engine = Engine::new(2, 32 << 20).unwrap();
@@ -129,6 +139,7 @@ fn the_audio_is_the_same_under_every_name() {
 /// test of this file that installs a tags directory: nothing else here has a tags file.
 #[test]
 fn a_tags_file_wins_and_verify_and_import_keep_what_the_extract_holds() {
+    let _g = serial();
     let (dir, lib) = library(&[(NO_TEXT, IN_FOLDERS)]);
     let tagsdir = dir.path().join("tags");
     fs::create_dir_all(&tagsdir).unwrap();

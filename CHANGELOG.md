@@ -16,6 +16,10 @@ All notable changes to sacdfs are recorded here. The format follows
 - **Installer: `--uninstall` on QNAP switches "Run user defined processes" off again when the
   installer switched it on (#353).** The installer records that it did, and `--uninstall` switches
   it off only then, and only if `autorun.sh` runs nothing else; otherwise it says why it left it on.
+- **Tag tests no longer race on the tags store.** Tests only. `tags::install` sets one store for the
+  whole process; in `tests/fallback.rs` and `tests/tags.rs` the test that sets it could overlap the
+  others, and one CI run on arm64 read a title from it on a disc that has none. The tests in each of
+  those files now run one at a time.
 
 ## [0.6.2] - 2026-11-11
 
