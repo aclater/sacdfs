@@ -31,7 +31,7 @@ oneliner() {
 state() {
     ls -d /opt/sacdfs /opt/sacdfs/compose.yaml /srv/sacd /etc/default/sacdfs /etc/systemd/system/sacdfs.service \
         /usr/local/bin/sacdfs /usr/local/etc/init.d/S99sacdfs "$vol/sacdfs" "$vol/sacd" 2>/dev/null
-    grep -c ' fuse' /proc/mounts
+    grep -cE ' fuse(\.[^ ]+)? ' /proc/mounts   # not fusectl, which the first FUSE use mounts
 }
 # same A B: equal files (cmp isn't in every image).
 same() { [ "$(sha256sum <"$1")" = "$(sha256sum <"$2")" ]; }
