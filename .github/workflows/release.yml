@@ -421,7 +421,12 @@ jobs:
             echo
             echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic CPU; amd64 and arm64)."
             echo
-            echo "Installer: \`install.sh\` finds the system and sets sacdfs up (docs/install/README.md): \`curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /path/to/images\`."
+            echo "Installer: \`install.sh\` finds the system (a NAS or Linux computer) and sets sacdfs up ([install guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/README.md)). Over SSH:"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh \\"
+            echo "  | sudo sh -s -- --iso-dir /path/to/images"
+            echo '```'
             echo
             echo "Verify a download: \`sha256sum -c <asset>.sha256\` and \`gh attestation verify <asset> -R $GITHUB_REPOSITORY\`; the image: \`gh attestation verify oci://$IMAGE:$VERSION -R $GITHUB_REPOSITORY\`. See the README, \"Install\"."
             echo
