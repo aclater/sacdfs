@@ -1105,6 +1105,105 @@ Percentages against 0.4.1. Measured on main before the core split (#22) with thi
 change was then rebased with no conflict in `src/track.rs`. Audio bytes were not compared in
 these runs: the change only decides when frames are decoded ahead, not what they hold.
 
+## A player beside copies on a slow server (#357)
+
+**What happened.** In the 0.6.2-rc.1 gate, with the server pinned to 2 efficiency cores, a
+6-channel WAV player beside four copies over SMB stalled up to 3 times longer than on 0.6.1, the
+copies took 20 % longer, and the server used about 20 % more CPU. Four copies at real time need
+more than these cores give, so both releases stall there.
+
+**Cause (instrumented builds, counters per reader).** Behind the #346 pace rule a copy reads for
+throughput only once it is 32 MiB ahead of playing time, or while it is *unsure* and an earlier
+player reads. On these cores the copies read at about the player's own rate, so after their first
+seconds they were simply *slow*: they counted as players for 97 to 99 % of their reads (0.6.1: 58
+to 69 %, thanks to its pace restarts). The player had no precedence, and five readers each read
+ahead a player's 2 s window (6.3 MiB of 6-channel PCM) in a 16 MiB cache. Frames were evicted
+before they were read and converted again:
+
+| One run, 2 slow cores, player + 4 copies | 0.6.1 | 0.6.2 | This change |
+|---|---|---|---|
+| PCM frames converted | 147,978 | 199,727 | 101,889 |
+| ...of which converted before (evicted unread) | 78,212 (53 %) | 129,333 (65 %) | 33,772 (33 %) |
+| DST frames decoded | 106,632 | 169,132 | 45,830 |
+| Copies' reads for throughput | 31 to 42 % | 0.1 to 1.2 % | 99 % |
+| Times a copy waited for the player's decoding | 3,778 | 93 | 19,147 |
+
+About 70,000 distinct frames were needed. The change's column is from an instrumented build of
+the first version of this change (the final one differs in when the #230 rules lapse, see below).
+A second cause showed in the same logs: a player stalled for over a second dropped off the list of
+players (1 s), so the copies counted as players again and stalled it longer.
+
+**The change** ([design](design.md#read-ahead)): behind a network client, a reader that has read
+4 MiB but reads no faster than a player still reads for throughput while an earlier player reads,
+until its client *pauses* (a read arrives after none was in progress for 0.5 s). The kernel SMB
+client fetches a player's audio in bursts about a second apart; a copy's client always has reads
+outstanding (in the instrumented runs no copy paused, and the player paused about every 3 s). A
+player counts while it waits for a read, and for 5 s for who goes first. A first version held the
+#230 rules for those 5 s too; one copy beside a player on 4 cores was then 15 to 20 % slower than
+0.6.2, so the rules still lapse after 1 s without a read, as before.
+
+**How measured.** Bare metal, a hybrid laptop-class CPU with performance and efficiency cores.
+Kernel SMB client (SMB 3.1.1) or NFS 4.2 over loopback to the container. A real-time 6-channel
+WAV player (128 KiB reads at 3,175,200 B/s, from 15 % into a track nobody else reads) starts 1 s
+before 1 or 4 whole-file copies (`cat`) of other 6-channel DST tracks (845, 786, 801 and 848 MB);
+"2 players" adds a second player on another track, starting with the copies. The container is
+pinned to 2 efficiency cores (256 MiB), 2 performance cores (256 MiB) or 4 cores (512 MiB);
+clients on other cores. A fresh container per run, no index cache, page cache dropped, builds
+alternating with the order rotated each round, 4 rounds. 0.6.1 and 0.6.2 are the release images;
+this change is 0.6.2 with it, built the same way. Player: runs with a read over 100 ms, worst read
+(max, median), reads over 100 ms per run. Copies: seconds until all end, median (range); sacdfs
+CPU seconds, median.
+
+| Cell | 0.6.1 | 0.6.2 | This change |
+|---|---|---|---|
+| **SMB, 4 copies, 2 slow cores** (the #357 case): runs over 100 ms | 4 of 4 | 4 of 4 | **3 of 4** |
+| worst read, ms | 7,480 (4,090) | 12,826 (11,134) | **3,947 (2,924)** |
+| reads over 100 ms per run | 10-14 | 39-54 | **0-6** |
+| player behind real time, worst | 7.6 s | 38.9 s | **3.9 s** |
+| copies, s | 269.88 (265.18-276.47) | 315.98 (310.74-323.51) | **236.55** (231.51-237.81) |
+| sacdfs CPU, s | 529 | 621 | **462** |
+| SMB, 4 copies, 2 fast cores: runs over 100 ms | 0 of 4 | 0 of 4 | 0 of 4 |
+| worst read, ms; copies, s | 32.4; 135.48 | 32.0; 120.87 | 32.6; 119.59 |
+| SMB, 1 copy, 2 slow cores: runs over 100 ms | 0 of 4 | 0 of 4 | 0 of 4 |
+| worst read, ms; copies, s | 76.5; 42.64 | 55.7; 42.77 | 58.5; 43.00 |
+| SMB, 4 copies, 4 cores: runs over 100 ms | 0 of 4 | 0 of 4 | 0 of 4 |
+| worst read, ms; copies, s | 32.4; 128.81 | 31.2; 110.24 | 31.7; 110.71 |
+| SMB, 1 copy, 4 cores: runs over 100 ms | 0 of 4 | 0 of 4 | 0 of 4 |
+| worst read, ms; copies, s | 31.3; 21.00 | 32.2; 23.95 | 33.0; 23.84 |
+| SMB, 1 copy alone, 2 slow cores, s | 31.60 (30.79-33.34) | 31.64 (29.78-32.98) | 32.10 (30.31-34.10), +1.5 % |
+| SMB, 1 copy alone, 4 cores, s | 18.78 (17.80-19.63) | 17.27 (16.42-17.39) | 16.50 (16.32-18.10), -4.5 % |
+| NFS, 4 copies, 2 slow cores: runs over 100 ms | 4 of 4 | 4 of 4 | 4 of 4 |
+| worst read, ms | 462.9 (359.8) | 382.8 (376.3) | 356.7 (337.4) |
+| copies, s | 137.54 (133.67-151.46) | 140.02 (130.58-149.22) | 136.19 (131.93-235.37) |
+| SMB, 2 players, 2 slow cores, no copies: runs over 100 ms (first / second player) | 0 / 3 of 4 | 0 / 1 of 4 | 0 / **0** of 4 |
+| worst read, ms (first / second) | 68.4 / 249.1 | 61.2 / 130.2 | 59.6 / 76.5 |
+| SMB, 2 players + 4 copies, 4 cores: runs over 100 ms (first / second) | 1 / 4 of 4 | 0 / 4 of 4 | 0 / 4 of 4 |
+| worst read, ms (first / second) | 685.3 / 2,648 (1,803) | 32.2 / 824 (590) | 31.0 / **1,332 (869)** |
+| copies, s | 146.79 | 114.63 | 114.09 |
+
+Percentages against 0.6.2. Against the bar set for this fix: every cell where 0.6.1 had no run
+over 100 ms has none with the change; the slow-core cells are no worse than 0.6.1 (worst read
+0.53 times 0.6.1's over SMB, 0.77 times over NFS); one copy alone is not slower than 0.6.2 beyond
+the spread of the runs (+1.5 % on 2 slow cores, ranges overlap; -4.5 % on 4 cores).
+
+- **The #357 case:** over SMB the player's worst read is about half 0.6.1's and a third of
+  0.6.2's; one run in four had no read over 100 ms. The copies finish 12 % sooner than on 0.6.1
+  and 25 % sooner than on 0.6.2, with 13 % and 26 % less CPU: frames are no longer converted twice
+  as often. It still stalls in 3 runs of 4: four copies at real time need more than these cores.
+- **Slower (regression): a second player starting beside four copies on 4 cores** waits longer
+  for its first reads than on 0.6.2 (worst 1,332 ms against 824, median 869 against 590; 0.6.1
+  2,648). It starts while the first player plays, so it lets that one go first, and its client,
+  still filling its read-ahead, has not paused yet. It stalls on every release. Not in the cells
+  #357 set as its bar; reported here and in the PR.
+- **NFS:** one run of the change took 235 s for the copies, with 75 % more CPU than the others;
+  the median is unchanged. An instrumented build reproduced it in 1 run of 3: NFS-Ganesha's reads
+  reached sacdfs in order, so the copies were not seen as behind a network client, the new rule
+  did not apply, and they counted as players by their pace, as on 0.6.2. Every reader then read
+  ahead a player's window and nearly every frame was converted twice (86,437 of 175,780). 0.6.1
+  and 0.6.2 show the same pattern more mildly in some runs (up to 379 reads over 100 ms per run).
+  Telling a copy from a player behind an NFS server is left for a follow-up.
+
+
 ## A player's import over SMB (#266)
 
 A player's library scan reads each file's header and tags. Through a Linux kernel SMB mount, the

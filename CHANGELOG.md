@@ -13,8 +13,12 @@ All notable changes to sacdfs are recorded here. The format follows
   which overflowed the cache: most frames were converted twice. A reader behind a network client
   now keeps reading for throughput while an earlier player reads, until its client pauses, and a
   player counts while it waits for a read. Over SMB, four copies beside a player on 2 slow cores:
-  see [performance](docs/performance.md#a-player-beside-copies-on-a-slow-server-357) for the
-  figures. Audio bytes are unchanged: only when frames are decoded ahead changes.
+  worst read 3.9 s (0.6.1: 7.5 s, 0.6.2: 12.8 s), copies 12 % faster than 0.6.1 with 13 % less
+  CPU. Still stalls there (four copies at real time need more than those cores). Slower: a second
+  player starting beside four copies on 4 cores waits longer for its first reads than on 0.6.2
+  (worst 1.3 s against 0.8 s; 0.6.1 2.6 s). Over NFS, copies whose reads reach sacdfs in order
+  are not covered ([performance](docs/performance.md#a-player-beside-copies-on-a-slow-server-357)).
+  Audio bytes are unchanged: only when frames are decoded ahead changes.
 
 ## [0.6.2] - 2026-11-11
 

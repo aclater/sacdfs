@@ -1382,7 +1382,9 @@ decoding them twice.
   player on 4 cores was 15 to 20 % slower than on 0.6.2. *Trade-off:* a second player that starts while another plays, on a server too slow
   for both, reads behind the first until its client pauses; a reader whose client pauses once
   counts as a player until it jumps; and a copy that starts within 5 s of a player pausing
-  without closing its file lets that player go first if it comes back.
+  without closing its file lets that player go first if it comes back. Copies served by an NFS server whose
+  reads reach sacdfs in order are not seen as behind a network client, and get none of this
+  (1 of 3 instrumented NFS runs).
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
