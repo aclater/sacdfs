@@ -528,6 +528,14 @@ files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network
   shows a name with a non-ASCII character (an acute accent) as a single byte, which a path from
   the server then does not match (`stat` fails for 4 of 206 files). With the package installed
   the 4 files are found. Ubuntu 26.04 was fine. This is the client's packaging, not sacdfs.
+- **Read-ahead of the kernel SMB client** ([#266](https://github.com/aclater/sacdfs/issues/266), 0.6.2,
+  Fedora 44 client, kernel 6.19, against a NAS): by default the client reads 4 MiB at a time and
+  reads ahead up to 8 MiB, so a library scan that wants each file's header and tags makes sacdfs
+  read, decode and serve about 1.8 MB per file. `rsize=262144` on the mount brings that to 262 KB,
+  with faster copies and unchanged player reads; `cache=none` to 99 KB, with each player read one
+  round trip. `rasize` can't go below `rsize` (the kernel refuses the mount). Figures:
+  [performance](performance.md#client-settings-on-a-nas-062); advice:
+  [deployment](deployment.md#linux).
 - **Extended attributes** ([#174](https://github.com/aclater/sacdfs/issues/174)), counted from
   sacdfs's FUSE request log (the published 0.4.0 and 0.4.1-rc.1 images under rootful Podman,
   alternating, two runs each, Fedora 44 client): `ls -lR` over NFS, which exited 0 with no

@@ -1210,9 +1210,9 @@ A player's library scan reads each file's header and tags. Through a Linux kerne
 client reads ahead around those reads: about 525 KB per file reached sacdfs, against 150 KB
 through a direct mount. The extra bytes are audio, so sacdfs decodes them.
 
-sacdfs can't avoid this. It already serves a WAV file's header and tags without decoding, and
+sacdfs can't avoid serving these bytes. It already serves a WAV file's header and tags without decoding, and
 starts no read-ahead of its own in a file's first 1 MiB ([design](design.md#read-ahead)). What it
-decodes is what the client asked for. What changes it is how the share or the mount caches.
+decodes is what the client asked for (on newer kernels a little more: [below](#client-settings-on-a-nas-062)). What changes it is how the share or the mount caches.
 
 **How measured:** 0.6.0, Navidrome 0.64.2 importing 122 DSF and WAV files of three discs.
 - **Rig:** sacdfs in a fresh container per run, pinned to 4 Zen 5 cores. The kernel SMB 3.1.1 client mounted the share on the same machine, with 0.5 ms added to each round trip (`tc netem` on the container's bridge).
@@ -1237,6 +1237,86 @@ decodes is what the client asked for. What changes it is how the share or the mo
 - **A smaller maximum read:** it halves the import's cost. Copies were 8 % faster here, because the client's requests arrive at sacdfs less out of order. Without the added delay, a smaller maximum read was faster again (stereo WAV 19.96 s at 256 KiB against 22.08 s by default; 6 channels 65.23 against 78.97 s; with the fix of #271).
 - **Defaults unchanged:** the import costs about 13 ms of sacdfs CPU per file. A full scan of 10,000 files is two to four minutes of CPU, once. The settings change every client of the share, and macOS and Windows clients, a real network and a NAS CPU were not measured with them.
 - **For a Linux machine that mounts the share only for a player's library, `cache=none` on that mount** makes its imports cost what a direct mount costs. It leaves other clients alone.
+
+### Client settings on a NAS (0.6.2)
+
+The same question on a NAS, over a real network, with a newer kernel client, a header-and-tags
+scan instead of Navidrome, and the client's read-ahead settings as well as the share's (#266,
+2026-11-12). By default the client's reads reach sacdfs as 4 MiB requests with up to 8 MiB of
+read-ahead, and a scan made sacdfs serve **1.8 MB per file**, where the scan itself asked for
+99 KB. On this kernel that is three times what 0.6.0's rig saw.
+
+**How measured:**
+- **Server:** sacdfs 0.6.2, the published image as a TrueNAS SCALE 25.10 app on a NAS with an
+  Intel Core i5-1235U (10 cores, 12 threads), the library on the NAS's own disks (9,822 DSF and
+  WAV files of 396 discs). One fresh container started per share setting.
+- **Client:** a Fedora 44 VM (kernel 6.19) on another machine, the kernel SMB 3.1.1 client, over
+  a direct 20 Gb/s link; the VM's user-mode network made the round trip 0.57 ms (0.27 ms from the
+  VM's host). Checked in a VM, not on a physical client.
+- **Scan:** `scripts/tag-scan.py` over 168 to 316 files of 10 discs: the first 64 KiB of each
+  file, then its tags (DSF: the ID3 block; WAV: every chunk but the audio), unbuffered. Each run
+  used other discs, so nothing was in sacdfs's cache. Bytes are the client's `Bytes read` in
+  `/proc/fs/cifs/Stats`; CPU is the app's (TrueNAS's per-app figure, sampled every 2 s, so
+  about).
+- **Copy:** `cat` of one stereo WAV file (277 to 392 MB) and one multichannel WAV file (850 to
+  975 MB) of one disc, a different track each run. **Player:** 32 KiB reads of a 6-channel WAV
+  (3.2 MB/s) at its real-time rate, 1 s ahead, for 30 s, a different track each run.
+- Each mount fresh, the client's page cache dropped; two runs of each, in opposite orders.
+
+| Client mount (share default unless noted) | Reached sacdfs per file | sacdfs app CPU per file | Scan time per file | Stereo WAV copy | Multichannel WAV copy | Player reads: median / 99th pct. / worst |
+|---|---|---|---|---|---|---|
+| Default (`rsize` 4 MiB, read-ahead 8 MiB) | 1,835 KB | 145, 251 ms | 52, 60 ms | 65, 81 MB/s | 55, 51 MB/s | 0.03 / 0.08 to 0.11 / 133 to 141 ms |
+| `rsize=1048576` | 1,041 KB | 225, 177 ms | 43, 37 ms | 108, 112 MB/s | 112, 118 MB/s | 0.03 / 0.73 / 111 to 120 ms |
+| **`rsize=262144`** | **262 KB** | **29, 23 ms** | **22, 22 ms** | **101, 109 MB/s** | **104, 103 MB/s** | 0.03 / 0.35 / 116 to 129 ms |
+| Share: `smb2 max read = 262144` (client default) | 262 KB | 34, 16 ms | 25, 21 ms | 90, 103 MB/s | 101, 102 MB/s | 0.03 / 0.35 / 106 to 107 ms |
+| `read_ahead_kb` 512 (`rsize` default) | 263 KB | 29, 31 ms | 22, 22 ms | 118, 120 MB/s | 122, 120 MB/s | 0.03 / 0.35 / 101 to 104 ms |
+| `read_ahead_kb` 128 | 262 KB | 42, 35 ms | 22, 24 ms | 115, 122 MB/s | 119, 121 MB/s | 0.03 / 0.36 to 0.50 / 73 to 88 ms |
+| `read_ahead_kb` 0 | 70 KB | 22, 19 ms | 30, 32 ms | **5.2, 5.1 MB/s** | **5.5, 5.0 MB/s** | 6.1 to 7.0 / 12 to 18 / 47 to 48 ms |
+| `cache=none` | 99 KB | 18, 11 ms | 22, 24 ms | 122, 122 MB/s | 125, 126 MB/s | **1.4 to 1.7** / 3.9 to 4.1 / 72 to 78 ms |
+
+- **`rsize=262144` is the setting to use** on a Linux client: a seventh of the bytes and of the
+  CPU for a scan, a scan 2.5 times as fast, copies faster rather than slower, and player reads
+  as before. It is a mount option, so it goes in `/etc/fstab` like the others.
+- **`read_ahead_kb`** (in `/sys/class/bdi/cifs-N/`, root only, gone at the next mount) does the
+  same at 128 or 512 KiB; at 0 every read waits for the network and copies drop to 5 MB/s.
+  **`rasize`** can't help: the kernel refuses a `rasize` below `rsize`.
+- **`cache=none`** fetches only what the application asks for: the smallest scan and the fastest
+  copies here. Each player read then waits one round trip; the median is still far inside the
+  50 ms target.
+- **The share's `smb2 max read = 262144`** gives every Linux client the 256 KiB `rsize` without
+  a mount option, with the same scan figures. It is not the default: it changes what macOS and
+  Windows clients may ask for, and they were not measured with it. Set it with
+  `SMB_EXTRA_GLOBAL` if all your clients are Linux.
+- **One player read over 50 ms in 30 s** (73 to 141 ms) in almost every run of every setting,
+  with or without these settings; with `read_ahead_kb` 0 none. It is not caused by them and was
+  not chased here.
+- **The default copies were the slowest** here (51 to 81 MB/s against 100 to 126), which a
+  local run (below) shows more mildly.
+
+**By release, on a local rig** (sacdfs in a rootless Podman container limited to 4 CPUs on a
+Core i9-13900H, the client VM on the same machine; 12 discs, the scan of 222 files of 10 of them;
+container CPU from its cgroup; a fresh container per run; 2 or 3 runs):
+
+| Mount | Version | Per file: reached sacdfs, CPU, scan time | Stereo / multichannel WAV copy | Player worst read |
+|---|---|---|---|---|
+| Default | 0.6.2 | 1,826 KB, 48.6 / 48.6 / 48.6 ms, 17.0 / 17.0 / 16.9 ms | 118, 125 / 108, 105 MB/s | 74, 77 ms |
+| Default | main (with #360) | 1,826 KB, **53.7 / 53.4 / 49.8 ms**, **19.3 / 18.9 / 17.4 ms** | 122, 124 / 106, 113 MB/s | 75, 79 ms |
+| `rsize=262144` | 0.6.2 | 262 KB, 8.1 / 7.9 ms, 4.5 / 4.6 ms | 141, 141 / 140, 140 MB/s | 62, 57 ms |
+| `rsize=262144` | main | 262 KB, 8.1 / 8.2 ms, 4.8 / 4.5 ms | 141, 141 / 140, 138 MB/s | 56, 49 ms |
+| `cache=none` | 0.6.2 | 99 KB, 6.8 / 6.7 ms, 5.1 / 5.4 ms | 148, 149 / 149, 151 MB/s | 37, 39 ms |
+| `cache=none` | main | 99 KB, 6.8 / 7.1 ms, 5.4 / 5.6 ms | 147, 149 / 151, 150 MB/s | 37, 41 ms |
+
+- **Regression flagged:** with the default mount, main's scan took 2 to 10 % more CPU and time
+  than 0.6.2's in each of 3 runs (0.6.2's three runs agree within 0.2 %). With `rsize=262144` or
+  `cache=none` there is no difference. The scan reaches sacdfs in large out-of-order reads only
+  with the default mount, which is where #360's pacing applies.
+- **What sacdfs could do itself:** a scan's read past 1 MiB from a file's start starts
+  sacdfs's own read-ahead ([design](design.md#read-ahead)), and with the default mount the
+  client's read-ahead goes past 1 MiB. A test build with that limit at 4 MiB took the default
+  scan to 36.7 and 37.2 ms of CPU and 12.2 ms per file (main: 49.8 to 53.7, 17.4 to 19.3), but
+  copies 1 to 8 % slower than main's (113, 118 / 105, 108 MB/s) and player reads no worse (worst 61,
+  44 ms). Measured only; not
+  part of any release.
 
 ## History
 

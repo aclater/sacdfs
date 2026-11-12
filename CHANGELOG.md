@@ -38,6 +38,17 @@ All notable changes to sacdfs are recorded here. The format follows
   are not covered ([performance](docs/performance.md#a-player-beside-copies-on-a-slow-server-357)).
   Audio bytes are unchanged: only when frames are decoded ahead changes.
 
+### Documentation
+- **A Linux SMB mount for a player or for copies: add `rsize=262144` (part of #266).** Measured on
+  a NAS with a Linux 6.19 client: by default the client's 4 MiB reads and 8 MiB read-ahead made a
+  header-and-tags scan cost sacdfs 1.8 MB of audio per file; with `rsize=262144` 262 KB and about
+  a seventh of the CPU, copies were faster (101 to 109 MB/s against 51 to 81) and player reads
+  unchanged. `cache=none` cuts it to 99 KB, with a round trip per player read; the share setting
+  `smb2 max read = 262144` does what `rsize` does for every Linux client. No default changed. New
+  `scripts/tag-scan.py` repeats the scan
+  ([performance](docs/performance.md#client-settings-on-a-nas-062), deployment, Linux client and
+  Navidrome guides, clients).
+
 ## [0.6.2] - 2026-11-11
 
 Tested as release candidate 0.6.2-rc.1; the results are in docs/test-plan.md ("Results: 0.6.2-rc.1
