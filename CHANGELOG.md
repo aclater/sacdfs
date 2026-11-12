@@ -7,6 +7,10 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Tag tests no longer race on the tags store.** Tests only. `tags::install` sets one store for the
+  whole process; in `tests/fallback.rs` and `tests/tags.rs` the test that sets it could overlap the
+  others, and one CI run on arm64 read a title from it on a disc that has none. The tests in each of
+  those files now run one at a time.
 - **A player beside copies on a server too slow for them all no longer stalls longer than in
   0.6.1 (#357).** Behind a network client, copies reading at about a player's rate counted as
   players, so the player lost its precedence and every reader read ahead a player's window,
