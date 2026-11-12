@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Tag tests no longer race on the tags store.** Tests only. `tags::install` sets one store for the
+  whole process; in `tests/fallback.rs` and `tests/tags.rs` the test that sets it could overlap the
+  others, and one CI run on arm64 read a title from it on a disc that has none. The tests in each of
+  those files now run one at a time.
+
 ## [0.6.2] - 2026-11-11
 
 Tested as release candidate 0.6.2-rc.1; the results are in docs/test-plan.md ("Results: 0.6.2-rc.1
