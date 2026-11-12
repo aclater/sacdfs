@@ -7,95 +7,47 @@
 [![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-orange)](Cargo.toml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aclater/sacdfs/badge)](https://scorecard.dev/viewer/?uri=github.com/aclater/sacdfs)
 
-sacdfs is a read-only FUSE filesystem for Linux that shows Super Audio CD disc images (ISOs)
-as DSF files, and as 24-bit WAV files next to them, decoded on demand. Players, taggers and
-music servers see every track of every disc, with tags, without extracting anything: you
-keep the ISOs and can delete the extracted copies.
+sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
+player or music server. Nothing is extracted: keep the ISOs, delete the extracted copies.
 
-A disc with little or no text can be looked up on MusicBrainz, on demand with
-`sacdfs tags fetch`, or by the mount in the background with `--musicbrainz`. Both are off unless
-you ask for them; nothing else in sacdfs uses the network, and no read waits for it: see the
-[user guide](docs/user-guide.md#your-own-tags---tags).
+## Install
 
-## Quick start
-
-**On a NAS or any Linux host with Podman or Docker:** the container shares the mount over
-SMB and NFS. Put your folder of `.iso` files in place of `/srv/music`:
+On your NAS or Linux computer, over SSH (use the folder that holds your `.iso` files):
 
 ```sh
-sudo podman run -d --name sacdfs --restart unless-stopped \
-  --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
-  --security-opt label=disable \
-  -p 445:445 -p 2049:2049 \
-  -v /srv/music:/images:ro \
-  -v sacdfs-cache:/cache \
-  ghcr.io/aclater/sacdfs:0.6.2
+curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /volume1/music
 ```
 
-The [Docker and Podman guide](docs/install/docker-podman.md) goes step by step, and tells you how to
-check it works.
+It works out what it runs on and sets sacdfs up to match. Add `--dry-run` to see what it would
+change first, and `--uninstall` to remove it again. No `curl`, checking the download first, or
+TrueNAS: see the [install guide](docs/install/README.md).
 
-**Directly on Linux:** build it (Rust 1.85 or later; the [binary guide](docs/install/binary.md)
-has release downloads), then mount. As a user other than root you need FUSE's setuid helper:
-`fusermount3` (package `fuse3`), or FUSE 2's `fusermount` where that is all there is (from 0.5.0).
-Root mounts without either.
+Other ways in: [container](docs/install/docker-podman.md) ·
+[release binary or source](docs/install/binary.md) · [guide per NAS and player](docs/install/README.md#pick-a-guide)
 
-```sh
-cargo build --release
-mkdir -p ~/sacd
-target/release/sacdfs ~/music/sacd-images ~/sacd    # returns once mounted
-ls ~/sacd                                           # a folder per disc, with Stereo/ (and Multichannel/)
-fusermount3 -u ~/sacd
-```
-
-`~/music/sacd-images` is one `.iso` file or a folder searched recursively for them. All options:
-[docs/options.md](docs/options.md).
-
-## Install on your system
-
-**Beta testers wanted:** if you have a NAS (Synology, QNAP, UGREEN, Unraid, TrueNAS, ASUSTOR, TerraMaster
-and others), we'd like your report from real hardware, whether it worked or not:
-[beta testing](docs/beta-testing.md).
-
-- [Install guides](docs/install/README.md): pick yours in two or three questions: TrueNAS SCALE, OpenMediaVault, Unraid,
-  Synology, QNAP, UGREEN, Docker/Podman, and Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD.
-- [Release binary, crates.io or source](docs/install/binary.md).
-- [Clients](docs/clients.md): what sacdfs has been tested with, and how to set each one up.
-
-## Before you delete extracted files
-
-`sacdfs verify` checks, file by file, whether sacdfs serves the same audio as your extracted
-DSF or DFF files. It never deletes or changes anything.
-
-```sh
-sacdfs verify -o report.tsv ~/music/sacd-images
-```
-
-Statuses, extracts in their own tree, and keeping their tags:
-[user guide](docs/user-guide.md#before-you-delete-extracts).
+**Have a NAS?** Tell us how it went on real hardware: [beta testing](docs/beta-testing.md).
 
 ## Documentation
 
-- [User guide](docs/user-guide.md): options in detail, tags, sidecar files, fstab and systemd, troubleshooting
-- [Options](docs/options.md), [what the mount shows](docs/layout.md) and [limits](docs/limits.md)
-- [Deployment guide](docs/deployment.md): the container reference, every setting and why; [Small NAS: sizing](docs/deployment.md#small-nas-sizing) for memory and cores
-- [Design](docs/design.md) (how it works, and why), [performance](docs/performance.md), [PCM quality](docs/pcm-quality.md)
-- [Changelog](CHANGELOG.md), [releases](https://github.com/aclater/sacdfs/releases), and
-  what each minor version brought: [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
-- [Contributing](CONTRIBUTING.md)
+- [User guide](docs/user-guide.md): tags, [MusicBrainz lookup](docs/user-guide.md#your-own-tags---tags),
+  sidecar files, mounting at boot, troubleshooting
+- [Before you delete extracts](docs/user-guide.md#before-you-delete-extracts): `sacdfs verify`
+- [Clients](docs/clients.md): players and music servers tested
+- [Options](docs/options.md) · [what the mount shows](docs/layout.md) · [limits](docs/limits.md)
+- [Deployment reference](docs/deployment.md) · [small NAS sizing](docs/deployment.md#small-nas-sizing)
+- [Design](docs/design.md) · [performance](docs/performance.md) · [PCM quality](docs/pcm-quality.md)
+- [Changelog](CHANGELOG.md) · [releases](https://github.com/aclater/sacdfs/releases) ·
+  [contributing](CONTRIBUTING.md)
 
 ## Licence and credits
 
-sacdfs is free software: you can redistribute it and/or modify it under the terms of the
-[GNU General Public License](COPYING) as published by the Free Software Foundation, either
-version 3 of the License, or (at your option) any later version.
+sacdfs is free software under the [GNU General Public License](COPYING), version 3 or (at your
+option) any later version.
 
-- **[scarletbook](https://github.com/aclater/scarletbook-rs)** (MIT OR Apache-2.0) does all
-  SACD parsing and DST decoding, and its `scarletbook-pcm` the DSD-to-PCM conversion; sacdfs
-  uses their public APIs only.
-- **[pysacd](https://github.com/aclater/pysacd)** (GPL-2.0-or-later): its `pysacd-extract`
-  made the reference hashes the DSF files are checked against. sacdfs 0.1's own converter
-  (replaced by scarletbook-pcm, #84) was ported from its `csrc/dsp.c`, with a first stage
-  using the byte lookup-table technique of Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
-- The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec),
-  is dedicated to the public domain under CC0 1.0 (see its [licence](tests/corpus/LICENSE)).
+- [scarletbook](https://github.com/aclater/scarletbook-rs) (MIT OR Apache-2.0) does the SACD
+  parsing, DST decoding and DSD-to-PCM conversion, through its public APIs.
+- [pysacd](https://github.com/aclater/pysacd) (GPL-2.0-or-later) made the reference hashes the
+  DSF files are checked against; sacdfs 0.1's converter was ported from it, with a first stage
+  after Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
+- The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec), is
+  public domain under CC0 1.0 ([licence](tests/corpus/LICENSE)).
