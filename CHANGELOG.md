@@ -20,6 +20,8 @@ All notable changes to sacdfs are recorded here. The format follows
   from sacdfs. The soak (`scripts/soak.py`) has a `--log-level` option and prints the time of
   each unexpected read error, to find it in the logs.
 
+## [0.6.3-rc.1] - 2026-11-13
+
 ### Fixed
 - **Installer: on macOS, or any system other than Linux, it now stops at once and says sacdfs
   runs on Linux only.** Before, it reported "Linux detected", downloaded the Linux release and
@@ -62,6 +64,12 @@ All notable changes to sacdfs are recorded here. The format follows
   `scripts/tag-scan.py` repeats the scan
   ([performance](docs/performance.md#client-settings-on-a-nas-062), deployment, Linux client and
   Navidrome guides, clients).
+
+### Known issues
+- **A tag scan through a Linux SMB mount with default settings uses 2–10 % more CPU than on
+  0.6.2**, a side effect of the #357 change (measured on a 4-CPU container, 222 files; copies and
+  player reads are equal or better). With `rsize=262144` on the mount, as the docs now advise,
+  there is no difference, and the scan costs about a seventh of the CPU of a default mount.
 
 ## [0.6.2] - 2026-11-11
 
@@ -1343,7 +1351,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.3-rc.1...HEAD
+[0.6.3-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3-rc.1
 [0.6.2]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2
 [0.6.2-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2-rc.1
 [0.6.1]: https://github.com/aclater/sacdfs/compare/v0.6.0...v0.6.1
