@@ -53,6 +53,14 @@ const GIVE_UP_MARGIN: u64 = 1 << 20;
 /// While someone plays, a reader that is not playing reads ahead at least this many frames...
 const SHARED_WINDOW_MIN: u32 = 16;
 
+/// A reader not yet judged a player or a reader for throughput ([`PLAYER_AFTER`]) reads ahead
+/// only this many frames while a player reads (#363). *Why:* a player that starts beside copies
+/// starts with them, and none of them can be told apart in their first half second. Each read
+/// ahead a player's 2 s window then, so the new player's first reads waited behind about
+/// 600 frames of the copies' work, 0.4 to 0.9 s on 4 cores. The readers' own reads are not
+/// limited, and the window comes back once they are judged.
+const UNJUDGED_WINDOW: u32 = SHARED_WINDOW_MIN;
+
 /// ...and in slices of this many frames per decoder thread, at least [`SHARED_WINDOW_MIN`]:
 /// about 20 ms of work per slice, whatever the number of threads.
 const SLICE_FRAMES_PER_THREAD: u32 = 8;
@@ -157,6 +165,13 @@ impl FastReaders {
     fn any(&self, now: std::time::Instant) -> bool {
         let seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
         seen.iter().any(|r| r.lately(now, FAST_READER_IDLE))
+    }
+
+    /// Whether a reader other than `id` has been heard from in the last [`FAST_READER_IDLE`], or
+    /// waits for a read.
+    fn any_but(&self, id: u64, now: std::time::Instant) -> bool {
+        let seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
+        seen.iter().any(|r| r.id != id && r.lately(now, FAST_READER_IDLE))
     }
 }
 
@@ -879,10 +894,16 @@ impl Drop for Reader {
 impl Reader {
     /// A reader of `file`.
     pub fn new(file: Arc<TrackFile>) -> Self {
+        Self::opened_by(file, false)
+    }
+
+    /// A reader of `file`, opened by a network file server's process if `network`: behind a
+    /// network client from its first read, whatever the order of its reads (#362).
+    pub fn opened_by(file: Arc<TrackFile>, network: bool) -> Self {
         Reader {
             file,
             stream: Mutex::new(Stream::default()),
-            seq: Mutex::new(Seq::default()),
+            seq: Mutex::new(Seq { networked: network, ..Seq::default() }),
             reads: Arc::default(),
             flight: Mutex::new(Flight::default()),
             id: NEXT_READER.fetch_add(1, Ordering::Relaxed),
@@ -1129,6 +1150,8 @@ impl Reader {
                 READ_AHEAD_FRAMES
             };
             if someone_plays { own.min(self.file.shared_frames(engine.cache().cap(), n)) } else { own }
+        } else if !player && traffic.players.any_but(self.id, now) {
+            UNJUDGED_WINDOW
         } else {
             READ_AHEAD_FRAMES
         };
@@ -1414,6 +1437,56 @@ mod tests {
         }
         assert!(starting.seq.lock().unwrap().networked);
         assert!(starting.player.load(Ordering::Relaxed), "too early to tell: a player");
+    }
+
+    /// A reader opened by a network file server's process is behind a network client from its
+    /// first read, even if its reads arrive in order (#362).
+    #[test]
+    fn a_reader_opened_by_a_network_server_is_networked_at_once() {
+        let tree = corpus();
+        let f = longest_dsf(&tree);
+        let engine = Engine::new(4, 32 << 20).unwrap();
+        let local = Reader::new(f.clone());
+        let served = Reader::opened_by(f.clone(), true);
+        for r in [&local, &served] {
+            for i in 0..8 {
+                r.plan_read_ahead(&engine, i * (128 << 10), (i + 1) * (128 << 10), 0, 1);
+            }
+        }
+        assert!(!local.seq.lock().unwrap().networked, "in order, opened locally");
+        assert!(served.seq.lock().unwrap().networked, "in order, opened by a file server");
+    }
+
+    /// A reader not yet judged reads ahead only a few frames while someone else plays (#363).
+    #[test]
+    fn an_unjudged_reader_reads_ahead_little_beside_a_player() {
+        let tree = corpus();
+        let f = longest_dsf(&tree);
+        let engine = Engine::new(4, 32 << 20).unwrap();
+        let reader = Reader::new(f.clone());
+        let window =
+            |off: u64| reader.plan_read_ahead(&engine, off, off + (128 << 10), 0, 1).map(|a| a.end - a.first);
+        // Past the head window, in order, at once: not yet judged.
+        let past = HEAD_WINDOW + (128 << 10);
+        window(0);
+        let alone = window(past).expect("read-ahead with no player");
+        assert_eq!(alone, READ_AHEAD_FRAMES.min(f.layout.frames - 1));
+
+        let player = u64::MAX;
+        let now = std::time::Instant::now();
+        engine.traffic().players.note_since(player, now, now, None);
+        let fresh = Reader::new(f.clone());
+        fresh.plan_read_ahead(&engine, 0, 128 << 10, 0, 1);
+        let ahead = fresh.plan_read_ahead(&engine, past, past + (128 << 10), 0, 1).unwrap();
+        assert_eq!(ahead.end - ahead.first, UNJUDGED_WINDOW.min(f.layout.frames - 1), "beside a player");
+        assert!(!fresh.player.load(Ordering::Relaxed));
+
+        // Once it is a player, it gets a player's window back.
+        fresh.seq.lock().unwrap().started = Some((now - PLAYER_AFTER, 0));
+        fresh.seq.lock().unwrap().ahead_until = 0;
+        let ahead = fresh.plan_read_ahead(&engine, past + (128 << 10), past + (256 << 10), 0, 1).unwrap();
+        assert!(fresh.player.load(Ordering::Relaxed));
+        assert_eq!(ahead.end - ahead.first, READ_AHEAD_FRAMES.min(f.layout.frames - 1));
     }
 
     /// A reader on the list counts while it is heard from lately or waits for a read (#357).

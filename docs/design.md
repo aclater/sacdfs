@@ -1331,10 +1331,20 @@ decoding them twice.
   priorities and a pace cap on scanners (not tried: the first is larger, the second slows a
   scan with no player). *Trade-off:* beside a player a scanner runs 5 to 13 % slower, and a
   player's first 0.5 s is not protected.
+- **Readers not yet judged read ahead little beside a player (#363).** While another player
+  reads, a reader that is neither a player nor reading for throughput yet (its first 0.5 s)
+  reads ahead 16 frames, not 2 s; its own reads are not limited. *Why:* a player that starts
+  together with copies can't be told from them then, and each read ahead a player's window, so
+  its first reads waited behind about 600 frames of the copies' work (0.4 to 0.9 s on 4 cores,
+  on every release). *Trade-off:* a reader's first half second beside a player decodes on
+  demand, in pieces.
 - **The pace behind a network client (#271).** A jump, for the pace, is a read more than
   64 MiB from the furthest byte read so far, and the pace counts the bytes read since, but no
   further than the reader got. A reader one of whose reads has landed more than 2 MiB behind
-  the furthest byte read is behind a network client. Such a reader reads for throughput once
+  the furthest byte read is behind a network client, and so is one whose file a network file
+  server's process opened (#362: Samba's `smbd`, `ganesha.nfsd`, the kernel's `nfsd` or `ksmbd`,
+  told by the name of the request's thread group; NFS-Ganesha's reads can arrive in order, and a
+  local program with one of those names counts too). Such a reader reads for throughput once
   it is also 32 MiB ahead of playing time. Until then it is *unsure*: it plays if no player has
   been reading since before it, and otherwise reads for throughput, letting that player go
   first. *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a
@@ -1382,9 +1392,9 @@ decoding them twice.
   player on 4 cores was 15 to 20 % slower than on 0.6.2. *Trade-off:* a second player that starts while another plays, on a server too slow
   for both, reads behind the first until its client pauses; a reader whose client pauses once
   counts as a player until it jumps; and a copy that starts within 5 s of a player pausing
-  without closing its file lets that player go first if it comes back. Copies served by an NFS server whose
-  reads reach sacdfs in order are not seen as behind a network client, and get none of this
-  (1 of 3 instrumented NFS runs).
+  without closing its file lets that player go first if it comes back. Copies served by an NFS
+  server whose reads reach sacdfs in order were not seen as behind a network client until #362,
+  which tells them by the server's process; one in another PID namespace still isn't.
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.

@@ -267,12 +267,12 @@ impl Filesystem for SacdFs {
         self.volume.getattr(ino.0, fh.map(|f| f.0), reply);
     }
 
-    fn open(&self, _req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
+    fn open(&self, req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
         if flags.acc_mode() != OpenAccMode::O_RDONLY {
             reply.error(errno(vfs::Error::ReadOnly));
             return;
         }
-        self.volume.open(ino.0, reply);
+        self.volume.open_by(ino.0, req.pid(), reply);
     }
 
     fn read(
