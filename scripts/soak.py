@@ -136,7 +136,8 @@ def record_error(path, err, args):
         FAILED_PATHS[cls].add(str(path))
         ERRORS[(cls, name, "churn" if top == "churn" else "stall" if top == "stall" else "other")] += 1
         if cls == "unexpected" and len(SAMPLES) < 10:
-            SAMPLES.append((name, str(path) if args.sample_paths else f"<{top}>"))
+            # The wall-clock time, to find its line in sacdfs's log and the kernel's (#339).
+            SAMPLES.append((name, str(path) if args.sample_paths else f"<{top}>", time.strftime("%Y-%m-%d %H:%M:%S")))
 
 
 def log(msg):
@@ -183,7 +184,7 @@ class Mount:
                                    "--cache-mb", str(args.cache_mb),
                                    "--request-timeout", str(args.request_timeout),
                                    "--log-file", str(args.work / logname), str(lib), str(mp)]
-        env = dict(os.environ, XDG_CACHE_HOME=str(args.work / "cache"), RUST_LOG="warn")
+        env = dict(os.environ, XDG_CACHE_HOME=str(args.work / "cache"), RUST_LOG=args.log_level)
         self.proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                      stderr=open(args.work / f"{logname}.stderr", "ab"))
         wait(lambda: is_mounted(mp) or self.proc.poll() is not None, 120, f"the mount on {mp}")
@@ -582,8 +583,8 @@ def verdict(rows, args):
         # counts above are attempts; these are how many different files failed.
         lines.append("  distinct files that failed, by class: "
                      + ", ".join(f"{k} {len(v)}" for k, v in sorted(FAILED_PATHS.items())))
-        for name, where in SAMPLES:
-            lines.append(f"  unexpected sample: {name} {where}")
+        for name, where, when in SAMPLES:
+            lines.append(f"  unexpected sample: {name} {where} at {when}")
     if c["err_unexpected"]:
         ok = False
         lines.append("FAIL: unexpected read errors")
@@ -627,6 +628,9 @@ def main():
     ap.add_argument("--malloc-info-every", type=float, default=0,
                     help="every this many seconds, write glibc's malloc_info XML (via gdb) to <out>.malloc-info/")
     ap.add_argument("--wrap", default="", help="command line to run the main sacdfs under")
+    ap.add_argument("--log-level", default="warn",
+                    help="sacdfs's log level (RUST_LOG), in mount.log and remount.log of the work "
+                         "directory: warn has every failed request (#339); info or debug say more")
     args = ap.parse_args()
     args.sacdfs = str(Path(args.sacdfs).resolve())
     if args.work is None:

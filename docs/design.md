@@ -1825,6 +1825,27 @@ everything:
 - The root's `getattr` starts a sweep of the source for changes (#123). It does not wait for
   a sweep already running (held up by a stalled source, say): it answers with the times
   known, and the running sweep moves them when it is done.
+- **Every failed request is logged, rate-limited
+  ([#339](https://github.com/aclater/sacdfs/issues/339)).** Each path that answers a request
+  with `EIO`, or with the errno of a failed source read, logs a `warn` line through
+  `src/errlog.rs` (`errlog::failed`). The line gives the image, track, inode and offset of a
+  read, or the sidecar file, and the cause. This covers a failed decode or source read, a
+  panic, a read refused under the #241 cap, a timeout, and a request whose job ended without
+  an answer. fuser would answer that last one with `EIO` when its reply was dropped, and log
+  only the request number, so the watchdog's slot answers it instead, saying what the request
+  was. Other errnos are answers, not failures: `ENOENT`, `ENOTDIR`, `EISDIR`, `EROFS`,
+  `EACCES`, `ESTALE` and `ENOSYS`. A read of a handle that isn't open (`EBADF`) is
+  logged as well. `ENOMEM` is logged when the refusal starts (#237). *Why a
+  rate limit:* a damaged image or a hung share fails every read, and clients retry, so a line
+  per read would flood the log and bury the first line. One line per key (the image, the
+  sidecar, or the request's description) per minute; the next line of that key says how many
+  were left out. *Why per key and not one limit for all:* the line that matters can be a
+  healthy image's single failure while another image fails over and over (#339), and one
+  shared limit would drop it. A cap of 50 lines a minute in all keeps a whole share failing
+  from flooding the log; past it, the next line logged says how many others were left out.
+  *Trade-off:* the second failure of an image within a minute has no line of its own, only a
+  count. So an `EIO` that a client saw is in the log, or counted in a later line, unless the
+  kernel or fuser made it (fuser logs its own at `warn`).
 - **A hung image's reads are capped once they have failed
   ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
   free the thread, which stays blocked until the source answers, so each retry by a client took
