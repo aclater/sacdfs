@@ -47,12 +47,29 @@ pub trait Fail: Send + 'static {
 pub struct What {
     op: &'static str,
     detail: Box<dyn fmt::Display + Send + Sync>,
+    /// What its failure's log line is rate-limited by ([`crate::errlog`]); `None`: the whole
+    /// description.
+    key: Option<String>,
 }
 
 impl What {
     /// Request `op`, described by `detail` (formatted only if it times out).
     pub fn new(op: &'static str, detail: impl fmt::Display + Send + Sync + 'static) -> What {
-        What { op, detail: Box::new(detail) }
+        What { op, detail: Box::new(detail), key: None }
+    }
+
+    /// Request `op` as with [`What::new`], whose failures are logged at most once per
+    /// [`crate::errlog::WINDOW`] per `key` (an image's reads, whatever their offset).
+    pub fn keyed(op: &'static str, key: String, detail: impl fmt::Display + Send + Sync + 'static) -> What {
+        What { op, detail: Box::new(detail), key: Some(key) }
+    }
+
+    /// The key of its failure's log line.
+    fn log_key(&self) -> String {
+        match &self.key {
+            Some(k) => format!("{} {k}", self.op),
+            None => self.to_string(),
+        }
     }
 }
 
@@ -105,22 +122,29 @@ impl<R: Fail> Watched for Slot<R> {
         };
         let Some(reply) = reply else { return };
         let waited = self.started.elapsed().as_secs_f64();
+        let key = self.what.log_key();
         match running {
-            Some((thread, since)) => log::warn!(
-                "{} has waited {waited:.1} s (running on {} for {:.1} s): failing it with EIO \
-                 after the {} s request timeout",
-                self.what,
-                thread.name().unwrap_or("a request thread"),
-                since.elapsed().as_secs_f64(),
-                timeout.as_secs_f64()
+            Some((thread, since)) => crate::errlog::failed(
+                &key,
+                format_args!(
+                    "{} has waited {waited:.1} s (running on {} for {:.1} s): failing it with EIO \
+                     after the {} s request timeout",
+                    self.what,
+                    thread.name().unwrap_or("a request thread"),
+                    since.elapsed().as_secs_f64(),
+                    timeout.as_secs_f64()
+                ),
             ),
-            None => log::warn!(
-                "{} has waited {waited:.1} s, queued (every request thread busy): failing it \
-                 with EIO after the {} s request timeout",
-                self.what,
-                timeout.as_secs_f64()
+            None => crate::errlog::failed(
+                &key,
+                format_args!(
+                    "{} has waited {waited:.1} s, queued (every request thread busy): failing it \
+                     with EIO after the {} s request timeout",
+                    self.what,
+                    timeout.as_secs_f64()
+                ),
             ),
-        }
+        };
         reply.fail(Error::Io);
     }
 }
@@ -266,7 +290,22 @@ impl<R: Fail> Drop for Pending<R> {
         if let Some(inner) = &self.inner {
             inner.pending().remove(&self.id);
         }
-        // A reply never taken (a job dropped unrun) answers EIO when dropped (fuser does that).
+        // A reply never taken: its job panicked, or was dropped unrun. fuser would answer EIO
+        // for it when dropped, logging only the request's number: answered here instead, with
+        // what it was (#339).
+        let reply = self.slot.lock().reply.take();
+        if let Some(reply) = reply {
+            crate::errlog::failed(
+                &self.slot.what.log_key(),
+                format_args!(
+                    "{} was left unanswered after {:.1} s (its job ended without a reply): failing \
+                     it with EIO",
+                    self.slot.what,
+                    self.slot.started.elapsed().as_secs_f64()
+                ),
+            );
+            reply.fail(Error::Io);
+        }
     }
 }
 
@@ -343,5 +382,45 @@ mod tests {
             assert!(rx.try_recv().is_err());
             p.take().unwrap().ok();
         }
+    }
+
+    /// A request whose job ended without answering it (a panic, a job dropped unrun) fails
+    /// with EIO at once, and the log says which it was (#339): before, fuser answered it when
+    /// the reply was dropped, with only the request's number in its log line.
+    #[test]
+    fn a_request_left_unanswered_fails_with_eio_and_logs() {
+        for wd in [Watchdog::new(Some(Duration::from_secs(30))).unwrap(), Watchdog::off()] {
+            let (tx, rx) = mpsc::channel();
+            let p = wd.watch(What::new("read", "unanswered-test inode 5"), Probe(tx));
+            p.running();
+            drop(p);
+            assert_eq!(rx.try_recv().unwrap(), Some(Error::Io));
+            assert_eq!(wd.pending(), 0);
+        }
+        let lines = crate::errlog::tests::lines_with("unanswered-test inode 5");
+        assert_eq!(lines.len(), 1, "one line per key per window: {lines:?}");
+        assert!(lines[0].contains("left unanswered") && lines[0].contains("EIO"), "{lines:?}");
+    }
+
+    /// A request failed for its timeout logs what it was, once per key per window, however
+    /// many of its kind time out (#339).
+    #[test]
+    fn timed_out_reads_of_one_image_log_once() {
+        let wd = Watchdog::new(Some(Duration::from_millis(100))).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let held: Vec<_> = (0..5)
+            .map(|i| {
+                let what =
+                    What::keyed("read", "timeout-test.iso".to_owned(), format!("timeout-test.iso at {i}"));
+                wd.watch(what, Probe(tx.clone()))
+            })
+            .collect();
+        for _ in 0..5 {
+            assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(Error::Io));
+        }
+        drop(held);
+        let lines = crate::errlog::tests::lines_with("timeout-test.iso at");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("request timeout"), "{lines:?}");
     }
 }

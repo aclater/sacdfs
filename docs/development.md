@@ -156,7 +156,11 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   per class are columns of the TSV, and `<out>.errors.tsv` has class, errno and area. The summary lists up to ten unexpected paths only with `--sample-paths`: leave it off
   on a real library, whose names must not be published. A failed read returns at once and is
   retried after `--read-pause`, so the counts are attempts; the summary also gives how many
-  different files failed.
+  different files failed. Each unexpected sample has its time, to find it in the work
+  directory's `mount.log` and in the kernel log (`journalctl -k`, where the account may read
+  it). sacdfs logs every request it fails with `EIO`, rate-limited (#339), so an unexpected EIO
+  with no line in `mount.log` came from the kernel. `--log-level` sets sacdfs's log level
+  (`warn` by default; `info` or `debug` say more and make a larger log).
 
 The exit status is 0 on PASS and 1 on FAIL. `--help` lists the knobs.
 

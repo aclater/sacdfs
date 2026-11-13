@@ -13,6 +13,7 @@
 pub mod disc;
 pub mod dsf;
 pub mod engine;
+pub mod errlog;
 pub mod fallback;
 pub mod fuse;
 pub mod handles;

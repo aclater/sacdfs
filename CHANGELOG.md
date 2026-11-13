@@ -6,6 +6,20 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Every request sacdfs fails with an I/O error is logged with what failed, where and why, and
+  the lines are rate-limited (part of #339).** A read that fails has a `warn` line with the image,
+  the track, the inode and the offset, and the cause. Reads of an image refused while it has reads
+  blocked past the request timeout (#241) are logged as well, and not only when the refusal starts.
+  Reads of a sidecar file, opens of a sidecar file that fail for a reason other than a missing or
+  replaced file, and requests whose work ended without an answer are logged too. Before, fuser
+  answered those with `EIO` and logged only the request's number. Lines about the same image (or
+  sidecar, or request) are logged at most once a minute, and at most 50 lines a minute in all;
+  the next line says how many were left out. So a damaged image or a hung share no longer writes
+  a line for every read retried, and an `EIO` with no line in the log came from the kernel, not
+  from sacdfs. The soak (`scripts/soak.py`) has a `--log-level` option and prints the time of
+  each unexpected read error, to find it in the logs.
+
 ### Fixed
 - **Installer: on macOS, or any system other than Linux, it now stops at once and says sacdfs
   runs on Linux only.** Before, it reported "Linux detected", downloaded the Linux release and
