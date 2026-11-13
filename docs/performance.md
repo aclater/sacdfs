@@ -1201,8 +1201,89 @@ the spread of the runs (+1.5 % on 2 slow cores, ranges overlap; -4.5 % on 4 core
   did not apply, and they counted as players by their pace, as on 0.6.2. Every reader then read
   ahead a player's window and nearly every frame was converted twice (86,437 of 175,780). 0.6.1
   and 0.6.2 show the same pattern more mildly in some runs (up to 379 reads over 100 ms per run).
-  Telling a copy from a player behind an NFS server is left for a follow-up.
+  Telling a copy from a player behind an NFS server is left for a follow-up. It came with #362,
+  in the next section.
 
+
+## A second player beside copies, and copies behind NFS (#363, #362)
+
+**A second player (#363).** A player that starts while another plays, together with four
+copies, waited for its first reads on every release (above: worst 2.6 s on 0.6.1, 0.8 s on
+0.6.2, 1.3 s with #357's change). Its stalls came at two moments. The first was its second read,
+0.2 s in. It and the copies had all started together and none of them could be judged yet
+(a reader counts as a player only after 0.5 s), so each read ahead a player's 2 s window, and
+the new player's read waited behind about 600 frames of the copies' 6-channel work on 4
+threads. The second came between 1.2 and 2.6 s: its client had fetched its first 4 to 8 MiB at
+once, so it was *unsure* and let the first player go first, until its client paused (traced:
+unsure from 0.5 to 0.9 s, a player again at 4.8 to 6.8 s).
+
+**The change** ([design](design.md#read-ahead)): a reader not yet judged reads ahead only 16
+frames while another player reads. Its own reads are not limited, and once it counts as a player
+it has the 2 s window again. That removed the first stall in every run.
+
+**What was tried and dropped** (6 runs each, same cell, worst read of the second player, max
+(median)): with the change, 762 (365); letting a reader whose client has paused play even while
+unsure, 1,914 (756), no better than main (1,129 (664)), because its client first paused only once
+it read no faster than a player; that, plus a reader reading no faster than a player playing
+while any copy is far ahead of playing time, 978 (625); that, plus judging no reader before 2 s,
+1,733 (1,392), worse. 0.6.2 in the same runs: 727 (695).
+
+**Copies behind NFS (#362).** A reader counted as behind a network client only once one of its
+reads landed more than 2 MiB behind another. NFS-Ganesha's reads can reach sacdfs in order, and
+then the #357 rule didn't apply: the copies counted as players by their pace, read ahead a
+player's window each and converted most frames twice, as on 0.6.2. Now a file opened by a
+network file server's process counts as behind a network client from its first read. The server
+is told by the name of the thread group of the request's process: `smbd` (Samba 4.18 and later
+name its processes `smbd[client]`, cut to 15 bytes), `ganesha.nfsd`, `nfsd` or `ksmbd`. An
+unknown process (0, or one in another PID namespace) is not, and the order of its reads still
+tells. A local program named like one of those servers counts as one: its reader lets an earlier
+player go first until its client pauses or it is far ahead of playing time, and its audio is the
+same.
+
+**How measured.** As in the previous section: the same machine, harness, test disc, tracks and
+container pins; a fresh container per run, page cache dropped, builds alternating with the order
+rotated each round. "0.6.3" is the release image, or main built from the same source (the
+release changed only the version); "this change" is built the same way. 0.6.2 is measured in
+the same session where a run count is given, otherwise its figures are the previous section's.
+Player: worst read, ms, max (median); copies: seconds until all end, median (range).
+
+| Cell | 0.6.2 | 0.6.3 | This change |
+|---|---|---|---|
+| **SMB, 2 players + 4 copies, 4 cores: second player** | 727 (695), 6 runs | 1,210 (749), 4 runs; 1,129 (664), 6 runs | **517 (171)**, 4 runs |
+| first player | 1,308 (32), 6 runs | 42 (31), 10 runs | 712 (29), 4 runs: **one read of 712 ms at 62 s, flagged** |
+| copies, s | 115.2 | 115.8 | 115.1 |
+| SMB, 2 players, 2 slow cores, no copies: second player | 130 | 218 (77) | **38 (37)** |
+| first player | 61 | 61 (59) | 56 (55) |
+| **SMB, 4 copies, 2 slow cores** (#357's case), 16 runs each: worst read | 12,826 (11,134), 4 runs | 4,031 (1,768) | 4,192 (1,294) |
+| reads over 100 ms per run; player behind real time, worst | 39-54; 38.9 s | 1-10; 4.0 s | 2-7; 4.2 s |
+| copies, s; sacdfs CPU, s | 315.98; 621 | 235.33 (227.23-240.31); 459 | 233.92 (226.22-246.37); 457 |
+| SMB, 4 copies, 2 fast cores (3 runs): worst read; copies, s | 32.0; 120.87 | 32; 122.2 | 34; 117.3 |
+| SMB, 1 copy, 2 slow cores: worst read; copies, s | 55.7; 42.77 | 64; 43.8 | 62; 43.7 |
+| SMB, 4 copies, 4 cores: worst read; copies, s | 31.2; 110.24 | 32; 110.5 | 31; 111.3 |
+| SMB, 1 copy, 4 cores: worst read; copies, s | 32.2; 23.95 | 33; 23.5 | 31; 23.4 |
+| SMB, 1 copy alone, 2 slow cores, s | 31.64 | 31.0 (30.3-34.0) | 30.9 (30.8-32.3) |
+| SMB, 1 copy alone, 4 cores, s | 17.27 | 17.7 (16.8-18.5) | 17.9 (16.8-18.6) |
+| **NFS, 4 copies, 2 slow cores** (6 runs): reads over 100 ms per run | 12-344, 4 runs | 8-506 | **3-9** |
+| worst read | 382.8 (376.3) | 367 (281) | **484 (407), higher, flagged** |
+| copies, s; sacdfs CPU, s | 140.02; 272 | 139.1 (130.1-235.3); 270 | **130.3 (129.2-130.9); 253** |
+| Tag scan, SMB default mount, 4 cores (186 files, 6 runs): sacdfs CPU, s; wall, s | 21.3 (21.2-21.4); 6.85 | 21.4 (21.3-21.5); 6.87 | 21.4 (21.3-21.4); 6.87 |
+
+- **The second player:** its worst read is about a third of 0.6.3's median and below 0.6.2's in
+  every run. One stall at 2.4 s remains in some runs (up to 517 ms), when copies and both players
+  are being judged.
+- **First player, flagged:** in 1 run of 4 the first player had one read of 712 ms, 62 s in,
+  while all readers were long judged; 0.6.2 had one of 1,308 ms in 6 runs, the change's earlier
+  version none in 6. Single mid-run stalls of either player show on every build in this cell.
+- **#357's case:** no worse in 16 runs each: the median worst read is lower, the maximum 4 %
+  higher (4.19 s against 4.03 s), within the spread. One earlier run of the change took 315 s
+  for the copies with 617 s of CPU and a 14.8 s stall, as on 0.6.2; it followed a run whose
+  copies had been killed by hand, leaving that run's player reading on the same core. In 19
+  undisturbed runs of the change it didn't recur.
+- **NFS:** in 3 of 6 runs of 0.6.3 the copies counted as players (206 to 506 reads over 100 ms,
+  copies 143 to 235 s); with the change none did. The player's worst read is higher, 484 ms
+  against 367 at most, but it had 3 to 9 reads over 100 ms per run against 8 to 506.
+- **Audio:** every DSF and WAV file of the test corpus and a 6-channel DST disc (970 files,
+  20 GB) read through 0.6.3's code and the change's has the same SHA-256.
 
 ## A player's import over SMB (#266)
 

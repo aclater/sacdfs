@@ -20,6 +20,27 @@ All notable changes to sacdfs are recorded here. The format follows
   from sacdfs. The soak (`scripts/soak.py`) has a `--log-level` option and prints the time of
   each unexpected read error, to find it in the logs.
 
+### Fixed
+- **A player that starts beside copies gets its first reads sooner (#363).** A player starting
+  while another plays and copies start can't be told from the copies in its first half second, and
+  every one of them read ahead 2 s of audio, so its first reads waited behind about 600 frames of
+  the copies' work. Now a reader not yet judged reads ahead 16 frames while another player reads;
+  its own reads are not limited, and the full window comes back once it counts as a player. Over
+  SMB on 4 cores, a second player starting with four copies beside a first: worst read 517 ms,
+  median 171 (0.6.3: 1,210 and 749; 0.6.2: 727 and 695), and with no copies on 2 slow cores 38 ms
+  (0.6.3: 218). The other cells are unchanged within the spread of the runs
+  ([performance](docs/performance.md#a-second-player-beside-copies-and-copies-behind-nfs-363-362)).
+- **Copies served by a network file server count as behind a network client from their first
+  read (part of #362).** A file opened by Samba (`smbd`), NFS-Ganesha (`ganesha.nfsd`), the
+  kernel's NFS server (`nfsd`) or `ksmbd` is read for a network client, whatever the order of its
+  reads; before, only reads arriving out of order showed it, and NFS-Ganesha's often arrive in
+  order. Over NFS, four copies beside a player on 2 slow cores no longer slip into the 0.6.2
+  pattern where the copies count as players: reads over 100 ms per run 3 to 9 (0.6.3: 8 to 506),
+  copies 130 s in every run (0.6.3: 130 to 235 s), 6 % less CPU. The player's worst read is
+  higher there, 484 ms against 367 (median 407 against 281). A local program named like one of
+  those servers counts as one; its reader then lets an earlier player go first, and its audio is
+  the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
+
 ## [0.6.3] - 2026-11-13
 
 Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
