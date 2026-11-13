@@ -653,6 +653,56 @@ Not run: Unraid (no image here; it runs from a licensed USB stick), QTS and UGOS
 the container route on a NAS, restarts, aarch64 hardware, and the `wget` one-liner piped into `sh`
 on a NAS.
 
+## Results: 0.6.3-rc.1 gate
+
+What was run on 0.6.3-rc.1 (tag `v0.6.3-rc.1`), with 0.6.2 as the baseline. Anything missing here is untested on 0.6.3-rc.1.
+
+**Release artifacts.** The release workflow succeeded. The release is a pre-release with the x86_64, x86_64-v3 and aarch64 archives and `install.sh`, each with a `.sha256` and an `.intoto.jsonl`, and `SHA256SUMS`. All four checksums verify, each against its `.sha256` and against `SHA256SUMS`, and `gh attestation verify` passes on each of the four assets, by repository and with its own `.intoto.jsonl`. The released `install.sh` says `DEFAULT_VERSION=0.6.3-rc.1` and differs from the tagged `deploy/install.sh` only in that line; each archive holds a byte-identical copy of it next to `nas-compose.yaml`, `sacdfs`, `sacdfs-ctl`, `sacdfs.service`, `sacdfs.conf.example`, `COPYING`, `README.md` and `CHANGELOG.md`. Each archive's `nas-compose.yaml` names `ghcr.io/aclater/sacdfs:0.6.3-rc.1` and otherwise equals the tagged file (#351: 0.6.2-rc.1's named 0.6.1). `--version` prints `sacdfs 0.6.3-rc.1` for all three binaries (aarch64 under `qemu-user`) and inside the image on both architectures. The x86_64 binary needs no symbol newer than `GLIBC_2.17`.
+
+- **Image:** `ghcr.io/aclater/sacdfs:0.6.3-rc.1` is an image index with amd64 and arm64; `:latest` is still the 0.6.2 index. `gh attestation verify oci://ghcr.io/aclater/sacdfs:0.6.3-rc.1` passes, as the release notes give it, and so do the `0.6.3-rc.1-amd64` and `0.6.3-rc.1-arm64` tags and the arm64 image by its digest. The amd64 image by its own digest (the one a pull on amd64 resolves to) has no attestation: the workflow attests the `-amd64` tag, which is an index of the image and Docker's build record, not the image. The same holds for 0.6.2 and 0.6.2-rc.1, so it isn't new.
+- **crates.io:** the workflow skips its publish job for versions with a `-`, so the candidate isn't there; the newest there is 0.6.2.
+- **Release notes (#368):** the installer command renders as a two-line code block (`curl ... install.sh \` and `  | sudo sh -s -- --iso-dir /path/to/images`), checked with GitHub's own Markdown rendering. It uses the `latest/download` address, which serves 0.6.2's installer until a final release replaces it.
+
+| | 0.6.1 | 0.6.2 | 0.6.3-rc.1 |
+|---|---|---|---|
+| `install.sh` asset, checksum and attestation | none | pass | pass |
+| Archive's `nas-compose.yaml` names its own version | not in the archive | yes | yes |
+| Image attestation by tag / amd64 digest / arm64 digest | | pass / none / pass | pass / none / pass |
+| Installer stops on a system other than Linux before downloading (#367) | no installer | no | yes |
+| Installer piped into `sh` and cut short fails (#352) | no installer | no (exit 0) | yes (exit 1) |
+
+**Installer from the real release** (Part of #340). The release's own `install.sh` (from `releases/download/v0.6.3-rc.1/`, not `latest`), which downloaded and checked the 0.6.3-rc.1 archive. Each run was the whole cycle of `deploy/ci-install-steps.sh`: a dry run that changed nothing, the install, all 28 DSF and WAV files of three corpus images identical to a reference, a second run that changed nothing, `--uninstall` back to the start, a second `--uninstall` with nothing to remove, and the images folder unchanged. The reference, read by the 0.6.3-rc.1 x86-64 binary on a Linux host, is byte-identical to the one 0.6.2's binary gave.
+
+| System | Route | One-liner | Download, check, run |
+|---|---|---|---|
+| BusyBox-only container (BusyBox `wget`, no curl) | `sacdfs-ctl` | pass | not run |
+| BusyBox with no C library | refuses, changes nothing | pass | not run |
+| Fedora 44 container | `sacdfs-ctl` | pass | not run |
+| UBI 7 container (glibc 2.17) | `sacdfs-ctl` | pass | not run |
+| Synology DSM 7.4.1, checked in a VM, not on the vendor's hardware | `sacdfs-ctl`, Task Scheduler tasks | pass | pass |
+| QNAP QuTScloud 5.2.9, checked in a VM, not on the vendor's hardware (a hand-made ext4 volume) | `sacdfs-ctl`, `autorun.sh` | pass | pass |
+
+- **The containers** ran `deploy/ci-install-test.sh containers` changed only to serve the release's own `install.sh`, archive and `.sha256`, unchanged, from a local server in GitHub's layout (CI repacks the archive with the tree's files instead). The NAS VMs fetched everything from GitHub.
+- **A download cut short (#352):** in the BusyBox and Fedora 44 containers, the release's `install.sh` piped into `sh` and cut before its last line, or in the middle, stops with status 1, says the download was cut short, and changes nothing; download-then-run with a failing download (TLS error, missing file) stops before `sh`. On both NAS VMs, `curl ... install.sh | sed '$d' | sh` from GitHub stops with status 1 and the same message. 0.6.2's installer exits 0 there.
+- **Not Linux (#367):** with a fake `uname` that prints `Darwin` first in `PATH`, the release's `install.sh` stops with status 1 ("sacdfs runs on Linux only, and this system is Darwin: nothing was changed") before any download: a local server it was pointed at (`SACDFS_RELEASES_URL`) got no request. The same on QNAP, and on Synology with the fake `uname` on the data volume. (The first Synology try put it in `/tmp`, which DSM mounts `noexec`, so the shell skipped it and used the real `uname`: a fault of the test, not of the installer.) 0.6.2's installer said "Linux detected" there.
+- **QNAP autorun (#353),** with the release's `install.sh`: "Run user defined processes" off before the install, on after it, off again after `--uninstall`.
+
+Not run: Fedora as root through `sudo` with systemd or Docker Compose (CI's runner covers both on every change to `deploy/`), the other NAS VMs, aarch64, restarts, and the `latest/download` address (it serves 0.6.2 until the final release).
+
+### Windows and macOS
+
+*(coordinator: Windows 11 byte identity and #271 timings, 0.6.2 against 0.6.3-rc.1)*
+
+**macOS:** not run on 0.6.3-rc.1. The Apple hardware that hosts the macOS VM was not available.
+
+### Soak
+
+*(coordinator)*
+
+### Clients
+
+*(coordinator)*
+
 ## Soak memory steps (#247)
 
 Steps of 3 to 9 MiB in a soak's resident size, in both directions, appeared on 0.4.0, 0.4.1-rc.2
