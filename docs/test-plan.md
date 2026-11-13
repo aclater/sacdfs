@@ -691,7 +691,27 @@ Not run: Fedora as root through `sudo` with systemd or Docker Compose (CI's runn
 
 ### Windows and macOS
 
-*(coordinator: Windows 11 byte identity and #271 timings, 0.6.2 against 0.6.3-rc.1)*
+**Windows 11** in a VM, not on physical hardware, against the published 0.6.2 and 0.6.3-rc.1 images, each on 4 pinned cores with a fresh container per run and the versions alternating, over the same 6 discs as the 0.6.2-rc.1 gate (230 files, 107.7 GB).
+
+- **Bytes:** Robocopy `/MIR` copied the whole tree from the rc and Windows hashed every file: all 230 match the server's own read and the reference taken at the 0.6.2-rc.1 gate. A separate Windows hash pass against 0.6.2 itself was not run.
+- **One Robocopy copy of a single WAV** (median seconds, range):
+
+| | 0.6.1 (0.6.2-rc.1 gate) | 0.6.2 | 0.6.3-rc.1 |
+|---|---|---|---|
+| Stereo, 740 MB (10 rounds) | 1.549 (1.527–5.899) | 1.510 (1.359–1.644) | 1.626 (1.346–7.978) |
+| 6-channel, 1.62 GB (5 rounds) | 13.609 | 12.692 (12.563–24.855) | 12.678 (12.589–12.765) |
+
+  Three of the rc's ten stereo copies were slow (4.6, 6.4 and 8.0 s against about 1.5 s); 0.6.2 had one slow 6-channel copy (24.9 s) and 0.6.1 one slow stereo copy in five. Without these outliers the two releases are equal; their cause isn't known.
+- **A real-time 6-channel reader beside Robocopy copies** (4 runs per cell; runs with a read over 100 ms, worst read, copies median):
+
+| Cell | 0.6.1 | 0.6.2 | 0.6.3-rc.1 |
+|---|---|---|---|
+| 1 copy | 0 runs | 0 runs; 24–37 ms; 11.92 s | 0 runs; 24–28 ms; 12.00 s |
+| 4 copies | 4 runs | 2 runs; 33–142 ms; 49.70 s | **0 runs; 37–100 ms; 49.48 s** |
+
+  The reader kept up with real time in every run.
+
+Not run on Windows: the functional checks (names, tags, thumbnails, write refusals, an open file across a restart, files over 4 GiB), large-icon view, CJK names, foobar2000 and JRiver.
 
 **macOS:** not run on 0.6.3-rc.1. The Apple hardware that hosts the macOS VM was not available.
 
