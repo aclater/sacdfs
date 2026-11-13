@@ -855,7 +855,7 @@ mod network_tests {
 
     #[test]
     fn network_servers_by_name() {
-        for c in ["smbd", "smbd[192.168.1.", "smbd: client [", "ganesha.nfsd", "nfsd", "ksmbd:r445"] {
+        for c in ["smbd", "smbd[192.0.2.1]", "smbd: client [", "ganesha.nfsd", "nfsd", "ksmbd:r445"] {
             assert!(is_network_server(c), "{c}");
         }
         for c in ["python3", "cat", "RoonAppliance", "Plex Media Serv", "nfsdcld", "ganesha", "sacdfs"] {
