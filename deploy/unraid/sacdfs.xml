@@ -4,7 +4,7 @@
      store listing: docs/install/store-apps.md. -->
 <Container version="2">
   <Name>sacdfs</Name>
-  <Repository>ghcr.io/aclater/sacdfs:0.6.2</Repository>
+  <Repository>ghcr.io/aclater/sacdfs:0.6.3</Repository>
   <Registry>https://github.com/aclater/sacdfs/pkgs/container/sacdfs</Registry>
   <Network>bridge</Network>
   <MyIP/>

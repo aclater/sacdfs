@@ -31,7 +31,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    Set `a` to that.
 
    ```sh
-   v=0.6.2 a=x86_64
+   v=0.6.3 a=x86_64
    cd ~
    curl -fLO "https://github.com/aclater/sacdfs/releases/download/v$v/sacdfs-$v-$a-linux.tar.gz"
    curl -fLO "https://github.com/aclater/sacdfs/releases/download/v$v/sacdfs-$v-$a-linux.tar.gz.sha256"
@@ -43,7 +43,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
    ```
 
-   *You should see* `sacdfs-0.6.2-x86_64-linux.tar.gz: OK`.
+   *You should see* `sacdfs-0.6.3-x86_64-linux.tar.gz: OK`.
 
 4. **Unpack it and put the program in your own `bin` folder.**
 
@@ -54,7 +54,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    ~/.local/bin/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.6.2`.
+   *You should see* `sacdfs 0.6.3`.
 
 5. **Make an empty folder to mount on, and start sacdfs.** While it runs, this folder shows the
    DSF and WAV files; anything already in it is hidden.
@@ -131,7 +131,7 @@ clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributi
 **With `gh` instead of `curl`,** and checking where it was built:
 
 ```sh
-v=0.6.2 a=x86_64          # or a=x86_64-v3, or a=aarch64
+v=0.6.3 a=x86_64          # or a=x86_64-v3, or a=aarch64
 gh release download "v$v" -R aclater/sacdfs -p "sacdfs-$v-$a-linux.tar.gz*"
 sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
 gh attestation verify "sacdfs-$v-$a-linux.tar.gz" -R aclater/sacdfs
