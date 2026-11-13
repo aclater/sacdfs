@@ -39,27 +39,27 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 4. **Download sacdfs and its checksum file.**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.2/sacdfs-0.6.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.2/sacdfs-0.6.2-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.3/sacdfs-0.6.3-x86_64-linux.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.3/sacdfs-0.6.3-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
 5. **Check the download.**
 
    ```sh
-   sha256sum -c sacdfs-0.6.2-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.6.3-x86_64-linux.tar.gz.sha256
    ```
 
-   *You should see* `sacdfs-0.6.2-x86_64-linux.tar.gz: OK`.
+   *You should see* `sacdfs-0.6.3-x86_64-linux.tar.gz: OK`.
 6. **Unpack it and copy out the program and its start script.**
 
    ```sh
-   tar -xzf sacdfs-0.6.2-x86_64-linux.tar.gz
-   cp sacdfs-0.6.2-x86_64-linux/sacdfs sacdfs-0.6.2-x86_64-linux/sacdfs-ctl /volume1/sacdfs/
+   tar -xzf sacdfs-0.6.3-x86_64-linux.tar.gz
+   cp sacdfs-0.6.3-x86_64-linux/sacdfs sacdfs-0.6.3-x86_64-linux/sacdfs-ctl /volume1/sacdfs/
    /volume1/sacdfs/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.6.2`.
+   *You should see* `sacdfs 0.6.3`.
 7. **Write the settings file.** Change the first line to your images folder.
 
    ```sh

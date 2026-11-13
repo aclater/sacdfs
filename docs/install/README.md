@@ -33,7 +33,7 @@ DSM, TerraMaster TOS, ReadyNAS OS, Debian 12 with UGREEN's kernel and OpenMediaV
 not on the vendor's hardware; and with BusyBox 1.37's `wget` in a test container, where it stops
 with status 1 and runs nothing.)*
 
-From the release after 0.6.2, the installer also stops with an error, and changes nothing, when
+Since 0.6.3, the installer also stops with an error, and changes nothing, when
 a download piped into `sh` is cut short. *(Checked with BusyBox 1.37 `sh`, dash and bash, in
 the BusyBox and Fedora 44 test containers that CI runs, and from the 0.6.3-rc.1 release on QNAP
 QuTScloud and Synology DSM in VMs, not on the vendor's hardware; 0.6.2's installer doesn't have this
@@ -72,7 +72,7 @@ against the release's checksum, and tries the binary before installing anything.
 under `--iso-dir`. A second run changes nothing, `--uninstall` removes what it installed (your
 images stay), and `--help` lists the rest (`--mount`, `--prefix`, `--share-name`, `--method`).
 On QNAP, the installer switches on "Run user defined processes" if it is off, so that
-`autorun.sh` starts sacdfs at boot. From the release after 0.6.2, `--uninstall` switches it off
+`autorun.sh` starts sacdfs at boot. Since 0.6.3, `--uninstall` switches it off
 again only if the installer switched it on and `autorun.sh` runs nothing else; otherwise it leaves
 it on and says why (0.6.2's `--uninstall` always leaves it on). *(Checked on QuTScloud in a VM,
 not on the vendor's hardware.)*
