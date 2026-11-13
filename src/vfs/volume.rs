@@ -360,7 +360,7 @@ impl Volume {
     pub fn read(&self, ino: u64, fh: u64, offset: u64, size: u32, reply: impl DataReply) {
         let reader = match self.shared.handle(fh) {
             Some(Open::Track(r)) => r,
-            Some(Open::Sidecar(file, _)) => {
+            Some(Open::Sidecar(file, sidecar)) => {
                 // The source may be slow (a network filesystem): read on a request thread.
                 let pending = self.watchdog.watch(What::new("sidecar read", Ino(ino)), reply);
                 self.requests.spawn(move || {
@@ -370,7 +370,11 @@ impl Volume {
                     match r {
                         Ok(data) => reply.data(&data),
                         Err(e) => {
-                            log::warn!("sidecar read at {offset}: {e}");
+                            let target = sidecar.target.display();
+                            crate::errlog::failed(
+                                &format!("sidecar {target}"),
+                                format_args!("sidecar {target} (inode {ino}): read at {offset}: {e}: EIO"),
+                            );
                             reply.fail(Error::Io);
                         }
                     }
@@ -378,6 +382,10 @@ impl Volume {
                 return;
             }
             None => {
+                crate::errlog::failed(
+                    &format!("handle {fh}"),
+                    format_args!("read of inode {ino} at {offset}: no open file {fh}: EBADF"),
+                );
                 reply.fail(Error::BadHandle);
                 return;
             }
@@ -385,6 +393,15 @@ impl Volume {
         // An image with reads blocked past the timeout gets no thread to block one more (#241).
         let disc = &reader.file.disc;
         let Some(counted) = self.image_reads.start(disc.id, &disc.path) else {
+            let path = disc.path.display();
+            crate::errlog::failed(
+                &path.to_string(),
+                format_args!(
+                    "{path} track {} (inode {ino}): read at {offset}: refused, the image has \
+                     reads blocked past the request timeout: EIO",
+                    reader.file.number
+                ),
+            );
             reply.fail(Error::Io);
             return;
         };
@@ -392,7 +409,8 @@ impl Volume {
         let arrival = reader.arrived();
         let engine = self.engine.clone();
         let pool = self.requests.clone();
-        let what = What::new("read", ReadOf { reader: reader.clone(), offset, size });
+        let key = reader.file.disc.path.display().to_string();
+        let what = What::keyed("read", key, ReadOf { reader: reader.clone(), offset, size });
         let pending = self.watchdog.watch(what, reply);
         self.requests.spawn(move || {
             pending.running();
@@ -411,18 +429,24 @@ impl Volume {
                     }
                 }
                 Ok(Err(e)) => {
-                    log::warn!(
-                        "{} track {}: read at {offset}: {e}",
-                        reader.file.disc.path.display(),
-                        reader.file.number
+                    let path = reader.file.disc.path.display();
+                    crate::errlog::failed(
+                        &path.to_string(),
+                        format_args!(
+                            "{path} track {} (inode {ino}): read at {offset}: {e}: EIO",
+                            reader.file.number
+                        ),
                     );
                     reply.fail(Error::Io);
                 }
                 Err(_) => {
-                    log::error!(
-                        "{} track {}: read at {offset} panicked",
-                        reader.file.disc.path.display(),
-                        reader.file.number
+                    let path = reader.file.disc.path.display();
+                    crate::errlog::failed(
+                        &path.to_string(),
+                        format_args!(
+                            "{path} track {} (inode {ino}): read at {offset} panicked: EIO",
+                            reader.file.number
+                        ),
                     );
                     reply.fail(Error::Io);
                 }
@@ -708,7 +732,17 @@ impl Shared {
             Node::Sidecar(s) => match self.tree.open_sidecar(s) {
                 Ok(f) => Open::Sidecar(Arc::new(f), s.clone()),
                 Err(e) => {
-                    log::info!("sidecar {}: open: {e}", s.target.display());
+                    let gone = e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(libc::ESTALE);
+                    if gone {
+                        // A cover removed or replaced: the client asks again (#235).
+                        log::info!("sidecar {}: open: {e}", s.target.display());
+                    } else {
+                        let target = s.target.display();
+                        crate::errlog::failed(
+                            &format!("sidecar {target}"),
+                            format_args!("sidecar {target} (inode {ino}): open: {e}"),
+                        );
+                    }
                     // Gone since the client was told of it (#235): it asks again, then.
                     let missing = e.raw_os_error().is_some() && e.kind() == io::ErrorKind::NotFound;
                     if missing && self.tree.art_told_lately(ino) {
