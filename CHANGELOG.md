@@ -6,6 +6,17 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-13
+
+Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
+gate"). No change on top of rc.1: everything is in the 0.6.3-rc.1 section below. A player beside
+four copies on 2 slow cores over SMB stalls far less than on 0.6.2 or 0.6.1 (worst read 3.4 s
+against 12.3 s and 7.7 s in the gate), though it can still stall there; on Windows the player had
+no read over 100 ms beside four copies. The known issue listed for rc.1 (2–10 % more CPU for a tag
+scan through a default Linux SMB mount) did not reproduce in the gate or in a second check: the
+same CPU as 0.6.2. Known: a second player starting beside four copies waits longer for its first
+reads than on 0.6.2 (#363); a macOS client copying four files beside a player on a busy server
+stalls the player for seconds, as 0.6.2 does.
 ### Changed
 - **Every request sacdfs fails with an I/O error is logged with what failed, where and why, and
   the lines are rate-limited (part of #339).** A read that fails has a `warn` line with the image,
@@ -1351,7 +1362,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.3-rc.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3
 [0.6.3-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3-rc.1
 [0.6.2]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2
 [0.6.2-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2-rc.1
