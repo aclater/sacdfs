@@ -338,11 +338,17 @@ impl Volume {
     /// Opens file `ino` for reading: a new file handle. The front end refuses an open for
     /// writing itself, with [`Error::ReadOnly`].
     pub fn open(&self, ino: u64, reply: impl Reply<u64>) {
+        self.open_by(ino, 0, reply);
+    }
+
+    /// [`Volume::open`] for the process (thread) `pid` of the request, 0 if unknown. A network
+    /// file server's process opens it for a network client ([`network_server`]).
+    pub fn open_by(&self, ino: u64, pid: u32, reply: impl Reply<u64>) {
         // Opening a sidecar opens its source file.
         self.serve(
             What::new("open", Ino(ino)),
             reply,
-            move |sh| (sh.open(ino, sh.tree.get(ino)), sh.clone()),
+            move |sh| (sh.open(ino, sh.tree.get(ino), pid), sh.clone()),
             |reply, (r, sh)| match reply {
                 Some(reply) => reply.reply(r),
                 // Too late: the client never learns of the handle, so it is closed here.
@@ -697,14 +703,14 @@ impl Shared {
     }
 
     /// Opens `node`: a new file handle.
-    fn open(&self, ino: u64, node: Option<Arc<Node>>) -> Result<u64, Error> {
+    fn open(&self, ino: u64, node: Option<Arc<Node>>, pid: u32) -> Result<u64, Error> {
         let Some(node) = node else { return Err(self.not_found()) };
         // New readers wait out a shortage, so that the ones reading now go on (#237).
         if self.tree.refusing() && matches!(&*node, Node::File(_)) {
             return Err(Error::NoMemory);
         }
         let open = match &*node {
-            Node::File(file) => Open::Track(Arc::new(Reader::new(file.clone()))),
+            Node::File(file) => Open::Track(Arc::new(Reader::opened_by(file.clone(), network_server(pid)))),
             Node::Sidecar(s) => match self.tree.open_sidecar(s) {
                 Ok(f) => Open::Sidecar(Arc::new(f), s.clone()),
                 Err(e) => {
@@ -781,5 +787,47 @@ struct Ino(u64);
 impl std::fmt::Display for Ino {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "inode {}", self.0)
+    }
+}
+
+/// Whether process (thread) `pid` is a network file server's: Samba's `smbd`, NFS-Ganesha's
+/// `ganesha.nfsd`, or the kernel's `nfsd` or `ksmbd` threads. Its reads come from a network
+/// client with its own read-ahead (#362). *Why not only the order of the reads
+/// (`NETWORK_REORDER` in `track.rs`):* NFS-Ganesha's reads can reach sacdfs in order, so
+/// copies behind it went undetected. *Why the thread group's name:* FUSE gives the calling
+/// thread, and NFS-Ganesha's workers have names of their own. 0, or a process in another PID
+/// namespace, is unknown: the order of the reads still tells.
+fn network_server(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let tgid = std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .ok()
+        .and_then(|s| s.lines().find_map(|l| l.strip_prefix("Tgid:").map(|v| v.trim().to_owned())));
+    let Some(tgid) = tgid else { return false };
+    let Ok(comm) = std::fs::read_to_string(format!("/proc/{tgid}/comm")) else { return false };
+    is_network_server(comm.trim_end())
+}
+
+/// Whether a process named `comm` is a network file server's ([`network_server`]). Samba 4.18
+/// and later name their processes `smbd[client]` or `smbd: client`, cut to 15 bytes.
+fn is_network_server(comm: &str) -> bool {
+    comm.starts_with("smbd") || comm == "ganesha.nfsd" || comm == "nfsd" || comm.starts_with("ksmbd")
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    #[test]
+    fn network_servers_by_name() {
+        for c in ["smbd", "smbd[192.168.1.", "smbd: client [", "ganesha.nfsd", "nfsd", "ksmbd:r445"] {
+            assert!(is_network_server(c), "{c}");
+        }
+        for c in ["python3", "cat", "RoonAppliance", "Plex Media Serv", "nfsdcld", "ganesha", "sacdfs"] {
+            assert!(!is_network_server(c), "{c}");
+        }
+        assert!(!network_server(0));
+        assert!(!network_server(std::process::id()), "this test is no file server");
     }
 }
