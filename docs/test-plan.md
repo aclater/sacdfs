@@ -713,7 +713,22 @@ Not run: Fedora as root through `sudo` with systemd or Docker Compose (CI's runn
 
 Not run on Windows: the functional checks (names, tags, thumbnails, write refusals, an open file across a restart, files over 4 GiB), large-icon view, CJK names, foobar2000 and JRiver.
 
-**macOS:** not run on 0.6.3-rc.1. The Apple hardware that hosts the macOS VM was not available.
+**macOS:** checked on macOS 27.2 in a VM on Apple hardware, with `mount_smbfs` and command-line tools, headless, with no audio, no Finder and no player app, against the published image with the SMB share and flattened layout (12,434 files: 4,911 DSF, 4,911 WAV), the server not pinned to fewer cores.
+- **Mount and listing:** the password mount works and is read-only. A cold `ls -lR` gives 16,883 lines in 5.5 s (0.6.0-rc.1: the same 16,883 lines in 6 s); an immediate repeat takes 0.19 s. `find` sees all 12,434 files.
+- **Bytes:** a DSF (281 MB), a stereo WAV (739 MB) and a 6-channel WAV (1.77 GB) copied off the mount hash like the mount's own read; the DSF and the 6-channel WAV also equal a Linux SMB client's read.
+- **One reader** (5 rounds, median): to `/dev/null` a stereo WAV in 3.26 s and a 6-channel WAV in 7.74 s; copied to the VM's disk 3.83 s and 9.20 s.
+- **A real-time 6-channel reader beside four whole-file reads of other tracks,** compared with 0.6.2 on the same server and client, 4 runs each with the versions alternated:
+
+| | 0.6.2 | 0.6.3-rc.1 |
+|---|---|---|
+| Four reads, wall, median (range) | 95.0 s (92.5–96.3) | 92.8 s (89.4–94.4) |
+| Reads over 100 ms per run | 22, 12, 7, 5 | 10, 10, 10, 5 |
+| Worst read, median (range) | 3.29 s (2.34–4.20) | 3.12 s (3.04–4.00) |
+
+  The same within noise. The reader caught up after each stall. These long stalls happen with this client on both releases, so they are not a regression; the Linux and Windows clients stay under 0.7 s in the same kind of test (#271). Earlier the same morning six rc runs were much faster (four reads in 20–30 s, worst read 3.45 s, three of six runs over 100 ms), which could not be reproduced; the server's load during the slow runs suggests disc images read from disk rather than memory, untested.
+- With one copy beside the reader (12 runs on the rc), 4 runs had a read over 100 ms, worst 626 ms, all near the start.
+
+Not run on macOS: request counts per workload, a restart with a file open, Finder, players, macOS 15.
 
 ### Soak
 
