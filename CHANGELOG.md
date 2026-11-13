@@ -6,17 +6,6 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.6.3] - 2026-11-13
-
-Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
-gate"). No change on top of rc.1: everything is in the 0.6.3-rc.1 section below. A player beside
-four copies on 2 slow cores over SMB stalls far less than on 0.6.2 or 0.6.1 (worst read 3.4 s
-against 12.3 s and 7.7 s in the gate), though it can still stall there; on Windows the player had
-no read over 100 ms beside four copies. The known issue listed for rc.1 (2–10 % more CPU for a tag
-scan through a default Linux SMB mount) did not reproduce in the gate or in a second check: the
-same CPU as 0.6.2. Known: a second player starting beside four copies waits longer for its first
-reads than on 0.6.2 (#363); a macOS client copying four files beside a player on a busy server
-stalls the player for seconds, as 0.6.2 does.
 ### Changed
 - **Every request sacdfs fails with an I/O error is logged with what failed, where and why, and
   the lines are rate-limited (part of #339).** A read that fails has a `warn` line with the image,
@@ -30,6 +19,18 @@ stalls the player for seconds, as 0.6.2 does.
   a line for every read retried, and an `EIO` with no line in the log came from the kernel, not
   from sacdfs. The soak (`scripts/soak.py`) has a `--log-level` option and prints the time of
   each unexpected read error, to find it in the logs.
+
+## [0.6.3] - 2026-11-13
+
+Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
+gate"). No change on top of rc.1: everything is in the 0.6.3-rc.1 section below. A player beside
+four copies on 2 slow cores over SMB stalls far less than on 0.6.2 or 0.6.1 (worst read 3.4 s
+against 12.3 s and 7.7 s in the gate), though it can still stall there; on Windows the player had
+no read over 100 ms beside four copies. The known issue listed for rc.1 (2–10 % more CPU for a tag
+scan through a default Linux SMB mount) did not reproduce in the gate or in a second check: the
+same CPU as 0.6.2. Known: a second player starting beside four copies waits longer for its first
+reads than on 0.6.2 (#363); a macOS client copying four files beside a player on a busy server
+stalls the player for seconds, as 0.6.2 does.
 
 ## [0.6.3-rc.1] - 2026-11-13
 
