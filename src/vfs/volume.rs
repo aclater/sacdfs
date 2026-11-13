@@ -342,7 +342,7 @@ impl Volume {
     }
 
     /// [`Volume::open`] for the process (thread) `pid` of the request, 0 if unknown. A network
-    /// file server's process opens it for a network client ([`network_server`]).
+    /// file server's process opens it for a network client (`network_server`).
     pub fn open_by(&self, ino: u64, pid: u32, reply: impl Reply<u64>) {
         // Opening a sidecar opens its source file.
         self.serve(
