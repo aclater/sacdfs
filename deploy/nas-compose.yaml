@@ -12,7 +12,7 @@
 # What each guide checked, and where, is in docs/install/. Every setting: docs/deployment.md.
 services:
   sacdfs:
-    image: ghcr.io/aclater/sacdfs:0.6.2
+    image: ghcr.io/aclater/sacdfs:0.6.3
     container_name: sacdfs
     # hostname: sacdfs   # keeps the SMB server identity across a recreate (docs/deployment.md#smb-and-restarts)
     restart: unless-stopped

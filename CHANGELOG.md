@@ -6,6 +6,34 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Every request sacdfs fails with an I/O error is logged with what failed, where and why, and
+  the lines are rate-limited (part of #339).** A read that fails has a `warn` line with the image,
+  the track, the inode and the offset, and the cause. Reads of an image refused while it has reads
+  blocked past the request timeout (#241) are logged as well, and not only when the refusal starts.
+  Reads of a sidecar file, opens of a sidecar file that fail for a reason other than a missing or
+  replaced file, and requests whose work ended without an answer are logged too. Before, fuser
+  answered those with `EIO` and logged only the request's number. Lines about the same image (or
+  sidecar, or request) are logged at most once a minute, and at most 50 lines a minute in all;
+  the next line says how many were left out. So a damaged image or a hung share no longer writes
+  a line for every read retried, and an `EIO` with no line in the log came from the kernel, not
+  from sacdfs. The soak (`scripts/soak.py`) has a `--log-level` option and prints the time of
+  each unexpected read error, to find it in the logs.
+
+## [0.6.3] - 2026-11-13
+
+Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
+gate"). No change on top of rc.1: everything is in the 0.6.3-rc.1 section below. A player beside
+four copies on 2 slow cores over SMB stalls far less than on 0.6.2 or 0.6.1 (worst read 3.4 s
+against 12.3 s and 7.7 s in the gate), though it can still stall there; on Windows the player had
+no read over 100 ms beside four copies. The known issue listed for rc.1 (2–10 % more CPU for a tag
+scan through a default Linux SMB mount) did not reproduce in the gate or in a second check: the
+same CPU as 0.6.2. Known: a second player starting beside four copies waits longer for its first
+reads than on 0.6.2 (#363); a macOS client copying four files beside a player on a busy server
+stalls the player for seconds, as 0.6.2 does.
+
+## [0.6.3-rc.1] - 2026-11-13
+
 ### Fixed
 - **Installer: on macOS, or any system other than Linux, it now stops at once and says sacdfs
   runs on Linux only.** Before, it reported "Linux detected", downloaded the Linux release and
@@ -48,6 +76,12 @@ All notable changes to sacdfs are recorded here. The format follows
   `scripts/tag-scan.py` repeats the scan
   ([performance](docs/performance.md#client-settings-on-a-nas-062), deployment, Linux client and
   Navidrome guides, clients).
+
+### Known issues
+- **A tag scan through a Linux SMB mount with default settings uses 2–10 % more CPU than on
+  0.6.2**, a side effect of the #357 change (measured on a 4-CPU container, 222 files; copies and
+  player reads are equal or better). With `rsize=262144` on the mount, as the docs now advise,
+  there is no difference, and the scan costs about a seventh of the CPU of a default mount.
 
 ## [0.6.2] - 2026-11-11
 
@@ -1329,7 +1363,9 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3
+[0.6.3-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3-rc.1
 [0.6.2]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2
 [0.6.2-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2-rc.1
 [0.6.1]: https://github.com/aclater/sacdfs/compare/v0.6.0...v0.6.1
