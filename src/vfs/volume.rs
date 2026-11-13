@@ -864,4 +864,24 @@ mod network_tests {
         assert!(!network_server(0));
         assert!(!network_server(std::process::id()), "this test is no file server");
     }
+
+    /// By name only: a local program named like a file server counts as one. Its reader is then
+    /// treated as behind a network client: it lets an earlier player go first until it pauses
+    /// or reads far ahead, and its audio is the same.
+    #[test]
+    fn a_local_process_named_smbd_counts_as_a_file_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("smbd");
+        std::fs::copy("/bin/sleep", &fake).unwrap();
+        let mut child = std::process::Command::new(&fake).arg("5").spawn().unwrap();
+        let pid = child.id();
+        let seen = (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            network_server(pid)
+        });
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(seen, "a process named smbd");
+        assert!(!network_server(pid), "gone");
+    }
 }
