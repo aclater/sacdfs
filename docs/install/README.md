@@ -35,7 +35,8 @@ with status 1 and runs nothing.)*
 
 From the release after 0.6.2, the installer also stops with an error, and changes nothing, when
 a download piped into `sh` is cut short. *(Checked with BusyBox 1.37 `sh`, dash and bash, in
-the BusyBox and Fedora 44 test containers that CI runs; 0.6.2's installer doesn't have this
+the BusyBox and Fedora 44 test containers that CI runs, and from the 0.6.3-rc.1 release on QNAP
+QuTScloud and Synology DSM in VMs, not on the vendor's hardware; 0.6.2's installer doesn't have this
 check.)*
 
 **To read it before you run it,** download it, check it, and run it:
