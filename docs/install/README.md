@@ -131,7 +131,8 @@ can change them, and checks that before it writes anything
 - **The check:** that folder, the folder to mount on, and every folder above them up to `/`
   (through symbolic links) must be owned by root and not writable by their group or by other
   users (a folder with the sticky bit, such as `/tmp`, is fine), and the folder to mount on
-  must not be a link. Otherwise it stops, changes nothing, and names the folder and the fix: a
+  must not be a link. A folder it would make must not go straight into a folder other users can
+  write to, even one with the sticky bit (they could make it first). Otherwise it stops, changes nothing, and names the folder and the fix: a
   `chmod go-w` or `chown 0`, or another `--prefix` or `--mount`. There is no option to skip it.
   A shared folder you make for the DSF and WAV files may itself be writable: only the folders
   above it matter, since nobody but root can then replace it.
@@ -142,7 +143,9 @@ can change them, and checks that before it writes anything
 - **Upgrading from 0.6.3 or earlier:** run the installer again as you first did. On QNAP, and
   wherever the start-at-boot hook or the running sacdfs points to another folder, it installs
   into the new place, points the hook there, stops the old sacdfs without running anything
-  from the old folder, starts the new one, and removes the old files. On QNAP the DSF and WAV
+  from the old folder, starts the new one, and removes the old files. An old folder that is a
+  symbolic link, or is reached through one, is left alone with a warning: removing files
+  through a link could hit another folder. On QNAP the DSF and WAV
   files then appear in `/share/CACHEDEV1_DATA/sacd`: share that folder and point players at
   it. `--uninstall` finds both places.
 - **Checksums:** each release's `install.sh` carries the SHA-256 of that release's archives,
@@ -164,9 +167,15 @@ QNAP QuTScloud 5.2.9 (a hand-made ext4 volume: a 0.6.3 install in the shared fol
 TOS shared folder `public` refused and then moved, `--uninstall`) and Synology DSM 7.4.1 (a
 0.6.3 install with `--prefix` in a shared folder moved, both Task Scheduler tasks replaced, a
 restart that started the new one, `--uninstall`). Each time all 28 DSF and WAV files of three
-corpus images were identical to a reference. Not checked: a restart on QNAP (QuTScloud in the VM
-didn't keep its settings across one), QNAP's own volumes and their folder modes, ASUSTOR, UGREEN,
-ReadyNAS and OpenMediaVault in VMs, the container route on a NAS, and systemd 215.)*
+corpus images were identical to a reference. Also on ReadyNAS OS 6.10.10 (systemd 230; Debian's
+`/usr/local` is `root:staff` 2775 there, and the `staff` group counts as administrators): the
+systemd route upgraded from 0.6.3, single-quoted `Rock & Roll` and `Live (1972)` read by systemd,
+a fresh install, `--uninstall`; and on ASUSTOR ADM 5.1.4: a 0.6.3 install with `--prefix` in a
+shared folder moved through `S99sacdfs`, the boot scripts and a restart starting the new one, a
+fresh install from `R&B`, `--uninstall`. Not checked: a restart on QNAP (QuTScloud in the VM
+didn't keep its settings across one), QNAP's own volumes and their folder modes, UGREEN and
+OpenMediaVault in VMs, the container route on a NAS, and systemd 215 itself (its source reads
+single-quoted values the same way, for the characters the installer allows).)*
 
 **Where the installer was checked,** on the 0.6.2 release from GitHub, in both forms above (the
 one-liner, and download, check, run): a dry run that changed nothing, the install, all 28 DSF and
