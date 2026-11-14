@@ -146,9 +146,20 @@ entry_unsafe() {
         ?????w* | ????????w*)
             case ${_eu_nosticky:-}$2 in d????????[tT]*) ;; *)
                 # Debian (ReadyNAS OS, OpenMediaVault) makes /usr/local root:staff 2775 by
-                # policy: "staff" is an administrators' group there, so it counts as root's.
-                case $1:$2 in /usr/local:d???????-* | /usr/local/*:d???????-*)
-                    [ "$(awk -F: -v g="$5" '$3 == g { print $1; exit }' /etc/group 2>/dev/null)" = staff ] && return 1
+                # policy. /usr/local and /usr/local/bin only, accepted only while the group "staff" has no members at all (none
+                # listed, and no user with it as primary group), so only root can write.
+                case $1:$2 in /usr/local:d???????-* | /usr/local/bin:d???????-*)
+                    _eu_g=$({ getent group staff 2>/dev/null || grep '^staff:' /etc/group 2>/dev/null; } | head -n 1)
+                    _eu_gid=${_eu_g#*:*:}
+                    _eu_gid=${_eu_gid%%:*}
+                    if [ -n "$_eu_g" ] && [ "$_eu_gid" = "$5" ]; then
+                        _eu_m=${_eu_g##*:}
+                        _eu_p=$({ getent passwd 2>/dev/null || cat /etc/passwd 2>/dev/null; } |
+                            awk -F: -v g="$5" '$4 == g { printf "%s%s", s, $1; s = "," }')
+                        [ -z "$_eu_m$_eu_p" ] && return 1
+                        echo "can be written by the group staff ($2), which has members: ${_eu_m}${_eu_m:+${_eu_p:+,}}${_eu_p} (fix: remove them from staff, or chmod g-w '$1')"
+                        return 0
+                    fi
                     ;;
                 esac
                 echo "can be written by its group or by other users ($2) (fix: chmod go-w '$1', or use another folder)"
@@ -203,7 +214,11 @@ path_unsafe() {
         if [ ! -e "$_pu_next" ]; then
             # Not there yet, so root will make it: not in a folder (sticky, or the walk would
             # have stopped) where another user could make it first.
-            if _eu_nosticky=1 entry_unsafe "${_pu_cur:-/}" >/dev/null; then
+            _eu_nosticky=1
+            entry_unsafe "${_pu_cur:-/}" >/dev/null
+            _pu_w=$?
+            _eu_nosticky=
+            if [ "$_pu_w" = 0 ]; then
                 echo "$_pu_next doesn't exist yet, and other users can write to ${_pu_cur:-/}, so they could make it first (fix: make it as root first, mkdir -m 0755 '$_pu_next', or use another folder)"
                 return 0
             fi
@@ -1014,7 +1029,7 @@ hook_conf() {
 # One per line.
 old_prefixes() {
     {
-        # "n": a name another user may have made into a link; "p": the kernel's own path.
+        # One per line, each with a letter for where it came from (n: a name; p: the kernel).
         if [ "$PLATFORM" = qnap ]; then
             printf 'n%s/sacdfs\n' "$(printf '%s\n' "$ISO_DIR" | cut -d/ -f1-4)"
         fi
@@ -1030,17 +1045,13 @@ old_prefixes() {
             ;;
         esac
     } | while IFS= read -r d; do
-        kind=${d%"${d#?}"}
         d=${d#?}
         case $d in /?*) ;; *) continue ;; esac
         d=${d%/}
         [ -d "$d" ] || continue
-        if [ "$kind" = n ]; then
-            # Files are removed from there: never through a link, which could point anywhere.
-            real_folder "$d" || continue
-        else
-            d=$(cd -P "$d" 2>/dev/null && pwd -P) || continue
-        fi
+        # Files are removed from there: never through a link, which could point anywhere. (The
+        # kernel's path is canonical, so an honest one passes; a part swapped since fails.)
+        real_folder "$d" || continue
         [ "$d" != "$PREFIX" ] || continue
         for f in sacdfs-ctl sacdfs.conf compose.yaml; do
             if [ -e "$d/$f" ]; then

@@ -75,6 +75,42 @@ rc=$?
 if [ "$rc" = 0 ]; then res "made-by-root-in-sticky" "pass (accepted)"; else cat "$log"; res "made-by-root-in-sticky" "FAIL (status $rc)"; fi
 rm -rf /s
 
+# Debian's /usr/local and /usr/local/bin, root:staff 2775: accepted only while "staff" has no
+# members (listed, or as a primary group), and only those two folders.
+cp /etc/group /tmp/group.orig
+cp /etc/passwd /tmp/passwd.orig
+grep -v '^staff:' /tmp/group.orig >/etc/group
+echo 'staff:x:4050:' >>/etc/group
+mkdir -p /usr/local/bin /usr/local/lib
+chgrp 4050 /usr/local /usr/local/bin /usr/local/lib
+chmod 2775 /usr/local /usr/local/bin /usr/local/lib
+staffcase() { # NAME PREFIX EXPECT(accept|refuse) WORD
+    inst --iso-dir "$music" --platform linux --method ctl --prefix "$2" --dry-run >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [ "$3" = accept ] && [ "$rc" = 0 ]; then
+        res "staff-$1" "pass (accepted)"
+    elif [ "$3" = refuse ] && [ "$rc" != 0 ] && grep -q -- "$4" "$log"; then
+        res "staff-$1" "pass (refused, names $4)"
+    else
+        res "staff-$1" "FAIL (status $rc)"
+    fi
+}
+staffcase empty-group /usr/local/bin/sacdfs-t accept
+staffcase usr-local-lib /usr/local/lib/sacdfs-t refuse /usr/local/lib
+sed -i 's/^staff:x:4050:$/staff:x:4050:alice/' /etc/group
+staffcase member /usr/local/bin/sacdfs-t refuse alice
+sed -i 's/^staff:x:4050:alice$/staff:x:4050:/' /etc/group
+echo 'bob:x:4051:4050::/:/bin/sh' >>/etc/passwd
+staffcase primary-group /usr/local/bin/sacdfs-t refuse bob
+cp /tmp/passwd.orig /etc/passwd
+chmod 2777 /usr/local/bin
+staffcase other-writable /usr/local/bin/sacdfs-t refuse drwxrwsrwx
+cp /tmp/group.orig /etc/group
+chgrp 0 /usr/local /usr/local/bin /usr/local/lib
+chmod 0755 /usr/local /usr/local/bin /usr/local/lib
+rm -f /tmp/group.orig /tmp/passwd.orig
+
 # A prefix inside the images folder, both with a space in their names: refused.
 images "/vol3/my music"
 inst --iso-dir "/vol3/my music" --platform linux --method ctl --prefix "/vol3/my music/sacdfs" >"$log" 2>&1
@@ -359,6 +395,25 @@ else
     cat "$log"
     res "asustor-uninstall" "FAIL (status $rc)"
 fi
+
+# No hook names it (plain Linux): an earlier install in a shared folder is found through the
+# running sacdfs's own path, and moved.
+mkdir -p /pidshare
+chmod 0777 /pidshare
+sh "$old/install.sh" --iso-dir "$music" --platform linux --method ctl --prefix /pidshare/sacdfs >"$log" 2>&1
+rc=$?
+cat "$log"
+inst --iso-dir "$music" --platform linux --method ctl >"$log" 2>&1
+rc2=$?
+cat "$log"
+hashes /srv/sacd >/tmp/got.sha 2>/dev/null
+if [ "$rc" = 0 ] && [ "$rc2" = 0 ] && [ "$(running_exe)" = /opt/sacdfs/sacdfs ] && [ ! -e /pidshare/sacdfs ] && same /tmp/got.sha "$ref"; then
+    res "pid-found-old-install-moves" "pass (found through the running sacdfs, moved to /opt/sacdfs)"
+else
+    res "pid-found-old-install-moves" "FAIL (status $rc/$rc2, running $(running_exe))"
+fi
+inst --iso-dir "$music" --platform linux --method ctl --uninstall >/dev/null 2>&1
+rm -rf /pidshare
 
 # The hook names a settings file through a link: nothing there is touched by --uninstall.
 victim /victim2
