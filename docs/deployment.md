@@ -1550,6 +1550,69 @@ when the test took the number away on purpose, Docker's clients went stale as we
 
 The container speaks only NFSv4 (`Protocols = 4`); NFSv3 can't be tried against it.
 
+## systemd unit
+
+Without a container, on a NAS or Linux host with systemd, sacdfs runs from the unit in the release
+archive ([deploy/systemd/sacdfs.service](../deploy/systemd/sacdfs.service); steps in
+[install/nas-binary.md](install/nas-binary.md#start-at-boot-and-stop-safely)). Since 0.6.4 (#387)
+it limits what sacdfs may do, with every systemd option that keeps the mount visible to the rest of
+the system. `systemd-analyze security sacdfs` rates it 4.1 ("OK"), from 9.6 ("UNSAFE") before.
+
+| Option | What it does |
+|---|---|
+| `CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE` | sacdfs keeps only the right to mount, and to read the images (and write the index cache and tags folders) whatever their owner and mode |
+| `NoNewPrivileges=yes` | no setuid or file-capability program can raise its privileges. sacdfs mounts as root with `mount(2)`, not through the setuid `fusermount3` |
+| `DevicePolicy=closed`, `DeviceAllow=/dev/fuse rw` | no device but `/dev/fuse` and the usual pseudo devices (`/dev/null`, `/dev/urandom`...) |
+| `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | the journal and systemd's notify socket, and MusicBrainz lookups (`--musicbrainz`) |
+| `SystemCallFilter=~@clock @cpu-emulation @debug @module @obsolete @privileged @raw-io @reboot @swap`, `SystemCallErrorNumber=EPERM` | a deny list: those calls fail with `EPERM` |
+| `SystemCallArchitectures=native`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `ProtectClock=yes`, `ProtectHostname=yes` | each closes a kind of call sacdfs never makes |
+| `PermissionsStartOnly=yes` | the helper lines (`modprobe fuse` when `/dev/fuse` is missing, `mkdir`, `umount -l` after a stop) run without these limits, so `modprobe` can still load FUSE |
+
+**Left out, on purpose:**
+
+- **Options that give the service its own mount namespace.** With these, the FUSE mount is made in that namespace, and no other program sees it. Each was tried on its own and hid the mount:
+  - `ProtectSystem=`, `ProtectHome=`, `PrivateTmp=`
+  - `ProtectKernelTunables=`, `ProtectKernelModules=`, `ProtectKernelLogs=`
+  - `ProtectControlGroups=`, `ProtectProc=`, `PrivateIPC=`
+  - `PrivateDevices=`, which also stops the service from starting, since it hides `/dev/fuse`
+  - the untried `ProcSubset=`, `PrivateMounts=` and `ReadOnlyPaths=` work the same way.
+- **`PrivateNetwork=`, `IPAddressDeny=`:** `--musicbrainz` needs the network.
+- **`@mount` and `@resources` in the call filter:** sacdfs mounts and unmounts, and the lookup worker lowers its priority with `setpriority`.
+- **An allow list (`SystemCallFilter=@system-service`):** a systemd that doesn't know a group drops it from the list. Under an allow list, sacdfs would then be allowed too little and killed; a deny list then just filters less.
+
+**Old systemd.** A systemd that doesn't know an option logs `Unknown lvalue` (or, for a call
+group, `Failed to parse system call, ignoring`) and runs the unit without it. ReadyNAS OS 6.10's
+systemd 230 knows only `CapabilityBoundingSet=`, `NoNewPrivileges=`, the device and address-family
+options, `SystemCallArchitectures=` and `PermissionsStartOnly=`; the rest are ignored there.
+
+**Where it was checked** (#387). Release 0.6.3's binary ran on the corpus under the old unit and the new one, on:
+
+| System | systemd |
+|---|---|
+| Fedora 44 | 259 |
+| RHEL 10.1 | 257 |
+| TerraMaster TOS 7.0 | 249 |
+| Debian 12 with UGREEN's kernel | 252 |
+| ReadyNAS OS 6.10 | 230 |
+
+Each was in a VM, not on the vendor's hardware. On each system, these passed under both units:
+
+- the unit started;
+- the mount was visible on the host;
+- another user outside the service read it: on Fedora and RHEL from another systemd service, on the NAS systems from a shell;
+- every file was byte-identical: 457 tracks against the corpus manifest on Fedora and RHEL, and all 914 files against a reference on the NAS systems;
+- a restart worked;
+- a stop removed the mount;
+- the index cache was written;
+- after sacdfs was killed (`SIGKILL`), systemd restarted it and the dead mount was cleared.
+
+Also checked:
+
+- **Process limits**, read from `/proc`: sacdfs's bounding set held only those two capabilities on every system, while the helper lines kept the full set.
+- **MusicBrainz:** a `sacdfs tags fetch` lookup under the same options reached MusicBrainz (DNS and HTTPS), on RHEL 10.
+
+The CI job that installs with the unit (`installer`, `host-systemd`) and `systemd-analyze verify` (`ci`) run on every pull request.
+
 ## Troubleshooting
 
 - **`sacdfs exited (needs --device /dev/fuse and CAP_SYS_ADMIN)`** (0.5.0 and earlier): the
