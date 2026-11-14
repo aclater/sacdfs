@@ -340,7 +340,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         return Ok(());
     }
     let path = dir.join(format!("{key}.toml"));
-    let existing = match safe_file::read_text(&path) {
+    let existing = match safe_file::read_text(&path, safe_file::MAX_TAGS_TEXT) {
         Ok((text, _)) => {
             Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", shown(&path))))?)
         }
@@ -553,6 +553,6 @@ mod tests {
         let toml = dir.path().join("4567.toml");
         fs::write(&victim, "[album]\ngenre = \"Jazz\"\n").unwrap();
         symlink(&victim, &toml).unwrap();
-        assert!(safe_file::read_text(&toml).is_err());
+        assert!(safe_file::read_text(&toml, safe_file::MAX_TAGS_TEXT).is_err());
     }
 }

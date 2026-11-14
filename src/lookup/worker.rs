@@ -143,7 +143,10 @@ fn stamp(image: &Path) -> Option<(u64, u64)> {
 impl State {
     fn load(file: Option<PathBuf>) -> State {
         let mut entries = HashMap::new();
-        if let Some((text, _)) = file.as_deref().and_then(|f| crate::safe_file::read_text(f).ok()) {
+        if let Some((text, _)) = file
+            .as_deref()
+            .and_then(|f| crate::safe_file::read_text(f, crate::safe_file::MAX_STATE_TEXT).ok())
+        {
             let mut lines = text.lines();
             if lines.next() == Some(STATE_HEADER) {
                 for line in lines {

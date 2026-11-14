@@ -21,9 +21,17 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The mode of tags files, covers, reports and the state files: as `fs::write` made them under
-/// the usual umask.
-pub const MODE: u32 = 0o644;
+/// The mode of tags files, covers, reports and the state files, before the umask: as
+/// `fs::write` made them, so that a folder shared by a group (umask 002) stays editable by it.
+pub const MODE: u32 = 0o666;
+
+/// The largest tags file read. *Why a bound:* the mount reads tags files while it answers
+/// requests, and a huge (or sparse) file must not take its memory. Real ones are a few KiB.
+pub const MAX_TAGS_TEXT: u64 = 4 << 20;
+
+/// The largest state file read (the tag watch, the lookup state): about 100 bytes per image,
+/// so room for a few hundred thousand images.
+pub const MAX_STATE_TEXT: u64 = 32 << 20;
 
 /// A temporary file's name beside `path`: hidden, with the process's ID, a counter and 64
 /// random bits, so that it can't be guessed ahead.
@@ -105,20 +113,25 @@ pub fn read_regular(path: &Path, max: u64) -> io::Result<(Vec<u8>, fs::Metadata)
     if !meta.is_file() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
     }
+    let too_large = || {
+        let limit = if max % (1 << 20) == 0 { format!("{} MiB", max >> 20) } else { format!("{max} bytes") };
+        io::Error::new(io::ErrorKind::InvalidInput, format!("larger than {limit}: not read"))
+    };
     if meta.len() > max {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("larger than {max} bytes")));
+        return Err(too_large());
     }
-    let mut bytes = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
+    let mut bytes = Vec::with_capacity(usize::try_from(meta.len().min(max)).unwrap_or(0));
     f.take(max.saturating_add(1)).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > max {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("larger than {max} bytes")));
+        return Err(too_large());
     }
     Ok((bytes, meta))
 }
 
-/// [`read_regular`] of a UTF-8 text file of any size.
-pub fn read_text(path: &Path) -> io::Result<(String, fs::Metadata)> {
-    let (bytes, meta) = read_regular(path, u64::MAX)?;
+/// [`read_regular`] of a UTF-8 text file of at most `max` bytes ([`MAX_TAGS_TEXT`],
+/// [`MAX_STATE_TEXT`]).
+pub fn read_text(path: &Path, max: u64) -> io::Result<(String, fs::Metadata)> {
+    let (bytes, meta) = read_regular(path, max)?;
     let text = String::from_utf8(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok((text, meta))
 }
@@ -176,13 +189,17 @@ mod tests {
         fs::write(&victim, b"precious").unwrap();
         let target = dir.path().join("k.toml");
         symlink(&victim, &target).unwrap();
-        write_atomic(&target, b"new", 0o644).unwrap();
+        write_atomic(&target, b"new", MODE).unwrap();
         assert_eq!(fs::read(&victim).unwrap(), b"precious");
         assert!(!fs::symlink_metadata(&target).unwrap().file_type().is_symlink());
         assert_eq!(fs::read(&target).unwrap(), b"new");
-        assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o7022, 0o0000);
+        // The mode `fs::write` gives under this process's umask.
+        let plain = dir.path().join("plain");
+        fs::write(&plain, b"x").unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode(&target), mode(&plain));
         let left: Vec<_> = fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
-        assert_eq!(left.len(), 2, "no temporary file left: {left:?}");
+        assert_eq!(left.len(), 3, "no temporary file left: {left:?}");
     }
 
     #[test]
@@ -200,9 +217,9 @@ mod tests {
         fs::write(&victim, b"precious").unwrap();
         let link = dir.path().join("l");
         symlink(&victim, &link).unwrap();
-        assert!(create_new(&link, 0o644).is_err());
+        assert!(create_new(&link, MODE).is_err());
         symlink(dir.path().join("none"), dir.path().join("dangling")).unwrap();
-        assert!(create_new(&dir.path().join("dangling"), 0o644).is_err());
+        assert!(create_new(&dir.path().join("dangling"), MODE).is_err());
         assert!(!dir.path().join("none").exists());
         assert_eq!(fs::read(&victim).unwrap(), b"precious");
     }
@@ -218,6 +235,20 @@ mod tests {
         assert!(read_regular(&f, 9).is_err());
         assert!(read_regular(&link, 100).is_err());
         assert!(read_regular(dir.path(), 100).is_err());
+    }
+
+    /// A sparse file larger than the bound is refused before anything is allocated for it.
+    #[test]
+    fn read_text_refuses_a_file_over_its_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("k.toml");
+        File::create(&f).unwrap().set_len(MAX_TAGS_TEXT + 1).unwrap();
+        let e = read_text(&f, MAX_TAGS_TEXT).unwrap_err();
+        assert_eq!(e.to_string(), "larger than 4 MiB: not read");
+        File::create(&f).unwrap().set_len(1 << 40).unwrap();
+        assert!(read_text(&f, MAX_TAGS_TEXT).is_err());
+        fs::write(&f, "[album]\n").unwrap();
+        assert_eq!(read_text(&f, MAX_TAGS_TEXT).unwrap().0, "[album]\n");
     }
 
     #[test]

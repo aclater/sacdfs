@@ -902,7 +902,7 @@ fn advice_for(reason: &str, options: Options) -> Option<&'static str> {
 
 /// The tags file at `path`, if there is one.
 fn read_tags(path: &Path) -> Result<Option<TagsFile>, String> {
-    match safe_file::read_text(path) {
+    match safe_file::read_text(path, safe_file::MAX_TAGS_TEXT) {
         Ok((text, _)) => {
             TagsFile::parse(&text).map(Some).map_err(|e| format!("{}: {e}", safe_file::shown(path)))
         }
