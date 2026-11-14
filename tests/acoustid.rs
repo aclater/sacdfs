@@ -428,3 +428,94 @@ fn the_real_fpcalc_fingerprints_a_track() {
     assert_eq!(fed.frames, MAX_SECONDS * 75);
     assert!(fp.len() > 100, "{fp}");
 }
+
+/// Busy answers are tried again; a failure to connect never says the key.
+#[test]
+fn busy_answers_are_retried_and_errors_hide_the_key() {
+    #[derive(Debug)]
+    struct Flaky(Arc<Mutex<usize>>);
+    impl Transport for Flaky {
+        fn get(&mut self, url: &str) -> Result<Reply, String> {
+            let mut n = self.0.lock().unwrap();
+            *n += 1;
+            match *n {
+                1 => Ok(Reply { status: 503, body: Vec::new(), retry_after: None }),
+                2 => Err(format!("connection reset for {url}")),
+                _ => Ok(Reply {
+                    status: 200,
+                    body: json!({"status": "ok", "results": []}).to_string().into_bytes(),
+                    retry_after: None,
+                }),
+            }
+        }
+    }
+    let d = tempfile::tempdir().unwrap();
+    let fpcalc = fake_fpcalc(d.path());
+    common::spawns_children!();
+    let count = Arc::new(Mutex::new(0));
+    let mut c = Config::new(KEY.to_owned(), fpcalc);
+    (c.max_load, c.min_seconds, c.interval, c.backoff) = (Some(f64::MAX), 0, Duration::ZERO, Duration::ZERO);
+    let mut s = Session::new(c, Box::new(Flaky(count.clone())), d.path(), Arc::new(AtomicBool::new(false)));
+    let disc = Disc::open(&corpus_image("no-text"), 0, Tuning::default()).unwrap();
+    let mut lines = Vec::new();
+    let p = s.identify(&disc, 0, &mut |l| lines.push(l)).unwrap();
+    assert_eq!(p.recordings.len(), 2);
+    assert_eq!(*count.lock().unwrap(), 4, "two tries for the first track, one for the second");
+
+    // Always failing: the error names the problem, not the key.
+    #[derive(Debug)]
+    struct Down;
+    impl Transport for Down {
+        fn get(&mut self, url: &str) -> Result<Reply, String> {
+            Err(format!("cannot reach {url}"))
+        }
+    }
+    let mut c = Config::new(KEY.to_owned(), fake_fpcalc_path(d.path()));
+    (c.max_load, c.min_seconds, c.interval, c.backoff) = (None, 0, Duration::ZERO, Duration::ZERO);
+    let mut s = Session::new(c, Box::new(Down), d.path(), Arc::new(AtomicBool::new(false)));
+    match s.identify(&disc, 0, &mut |_| {}) {
+        Err(acoustid::Skip::Network(e)) => {
+            assert!(!e.contains(KEY) && e.contains("<key>") && e.contains("after 4 tries"), "{e}")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+fn fake_fpcalc_path(dir: &Path) -> PathBuf {
+    dir.join("fpcalc")
+}
+
+/// The command refuses to start without a usable key or fpcalc, and sends nothing.
+#[test]
+fn the_command_checks_its_key_and_fpcalc_first() {
+    common::spawns_children!();
+    let bin = env!("CARGO_BIN_EXE_sacdfs");
+    let d = tempfile::tempdir().unwrap();
+    let image = corpus_image("no-text");
+    let key = d.path().join("key");
+    for (content, fpcalc, says) in
+        [("not a key!", "fpcalc", "letters and digits"), ("Abc123", "/nonexistent/fpcalc", "doesn't run")]
+    {
+        fs::write(&key, content).unwrap();
+        let out = std::process::Command::new(bin)
+            .args(["tags", "fetch", "--acoustid", "--acoustid-key-file"])
+            .arg(&key)
+            .args(["--fpcalc", fpcalc, "--tags"])
+            .arg(d.path().join("tags"))
+            .arg(&image)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(says) && !err.contains("Abc123"), "{err}");
+    }
+    let out = std::process::Command::new(bin)
+        .args(["tags", "fetch", "--acoustid", "--acoustid-key-file"])
+        .arg(d.path().join("missing"))
+        .arg("--tags")
+        .arg(d.path())
+        .arg(&image)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+}
