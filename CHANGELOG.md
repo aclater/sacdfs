@@ -49,6 +49,16 @@ All notable changes to sacdfs are recorded here. The format follows
   those servers counts as one; its reader then lets an earlier player go first, and its audio is
   the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
 
+### Security
+- **Files in the tags directory, the cache and a report's folder are written and read safely
+  ([GHSA-825f-7xrc-fqf7](https://github.com/aclater/sacdfs/security/advisories/GHSA-825f-7xrc-fqf7)).**
+  `sacdfs tags import`, `sacdfs tags fetch`, the `--musicbrainz` worker, the tag watch and
+  `sacdfs verify`'s report now write through a new temporary file with an unpredictable name,
+  created exclusively and without following a symbolic link, then renamed into place; tags
+  files, covers and the state files are read without following a link. Paths and messages
+  shown on the terminal or in the log have control characters escaped, as do the fields of
+  `sacdfs verify`'s report. Medium severity: upgrade to 0.6.4.
+
 ## [0.6.3] - 2026-11-13
 
 Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
