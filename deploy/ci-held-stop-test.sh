@@ -19,6 +19,8 @@ image=$2
 read -r -a dk <<<"${DOCKER:-docker}"
 client_image=${CLIENT:-sacdfs-client:ci}
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=deploy/ci-caps.sh
+. "$here/ci-caps.sh"
 grace=3
 # Not the ports of the other tests, which may still be in TIME_WAIT. Names of their own per
 # runtime: the client's mounts hang once the server is gone, and its removal can lag behind.
@@ -42,8 +44,7 @@ trap cleanup EXIT
 
 export RUNTIME="${rt[*]}"
 "${rt[@]}" run -d --name "$srv" -e SACDFS_STOP_GRACE=$grace \
-    --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
-    --security-opt apparmor=unconfined --security-opt label=disable \
+    "${SERVER_OPTS[@]}" --security-opt label=disable \
     -p "127.0.0.1:$nfs_port:2049" -p "127.0.0.1:$smb_port:445" \
     -v "$PWD/tests/corpus/images:/images:ro" "$image" >/dev/null
 "$here/ci-wait-healthy.sh" "$srv"

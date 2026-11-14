@@ -32,7 +32,7 @@ In the container's logs, *you should see* the number of image files, `mounted`, 
 
 ## If something goes wrong
 
-- **You see:** the container stops at once, or the logs say `/dev/fuse` or `mount` is not permitted. **Do this:** the container needs the FUSE device and two capabilities. The template passes them in **Extra Parameters**: `--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined`. If you edited that field, put them back. Whether Unraid allows them is not known: please report it on [#82](https://github.com/aclater/sacdfs/issues/82).
+- **You see:** the container stops at once, or the logs say `/dev/fuse` or `mount` is not permitted. **Do this:** the container needs the FUSE device and seven capabilities. The template passes them in **Extra Parameters**: `--device=/dev/fuse --cap-drop=ALL --cap-add=SYS_ADMIN --cap-add=DAC_OVERRIDE --cap-add=DAC_READ_SEARCH --cap-add=SETUID --cap-add=SETGID --cap-add=NET_BIND_SERVICE --cap-add=SETPCAP --security-opt no-new-privileges:true --security-opt apparmor=unconfined`. If you edited that field, put them back. Whether Unraid allows them is not known: please report it on [#82](https://github.com/aclater/sacdfs/issues/82).
 - **You see:** the share is empty. **Do this:** the **SACD images** path is wrong or holds no `.iso` files.
 - **You see:** clients can't connect. **Do this:** name the ports 10445 and 12049 when you mount, and check **NFS clients** covers the client's address.
 

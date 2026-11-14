@@ -23,10 +23,18 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
        restart: unless-stopped
        devices:
          - /dev/fuse
+       cap_drop:                    # only the capabilities it needs (docs/deployment.md#privileges)
+         - ALL
        cap_add:
          - SYS_ADMIN
+         - DAC_OVERRIDE
          - DAC_READ_SEARCH
+         - SETUID
+         - SETGID
+         - NET_BIND_SERVICE
+         - SETPCAP
        security_opt:
+         - no-new-privileges:true
          - apparmor=unconfined
        ports:
          - "10445:445"

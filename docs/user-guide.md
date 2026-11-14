@@ -357,10 +357,19 @@ writes nothing but the tags directory (verify's report goes to `DIR/.last-import
 the picture (`PRIV`, `RVA2`, `GEOB` ...) cannot be kept; the summary lists them. DFF text
 chunks are not imported.
 
+It writes only what the mount uses: a picture of up to 960 KiB; per track, values of up to
+16 KiB, 64 keys and 32 KiB of text in all (the tag sacdfs builds holds at most 1 MiB, with the
+picture and the disc's own text); and up to about 2 MiB of text per disc, since every track's
+tag is built from that tags file. A value over a limit is left out whole, never cut. Each
+picture or value left out is listed as `not kept:`, with its extract and disc: keep those
+extracts, as their tags file lacks it. A disc whose tags file, with what import adds, would be
+over 3 MiB gets nothing added and is listed as `not kept:` too; the file is left as it was.
+The summary lists at most 32 `not kept:` lines and counts the rest.
+
 **Exit status:** 0 when every extract was handled, as `sacdfs verify` means it: each DSF and DFF
 file matched and its tags were read (a FLAC or WAV file can't be compared, and doesn't count
-against this). 2 when any extract didn't match or couldn't be checked, or when a tag or tags file
-couldn't be read or written: what could be done was done, the rows are in the report, and the
+against this). 2 when any extract didn't match or couldn't be checked, when a tag or tags file
+couldn't be read or written, or when a picture or value was not kept: what could be done was done, the rows are in the report, and the
 summary says how many were left out. 1 when the import couldn't run or didn't finish.
 
 **From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).
@@ -830,6 +839,10 @@ sacdfs unmounts on SIGTERM, which is how systemd stops it, so the unit has no `E
 (`fusermount3` there failed under SELinux on Fedora 44 and left the unit "failed" after every
 stop). `CacheDirectory=sacdfs` gives the service `/var/cache/sacdfs` for the seek index cache
 (a service has no `HOME`, so sacdfs would otherwise run without one).
+
+The unit in the release archive ([deploy/systemd/sacdfs.service](../deploy/systemd/sacdfs.service))
+adds options that limit what sacdfs may do and still keep the mount visible; they suit this
+recipe too ([deployment guide, systemd unit](deployment.md#systemd-unit)).
 
 `systemctl enable --now sacdfs`, `journalctl -u sacdfs` for the log. Services that read the
 mount should say `After=sacdfs.service` and `Requires=sacdfs.service`. A container that
