@@ -302,6 +302,8 @@ fn keeps_stderr(log_file: bool, journal_stream: bool) -> bool {
 }
 
 fn run(args: Args) -> io::Result<()> {
+    // Before anything is opened: images and sidecars share this limit.
+    let nofile = startup::raise_nofile();
     // The wide filter passes up to about 80 kHz, which 88.2 kHz PCM cannot hold (its Nyquist
     // frequency is 44.1 kHz). The converter would quietly use 40 kHz instead: refuse the
     // combination before mounting.
@@ -414,7 +416,9 @@ fn run(args: Args) -> io::Result<()> {
     // A SIGINT, SIGTERM or SIGHUP from here on is held until the check below, before
     // mounting, or the signal thread, after: either way no dead mount is left behind.
     let mut signals = stop_signals::catch()?;
-    sacdfs::handles::global().configure(args.max_open_images, sacdfs::handles::DEFAULT_IDLE);
+    let (max_open_images, sidecars_open) = startup::open_files_budget(nofile, args.max_open_images);
+    sacdfs::handles::global().configure(max_open_images, sacdfs::handles::DEFAULT_IDLE);
+    sacdfs::vfs::sidecar_slots::global().set_cap(sidecars_open);
 
     // Opening the images of a directory listing runs on rayon's global pool.
     let _ = rayon::ThreadPoolBuilder::new()
