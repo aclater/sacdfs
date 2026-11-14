@@ -8,9 +8,14 @@
 //! threads, under the watchdog. What is left here is FUSE's own: `INIT`, the kernel's caching
 //! flags, the decoding of open flags and access masks, extended attributes, and the errno of
 //! each core error.
+//!
+//! Every callback that calls the core runs under `guarded` (#389): fuser 0.18 doesn't catch
+//! panics, and a panic on one of its threads ends the session, which takes the mount down for
+//! everyone. A callback that panics is answered `EIO` and logged instead, and the mount stays.
 
 use std::ffi::OsStr;
 use std::io;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -204,10 +209,30 @@ impl Reply<ListingPlus> for ReplyDirectoryPlus {
     }
 }
 
+/// Runs the work of a callback, `op`, so that a panic in it doesn't end the session (#389).
+///
+/// *How the request is answered:* the callback's reply was moved into `work`, and is dropped
+/// unsent as the panic unwinds. fuser answers a reply dropped unsent with `EIO` (and logs a
+/// warning with the request's number), so the guard needn't, and mustn't, answer it again.
+/// The panic's own message goes to standard error through the panic hook, as on every thread.
+///
+/// *Why `AssertUnwindSafe`:* the core's locks are taken with `unwrap_or_else(into_inner)`, so a
+/// lock poisoned by the panic stays usable. The panic may leave a cache entry half-made; the
+/// request threads (`vfs/workers.rs`) accept the same risk for the jobs they run, rather than
+/// end the mount for every client.
+fn guarded(op: &'static str, work: impl FnOnce()) {
+    if catch_unwind(AssertUnwindSafe(work)).is_err() {
+        log::error!("a {op} request panicked: answered EIO; the mount stays up");
+    }
+}
+
 /// The filesystem, as fuser sees it.
 #[derive(Debug)]
 pub struct SacdFs {
     volume: Volume,
+    /// Tests only: the callback that panics, to test `guarded`.
+    #[cfg(test)]
+    panic_in: Arc<std::sync::Mutex<Option<&'static str>>>,
 }
 
 impl SacdFs {
@@ -219,13 +244,21 @@ impl SacdFs {
         uid: u32,
         gid: u32,
     ) -> io::Result<Self> {
-        Ok(SacdFs { volume: Volume::new(tree, engine, request_threads, uid, gid)? })
+        Ok(SacdFs {
+            volume: Volume::new(tree, engine, request_threads, uid, gid)?,
+            #[cfg(test)]
+            panic_in: Arc::default(),
+        })
     }
 
     /// The same filesystem, failing a request that waits longer than `timeout`: see
     /// [`Volume::with_request_timeout`].
     pub fn with_request_timeout(self, timeout: Option<Duration>) -> io::Result<Self> {
-        Ok(SacdFs { volume: self.volume.with_request_timeout(timeout)? })
+        Ok(SacdFs {
+            volume: self.volume.with_request_timeout(timeout)?,
+            #[cfg(test)]
+            panic_in: self.panic_in,
+        })
     }
 
     /// The watchdog.
@@ -237,6 +270,18 @@ impl SacdFs {
     pub fn volume(&self) -> &Volume {
         &self.volume
     }
+
+    /// Tests only: panics if `op` is the callback the test chose.
+    #[cfg(test)]
+    #[allow(clippy::panic)]
+    fn test_hook(&self, op: &'static str) {
+        if *self.panic_in.lock().unwrap_or_else(|p| p.into_inner()) == Some(op) {
+            panic!("test hook: {op} panics");
+        }
+    }
+
+    #[cfg(not(test))]
+    fn test_hook(&self, _op: &'static str) {}
 }
 
 impl Filesystem for SacdFs {
@@ -260,11 +305,17 @@ impl Filesystem for SacdFs {
     }
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
-        self.volume.lookup(parent.0, name, reply);
+        guarded("lookup", || {
+            self.test_hook("lookup");
+            self.volume.lookup(parent.0, name, reply);
+        });
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, fh: Option<FileHandle>, reply: ReplyAttr) {
-        self.volume.getattr(ino.0, fh.map(|f| f.0), reply);
+        guarded("getattr", || {
+            self.test_hook("getattr");
+            self.volume.getattr(ino.0, fh.map(|f| f.0), reply);
+        });
     }
 
     fn open(&self, req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
@@ -272,7 +323,7 @@ impl Filesystem for SacdFs {
             reply.error(errno(vfs::Error::ReadOnly));
             return;
         }
-        self.volume.open_by(ino.0, req.pid(), reply);
+        guarded("open", || self.volume.open_by(ino.0, req.pid(), reply));
     }
 
     fn read(
@@ -286,7 +337,7 @@ impl Filesystem for SacdFs {
         _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        self.volume.read(ino.0, fh.0, offset, size, reply);
+        guarded("read", || self.volume.read(ino.0, fh.0, offset, size, reply));
     }
 
     fn flush(
@@ -310,16 +361,21 @@ impl Filesystem for SacdFs {
         _flush: bool,
         reply: ReplyEmpty,
     ) {
-        self.volume.release(fh.0);
-        reply.ok();
+        guarded("release", || {
+            self.volume.release(fh.0);
+            reply.ok();
+        });
     }
 
     fn opendir(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
-        self.volume.opendir(ino.0, reply);
+        guarded("opendir", || self.volume.opendir(ino.0, reply));
     }
 
     fn readdir(&self, _req: &Request, ino: INodeNo, _fh: FileHandle, offset: u64, reply: ReplyDirectory) {
-        self.volume.readdir(ino.0, Dir(reply, offset));
+        guarded("readdir", || {
+            self.test_hook("readdir");
+            self.volume.readdir(ino.0, Dir(reply, offset));
+        });
     }
 
     /// A listing with each entry's attributes (#205), so that a server listing a folder and
@@ -334,13 +390,16 @@ impl Filesystem for SacdFs {
         offset: u64,
         reply: ReplyDirectoryPlus,
     ) {
-        self.volume.readdir_plus(ino.0, offset, reply);
+        guarded("readdirplus", || {
+            self.test_hook("readdir");
+            self.volume.readdir_plus(ino.0, offset, reply);
+        });
     }
 
     fn access(&self, _req: &Request, ino: INodeNo, mask: AccessFlags, reply: ReplyEmpty) {
         let want =
             Access { write: mask.contains(AccessFlags::W_OK), execute: mask.contains(AccessFlags::X_OK) };
-        self.volume.access(ino.0, want, reply);
+        guarded("access", || self.volume.access(ino.0, want, reply));
     }
 
     // No extended attributes (#174, docs/design.md). getxattr: ENOSYS, which the kernel
@@ -365,7 +424,103 @@ impl Filesystem for SacdFs {
 
     /// The volume's size: see [`Volume::statfs`].
     fn statfs(&self, _req: &Request, _ino: INodeNo, reply: ReplyStatfs) {
-        let s = self.volume.statfs();
-        reply.statfs(s.blocks, 0, 0, s.files, 0, s.bsize, s.namelen, s.frsize);
+        guarded("statfs", || {
+            self.test_hook("statfs");
+            let s = self.volume.statfs();
+            reply.statfs(s.blocks, 0, 0, s.files, 0, s.bsize, s.namelen, s.frsize);
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::os::unix::fs::MetadataExt;
+    use std::path::Path;
+    use std::process::Command;
+
+    use fuser::{Config, MountOption, Session};
+
+    use super::*;
+    use crate::tree::SourceDir;
+
+    fn fuse_available() -> bool {
+        let ok = Path::new("/dev/fuse").exists()
+            && Command::new("fusermount3").arg("-V").output().is_ok_and(|o| o.status.success());
+        if !ok && std::env::var_os("SACDFS_FUSE_TESTS").is_some_and(|v| v == "1") {
+            panic!("SACDFS_FUSE_TESTS=1 but /dev/fuse or fusermount3 is missing");
+        }
+        ok
+    }
+
+    /// A panic in a callback answered on fuser's thread fails that request with `EIO`, and the
+    /// mount keeps answering (#389). Before, the panic ended fuser's session: the mount was gone.
+    #[test]
+    fn a_panic_in_an_inline_callback_fails_the_request_and_keeps_the_mount() {
+        if !fuse_available() {
+            eprintln!("SKIPPED a_panic_in_an_inline_callback_fails_the_request_and_keeps_the_mount: no FUSE");
+            return;
+        }
+        let source = tempfile::tempdir().unwrap();
+        let tree = Arc::new(Tree::new(SourceDir::scan(source.path()).unwrap()));
+        let engine = Arc::new(Engine::new(1, 1 << 20).unwrap());
+        let meta = std::fs::metadata(source.path()).unwrap();
+        let (uid, gid) = (meta.uid(), meta.gid());
+        let fs = SacdFs::new(tree, engine, 4, uid, gid).unwrap();
+        let panic_in = fs.panic_in.clone();
+        let at = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.mount_options = vec![MountOption::RO, MountOption::FSName("sacdfs-test".to_owned())];
+        config.n_threads = Some(1);
+        let session = Session::new(fs, at.path(), &config).unwrap().spawn().unwrap();
+        let set = |op| *panic_in.lock().unwrap() = op;
+        let mp = at.path().to_owned();
+        // Runs `op` on the mount, failing the test (and detaching the mount) if it doesn't
+        // answer: a panic that escaped would have ended the session, leaving requests hanging.
+        let on_mount = |what: &str, op: fn(&Path) -> io::Result<()>| -> io::Result<()> {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let p = mp.clone();
+            std::thread::spawn(move || tx.send(op(&p)));
+            rx.recv_timeout(Duration::from_secs(10)).unwrap_or_else(|_| {
+                let _ = Command::new("fusermount3").arg("-uz").arg(&mp).status();
+                panic!("{what}: the mount stopped answering");
+            })
+        };
+        let eio = |r: io::Result<()>, what: &str| {
+            let e = r.expect_err(what);
+            assert_eq!(e.raw_os_error(), Some(libc::EIO), "{what}: {e}");
+        };
+        fn statfs(p: &Path) -> io::Result<()> {
+            nix::sys::statvfs::statvfs(p).map(drop).map_err(io::Error::from)
+        }
+        fn lookup(p: &Path) -> io::Result<()> {
+            std::fs::metadata(p.join("a")).map(drop)
+        }
+        fn list(p: &Path) -> io::Result<()> {
+            std::fs::read_dir(p).and_then(|mut d| d.try_for_each(|e| e.map(drop)))
+        }
+
+        // Each with one fuser thread, so that a panic that escaped would end the session.
+        set(Some("statfs"));
+        eio(on_mount("statfs", statfs), "statfs");
+        set(None);
+        on_mount("statfs after", statfs).unwrap();
+
+        set(Some("lookup"));
+        eio(on_mount("lookup", lookup), "lookup");
+        set(None);
+        // Answered, and by the tree: there is no such file (and nothing cached a failure).
+        let e = on_mount("lookup after", lookup).unwrap_err();
+        assert_eq!(e.raw_os_error(), Some(libc::ENOENT), "{e}");
+
+        set(Some("readdir"));
+        eio(on_mount("readdir", list), "readdir");
+        set(None);
+        on_mount("readdir after", list).unwrap();
+
+        // Still the same session, still answering.
+        on_mount("statfs at the end", statfs).unwrap();
+        session.umount_and_join().unwrap();
     }
 }

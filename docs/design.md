@@ -1773,6 +1773,12 @@ converted to PCM, on a separate rayon pool (`--threads`), with `DstDecoder`s and
   wait, on the same thread, for the demultiplexer lock the first one holds.
 - Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O error on
   that read.
+- So does every FUSE callback, on fuser's own threads, where the requests answered from memory
+  (lookups and attributes of known entries, cached listings, `statfs`) are answered inline
+  (#389). fuser 0.18 catches no panic, and one on its thread ended the session: the mount was
+  gone for every client. Now the callback's reply, dropped unsent as the panic unwinds, is
+  answered `EIO` by fuser, an error line is logged, and the mount stays. A test makes each kind
+  of inline callback panic through a test-only hook (`fuse::tests`).
 
 ### A stalled source (#63, #72)
 
