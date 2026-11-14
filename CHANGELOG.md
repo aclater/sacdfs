@@ -105,6 +105,10 @@ All notable changes to sacdfs are recorded here. The format follows
   32 KiB, and stops at about 2 MiB of text per disc; a tags file there already is not grown
   past 3 MiB. Each is listed as `not kept:` with its extract and disc (at most 32 lines, then a
   count), and the exit status is 2, so those extracts are kept.
+- **`verify` and `tags import` no longer hang on a FIFO in place of a track file (#404).** A
+  `.dsf` or `.dff` swapped for a FIFO after the folder was listed held the open forever, waiting
+  for a writer. Extracts are now opened without blocking and refused unless they are regular
+  files; that file is reported and the run goes on.
 - **A WAV read whose conversion fails is an I/O error, never old audio (#388).** If the DSD to
   PCM conversion ever refused a run, the engine's buffer (which may be a reused slot of the frame
   cache that held another frame's audio) was served and cached as if converted. Now the read fails
