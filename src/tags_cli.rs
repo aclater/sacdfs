@@ -155,6 +155,11 @@ pub struct ImportSummary {
     pub keys: usize,
     /// Pictures written.
     pub pictures: usize,
+    /// Values and pictures read from matched extracts but not written, because the mount would
+    /// not use them ([`MAX_VALUE_BYTES`] and the limits after it, [`tags::MAX_ART_BYTES`]): each
+    /// with its extract, disc and reason. Those extracts still
+    /// hold something their tags file lacks.
+    pub not_kept: Vec<String>,
     /// Discs whose tags file could not be read or written, and matched extracts whose tag could
     /// not be read, and why.
     pub failed: Vec<String>,
@@ -194,18 +199,69 @@ impl ImportSummary {
                 self.not_imported
             ));
         }
+        for n in &self.not_kept {
+            s.push_str(&format!("not kept: {n}\n"));
+        }
+        if !self.not_kept.is_empty() {
+            s.push_str("keep those extracts: their tags files lack what is listed as not kept\n");
+        }
         s
     }
 
     /// Whether every extract was handled, which is exit status 0: the same rule as `sacdfs
     /// verify`'s, plus what the import itself could not do (#198).
     pub fn all_handled(&self) -> bool {
-        self.failed.is_empty() && self.not_imported == 0
+        self.failed.is_empty() && self.not_imported == 0 && self.not_kept.is_empty()
     }
 }
 
 /// One area's imported fields, by track number.
 pub(crate) type AreaFields = BTreeMap<u8, Fields>;
+
+/// The largest value import writes, in bytes.
+pub const MAX_VALUE_BYTES: usize = 16 << 10;
+/// The most keys import writes for one track (all levels together).
+pub const MAX_TRACK_KEYS: usize = 64;
+/// The most text import writes for one track, in bytes as `cost` counts them. *Why:* the
+/// mount builds each track's tag from these values plus the disc's own text and frames, and
+/// refuses a tag over scarletbook's `MAX_TAG_BYTES` (1 MiB) with a picture of up to
+/// [`tags::MAX_ART_BYTES`]: that leaves 64 KiB for text, half of it kept for the disc's own.
+pub const MAX_TRACK_BYTES: usize = 32 << 10;
+/// The most text import adds to one disc's tags file, as `cost` counts it. *Why:* the mount
+/// builds every track's tag from that file, so it is kept bounded (under 2 MiB as written).
+pub const MAX_DISC_BYTES: usize = (2 << 20) - (64 << 10);
+
+/// What `key = value` costs: its bytes, with room for escaping in the tags file and for the
+/// frame header in the tag.
+fn cost(key: &str, value: &str) -> usize {
+    let escaped = value.chars().filter(|c| c.is_control() || matches!(c, '"' | '\\' | '\'')).count();
+    key.len() + value.len() + 5 * escaped + 16
+}
+
+/// Whether `key = value` may join `fields`, one track's imported values, when the disc's
+/// imported values already cost `disc`: `Err` with the reason it is not kept. A value over a
+/// limit is left out whole, never cut, and listed, so the extract that has it is kept.
+pub(crate) fn fit(fields: &Fields, key: &str, value: &str, disc: usize) -> Result<usize, String> {
+    let c = cost(key, value);
+    if value.len() > MAX_VALUE_BYTES {
+        return Err(format!(
+            "{} bytes, over the {} KiB a value can have",
+            value.len(),
+            MAX_VALUE_BYTES >> 10
+        ));
+    }
+    if fields.len() >= MAX_TRACK_KEYS {
+        return Err(format!("over the {MAX_TRACK_KEYS} keys a track can have"));
+    }
+    let track: usize = fields.iter().map(|(k, v)| cost(k, v)).sum();
+    if track + c > MAX_TRACK_BYTES {
+        return Err(format!("over the {} KiB of text a track can have", MAX_TRACK_BYTES >> 10));
+    }
+    if disc + c > MAX_DISC_BYTES {
+        return Err(format!("over the {} KiB of text a disc's tags file can get", MAX_DISC_BYTES >> 10));
+    }
+    Ok(c)
+}
 
 /// Runs verify with `args`, then writes the tags of its matched extracts into `dir`.
 pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
@@ -245,6 +301,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
     let key = tags::disc_key(disc.toc());
     let mut areas: [AreaFields; 2] = Default::default();
     let mut art: Option<Vec<u8>> = None;
+    let mut disc_bytes = 0;
     for row in rows {
         let slot = if row.area == "Multichannel" { Slot::Multichannel } else { Slot::TwoChannel };
         let Some(number) = row.track else { continue };
@@ -277,7 +334,19 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
             }
             if f.key == "APIC" {
                 if art.is_none() {
-                    art = front_cover(&tag);
+                    art = front_cover(&tag).filter(|p| {
+                        let fits = p.len() <= tags::MAX_ART_BYTES;
+                        if !fits {
+                            sum.not_kept.push(format!(
+                                "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
+                                row.path.display(),
+                                image.display(),
+                                p.len() >> 10,
+                                tags::MAX_ART_BYTES >> 10
+                            ));
+                        }
+                        fits
+                    });
                 }
                 continue;
             }
@@ -286,7 +355,19 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
                 Some(_) if !binary => {
                     let name =
                         tags::ITEMS.iter().find(|(_, id, _)| *id == f.key).map_or(f.key.as_str(), |i| i.0);
-                    fields.entry(name.to_owned()).or_insert_with(|| f.value.clone());
+                    if !fields.contains_key(name) {
+                        match fit(fields, name, &f.value, disc_bytes) {
+                            Ok(c) => {
+                                disc_bytes += c;
+                                fields.insert(name.to_owned(), f.value.clone());
+                            }
+                            Err(why) => sum.not_kept.push(format!(
+                                "{} (disc {}): {name}, {why}",
+                                row.path.display(),
+                                image.display()
+                            )),
+                        }
+                    }
                 }
                 _ if f.key == "TDAT" => {}
                 _ => {
@@ -507,6 +588,41 @@ mod tests {
         assert_eq!(a.album["genre"], "Mine");
         assert_eq!(a.album["date"], "2001");
         assert_eq!(merge(&mut a, &b), 0);
+    }
+
+    #[test]
+    fn fit_skips_what_the_mount_would_not_use() {
+        let mut t = Fields::new();
+        assert!(fit(&t, "genre", "Jazz", 0).is_ok());
+        // A value over its limit is not cut: it is refused, and says why.
+        let long = "x".repeat(MAX_VALUE_BYTES + 1);
+        assert!(fit(&t, "COMM", &long, 0).unwrap_err().contains("a value can have"));
+        // Keys of one track.
+        for i in 0..MAX_TRACK_KEYS {
+            t.insert(format!("TXXX:k{i}"), "v".into());
+        }
+        assert!(fit(&t, "genre", "Jazz", 0).unwrap_err().contains("keys a track can have"));
+        // A track's text.
+        let mut t = Fields::new();
+        let v = "y".repeat(12 << 10);
+        t.insert("COMM".into(), v.clone());
+        t.insert("TXXX:notes".into(), v.clone());
+        assert!(fit(&t, "TXXX:more", &v, 0).unwrap_err().contains("of text a track can have"));
+        // A disc's text.
+        assert!(fit(&Fields::new(), "genre", "Jazz", MAX_DISC_BYTES - 10).unwrap_err().contains("disc"));
+        // Escaping counts: a value of quotes costs more than its bytes.
+        assert!(cost("k", "\"\"") > cost("k", "ab"));
+    }
+
+    #[test]
+    fn not_kept_is_listed_and_not_all_handled() {
+        let mut s = ImportSummary::default();
+        assert!(s.all_handled());
+        s.not_kept.push("a.dsf (disc d.iso): COMM, 20000 bytes".into());
+        assert!(!s.all_handled());
+        let r = s.render();
+        assert!(r.contains("not kept: a.dsf (disc d.iso): COMM"), "{r}");
+        assert!(r.contains("keep those extracts"), "{r}");
     }
 
     #[test]
