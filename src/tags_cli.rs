@@ -175,7 +175,13 @@ impl ImportSummary {
             self.files, self.written, self.created, self.keys, self.pictures
         );
         if !self.skipped.is_empty() {
-            let k: Vec<&str> = self.skipped.iter().map(String::as_str).collect();
+            // Each key escaped by itself (a TXXX description can hold any character), and at
+            // most 32 of them.
+            let mut k: Vec<String> =
+                self.skipped.iter().take(32).map(|k| safe_file::one_line(k).into_owned()).collect();
+            if self.skipped.len() > 32 {
+                k.push(format!("+{} more", self.skipped.len() - 32));
+            }
             s.push_str(&format!("not kept (frames the tag layer cannot write): {}\n", k.join(", ")));
         }
         for f in &self.failed {
@@ -554,5 +560,24 @@ mod tests {
         fs::write(&victim, "[album]\ngenre = \"Jazz\"\n").unwrap();
         symlink(&victim, &toml).unwrap();
         assert!(safe_file::read_text(&toml, safe_file::MAX_TAGS_TEXT).is_err());
+    }
+
+    /// Keys import could not keep are escaped one by one in its summary.
+    #[test]
+    fn summary_keys_are_escaped() {
+        let keys = ["TXXX:\x1b]0;title\x07\x1b[2J", "TXXX:a\nUNSUPPORTED (1): forged"];
+        let sum = ImportSummary {
+            skipped: keys.iter().map(|k| (*k).to_owned()).collect(),
+            ..ImportSummary::default()
+        };
+        let out = sum.render();
+        assert!(!out.chars().any(|c| c.is_control() && c != '\n'), "{out:?}");
+        assert!(!out.lines().any(|l| l.starts_with("UNSUPPORTED")), "{out}");
+        assert!(out.contains("\\x1b]0;title\\x07\\x1b[2J") && out.contains("a\\x0aUNSUPPORTED"), "{out}");
+        let many = ImportSummary {
+            skipped: (0..100).map(|i| format!("K{i:03}")).collect(),
+            ..ImportSummary::default()
+        };
+        assert!(many.render().contains("+68 more"));
     }
 }
