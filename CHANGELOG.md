@@ -28,6 +28,42 @@ All notable changes to sacdfs are recorded here. The format follows
   the block on any Linux system, as a normal user, and changes nothing, for beta test reports.
 
 ### Changed
+- **The systemd unit limits what sacdfs may do, and the mount stays visible (#387).** The unit in
+  the release archive now keeps sacdfs to the rights to mount and to read the images
+  (`CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE`). It also sets:
+  - no new privileges;
+  - no device but `/dev/fuse`;
+  - sockets for the journal and MusicBrainz only;
+  - a system call deny list;
+  - native calls only;
+  - no namespaces, realtime scheduling, setuid files, writable-and-executable memory, clock
+    or hostname changes.
+
+  Options that give the service its own mount namespace (`ProtectSystem=`, `PrivateTmp=` and the
+  like) stay out, because the mount would then be seen by no other program; the unit's comments
+  and [docs/deployment.md](docs/deployment.md#systemd-unit) say why each was kept or left out.
+  `systemd-analyze security` goes from 9.6 to 4.1. A systemd too old for an option logs
+  `Unknown lvalue` and runs the unit without it. Checked on Fedora 44, RHEL 10.1, TerraMaster
+  TOS 7.0, Debian 12 with UGREEN's kernel and ReadyNAS OS 6.10 (systemd 230), each in a VM, not on
+  the vendor's hardware.
+- **The container gives each program only the capabilities it needs (#386).** The Compose files,
+  the TrueNAS app and the Unraid template now drop the runtime's whole default set
+  (`cap_drop: ALL`) and add back seven: `SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`,
+  `SETGID`, `NET_BIND_SERVICE` and `SETPCAP`, with `no-new-privileges`. Inside, the entry point
+  starts each program with `setpriv` and a reduced bounding set: sacdfs keeps `SYS_ADMIN` and
+  `DAC_OVERRIDE`, smbd `SETUID`, `SETGID` and `NET_BIND_SERVICE`, and NFS-Ganesha
+  `DAC_READ_SEARCH` alone; neither server can mount, and only NFS-Ganesha can open files by
+  handle. At its start the entry point also drops whatever none of them need, so a container
+  started with an older Compose file holds no more either, and with `NFS=0` no process keeps
+  `DAC_READ_SEARCH`. Every capability in the list was checked to be needed by leaving it out.
+  Checked with the CI share test (Docker and rootful Podman, AppArmor) and on Fedora 44 in a VM
+  with SELinux enforcing (Docker, rootful and rootless Podman, both Compose tools); copying the
+  corpus over SMB and NFS took as long as before. **To upgrade:** take the new `cap_drop`,
+  `cap_add` and `security_opt` lines from [deploy/nas-compose.yaml](deploy/nas-compose.yaml), or
+  the `docker run` options in [docs/deployment.md](docs/deployment.md#privileges). An older file
+  keeps working, with the per-program limits applied. Under SELinux, the container mounts with
+  its normal label: [docs/deployment.md](docs/deployment.md#privileges) lists the labels it can
+  read the images under.
 - **The security policy says more about disclosure and about how a report is handled.**
   [SECURITY.md](SECURITY.md) now has the terms of coordinated disclosure (private until a fixed
   release or 90 days, a CVE when warranted), what to do when GitHub's private reporting can't

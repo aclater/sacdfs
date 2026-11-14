@@ -18,14 +18,14 @@ image=$1
 # The client: Fedora 44, for mount.cifs and mount.nfs4 (pinned like the image's bases).
 client_image=${CLIENT_IMAGE:-registry.fedoraproject.org/fedora:44@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0}
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=deploy/ci-caps.sh
+. "$here/ci-caps.sh"
 
 group() { echo "::group::$*"; }
 endgroup() { echo "::endgroup::"; }
 
 server() {
-    docker run -d --name sacdfs --network sacdfs-ci \
-        --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
-        --security-opt apparmor=unconfined \
+    docker run -d --name sacdfs --network sacdfs-ci "${SERVER_OPTS[@]}" \
         "$@" -v "$PWD/tests/corpus/images:/images:ro" "$image"
     "$here/ci-wait-healthy.sh" sacdfs
 }
