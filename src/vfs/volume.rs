@@ -734,7 +734,7 @@ impl Shared {
             return Err(Error::NoMemory);
         }
         let open = match &*node {
-            Node::File(file) => Open::Track(Arc::new(Reader::opened_by(file.clone(), network_server(pid)))),
+            Node::File(file) => Open::Track(Arc::new(Reader::opened_by(file.clone(), pid, network_server))),
             Node::Sidecar(s) => match self.tree.open_sidecar(s) {
                 Ok(f) => Open::Sidecar(Arc::new(f), s.clone()),
                 Err(e) => {
