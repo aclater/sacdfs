@@ -22,6 +22,24 @@ All notable changes to sacdfs are recorded here. The format follows
   the block on any Linux system, as a normal user, and changes nothing, for beta test reports.
 
 ### Changed
+- **The systemd unit limits what sacdfs may do, and the mount stays visible (#387).** The unit in
+  the release archive now keeps sacdfs to the rights to mount and to read the images
+  (`CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE`). It also sets:
+  - no new privileges;
+  - no device but `/dev/fuse`;
+  - sockets for the journal and MusicBrainz only;
+  - a system call deny list;
+  - native calls only;
+  - no namespaces, realtime scheduling, setuid files, writable-and-executable memory, clock
+    or hostname changes.
+
+  Options that give the service its own mount namespace (`ProtectSystem=`, `PrivateTmp=` and the
+  like) stay out, because the mount would then be seen by no other program; the unit's comments
+  and [docs/deployment.md](docs/deployment.md#systemd-unit) say why each was kept or left out.
+  `systemd-analyze security` goes from 9.6 to 4.1. A systemd too old for an option logs
+  `Unknown lvalue` and runs the unit without it. Checked on Fedora 44, RHEL 10.1, TerraMaster
+  TOS 7.0, Debian 12 with UGREEN's kernel and ReadyNAS OS 6.10 (systemd 230), each in a VM, not on
+  the vendor's hardware.
 - **The image upgrades Fedora's own packages when it is built, and a weekly scan checks the
   published image (#399).** The runtime stage starts from the digest-pinned Fedora 44 base as
   before, then runs `dnf upgrade` before it installs Samba and the rest, so the base's packages
