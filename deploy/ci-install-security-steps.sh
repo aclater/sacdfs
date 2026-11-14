@@ -51,6 +51,61 @@ for case in "w|--prefix /w/sacdfs" "g|--prefix /g/sacdfs" "u|--prefix /u/sacdfs"
     rm -rf /w/* /g/* /u/* /okvol/*
 done
 
+# A folder to be made straight inside a sticky folder that all users can write to (as /tmp):
+# refused, since another user could make it first; made by root beforehand, it is fine.
+mkdir -p /s
+chmod 1777 /s
+for case in "prefix|--prefix /s/sacdfs" "mount|--mount /s/sacd"; do
+    name=${case%%|*}
+    # shellcheck disable=SC2086 # option and value, split on purpose
+    set -- ${case#*|}
+    inst --iso-dir "$music" --platform linux --method ctl --prefix /okvol/sacdfs "$@" >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [ "$rc" != 0 ] && grep -q 'could make it first' "$log" && [ -z "$(ls -A /s)$(ls -A /okvol)" ]; then
+        res "new-folder-in-sticky-$name" "pass (refused, nothing written)"
+    else
+        res "new-folder-in-sticky-$name" "FAIL (status $rc)"
+    fi
+    rm -rf /s/* /okvol/*
+done
+mkdir -m 0755 /s/sacdfs
+inst --iso-dir "$music" --platform linux --method ctl --prefix /s/sacdfs --dry-run >"$log" 2>&1
+rc=$?
+if [ "$rc" = 0 ]; then res "made-by-root-in-sticky" "pass (accepted)"; else cat "$log"; res "made-by-root-in-sticky" "FAIL (status $rc)"; fi
+rm -rf /s
+
+# A prefix inside the images folder, both with a space in their names: refused.
+images "/vol3/my music"
+inst --iso-dir "/vol3/my music" --platform linux --method ctl --prefix "/vol3/my music/sacdfs" >"$log" 2>&1
+rc=$?
+cat "$log"
+if [ "$rc" != 0 ] && grep -q 'is inside --iso-dir' "$log" && [ ! -e "/vol3/my music/sacdfs" ]; then
+    res "prefix-inside-iso-dir-with-space" "pass (refused)"
+else
+    res "prefix-inside-iso-dir-with-space" "FAIL (status $rc)"
+    inst --iso-dir "/vol3/my music" --platform linux --method ctl --prefix "/vol3/my music/sacdfs" --uninstall >/dev/null 2>&1
+fi
+rm -rf /vol3
+
+# /tmp that can't run programs: the binary would be tried on the data volume, which here
+# other users can write to: refused before the download.
+mkdir -p /nx /volume2/music
+mount -t tmpfs -o noexec tmpfs /nx
+chmod 0777 /volume2
+cp "$music"/*.iso /volume2/music/
+TMPDIR=/nx inst --iso-dir /volume2/music --platform asustor --method ctl --prefix /opt/nxp --mount /srv/nxm >"$log" 2>&1
+rc=$?
+cat "$log"
+if [ "$rc" != 0 ] && grep -q 'tried from /volume2' "$log" && [ ! -e /opt/nxp ] && [ -z "$(find /volume2 -name '.sacdfs-install*')" ]; then
+    res "noexec-tmp-unsafe-volume" "pass (refused)"
+else
+    res "noexec-tmp-unsafe-volume" "FAIL (status $rc)"
+    TMPDIR=/nx inst --iso-dir /volume2/music --platform asustor --method ctl --prefix /opt/nxp --mount /srv/nxm --uninstall >/dev/null 2>&1
+fi
+umount /nx
+rm -rf /volume2 /nx
+
 # --- 2. Folder names with &, spaces and brackets: a full install, the files, a second run
 # that changes nothing, uninstall. In the images folder, the prefix and the mount folder.
 for n in 'R&B' 'Rock & Roll' 'Live (1972)'; do
@@ -237,6 +292,40 @@ else
 fi
 umount "$vol/Multimedia/sacd" 2>/dev/null
 
+# The old QNAP folder replaced by a link to another folder: nothing there is touched, by an
+# install or by --uninstall.
+victim() { # DIR: a folder with files that look like sacdfs's
+    mkdir -p "$1/cache"
+    echo compose >"$1/compose.yaml"
+    echo conf >"$1/sacdfs.conf"
+    echo important >"$1/cache/important"
+}
+victim_ok() { [ "$(cat "$1/compose.yaml" "$1/sacdfs.conf" "$1/cache/important" 2>/dev/null)" = "compose
+conf
+important" ]; }
+victim /victim
+rm -rf "$vol/Multimedia/sacdfs"
+ln -s /victim "$vol/Multimedia/sacdfs"
+inst --iso-dir "$vol/Multimedia/music" --platform qnap --method ctl >"$log" 2>&1
+rc=$?
+cat "$log"
+if [ "$rc" = 0 ] && victim_ok /victim && grep -q 'symbolic link: nothing there' "$log" && [ "$(running_exe)" = "$vol/.sacdfs/sacdfs" ]; then
+    res "qnap-old-folder-link-install" "pass (installed; the link's target untouched)"
+else
+    find /victim
+    res "qnap-old-folder-link-install" "FAIL (status $rc)"
+fi
+inst --iso-dir "$vol/Multimedia/music" --platform qnap --method ctl --uninstall >"$log" 2>&1
+rc=$?
+cat "$log"
+if [ "$rc" = 0 ] && victim_ok /victim && [ ! -e "$vol/.sacdfs" ] && [ "$(fuse_mounts)" = "$base" ]; then
+    res "qnap-old-folder-link-uninstall" "pass (uninstalled; the link's target untouched)"
+else
+    find /victim
+    res "qnap-old-folder-link-uninstall" "FAIL (status $rc)"
+fi
+rm -f "$vol/Multimedia/sacdfs"
+
 # --- 8. Upgrade on ASUSTOR (init.d): an earlier install with --prefix in a shared folder is
 # found through S99sacdfs and moved to the default.
 mkdir -p /volume1/Public /usr/local/etc/init.d
@@ -270,5 +359,20 @@ else
     cat "$log"
     res "asustor-uninstall" "FAIL (status $rc)"
 fi
+
+# The hook names a settings file through a link: nothing there is touched by --uninstall.
+victim /victim2
+ln -s /victim2 /volume1/Public/lnk
+printf '#!/bin/sh\nexport SACDFS_CONF=/volume1/Public/lnk/sacdfs.conf\n' >/usr/local/etc/init.d/S99sacdfs
+inst --iso-dir /volume1/Public/music --platform asustor --method ctl --uninstall >"$log" 2>&1
+rc=$?
+cat "$log"
+if [ "$rc" = 0 ] && victim_ok /victim2 && grep -q 'symbolic link: nothing there' "$log"; then
+    res "asustor-hook-link-uninstall" "pass (the link's target untouched)"
+else
+    find /victim2
+    res "asustor-hook-link-uninstall" "FAIL (status $rc)"
+fi
+rm -f /volume1/Public/lnk /usr/local/etc/init.d/S99sacdfs /usr/local/etc/init.d/K01sacdfs
 
 exit "$fails"

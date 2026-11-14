@@ -127,6 +127,7 @@ check_name() { # OPTION VALUE
 
 # entry_unsafe PATH: why a user other than root could change PATH (one entry; a symbolic link
 # itself, not what it points to), printed with the fix, status 0; status 1 when only root can.
+# With _eu_nosticky=1, a folder with the sticky bit counts as writable by others too.
 entry_unsafe() {
     _eu_l=$(LC_ALL=C ls -ldn "$1" 2>/dev/null) || {
         echo "can't be read"
@@ -143,7 +144,13 @@ entry_unsafe() {
     case $2 in l*) return 1 ;; esac
     case $2 in
         ?????w* | ????????w*)
-            case $2 in d????????[tT]*) ;; *)
+            case ${_eu_nosticky:-}$2 in d????????[tT]*) ;; *)
+                # Debian (ReadyNAS OS, OpenMediaVault) makes /usr/local root:staff 2775 by
+                # policy: "staff" is an administrators' group there, so it counts as root's.
+                case $1:$2 in /usr/local:d???????-* | /usr/local/*:d???????-*)
+                    [ "$(awk -F: -v g="$5" '$3 == g { print $1; exit }' /etc/group 2>/dev/null)" = staff ] && return 1
+                    ;;
+                esac
                 echo "can be written by its group or by other users ($2) (fix: chmod go-w '$1', or use another folder)"
                 return 0
                 ;;
@@ -160,7 +167,8 @@ entry_unsafe() {
 
 # path_unsafe PATH: walks PATH from / down, through symbolic links, and prints the first
 # folder, link or file on the way that a user other than root could change or replace, with
-# why; status 1 when there is none. Parts that don't exist yet are not checked.
+# why; status 1 when there is none. A part that doesn't exist yet is fine unless the folder
+# it would be made in can be written by other users (with the sticky bit, as /tmp).
 path_unsafe() {
     if _pu_r=$(entry_unsafe /); then
         echo "/ $_pu_r"
@@ -192,7 +200,15 @@ path_unsafe() {
             _pu_todo=${_pu_t#/}${_pu_todo:+/$_pu_todo}
             continue
         fi
-        [ -e "$_pu_next" ] || return 1
+        if [ ! -e "$_pu_next" ]; then
+            # Not there yet, so root will make it: not in a folder (sticky, or the walk would
+            # have stopped) where another user could make it first.
+            if _eu_nosticky=1 entry_unsafe "${_pu_cur:-/}" >/dev/null; then
+                echo "$_pu_next doesn't exist yet, and other users can write to ${_pu_cur:-/}, so they could make it first (fix: make it as root first, mkdir -m 0755 '$_pu_next', or use another folder)"
+                return 0
+            fi
+            return 1
+        fi
         if _pu_r=$(entry_unsafe "$_pu_next"); then
             echo "$_pu_next $_pu_r"
             return 0
@@ -998,25 +1014,33 @@ hook_conf() {
 # One per line.
 old_prefixes() {
     {
+        # "n": a name another user may have made into a link; "p": the kernel's own path.
         if [ "$PLATFORM" = qnap ]; then
-            printf '%s/sacdfs\n' "$(printf '%s\n' "$ISO_DIR" | cut -d/ -f1-4)"
+            printf 'n%s/sacdfs\n' "$(printf '%s\n' "$ISO_DIR" | cut -d/ -f1-4)"
         fi
         c=$(hook_conf)
-        [ -n "$c" ] && dirname "$c"
+        [ -n "$c" ] && printf 'n%s\n' "$(dirname "$c")"
         # The folder of the sacdfs that sacdfs-ctl started (its pid file), on any system.
         p=$(cat /var/run/sacdfs.pid 2>/dev/null)
         case $p in '' | *[!0-9]*) ;; *)
             case $(cat "/proc/$p/comm" 2>/dev/null) in sacdfs*)
-                e=$(readlink "/proc/$p/exe" 2>/dev/null) && dirname "$e"
+                e=$(readlink "/proc/$p/exe" 2>/dev/null) && printf 'p%s\n' "$(dirname "$e")"
                 ;;
             esac
             ;;
         esac
     } | while IFS= read -r d; do
+        kind=${d%"${d#?}"}
+        d=${d#?}
         case $d in /?*) ;; *) continue ;; esac
         d=${d%/}
         [ -d "$d" ] || continue
-        d=$(cd -P "$d" 2>/dev/null && pwd -P) || continue
+        if [ "$kind" = n ]; then
+            # Files are removed from there: never through a link, which could point anywhere.
+            real_folder "$d" || continue
+        else
+            d=$(cd -P "$d" 2>/dev/null && pwd -P) || continue
+        fi
         [ "$d" != "$PREFIX" ] || continue
         for f in sacdfs-ctl sacdfs.conf compose.yaml; do
             if [ -e "$d/$f" ]; then
@@ -1025,6 +1049,16 @@ old_prefixes() {
             fi
         done
     done | awk '!seen[$0]++'
+}
+
+# real_folder DIR: DIR is a folder and no part of its path is a symbolic link; otherwise a
+# warning naming it, and status 1. Used before removing anything from a folder that other
+# users may have been able to change.
+real_folder() {
+    if [ -L "$1" ] || [ "$(cd -P "$1" 2>/dev/null && pwd -P)" != "$1" ]; then
+        warn "$1 is, or is reached through, a symbolic link: nothing there was stopped or removed. Check what it points to, and remove sacdfs's files from there yourself if they are yours."
+        return 1
+    fi
 }
 
 # stop_old DIR: stop a sacdfs started from DIR, a folder other users may be able to change,
@@ -1140,7 +1174,9 @@ uninstall_ctl() {
     found=0 mark=0
     while IFS= read -r d; do
         [ -n "$d" ] || continue
-        [ -d "$d" ] && d=$(cd -P "$d" && pwd -P)
+        d=${d%/}
+        [ -e "$d" ] || [ -L "$d" ] || continue
+        real_folder "$d" || continue
         CTL=$d/sacdfs-ctl CONF=$d/sacdfs.conf
         [ -f "$CONF" ] || [ -f "$CTL" ] || [ -f "$d/sacdfs" ] || continue
         found=1
@@ -1391,8 +1427,9 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
     fi
     case $PREFIX in /*) PREFIX=${PREFIX%/} ;; *) die "--prefix must be an absolute path" ;; esac
     case $MOUNT in /*) MOUNT=${MOUNT%/} ;; *) die "--mount must be an absolute path" ;; esac
-    if [ "$METHOD" = compose ]; then OWN="$PREFIX"; else OWN="$PREFIX $MOUNT"; fi
-    for p in $OWN; do
+    # (Each path on its own: folder names may hold spaces.)
+    for p in "$PREFIX" "$MOUNT"; do
+        [ "$p" != "$MOUNT" ] || [ "$METHOD" != compose ] || continue
         if inside "$p" "$ISO_DIR"; then
             die "$p is inside --iso-dir $ISO_DIR, and nothing may be written there: give --prefix and --mount outside it"
         fi
@@ -1433,7 +1470,10 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
         if [ "$METHOD" != compose ]; then
             [ ! -L "$MOUNT" ] || die "the folder to mount on, $MOUNT, is a symbolic link: give the folder itself with --mount. Nothing was changed."
             [ ! -e "$MOUNT" ] || [ -d "$MOUNT" ] || die "the folder to mount on, $MOUNT, is not a folder. Nothing was changed."
-            if why=$(path_unsafe "$(dirname "$MOUNT")"); then
+            # An existing folder: only the folders above it matter (it may be a share). A new
+            # one: also not made where other users could make it first.
+            if [ -e "$MOUNT" ]; then mchk=$(dirname "$MOUNT"); else mchk=$MOUNT; fi
+            if why=$(path_unsafe "$mchk"); then
                 die "$why.
 Another user could then put a link in place of the folder to mount on, $MOUNT, and have root mount sacdfs over any folder. Nothing was changed. Fix that folder as shown, or give a --mount in a folder only root can change, such as the volume's top folder, and share it with $NAME's own file sharing. See $DOCS/README.md#where-the-files-go"
             fi
@@ -1456,6 +1496,11 @@ Another user could then put a link in place of the folder to mount on, $MOUNT, a
         TMP=
         base=${VOLUME:-$(dirname "$PREFIX")}
         [ -d "$base" ] || die "/tmp doesn't allow running programs, and $base doesn't exist"
+        # Root runs the downloaded binary from there to try it.
+        if why=$(path_unsafe "$base"); then
+            die "$why.
+/tmp doesn't allow running programs here, so the downloaded binary would be tried from $base, which another user could change. Nothing was changed. Fix that folder as shown, or let /tmp run programs."
+        fi
         TMP=$(mktemp -d "$base/.sacdfs-install.XXXXXX") || die "mktemp in $base failed"
     fi
     rm -f "$TMP/x"
