@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A listing made while the process has no descriptor left: the images that could not be
-//! opened are left out of it, but the next listing, once descriptors are free again, shows
-//! them, with no change to SOURCE. Before, the listing was kept as it was until the source
+//! opened are left out of it, but a listing after the retry wait (1 s at first), once
+//! descriptors are free again, shows them, with no change to SOURCE. Before, the listing was kept as it was until the source
 //! folder changed.
 //!
 //! A test binary of its own, with one test: it lowers the process's open files limit and
@@ -65,5 +65,14 @@ fn a_listing_short_of_descriptors_is_complete_at_the_next_listing() {
 
     let mut want: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
     want.sort();
-    assert_eq!(listed(), want, "the images left out stay out once descriptors are free");
+    // Listed again once the first wait (1 s) is over.
+    let start = std::time::Instant::now();
+    while listed() != want {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "the images left out stay out once descriptors are free: {:?}",
+            listed()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }

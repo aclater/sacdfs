@@ -446,14 +446,27 @@ mod tests {
         assert_eq!(open_files_budget(None, 100), (100, 1024));
     }
 
+    /// The environment variable that makes the test below run its body: in a process of its
+    /// own, so that no other test sees the limit it changes.
+    const RAISE_CHILD: &str = "SACDFS_TEST_RAISE_NOFILE_CHILD";
+
     #[test]
     fn the_open_files_limit_is_raised_to_the_hard_limit() {
         use nix::sys::resource::{Resource, getrlimit, setrlimit};
-        let (_, hard) = getrlimit(Resource::RLIMIT_NOFILE).unwrap();
-        if hard <= 1024 {
-            return; // nothing to raise here
+        let name = "startup::tests::the_open_files_limit_is_raised_to_the_hard_limit";
+        if std::env::var_os(RAISE_CHILD).is_none() {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([name, "--exact", "--test-threads=1", "--nocapture"])
+                .env(RAISE_CHILD, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+            assert!(stdout.contains("1 passed"), "the test did not run in the child: {stdout}");
+            return;
         }
-        setrlimit(Resource::RLIMIT_NOFILE, 1024, hard).unwrap();
+        let (_, hard) = getrlimit(Resource::RLIMIT_NOFILE).unwrap();
+        setrlimit(Resource::RLIMIT_NOFILE, (hard / 2).max(64).min(hard), hard).unwrap();
         assert_eq!(raise_nofile(), Some(hard));
         assert_eq!(getrlimit(Resource::RLIMIT_NOFILE).unwrap(), (hard, hard));
     }
