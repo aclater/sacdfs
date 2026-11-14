@@ -102,8 +102,9 @@ All notable changes to sacdfs are recorded here. The format follows
   cover or a 3 MiB text field was in the tags directory but never served, and one oversized value
   could leave a track's whole tags file unused. Deleting the extract then lost them. Now import
   skips a picture over 960 KiB, and per track a value over 16 KiB, keys past 64 and text past
-  32 KiB, and stops at about 2 MiB of text per disc. Each is listed as `not kept:` with its
-  extract and disc, and the exit status is 2, so those extracts are kept.
+  32 KiB, and stops at about 2 MiB of text per disc; a tags file there already is not grown
+  past 3 MiB. Each is listed as `not kept:` with its extract and disc (at most 32 lines, then a
+  count), and the exit status is 2, so those extracts are kept.
 - **A WAV read whose conversion fails is an I/O error, never old audio (#388).** If the DSD to
   PCM conversion ever refused a run, the engine's buffer (which may be a reused slot of the frame
   cache that held another frame's audio) was served and cached as if converted. Now the read fails
