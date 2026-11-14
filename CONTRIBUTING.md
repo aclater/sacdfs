@@ -9,6 +9,11 @@ expected, what happened, and a log: run in the foreground with `sacdfs -f -vv ..
 attach copyrighted disc images. **Security problems** go through a private report instead:
 see [SECURITY.md](SECURITY.md).
 
+That applies to contributors and agents too. If you find a vulnerability while working on the
+code, don't open an issue or a pull request for it and don't describe it in a commit message:
+open a draft advisory and follow
+[How a report is handled](SECURITY.md#how-a-report-is-handled).
+
 ## Changing code
 
 1. Start with an issue, so the change can be discussed first.

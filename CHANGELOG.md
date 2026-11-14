@@ -7,6 +7,14 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **The security policy says more about disclosure and about how a report is handled.**
+  [SECURITY.md](SECURITY.md) now has the terms of coordinated disclosure (private until a fixed
+  release or 90 days, a CVE when warranted), what to do when GitHub's private reporting can't
+  be used, and a wider scope: tag lookups, the installer, the container image, the service
+  files and the checks on release files. A new section sets out what the maintainer and contributors do with a vulnerability:
+  a draft advisory from the first moment, the fix in the advisory's private fork, and nothing
+  in public issues, pull requests, commit messages or CI logs until the fixed release is out.
+  CONTRIBUTING.md points there.
 - **Every request sacdfs fails with an I/O error is logged with what failed, where and why, and
   the lines are rate-limited (part of #339).** A read that fails has a `warn` line with the image,
   the track, the inode and the offset, and the cause. Reads of an image refused while it has reads
