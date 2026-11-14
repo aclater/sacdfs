@@ -11,7 +11,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 - A QNAP NAS with an Intel or AMD chip (`uname -m` in step 1 prints `x86_64`).
 - An administrator login over SSH. SSH is a way to type commands on the NAS from another computer.
 - A folder of SACD images on the NAS, in a QNAP shared folder. This page uses a folder `music` in the shared folder `Multimedia`; change the paths to yours.
-- About 100 MB free in the shared folder.
+- About 100 MB free on the data volume.
 
 ## Steps
 
@@ -29,12 +29,16 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    ```
 
    *You should see* a line starting with `crw`.
-3. **Make the folders and go into the first.** Keep sacdfs in a shared folder: QNAP's system folders, `/root` included, are on a small RAM disk. `/share/CACHEDEV1_DATA/Multimedia/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs.
+3. **Make the folders and go into the first.** sacdfs's own files go in a hidden folder at the top of the data volume, `/share/CACHEDEV1_DATA/.sacdfs`, next to QNAP's own `.qpkg`: not in a shared folder, and not in QNAP's system folders, which are on a small RAM disk. Root runs these files at every start, so only root may be able to change them: in a shared folder, any user who can write to its top could swap them for their own. `/share/CACHEDEV1_DATA/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs.
 
    ```sh
-   mkdir -p /share/CACHEDEV1_DATA/Multimedia/sacdfs/cache /share/CACHEDEV1_DATA/Multimedia/sacd
-   cd /share/CACHEDEV1_DATA/Multimedia/sacdfs
+   ls -ld /share/CACHEDEV1_DATA
+   mkdir -p /share/CACHEDEV1_DATA/.sacdfs/cache /share/CACHEDEV1_DATA/sacd
+   chmod 0755 /share/CACHEDEV1_DATA/.sacdfs
+   cd /share/CACHEDEV1_DATA/.sacdfs
    ```
+
+   *You should see* a line starting `drwxr-xr-x` with the owner `admin` *(untested on QNAP hardware: QuTScloud in the VM had no volume of its own)*. If it starts `drwxrwxrwx` or similar, other users can write there: use another folder that only `admin` can change, and the same in every step below. [The installer](README.md#where-the-files-go) checks this for you.
 4. **Download sacdfs and its checksum file.**
 
    ```sh
@@ -54,29 +58,29 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
    ```sh
    tar -xzf sacdfs-0.6.3-x86_64-linux.tar.gz
-   cp sacdfs-0.6.3-x86_64-linux/sacdfs sacdfs-0.6.3-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/Multimedia/sacdfs/
-   /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs --version
+   cp sacdfs-0.6.3-x86_64-linux/sacdfs sacdfs-0.6.3-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/.sacdfs/
+   /share/CACHEDEV1_DATA/.sacdfs/sacdfs --version
    ```
 
    *You should see* `sacdfs 0.6.3`.
-7. **Write the settings file.** Change the first line to your images folder.
+7. **Write the settings file.** Change the first line to your images folder. Keep each path in single quotes.
 
    ```sh
-   cat > /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs.conf <<'EOF'
-   SACDFS_IMAGES=/share/CACHEDEV1_DATA/Multimedia/music
-   SACDFS_MOUNT=/share/CACHEDEV1_DATA/Multimedia/sacd
-   SACDFS_BIN=/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs
-   SACDFS_OPTIONS="--index-cache /share/CACHEDEV1_DATA/Multimedia/sacdfs/cache"
+   cat > /share/CACHEDEV1_DATA/.sacdfs/sacdfs.conf <<'EOF'
+   SACDFS_IMAGES='/share/CACHEDEV1_DATA/Multimedia/music'
+   SACDFS_MOUNT='/share/CACHEDEV1_DATA/sacd'
+   SACDFS_BIN='/share/CACHEDEV1_DATA/.sacdfs/sacdfs'
+   SACDFS_OPTIONS='--index-cache /share/CACHEDEV1_DATA/.sacdfs/cache'
    EOF
    ```
 8. **Start sacdfs.**
 
    ```sh
-   SACDFS_CONF=/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs.conf /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs-ctl start
-   ls /share/CACHEDEV1_DATA/Multimedia/sacd
+   SACDFS_CONF=/share/CACHEDEV1_DATA/.sacdfs/sacdfs.conf /share/CACHEDEV1_DATA/.sacdfs/sacdfs-ctl start
+   ls /share/CACHEDEV1_DATA/sacd
    ```
 
-   *You should see* `sacdfs started`, then one folder per image. Each holds `Stereo` and, on multichannel discs, `Multichannel`, with files like `01 - Title.dsf` and `01 - Title.wav`. sacdfs goes on running after you log out.
+   *You should see* `sacdfs started`, then one folder per image. Each holds `Stereo` and, on multichannel discs, `Multichannel`, with files like `01 - Title.dsf` and `01 - Title.wav`. sacdfs goes on running after you log out. If `sacdfs-ctl` says `not run as root: ...`, a folder on the way can be changed by other users: it names the folder and the fix.
 9. **Switch on "run user defined processes".** QNAP only runs start-up scripts when this is on. Type:
 
    ```sh
@@ -91,10 +95,10 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
     cat > /tmp/config/autorun.sh <<'EOF'
     #!/bin/sh
     (
-      D=/share/CACHEDEV1_DATA/Multimedia/sacdfs
+      D=/share/CACHEDEV1_DATA/.sacdfs
       i=0
-      while [ ! -x $D/sacdfs-ctl ] && [ $i -lt 120 ]; do sleep 5; i=$((i + 1)); done
-      SACDFS_CONF=$D/sacdfs.conf $D/sacdfs-ctl start
+      while [ ! -x "$D/sacdfs-ctl" ] && [ $i -lt 120 ]; do sleep 5; i=$((i + 1)); done
+      SACDFS_CONF="$D/sacdfs.conf" "$D/sacdfs-ctl" start
     ) > /tmp/sacdfs-autorun.log 2>&1 &
     EOF
     chmod +x /tmp/config/autorun.sh
@@ -108,17 +112,26 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
     reboot
     ```
 
-    Wait 5 to 10 minutes, log in again, and run `ls /share/CACHEDEV1_DATA/Multimedia/sacd`. *You should see* the same folders.
+    Wait 5 to 10 minutes, log in again, and run `ls /share/CACHEDEV1_DATA/sacd`. *You should see* the same folders.
 
-To stop sacdfs by hand: `SACDFS_CONF=/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs.conf /share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs-ctl stop`. Never use `kill -9`.
+To stop sacdfs by hand: `SACDFS_CONF=/share/CACHEDEV1_DATA/.sacdfs/sacdfs.conf /share/CACHEDEV1_DATA/.sacdfs/sacdfs-ctl stop`. Never use `kill -9`.
+
+## Moving an earlier install out of the shared folder
+
+Up to 0.6.3, this page and the installer put sacdfs's files in `/share/CACHEDEV1_DATA/Multimedia/sacdfs`, inside a shared folder, and the DSF and WAV files in `/share/CACHEDEV1_DATA/Multimedia/sacd` ([GHSA-wfjg-pqhm-4mm2](https://github.com/aclater/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2)). Move them:
+
+- **With the installer (0.6.4 or later):** run it again, as you first did. It installs into `/share/CACHEDEV1_DATA/.sacdfs`, points `autorun.sh` there, stops the old sacdfs without running anything from the old folder, starts the new one on `/share/CACHEDEV1_DATA/sacd`, and removes the old files. `--uninstall` also finds an install in the old place.
+- **By hand:** stop sacdfs with `kill $(cat /var/run/sacdfs.pid)` (a polite stop, not `-9`; don't run the old `sacdfs-ctl`, as someone may have changed it), delete `/share/CACHEDEV1_DATA/Multimedia/sacdfs`, then follow steps 3 to 10 above.
+
+Then point your players at the new `sacd` folder (see below).
 
 ## Check it worked
 
 ```sh
-ls /share/CACHEDEV1_DATA/Multimedia/sacd
+ls /share/CACHEDEV1_DATA/sacd
 ```
 
-*You should see* your images as folders. To play, share the `sacd` folder with QNAP's own file sharing (SMB or NFS) and open it from your player; see [the player guides](README.md).
+*You should see* your images as folders. To play, share the `sacd` folder with QNAP's own file sharing (SMB or NFS): in Control Panel, Shared Folders, make a shared folder named `sacd` on the same volume, which is `/share/CACHEDEV1_DATA/sacd` *(untested)*, and open it from your player; see [the player guides](README.md).
 
 ## If something goes wrong
 
@@ -134,12 +147,15 @@ Checked on QuTScloud 5.2.9 (kernel 5.10) in a VM, not on QNAP hardware. QuTSclou
 
 *0.6.0 run, from a clean system:* steps 1 (the `id -u` check only) to 11 as written, with the published 0.6.0 archive, using three images of the conformance corpus (22 DSF and WAV files). The checksum was `OK`, `--version` printed `sacdfs 0.6.0`, and all 22 files hashed identically to a reference read by a Linux host with the same release. After `reboot` (which QuTScloud in the VM only carried out about 22 minutes after the VM started; see below), `autorun.sh` had started sacdfs by itself when checked 9 minutes into the new start, with `Autorun = TRUE` still set and the same 22 files identical. Step 11 says to wait 5 minutes; the earlier 0.6.0-development check saw it after about 2.5 minutes, this check only looked at 9. Stopping on a restart wasn't looked at on this run.
 
+*0.6.4 changes (sacdfs's folder moved out of the shared folder):* steps 3 to 8 and 10 as now written were run with the published 0.6.3 archive on the same VM and hand-made volume: `ls -ld` showed `drwxr-xr-x` (on that volume, made by `mke2fs`; a volume made by QNAP may differ), the checksum was `OK`, sacdfs started with the single-quoted settings and the index cache, all 28 files of three corpus images were identical to a reference, and the new `autorun.sh`, run as QNAP runs it at start-up, started it again. A restart wasn't checked: QuTScloud in this VM state didn't keep "Run user defined processes" or the crontab across a restart. The move of an earlier install with the installer is in [where the files go](README.md#where-the-files-go). Not checked: QNAP's Shared Folders screen for the new `sacd` folder.
+
 *Earlier versions:* with 0.5.0, steps 1 to 9 of the old guide (by hand) read all 22 files of two test images identical to the reference and survived logging out and in. With the pull request's build before that, QuTScloud's own NFS server (NFSv3, explicit `fsid=`), mounted on the same system, gave the same bytes as a current Linux system for two test images and a real DST disc. `autorun.sh` was checked on a 0.6.0 development build: `Autorun = TRUE` stayed set across restarts, sacdfs mounted by itself about 2.5 minutes after the VM started (16 files of two test images identical), and QNAP's power-off of the VM stopped it cleanly (`signal 15: unmounting`, file system clean at the next start).
 
 **Not checked:** the QNAP web screens (including the "run user defined processes" menu), a non-root user (QuTScloud has no `su`), SMB (no Samba server ran), QNAP's own shared-folder and NFS settings, a client on another machine, and a volume made by QNAP's Storage Manager.
 
 ### Options and reasons
 
+- **Why `/share/CACHEDEV1_DATA/.sacdfs`:** root runs these files at every start, so they must be in a folder only root can change, and on the data volume (QNAP's system folders are a RAM disk, rebuilt at each start). The volume's top folder holds the shared folders and QNAP's own hidden folders, such as `.qpkg`; a hidden folder there is not a shared folder and keeps across restarts and firmware updates. QNAP sets `.qpkg` itself to mode 777 when it installs apps, so sacdfs doesn't go inside it.
 - **`/share/CACHEDEV1_DATA/Multimedia` and not `/share/Multimedia`:** `/share/Multimedia` is a link to the volume's real path, so `/proc/mounts` lists the mount under `/share/CACHEDEV1_DATA/...`. The real path is also what exists first at start-up.
 - **Why the script waits:** `autorun.sh` runs before the data volume is mounted. It waits up to 10 minutes for `sacdfs-ctl` to appear.
 - **QuTScloud is slow in the VM:** about 22 minutes to finish starting, because it waits for a licence check that has no answer. `autorun.sh` ran after about 2.5 minutes, but a restart or power-off asked for sooner waits until the 22 minutes are over (`reboot` and `qreboot` did nothing visible meanwhile). A real QNAP isn't expected to do this. The volume was also not QNAP's: the first-run setup partitions the disks but makes no volume, and `qcli_pool` stops with "read limitation error!" (no licence installed; activating one needs a QNAP account).
@@ -151,8 +167,8 @@ Container Station 3.1.4 came from QNAP's App Center (`qpkg_cli -g container-stat
 
 ### More problems
 
-- **You see:** `./sacdfs: not found`. **Do this:** use the full path, `/share/CACHEDEV1_DATA/Multimedia/sacdfs/sacdfs`.
-- **You see:** `sacdfs: the folder to mount on, ..., does not exist.` **Do this:** `mkdir -p /share/CACHEDEV1_DATA/Multimedia/sacd` (step 3).
+- **You see:** `./sacdfs: not found`. **Do this:** use the full path, `/share/CACHEDEV1_DATA/.sacdfs/sacdfs`.
+- **You see:** `sacdfs: the folder to mount on, ..., does not exist.` **Do this:** `mkdir -p /share/CACHEDEV1_DATA/sacd` (step 3).
 - **You see:** `umount: ... Device or resource busy`. **Do this:** something uses the folder (a share, an app, or a login whose current folder is inside it). Stop it or `cd /`, then try again.
 - **You see:** `... a sacdfs mount of this user's is still mounted there ...`. **Do this:** sacdfs already runs on that folder; `sacdfs-ctl stop` first.
 - **You see:** `Illegal instruction`. **Do this:** you used the `x86_64-v3` build on a CPU without AVX2; use the `x86_64` archive ([binary.md](binary.md#binaries)).

@@ -6,6 +6,30 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **The installer and `sacdfs-ctl` no longer run files that other users can change
+  ([GHSA-wfjg-pqhm-4mm2](https://github.com/aclater/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2), High).**
+  Up to 0.6.3, on QNAP the installer and the QNAP guide put sacdfs, `sacdfs-ctl` and its
+  settings inside the images' shared folder, where the start-at-boot script runs them as root;
+  folder names with some characters were not handled safely; and downloads were checked only
+  against a checksum from the same server. Now:
+  - sacdfs's files go to a folder only root can change: on QNAP `/share/CACHEDEV1_DATA/.sacdfs`
+    (the DSF and WAV files appear in `/share/CACHEDEV1_DATA/sacd`); elsewhere unchanged. The
+    installer refuses a `--prefix` or `--mount` in a folder that other users can change.
+  - `sacdfs-ctl` reads its settings as data, never as shell code (older settings files still
+    work), and as root refuses a settings file, program or folder that other users can change.
+  - Folder names may hold letters, digits, spaces and `. _ - + , @ = & ( ) [ ]`; `R&B`,
+    `Rock & Roll` and `Live (1972)` now work. Other characters are refused before anything is
+    written.
+  - Each release's `install.sh` carries the checksums of that release's archives and is attested;
+    `curl` runs HTTPS-only, and BusyBox `wget` is used only with those built-in checksums.
+
+  **QNAP users, and anyone whose sacdfs folder is inside a shared folder: run the installer for
+  0.6.4 again** as you first did; it moves the files out of the shared folder, updates the
+  start-at-boot hook and removes the old copy (`--uninstall` finds both places). If you set
+  sacdfs up by hand, follow the updated guide ([QNAP](docs/install/qnap.md#moving-an-earlier-install-out-of-the-shared-folder)),
+  then share the new `sacd` folder and point your players at it.
+
 ### Added
 - **The installer stops on a system it can't support before it downloads anything, and prints
   the details to ask for it (#382).** Before, the container route never checked the processor
