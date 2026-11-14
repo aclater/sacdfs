@@ -35,6 +35,44 @@ use scarletbook::{
 use crate::handles::Stamp;
 use crate::index_cache::{AreaShape, ImageKey, IndexCache};
 
+/// Opens the image file at `path` for reading. *Why not `File::open`:* the path (or the link
+/// it is) can be replaced between the scan and this open, and an open of a FIFO for reading
+/// blocks until a writer comes, holding a worker for good. So it opens with `O_NONBLOCK`,
+/// refuses anything but a regular file (`fstat`), and then clears `O_NONBLOCK` again (it means
+/// nothing to a regular file on a local filesystem, but goes to the server of a FUSE source).
+pub fn open_image(path: &Path) -> io::Result<File> {
+    use nix::fcntl::{FcntlArg, OFlag, fcntl};
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC)
+        .open(path)?;
+    if !file.metadata()?.file_type().is_file() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
+    }
+    let flags = OFlag::from_bits_truncate(fcntl(&file, FcntlArg::F_GETFL)?);
+    fcntl(&file, FcntlArg::F_SETFL(flags - OFlag::O_NONBLOCK))?;
+    Ok(file)
+}
+
+/// Whether `e`, an image's open failing, is a passing condition of the process or the system
+/// (out of file descriptors or memory, an I/O error) rather than the image's own content: the
+/// image is not left out of its folder for good, its folder is listed again later.
+pub fn transient(e: &scarletbook::Error) -> bool {
+    match e {
+        scarletbook::Error::Io(e) => transient_io(e),
+        _ => false,
+    }
+}
+
+/// [`transient`] for an I/O error.
+pub fn transient_io(e: &io::Error) -> bool {
+    matches!(
+        e.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOMEM | libc::EIO | libc::EAGAIN | libc::EINTR)
+    )
+}
+
 /// Bytes of DSF audio a seek is assumed to need first (a common read size of players and
 /// of the kernel for a random read): a located cursor's range covers its frames, so that
 /// the library sizes the first read to them.
@@ -167,7 +205,7 @@ impl Source {
 
     /// Opens the image again; refused if its length changed since its TOC was read.
     fn open(&self) -> io::Result<(File, Stamp)> {
-        let file = File::open(&self.inner.path)?;
+        let file = open_image(&self.inner.path)?;
         let meta = file.metadata()?;
         if meta.len() != self.inner.len {
             return Err(io::Error::other("image file changed size since it was mounted"));
@@ -260,7 +298,7 @@ impl Disc {
         tuning: Tuning,
         cache: Option<&IndexCache>,
     ) -> Result<Disc, scarletbook::Error> {
-        let file = File::open(path)?;
+        let file = open_image(path)?;
         let meta = file.metadata()?;
         let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         // The TOC is read through the handle that is kept for the audio reads, so that

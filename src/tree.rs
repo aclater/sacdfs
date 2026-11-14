@@ -517,7 +517,7 @@ fn may_be_sacd(path: &Path) -> bool {
     }
     #[cfg(test)]
     PROBES.with(|c| c.set(c.get() + 1));
-    let Ok(file) = fs::File::open(path) else { return true };
+    let Ok(file) = crate::disc::open_image(path) else { return true };
     let mut sig = [0u8; 8];
     let mut answer = false;
     for format in SectorFormat::DETECTION_ORDER {
@@ -689,6 +689,11 @@ struct Listing {
     /// Whether an open of the directory has told the kernel it may cache this listing (#205):
     /// from the next open on, it may keep what it cached.
     kept: bool,
+    /// An image of it failed to open for a passing reason ([`crate::disc::transient`]): the
+    /// listing is only good for this once, and made again at the next listing or lookup.
+    /// *Why it is kept at all:* what it read of the source and which entries it made are what
+    /// the next listing compares with, as for any listing replaced.
+    retry: bool,
 }
 
 #[derive(Debug)]
@@ -732,6 +737,8 @@ struct Cx {
     tags: Option<(String, crate::tags::FileState)>,
     /// A closed image could not be opened again: the listing is not kept (#237).
     unreadable: bool,
+    /// An image was left out for a passing reason: the listing is made again later.
+    retry: bool,
 }
 
 /// The folder art of the directory (or chain of directories) of an image: the image files
@@ -1502,8 +1509,11 @@ impl Tree {
         let Some(node) = node else { return Some(false) };
         let Node::Dir(dir) = &*node else { return Some(false) };
         if !wait {
-            let listed = dir.children.lock().unwrap_or_else(|p| p.into_inner()).is_some();
-            if !listed || (self.watching && live(dir)) {
+            let (listed, retry) = match dir.children.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+                Some(l) => (true, l.retry),
+                None => (false, false),
+            };
+            if !listed || retry || (self.watching && live(dir)) {
                 return None;
             }
         } else if self.children(ino).is_none() {
@@ -1513,7 +1523,16 @@ impl Tree {
             return Some(false);
         }
         let mut guard = dir.children.lock().unwrap_or_else(|p| p.into_inner());
-        Some(guard.as_mut().is_some_and(|l| std::mem::replace(&mut l.kept, true)))
+        // A listing that left out an image for a passing reason is never kept by the kernel.
+        Some(guard.as_mut().is_some_and(|l| std::mem::replace(&mut l.kept, true) && !l.retry))
+    }
+
+    /// Whether directory `ino`'s listing left out an image for a passing reason, and is made
+    /// again later: a name missing from it is not known to be missing.
+    pub fn retrying(&self, ino: u64) -> bool {
+        let Some(node) = self.loaded(ino) else { return false };
+        let Node::Dir(dir) = &*node else { return false };
+        dir.children.lock().unwrap_or_else(|p| p.into_inner()).as_ref().is_some_and(|l| l.retry)
     }
 
     /// Makes the next open of directory `ino` drop what the kernel cached of its listing: a
@@ -1544,7 +1563,7 @@ impl Tree {
         }
         let mut prev = guard.take();
         if let Some(l) = prev.as_mut() {
-            if !self.stale(dir, l) {
+            if !l.retry && !self.stale(dir, l) {
                 let entries = l.entries.clone();
                 *guard = prev;
                 return Some(entries);
@@ -1591,6 +1610,7 @@ impl Tree {
             served: self.dir_mtime(dir),
             tags: cx.tags,
             kept: false,
+            retry: cx.retry,
         }));
         drop(guard);
         self.keep_to_budget();
@@ -2095,12 +2115,19 @@ impl Tree {
                 // bound allows open (#237).
                 let batch = if self.bounded() { OPEN_BATCH } else { new.len().max(1) };
                 for images in new.chunks(batch) {
-                    let opened: Vec<(&PathBuf, Disc)> = images
+                    let opened: Vec<Result<(&PathBuf, Disc), ()>> = images
                         .par_iter()
                         .filter_map(|&p| {
                             let id = self.disc_id();
                             match Disc::open(p, id, self.tuning) {
-                                Ok(d) => Some((p, d)),
+                                Ok(d) => Some(Ok((p, d))),
+                                Err(e) if crate::disc::transient(&e) => {
+                                    log::info!(
+                                        "{}: not shown for now: {e}: tried again at the next listing",
+                                        p.display()
+                                    );
+                                    Some(Err(()))
+                                }
                                 Err(e) => {
                                     log::info!("{}: not shown: {e}", p.display());
                                     None
@@ -2108,7 +2135,8 @@ impl Tree {
                             }
                         })
                         .collect();
-                    for (path, disc) in opened {
+                    cx.retry |= opened.iter().any(Result::is_err);
+                    for (path, disc) in opened.into_iter().flatten() {
                         let ino = self.ids.image(path);
                         self.opened(&disc);
                         let mtime = disc.mtime;
@@ -2263,6 +2291,13 @@ impl Tree {
                                     dedup.unique(&e.name, false);
                                 }
                                 cx.head = out.len();
+                            }
+                            Err(e) if crate::disc::transient(&e) => {
+                                log::info!(
+                                    "{}: not shown for now: {e}: tried again at the next listing",
+                                    image.display()
+                                );
+                                cx.retry = true;
                             }
                             Err(e) => log::info!("{}: not shown: {e}", image.display()),
                         }

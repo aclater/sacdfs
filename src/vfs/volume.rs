@@ -180,7 +180,15 @@ enum Open {
     /// A track file, read through the engine.
     Track(Arc<Reader>),
     /// A sidecar file: its source file, open, and its node.
-    Sidecar(Arc<std::fs::File>, Arc<SidecarFile>),
+    Sidecar(Arc<SidecarOpen>, Arc<SidecarFile>),
+}
+
+/// A sidecar's source file, open, with its place under the bound on open sidecar files
+/// ([`super::sidecar_slots`]), given back with the file.
+#[derive(Debug)]
+struct SidecarOpen {
+    file: std::fs::File,
+    _slot: super::sidecar_slots::Slot,
 }
 
 impl Open {
@@ -191,6 +199,26 @@ impl Open {
             Open::Track(r) => Node::File(r.file.clone()),
             Open::Sidecar(_, s) => Node::Sidecar(s.clone()),
         }
+    }
+}
+
+/// Logs an open of sidecar `s` (inode `ino`) refused for the bound on open sidecar files, at
+/// most once a minute, with how many were refused in all.
+fn refused_sidecar_open(ino: u64, s: &SidecarFile) {
+    static REFUSED: AtomicU64 = AtomicU64::new(0);
+    static LOGGED_AT: AtomicU64 = AtomicU64::new(0);
+    let refused = REFUSED.fetch_add(1, Ordering::Relaxed) + 1;
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let last = LOGGED_AT.load(Ordering::Relaxed);
+    if (last == 0 || now >= last + 60)
+        && LOGGED_AT.compare_exchange(last, now.max(1), Ordering::Relaxed, Ordering::Relaxed).is_ok()
+    {
+        log::warn!(
+            "sidecar {} (inode {ino}): open refused, {} sidecar files are open already: EMFILE \
+             ({refused} refused since start)",
+            s.target.display(),
+            super::sidecar_slots::global().cap()
+        );
     }
 }
 
@@ -365,7 +393,7 @@ impl Volume {
                 let pending = self.watchdog.watch(What::new("sidecar read", Ino(ino)), reply);
                 self.requests.spawn(move || {
                     pending.running();
-                    let r = read_plain(&file, offset, size);
+                    let r = read_plain(&file.file, offset, size);
                     let Some(reply) = pending.take() else { return };
                     match r {
                         Ok(data) => reply.data(&data),
@@ -619,7 +647,8 @@ impl Shared {
                 // Art in an area is checked against its source, and asked about again each time (#235).
                 let (ino, art) = self.tree.lookup_art(parent, name);
                 volatile = art;
-                negative = self.tree.children(parent).is_some();
+                // Not if the listing left out an image for now: it may be there at the next.
+                negative = self.tree.children(parent).is_some() && !self.tree.retrying(parent);
                 ino
             }
         };
@@ -705,18 +734,26 @@ impl Shared {
         }
         let open = match &*node {
             Node::File(file) => Open::Track(Arc::new(Reader::new(file.clone()))),
-            Node::Sidecar(s) => match self.tree.open_sidecar(s) {
-                Ok(f) => Open::Sidecar(Arc::new(f), s.clone()),
-                Err(e) => {
-                    log::info!("sidecar {}: open: {e}", s.target.display());
-                    // Gone since the client was told of it (#235): it asks again, then.
-                    let missing = e.raw_os_error().is_some() && e.kind() == io::ErrorKind::NotFound;
-                    if missing && self.tree.art_told_lately(ino) {
-                        return Err(Error::Stale);
+            Node::Sidecar(s) => {
+                // Bounded, so that sidecars held open never take the descriptors images need:
+                // past the bound, this client's open fails, and no other request.
+                let Some(slot) = super::sidecar_slots::global().take() else {
+                    refused_sidecar_open(ino, s);
+                    return Err(Error::Os(libc::EMFILE));
+                };
+                match self.tree.open_sidecar(s) {
+                    Ok(file) => Open::Sidecar(Arc::new(SidecarOpen { file, _slot: slot }), s.clone()),
+                    Err(e) => {
+                        log::info!("sidecar {}: open: {e}", s.target.display());
+                        // Gone since the client was told of it (#235): it asks again, then.
+                        let missing = e.raw_os_error().is_some() && e.kind() == io::ErrorKind::NotFound;
+                        if missing && self.tree.art_told_lately(ino) {
+                            return Err(Error::Stale);
+                        }
+                        return Err(e.raw_os_error().map_or(Error::Io, Error::Os));
                     }
-                    return Err(e.raw_os_error().map_or(Error::Io, Error::Os));
                 }
-            },
+            }
             Node::Dir(_) => return Err(Error::IsDir),
         };
         let fh = self.next_fh.fetch_add(1, Ordering::Relaxed);

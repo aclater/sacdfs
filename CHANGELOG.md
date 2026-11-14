@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Fixed a denial of service through open files ([GHSA-phfg-58h9-f2pp](https://github.com/aclater/sacdfs/security/advisories/GHSA-phfg-58h9-f2pp)).**
+  A client of the mount could make images disappear from their folders until the source folder
+  changed. Upgrade to 0.6.4. sacdfs now raises its open files limit to the hard limit at start
+  (and warns below 4096), bounds the sidecar files open at once below that limit, lists a folder
+  again at the next listing when an image failed to open for a passing reason, and opens an
+  image only if it is a regular file.
+
 ## [0.6.3] - 2026-11-13
 
 Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
