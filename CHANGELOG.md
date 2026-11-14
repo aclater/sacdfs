@@ -90,7 +90,7 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
-- **A damaged, truncated or padded image no longer lists tracks far larger than its data.**
+- **A damaged, truncated or padded image no longer lists tracks far larger than its data (#402).**
   A track's size comes from the TOC, and the only check against the image counted the area's
   sectors the file has. An image extended with a hole, or padded with zero bytes, passed it, and
   its tracks listed at gigabytes each from a few megabytes of audio. Now sectors in a hole (found

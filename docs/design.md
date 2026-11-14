@@ -365,7 +365,7 @@ shown either: no consumer needs it, and it would add a tag no player uses.
 
 ### Track sizes
 
-A track's file size comes from its frames in the area TOC (start and duration, which the
+A track's file size (#402) comes from its frames in the area TOC (start and duration, which the
 library clamps to the area's play time), so a listing reads no audio. On a damaged,
 truncated or padded image those can claim far more than the image holds, or several tracks
 can cover the same frames. Before an area's files are made (`sacdfs::track_ranges`, with
