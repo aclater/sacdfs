@@ -905,7 +905,7 @@ impl Reader {
 
     /// A reader of `file`, opened by process `pid`: behind a network client, whatever the order
     /// of its reads, if `is_server(pid)` says it is a network file server's (#362). That is
-    /// asked once, and only when it matters: when the reader has read [`FAST_AFTER`], since
+    /// asked once, and only when it matters: when the reader has read `FAST_AFTER` (4 MiB), since
     /// below that its pace is a player's either way. *Why not at the open (#403):* the answer
     /// costs two reads of `/proc`, about 25 microseconds, and a scan of short files opened
     /// through the mount was 10 % slower for it.
