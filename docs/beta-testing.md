@@ -52,7 +52,8 @@ number, user name or folder. If the installer stopped because your system isn't 
 already printed this block, with a link to the
 [unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml).
 The block replaces sections 1 and 2 below; the log (section 3) is still useful.
-*(Checked in the BusyBox and Fedora 44 test containers. Until 0.6.4 is
+*(Checked in the BusyBox and Fedora 44 test containers, and on QNAP QuTScloud 5.2.9 and TerraMaster
+TOS 7.0 in VMs, not on the vendor's hardware; untested on other systems. Until 0.6.4 is
 released, the `latest` address serves an installer without `--report`, which stops with
 "unknown option": then use sections 1 and 2.)*
 

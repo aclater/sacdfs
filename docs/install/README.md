@@ -64,7 +64,11 @@ number, user name or folder, and nothing is sent anywhere: it is only printed.
 *(0.6.3 and older don't have `--report`. Checked with BusyBox 1.37 `sh`, dash and bash, in the
 BusyBox and Fedora 44 test containers that CI runs, with a fake `uname`, `getconf` and `ldd`:
 i686, armv7l, aarch64 with 32-bit programs, glibc 2.12 and musl each stop with status 1, the
-block and the link, and a local server the installer was pointed at got no request.)*
+block and the link, and a local server the installer was pointed at got no request. The same
+cases, `--report` and the whole install cycle with the 0.6.3 release were also run on QNAP
+QuTScloud 5.2.9 (BusyBox, no systemd; a hand-made ext4 volume) and TerraMaster TOS 7.0
+(systemd), checked in VMs, not on the vendor's hardware. Not run: real i686, 32-bit ARM or musl
+systems, other NAS systems.)*
 
 **To read it before you run it,** download it, check it, and run it:
 
