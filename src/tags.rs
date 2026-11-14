@@ -115,7 +115,17 @@ pub struct TagsFile {
 impl TagsFile {
     /// Parses a tags file's text.
     pub fn parse(text: &str) -> Result<TagsFile, String> {
-        let f: TagsFile = toml::from_str(text).map_err(|e| e.to_string())?;
+        // Where it fails, not the text there nor the message (which may quote it): a tags file
+        // may be a hard link to a file its writer can't read.
+        let f: TagsFile = toml::from_str(text).map_err(|e| match e.span() {
+            Some(span) => {
+                let before = text.get(..span.start).unwrap_or(text);
+                let line = before.matches('\n').count() + 1;
+                let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+                format!("not a valid tags file: line {line}, column {col}")
+            }
+            None => "not a valid tags file".to_owned(),
+        })?;
         for (_, fields) in f.levels() {
             for key in fields.keys() {
                 if key != ART && Key::of(key).is_none() {
@@ -543,18 +553,22 @@ impl Store {
             }
         }
         // Read through one descriptor that follows no link: the check above is by name only.
-        let tags = match safe_file::read_text(&path)
+        // The stamp kept is that descriptor's, so that it and the tags come from one file.
+        let (stamp, tags) = match safe_file::read_text(&path, safe_file::MAX_TAGS_TEXT)
             .map_err(|e| e.to_string())
-            .and_then(|(s, _)| TagsFile::parse(&s))
+            .and_then(|(s, m)| TagsFile::parse(&s).map(|f| (f, m)))
         {
-            Ok(f) if !f.is_empty() => Some(Arc::new(DiscTags::new(f, mtime, &self.dir))),
-            Ok(_) => None,
+            Ok((f, m)) => {
+                let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                let tags = (!f.is_empty()).then(|| Arc::new(DiscTags::new(f, mtime, &self.dir)));
+                ((mtime, m.len()), tags)
+            }
             Err(e) => {
                 log::warn!("tags: {}: {}; ignored", safe_file::shown(&path), safe_file::printable(&e));
-                None
+                ((mtime, meta.len()), None)
             }
         };
-        c.insert(key, (mtime, meta.len(), tags.clone()));
+        c.insert(key, (stamp.0, stamp.1, tags.clone()));
         tags
     }
 }
@@ -648,7 +662,9 @@ impl Watch {
     /// `None`: not kept). A file that cannot be read is as an empty one.
     pub fn load<'a>(file: Option<PathBuf>, images: impl Iterator<Item = &'a Path>) -> Watch {
         let mut known: HashMap<String, (String, FileState)> = HashMap::new();
-        if let Some((text, _)) = file.as_deref().and_then(|f| safe_file::read_text(f).ok()) {
+        if let Some((text, _)) =
+            file.as_deref().and_then(|f| safe_file::read_text(f, safe_file::MAX_STATE_TEXT).ok())
+        {
             let mut lines = text.lines();
             if lines.next() == Some(WATCH_HEADER) {
                 for line in lines {
@@ -1047,5 +1063,13 @@ TIT2 = "Three (stereo)"
         assert!(read_picture(&tags, "c.jpg").is_err());
         fs::copy(&victim, tags.join("d.jpg")).unwrap();
         assert!(read_picture(&tags, "d.jpg").is_ok());
+    }
+
+    /// A tags file that doesn't parse is reported by where, never by its text.
+    #[test]
+    fn a_parse_error_shows_no_text() {
+        let e = TagsFile::parse("[album]\ngenre = \"Jazz\"\nroot:secret-hash:19000\n").unwrap_err();
+        assert!(!e.contains("secret"), "{e}");
+        assert!(e.starts_with("not a valid tags file: line 3, column "), "{e}");
     }
 }

@@ -2306,7 +2306,9 @@ MusicBrainz IDs on 26.
   suffix (#97 hook): the user named it.
 - **Reading:** a tags file is read when a track file is made, that is when its area is first
   listed, and kept while its mtime and size are unchanged. A file that does not parse (unknown
-  key or section) is ignored with a warning, so a typo never changes the served files.
+  key or section) is ignored with a warning, so a typo never changes the served files. The
+  warning gives the line and column, not the text there. Files over 4 MiB, links and anything
+  but a regular file are not read.
 - **Live reload (owner requirement: pruning scanners such as Roon must see tag edits).** On a
   directory SOURCE (a watching tree, #101), adding, editing or removing a tags file changes the
   affected files' tags, size, mtime and generation and moves the mtime of the image's folder,
