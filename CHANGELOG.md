@@ -96,6 +96,11 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **The amd64 container image is attested by its own digest (#379).** Its `-amd64` tag is an
+  index of the image and Docker's build record, and only that index was attested, so
+  `gh attestation verify` failed on the image a pull on amd64 resolves to (0.6.2 to 0.6.3). The
+  release now attests each architecture's image by its own digest, and the tag too when it is an
+  index, and checks every one with `gh attestation verify` before it ends.
 - **`sacdfs tags import` writes only what the mount uses, and lists what it leaves out (#406).**
   Before, it wrote any picture and value an extract's tag held, up to 16 MiB, and reported
   success, but the mount embeds no picture over 960 KiB and builds no tag over 1 MiB: a 12 MiB

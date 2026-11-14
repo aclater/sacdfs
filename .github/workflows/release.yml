@@ -467,8 +467,20 @@ jobs:
             docker load < "image-$arch/sacdfs-image-$arch.tar.gz"
             docker tag sacdfs:release "$IMAGE:$VERSION-$arch"
             docker push "$IMAGE:$VERSION-$arch"
-            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION-$arch")
-            echo "digest_$arch=${digest#*@}" >> "$GITHUB_OUTPUT"
+            tag_digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION-$arch")
+            tag_digest=${tag_digest#*@}
+            # The tag can be an index of the image and Docker's build record (amd64, #379):
+            # attest the image's own manifest, the digest a pull resolves to, and the tag too.
+            raw=$(docker buildx imagetools inspect --raw "$IMAGE:$VERSION-$arch")
+            case $(jq -r .mediaType <<<"$raw") in
+              *index* | *manifest.list*)
+                digest=$(jq -er --arg a "$arch" '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest]
+                  | if length == 1 then .[0] else error("not one linux/\($a) image") end' <<<"$raw") ;;
+              *) digest=$tag_digest ;;
+            esac
+            echo "digest_$arch=$digest" >> "$GITHUB_OUTPUT"
+            echo "tag_digest_$arch=$tag_digest" >> "$GITHUB_OUTPUT"
+            echo "$arch: image $digest, tag $tag_digest"
             docker rmi sacdfs:release
           done
           tags=("$IMAGE:$VERSION")
@@ -501,6 +513,39 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest_arm64 }}
           push-to-registry: true
+      - name: Attest build provenance (amd64 tag, when an index)
+        if: github.ref_type == 'tag' && steps.push.outputs.tag_digest_amd64 != steps.push.outputs.digest_amd64
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.tag_digest_amd64 }}
+          push-to-registry: true
+      - name: Attest build provenance (arm64 tag, when an index)
+        if: github.ref_type == 'tag' && steps.push.outputs.tag_digest_arm64 != steps.push.outputs.digest_arm64
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.tag_digest_arm64 }}
+          push-to-registry: true
+      - name: Verify the image attestations
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGESTS: >-
+            ${{ steps.push.outputs.digest }} ${{ steps.push.outputs.digest_amd64 }}
+            ${{ steps.push.outputs.digest_arm64 }} ${{ steps.push.outputs.tag_digest_amd64 }}
+            ${{ steps.push.outputs.tag_digest_arm64 }}
+        run: |
+          # What a user checks: the index, each image by the digest a pull resolves to, and
+          # each -<arch> tag (#379). A few tries: the API may lag the attestation.
+          for d in $(tr ' ' '\n' <<<"$DIGESTS" | sort -u); do
+            for try in 1 2 3 4 5; do
+              gh attestation verify "oci://$IMAGE@$d" -R "$GITHUB_REPOSITORY" > /dev/null && break
+              [[ $try == 5 ]] && { echo "::error::no attestation verifies $IMAGE@$d"; exit 1; }
+              sleep 15
+            done
+            echo "verified $IMAGE@$d"
+          done
       - name: Log out
         if: always()
         run: docker logout ghcr.io || true
