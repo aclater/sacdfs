@@ -19,6 +19,10 @@ cannot tell us what real hardware does. A report from your NAS can.
 exactly what lets us fix a guide or a bug before everybody else meets it. You don't need to understand
 the cause. If you can't finish, tell us where you stopped.
 
+If the installer says your system isn't supported (an older or 32-bit processor, an old system),
+tell us with the [unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml).
+Requests there show which systems are worth a new build.
+
 ## sacdfs does not touch your ISOs
 
 sacdfs only reads your disc images. It shows them as folders of DSF and WAV files, made on the fly,
