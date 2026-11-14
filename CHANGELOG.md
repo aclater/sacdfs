@@ -148,6 +148,17 @@ All notable changes to sacdfs are recorded here. The format follows
   those servers counts as one; its reader then lets an earlier player go first, and its audio is
   the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
 
+### Documentation
+- **macOS: a player beside copies over SMB waits for seconds; use NFS (#378).** Docs only. The
+  macOS SMB client sends the copies' read-ahead before the read a player waits for, so the
+  player waits behind up to about 32 MiB per stall on a full-speed server, and seconds on a
+  slower one. Measured against Samba sharing plain files without sacdfs, which stalls the same
+  way as the 0.6.2 and 0.6.3 gates did; fewer SMB credits made it worse. Over NFS 4.0 from the
+  same Mac VM no read took over 100 ms, at full speed or limited to 600 Mbit/s, with copies as
+  fast as over SMB. `docs/deployment.md` (macOS) has the numbers and recommends NFS for a player
+  that shares the mount with copies. Checked on macOS 27.2 in a VM on Apple hardware; macOS 15
+  and a physical Mac not run.
+
 ## [0.6.3] - 2026-11-13
 
 Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
