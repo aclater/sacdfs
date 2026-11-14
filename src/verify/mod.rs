@@ -103,11 +103,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).try_init();
     match run(&args) {
         Ok(summary) => {
-            eprint!("{}", summary.render());
+            eprint!("{}", crate::safe_file::printable(&summary.render()));
             if summary.all_identical() { ExitCode::SUCCESS } else { ExitCode::from(2) }
         }
         Err(e) => {
-            eprintln!("sacdfs verify: {e}");
+            eprintln!("sacdfs verify: {}", crate::safe_file::printable(&e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -293,7 +293,7 @@ fn walk(
         let entries = match fs::read_dir(&dir) {
             Ok(e) => e,
             Err(e) => {
-                log::warn!("{}: {e}", dir.display());
+                log::warn!("{}: {e}", crate::safe_file::shown(&dir));
                 continue;
             }
         };

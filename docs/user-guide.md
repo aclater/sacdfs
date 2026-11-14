@@ -709,9 +709,9 @@ summary counts the IDENTICAL files that lose each kind.
 **The report** is tab-separated, one row per file, with a header row: `status`, `path`,
 `bytes`, `mtime`, `image`, `area`, `track`, `channels`, `samples`, `sha256` (of the
 compared audio), `loses` and `reason`. Tabs, newlines and backslashes in fields are
-escaped (`\t`, `\n`, `\\`), as are bytes of a path that aren't UTF-8 (`\xNN`). The summary
-goes to standard error: counts and bytes by status, the reclaimable bytes (the IDENTICAL
-files), and the tags they carry.
+escaped (`\t`, `\n`, `\\`), as are other control characters and bytes of a path that
+aren't UTF-8 (`\xNN`). The summary goes to standard error: counts and bytes by status, the
+reclaimable bytes (the IDENTICAL files), and the tags they carry.
 
 **Exit status:** 0 when every DSF and DFF file is IDENTICAL, 2 when any is not, 1 when the
 check couldn't run or didn't finish.
@@ -737,7 +737,8 @@ A run that fails before it starts writing (a bad path, for example) leaves `FILE
 run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming a descriptor
 (`/dev/stdout`, `/dev/stderr`, `/dev/fd/N`, even if it is redirected to a regular file) or a named
 pipe, the rows are written as they are made, after whatever is there, and only the exit status
-says whether the run finished; `--resume` has nothing to read there.
+says whether the run finished; `--resume` has nothing to read there. A symbolic link to a pipe or
+a device counts as a file: it is replaced by the report.
 
 Examples:
 
