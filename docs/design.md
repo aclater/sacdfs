@@ -1814,6 +1814,12 @@ converted to PCM, on a separate rayon pool (`--threads`), with `DstDecoder`s and
   wait, on the same thread, for the demultiplexer lock the first one holds.
 - Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O error on
   that read.
+- So does every FUSE callback, on fuser's own threads, where the requests answered from memory
+  (lookups and attributes of known entries, cached listings, `statfs`) are answered inline
+  (#389). fuser 0.18 catches no panic, and one on its thread ended the session: the mount was
+  gone for every client. Now the callback's reply, dropped unsent as the panic unwinds, is
+  answered `EIO` by fuser, an error line is logged, and the mount stays. A test makes each kind
+  of inline callback panic through a test-only hook (`fuse::tests`).
 
 ### A stalled source (#63, #72)
 
@@ -1897,6 +1903,20 @@ everything:
   *Trade-off:* the second failure of an image within a minute has no line of its own, only a
   count. So an `EIO` that a client saw is in the log, or counted in a later line, unless the
   kernel or fuser made it (fuser logs its own at `warn`).
+- **Names in log lines are escaped
+  ([#391](https://github.com/aclater/sacdfs/issues/391)).** Every line the daemon logs goes
+  through `printable::EscapingLogger`, installed in front of env_logger, which writes control
+  characters (C0, DEL, C1), Unicode format characters (category Cf: bidi controls, zero-width
+  characters, the BOM) and U+2028/U+2029 escaped, as `\n`, `\r`, `\t` or `\u{…}`. *Why:* the
+  lines carry names from SOURCE and disc text, directly and inside error messages, and a file
+  name can hold any byte but `/` and NUL. A raw newline split a line in two, so that the second
+  half could pass for a line of its own, an escape sequence changed a terminal's display, and a
+  bidi control showed a line in another order than its bytes. *Why at the logger, not at each of
+  the hundred or so log calls:* the names also arrive inside `io::Error` and scarletbook's
+  errors, which the calls don't build, and lines added later are covered too. The line format
+  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are, and the
+  names on the mount don't change: whether file names should drop format characters is a
+  separate question (#392). `sacdfs verify` and `sacdfs tags` keep their own loggers.
 - **A hung image's reads are capped once they have failed
   ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
   free the thread, which stays blocked until the source answers, so each retry by a client took
@@ -2055,6 +2075,7 @@ alternatives and the trade-off.
 - `convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM (`frame_bytes()` long) and returns the clip count. `None` neighbours are silence.
 - `convert_run(prev, frames, next, out, clips)` converts consecutive frames: the same bytes as `convert` on each, plus each frame's clip count.
 - `convert_f32` gives the same samples as floats, for tools and tests.
+- `try_convert` and `try_convert_run` are the same, but return `ConvertError` if scarletbook-pcm refuses the conversion. On failure, all four leave `out` all zeros, never what it held before. *Why (#388):* the engine converts into reused slots of its frame cache, which may hold another frame's audio. It uses the `try_` forms and fails the read with `EIO`, so nothing from a failed run is served or cached. The lengths sacdfs passes make a failure impossible today. The check is there in case scarletbook-pcm adds one.
 - `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
 - A short frame (which the decoder never makes) is padded with silence.
 
@@ -2121,7 +2142,11 @@ decisions, each with its reason:
   that survive a restart; CI checks this with NFS-Ganesha.
 - **Privileges:** `/dev/fuse` and `CAP_SYS_ADMIN` for FUSE, `CAP_DAC_READ_SEARCH` for NFS
   only (`NFS=0` drops the need), and on AppArmor hosts `apparmor=unconfined`, since Docker's
-  default profile forbids `mount(2)`. No `--privileged`.
+  default profile forbids `mount(2)`. No `--privileged`. Since 0.6.4 (#386) the container drops
+  the runtime's default capabilities and adds back seven, and the entry point starts each program
+  with `setpriv` and only its own share in its bounding set: sacdfs `SYS_ADMIN` and
+  `DAC_OVERRIDE`, smbd `SETUID`, `SETGID` and `NET_BIND_SERVICE`, NFS-Ganesha `DAC_READ_SEARCH`
+  alone. The reasons for each are in [deployment.md](deployment.md#privileges).
 - **NFSv4 only** (4.0 for macOS, 4.1 and 4.2 for Linux), TCP, port 2049: no rpcbind, no
   mountd, no lock manager, so one port to publish. **Graceless:** a read-only export has no
   locks or opens worth recovering, so a restarted server answers at once instead of
@@ -2727,8 +2752,16 @@ the owner's NAS already used.
   mapping. Fuzzing the image layer's parsers is scarletbook's job.
 - **Fuzzing (#161).** `fuzz/` has cargo-fuzz targets for what sacdfs adds on top of the
   library: tags files, sidecar paths, names, the tag and header writers, the tree, and the
-  `verify` readers; fuzz/README.md lists them. They check more than "no panic": a name the
-  kernel accepts, a tag with its true size, nothing read from outside SOURCE. *Why in CI as a
+  `verify` readers, and the audio read path (`read_path`, #390); fuzz/README.md lists them.
+  They check more than "no panic": a name the kernel accepts, a tag with its true size,
+  nothing read from outside SOURCE. `read_path` damages a corpus image (plain DSD or DST, each
+  sector size), reads its DSF and WAV files at offsets and lengths from the input, on readers
+  that stay open with their read-ahead, through engines whose small caches and buffer pools
+  live for the whole run, and checks every read against a new reader on an engine with no
+  cache: the same length and the same bytes. *Why against a reader with no cache:* the cache,
+  its reused buffers, the read-ahead and the demultiplexer state carried between reads are
+  what random access adds; with no cache, each read is converted from the image afresh, so a
+  frame from another range, file or image showing through is a difference. *Why in CI as a
   job of its own, not required:* a fuzzer's result depends on the run, and a new crash in old
   code shouldn't block an unrelated pull request. *Why a crate of its own:* cargo-fuzz needs a
   nightly toolchain, which stays away from sacdfs's build and locked dependencies.

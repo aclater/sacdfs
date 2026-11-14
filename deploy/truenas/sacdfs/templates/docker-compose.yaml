@@ -2,12 +2,13 @@
 
 {% set c1 = tpl.add_container(values.consts.sacdfs_container_name, "image") %}
 
-{# FUSE needs /dev/fuse and CAP_SYS_ADMIN to mount. NFS-Ganesha needs CAP_DAC_READ_SEARCH (open_by_handle_at). #}
+{# FUSE needs /dev/fuse. Capabilities: the library drops ALL and sets no-new-privileges; these are added back, and
+   the entry point gives each program only its own share (docs/deployment.md, "Capabilities"):
+   SYS_ADMIN (sacdfs mounts), DAC_OVERRIDE (sacdfs reads the images whatever their owner; useradd for an SMB user),
+   DAC_READ_SEARCH (NFS-Ganesha: open_by_handle_at), SETUID and SETGID (smbd acts as the connecting user or guest),
+   NET_BIND_SERVICE (smbd: port 445), SETPCAP (the entry point drops what each program does not need). #}
 {% do c1.devices.add_device("/dev/fuse", "/dev/fuse", allow_disallowed=True) %}
-{# Samba and NFS-Ganesha need the container runtime's default capability set (setuid, setgid, chown and so on), so
-   the library's "drop ALL" default is cleared and only the two extra capabilities are added. #}
-{% do c1.clear_caps() %}
-{% do c1.add_caps(["SYS_ADMIN", "DAC_READ_SEARCH"]) %}
+{% do c1.add_caps(["SYS_ADMIN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "SETUID", "SETGID", "NET_BIND_SERVICE", "SETPCAP"]) %}
 {# Docker's default AppArmor profile forbids mount(2) even with CAP_SYS_ADMIN. #}
 {% do c1.add_security_opt("apparmor", "unconfined") %}
 {% do c1.set_grace_period(20) %}

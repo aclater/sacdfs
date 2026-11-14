@@ -248,7 +248,7 @@ port_taken() {
 security_label() {
     local f l
     for f in /proc/self/attr/apparmor/current /proc/self/attr/current; do
-        l=$(tr -d '\0' <"$f" 2>/dev/null) || continue
+        { l=$(tr -d '\0' <"$f"); } 2>/dev/null || continue
         [ -n "$l" ] && { printf '%s' "$l"; return; }
     done
 }
@@ -276,6 +276,49 @@ preflight() {
     fi
 }
 preflight
+
+# --- capabilities (#386) -----------------------------------------------------------------
+# Each program starts with only the capabilities it needs in its bounding set: setpriv drops
+# the others before it starts, so neither it nor anything it runs can get them back.
+#   sacdfs:      SYS_ADMIN, to mount; DAC_OVERRIDE, to read the images (and write the tags
+#                folder) whatever their owner and mode on the host.
+#   smbd:        SETUID and SETGID, to act as the connecting user or guest; NET_BIND_SERVICE,
+#                for port 445.
+#   NFS-Ganesha: DAC_READ_SEARCH, for open_by_handle_at (how it reopens a file from an NFS
+#                file handle). Nothing else: the export is read-only, and Ganesha takes on a
+#                client's identity only to create files.
+# The entry point itself keeps SYS_ADMIN (fusermount3 -u at a stop), DAC_OVERRIDE (useradd
+# writes /etc/shadow, mode 0000, for SMB_USER) and SETPCAP (to drop capabilities), plus
+# what it hands on. With NFS=0 nothing keeps DAC_READ_SEARCH, with SMB=0 nothing keeps
+# NET_BIND_SERVICE. Docs: docs/deployment.md, "Capabilities".
+CAPS_SACDFS=sys_admin,dac_override
+CAPS_SMBD=setuid,setgid,net_bind_service
+CAPS_GANESHA=dac_read_search
+CAPS_SELF=sys_admin,dac_override,setpcap
+# Dropping from the bounding set needs CAP_SETPCAP, in the runtimes' default set and in the
+# documented cap_add list. A container started without it runs as before, with a warning.
+limit_caps=1
+if ! has_cap CapEff 8 || ! command -v setpriv >/dev/null; then
+    limit_caps=0
+    log "warning: the container lacks CAP_SETPCAP, so sacdfs, smbd and NFS-Ganesha each run with all of the container's capabilities instead of only the ones they need. Add SETPCAP to cap_add (docs/deployment.md, \"Capabilities\")"
+elif [ -z "${SACDFS_CAPS_SET:-}" ]; then
+    # Once, at the start: the entry point drops everything that neither it nor the programs
+    # it starts need (NET_RAW, MKNOD and the rest of a runtime's default set), then runs again.
+    keep=$CAPS_SELF,$CAPS_SACDFS
+    on "${SMB:-1}" && keep+=,$CAPS_SMBD
+    on "${NFS:-1}" && keep+=,$CAPS_GANESHA
+    export SACDFS_CAPS_SET=1
+    exec setpriv --bounding-set "-all,+${keep//,/,+}" -- "$0" "$@"
+fi
+unset SACDFS_CAPS_SET
+# with_caps CAPS COMMAND...: COMMAND, with only CAPS (comma-separated) in its bounding set.
+# Run it in the background (&): exec then replaces the subshell, and $! is COMMAND's PID.
+with_caps() {
+    local caps=$1
+    shift
+    [ "$limit_caps" = 1 ] && exec setpriv --bounding-set "-all,+${caps//,/,+}" -- "$@"
+    exec "$@"
+}
 
 # --- start ------------------------------------------------------------------------------
 pids=()
@@ -316,7 +359,7 @@ mountpoint -q "$MNT" && fusermount3 -u -z "$MNT" 2>/dev/null || true
 # not connected"); sacdfs detaches that one itself (#57), so the error is not fatal.
 mkdir -p "$MNT" 2>/dev/null || true
 log "sacdfs ${args[*]} $SOURCE $MNT"
-sacdfs "${args[@]}" "$SOURCE" "$MNT" &
+with_caps "$CAPS_SACDFS" sacdfs "${args[@]}" "$SOURCE" "$MNT" &
 pids+=($!)
 for _ in $(seq $((MOUNT_TIMEOUT * 10))); do
     mountpoint -q "$MNT" && break
@@ -334,13 +377,13 @@ log "mounted"
 if on "${SMB:-1}"; then
     write_smb_conf
     mkdir -p /run/samba /var/lib/samba/private /var/log/samba
-    smbd --foreground --no-process-group --debug-stdout &
+    with_caps "$CAPS_SMBD" smbd --foreground --no-process-group --debug-stdout &
     pids+=($!)
 fi
 if on "${NFS:-1}"; then
     write_ganesha_conf
     mkdir -p /var/lib/nfs/ganesha /run/ganesha
-    ganesha.nfsd -F -L STDOUT -f /etc/ganesha/ganesha.conf -p /run/ganesha/ganesha.pid &
+    with_caps "$CAPS_GANESHA" ganesha.nfsd -F -L STDOUT -f /etc/ganesha/ganesha.conf -p /run/ganesha/ganesha.pid &
     pids+=($!)
 fi
 printf '%s\n' "${pids[@]}" >/run/sacdfs-pids
