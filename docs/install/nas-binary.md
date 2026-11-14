@@ -134,7 +134,7 @@ systemctl enable --now sacdfs
 systemctl is-active sacdfs
 ```
 
-Day to day: `systemctl stop sacdfs` (unmounts, waits up to 30 s), `systemctl restart sacdfs`, `journalctl -u sacdfs` (the log). The unit loads FUSE if `/dev/fuse` is missing, makes the folder to mount on, restarts sacdfs if it crashes, and clears any mount left behind after a stop. It uses only settings that systemd 215 (Debian 8) has, and none that hide `/dev` or the file system from the mount.
+Day to day: `systemctl stop sacdfs` (unmounts, waits up to 30 s), `systemctl restart sacdfs`, `journalctl -u sacdfs` (the log). The unit loads FUSE if `/dev/fuse` is missing, makes the folder to mount on, restarts sacdfs if it crashes, and clears any mount left behind after a stop. From 0.6.4 it also limits what sacdfs may do (only the rights to mount and to read your images, no devices but `/dev/fuse`, a system call filter), with options that keep the mount visible to the rest of the NAS. A systemd too old for some of them skips those with an `Unknown lvalue` line in the log and runs the unit anyway. What each option does, and where it was checked: [systemd unit](../deployment.md#systemd-unit).
 
 **Without systemd** (QNAP, ASUSTOR, Synology): `sacdfs-ctl`, a short script for BusyBox `sh`, used in the steps above:
 

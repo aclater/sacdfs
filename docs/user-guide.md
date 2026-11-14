@@ -831,6 +831,10 @@ sacdfs unmounts on SIGTERM, which is how systemd stops it, so the unit has no `E
 stop). `CacheDirectory=sacdfs` gives the service `/var/cache/sacdfs` for the seek index cache
 (a service has no `HOME`, so sacdfs would otherwise run without one).
 
+The unit in the release archive ([deploy/systemd/sacdfs.service](../deploy/systemd/sacdfs.service))
+adds options that limit what sacdfs may do and still keep the mount visible; they suit this
+recipe too ([deployment guide, systemd unit](deployment.md#systemd-unit)).
+
 `systemctl enable --now sacdfs`, `journalctl -u sacdfs` for the log. Services that read the
 mount should say `After=sacdfs.service` and `Requires=sacdfs.service`. A container that
 bind-mounts the mount point must bind its parent directory instead
