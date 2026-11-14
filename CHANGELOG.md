@@ -7,6 +7,12 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A fuzz target for the audio read path (#390).** `fuzz/fuzz_targets/read_path.rs` reads
+  the DSF and WAV files of damaged corpus images (plain DSD and DST, 2048-, 2054- and 2064-byte
+  sectors) at any offset and length, with read-ahead and small caches whose buffers are reused
+  across images, and checks each read against a reader with no cache. It runs in the fuzz job
+  with the other targets, from seeds made by `examples/fuzz_seeds.rs`. Locally it ran for the
+  hours in its pull request, with no finding.
 - **The installer stops on a system it can't support before it downloads anything, and prints
   the details to ask for it (#382).** Before, the container route never checked the processor
   (on i686 or 32-bit ARM it pulled an image that can't run), a 64-bit kernel with 32-bit
