@@ -58,11 +58,25 @@ pub struct FileSource {
 }
 
 impl FileSource {
-    /// Opens `path`.
+    /// Opens `path`, which must be a regular file.
+    ///
+    /// The open does not block: a FIFO or device put in place of a file after it was listed
+    /// is refused instead of holding the caller forever. Blocking reads are restored once
+    /// the descriptor is known to be a regular file.
     pub fn open(path: &std::path::Path) -> io::Result<FileSource> {
-        let file = File::open(path)?;
-        let len = file.metadata()?.len();
-        Ok(FileSource { file, len })
+        use nix::fcntl::{FcntlArg, OFlag, fcntl};
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+            .open(path)?;
+        let meta = file.metadata()?;
+        if !meta.is_file() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
+        }
+        let flags = OFlag::from_bits_truncate(fcntl(&file, FcntlArg::F_GETFL)?);
+        fcntl(&file, FcntlArg::F_SETFL(flags - OFlag::O_NONBLOCK))?;
+        Ok(FileSource { file, len: meta.len() })
     }
 }
 
@@ -791,5 +805,27 @@ mod tests {
         assert_eq!(a.tags.dff_title.as_deref(), Some("Title"));
         assert_eq!(a.tags.dff_artist.as_deref(), Some("Artist"));
         assert_eq!(a.tags.dff_other, vec!["DIIN/EMID".to_owned()]);
+    }
+
+    /// A FIFO in place of a track file is refused at once: opening it must not wait for a
+    /// writer.
+    #[test]
+    fn open_refuses_fifo_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("01.dsf");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(FileSource::open(&fifo).map(|_| ()));
+        });
+        let r = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("open blocked on a FIFO");
+        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        // A regular file still opens and reads.
+        let file = dir.path().join("02.dsf");
+        std::fs::write(&file, b"abcd").unwrap();
+        let mut src = FileSource::open(&file).unwrap();
+        let mut buf = [0u8; 2];
+        src.read_at(2, &mut buf).unwrap();
+        assert_eq!((src.len(), &buf), (4, b"cd"));
     }
 }
