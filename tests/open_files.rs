@@ -2,7 +2,8 @@
 
 //! Open files: what one client opens does not take the descriptors the images need, and an
 //! image that fails to open for a passing reason is not left out of its folder for good.
-//! Also: an image path replaced by a FIFO does not hang a listing.
+//! An image whose opens keep failing with `EIO` is tried again only after a wait, and left
+//! out after a few tries. Also: an image path replaced by a FIFO does not hang a listing.
 //!
 //! The mount tests need `/dev/fuse` and `fusermount3`, like `tests/mount.rs`.
 
@@ -11,11 +12,18 @@
 mod common;
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant, SystemTime};
+
+use fuser::{
+    Config, Errno, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo, MountOption, OpenFlags,
+    ReplyAttr, ReplyEntry, ReplyOpen, Request, Session,
+};
 
 use common::*;
 use sacdfs::disc::Tuning;
@@ -231,4 +239,132 @@ fn a_fifo_in_place_of_an_image_does_not_hang_a_listing() {
     // A writer lets a blocked open go on, so that the thread ends either way.
     let _w = std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK).open(&fifo);
     assert_eq!(listed.expect("the listing hangs on the FIFO"), ["good"]);
+}
+
+/// A filesystem of one file, `bad.iso`, that looks like an image and whose every open fails
+/// with `EIO`, as on a failing disk; it counts the opens.
+struct FailingFs(Arc<AtomicUsize>);
+
+const BAD_INO: INodeNo = INodeNo(2);
+
+fn failing_attr(ino: INodeNo) -> FileAttr {
+    let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let dir = ino == INodeNo::ROOT;
+    FileAttr {
+        ino,
+        size: if dir { 0 } else { 64 << 20 },
+        blocks: 0,
+        atime: t,
+        mtime: t,
+        ctime: t,
+        crtime: t,
+        kind: if dir { FileType::Directory } else { FileType::RegularFile },
+        perm: if dir { 0o555 } else { 0o444 },
+        nlink: if dir { 2 } else { 1 },
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        blksize: 4096,
+        flags: 0,
+    }
+}
+
+impl Filesystem for FailingFs {
+    fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
+        if parent == INodeNo::ROOT && name == "bad.iso" {
+            reply.entry(&Duration::ZERO, &failing_attr(BAD_INO), Generation(0));
+        } else {
+            reply.error(Errno::ENOENT);
+        }
+    }
+
+    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
+        reply.attr(&Duration::ZERO, &failing_attr(ino));
+    }
+
+    fn open(&self, _req: &Request, _ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        reply.error(Errno::EIO);
+    }
+}
+
+/// An image on a failing disk (every open `EIO`) does not make its folder open it again at
+/// every listing and lookup: ten lookups within the wait open it once. After
+/// `sacdfs::tree::EIO_TRIES` failed opens it is left out for good, and the other image of the
+/// folder is listed and reads throughout.
+#[test]
+fn an_image_that_keeps_failing_with_eio_is_tried_after_waits_then_left_out() {
+    common::skip_without_fuse!();
+    let base = tempfile::tempdir().unwrap();
+    let (src, mnt) = (base.path().join("src"), base.path().join("mnt"));
+    let album = src.join("Album");
+    std::fs::create_dir_all(&album).unwrap();
+    std::fs::create_dir_all(&mnt).unwrap();
+    let opens = Arc::new(AtomicUsize::new(0));
+    let mut config = Config::default();
+    config.mount_options = vec![MountOption::RO, MountOption::FSName("sacdfs-failing-test".to_owned())];
+    let _session = Session::new(FailingFs(opens.clone()), &mnt, &config).unwrap().spawn().unwrap();
+    let start = Instant::now();
+    while !mnt.join("bad.iso").is_file() {
+        assert!(start.elapsed() < Duration::from_secs(30), "timed out waiting for the mount");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let id = "dsd-stereo-mch-2048";
+    std::os::unix::fs::symlink(corpus().join(format!("images/{id}.iso")), album.join("good.iso")).unwrap();
+    std::os::unix::fs::symlink(mnt.join("bad.iso"), album.join("bad.iso")).unwrap();
+    let tree = Tree::with_options(
+        SourceDir::scan_with(&src, &Sidecars::standard(), None).unwrap(),
+        Tuning::default(),
+        Output::default(),
+    );
+    let engine = sacdfs::engine::Engine::new(2, 8 << 20).unwrap();
+    let ino = tree.resolve(Path::new("Album")).unwrap();
+    let listed = || {
+        let mut v: Vec<String> =
+            tree.children(ino).unwrap().iter().map(|e| e.name.to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    };
+    let reads = || {
+        let stereo = tree.resolve(Path::new("Album/good/Stereo")).unwrap();
+        let first = tree
+            .children(stereo)
+            .unwrap()
+            .iter()
+            .find(|e| e.name.to_string_lossy().ends_with(".dsf"))
+            .unwrap()
+            .ino;
+        let Some(node) = tree.get(first) else { panic!("no node") };
+        let sacdfs::tree::Node::File(f) = &*node else { panic!("not a file") };
+        let (data, _) = sacdfs::track::Reader::new(f.clone()).read(&engine, 0, f.size).unwrap();
+        assert_eq!(data.len() as u64, f.size);
+    };
+    // The scan's look at the image is not a listing's open.
+    let scanned = opens.load(Ordering::SeqCst);
+
+    assert_eq!(listed(), ["good"]);
+    assert_eq!(opens.load(Ordering::SeqCst), scanned + 1);
+    for _ in 0..10 {
+        assert!(tree.lookup(ino, OsStr::new("bad")).is_none());
+    }
+    assert_eq!(opens.load(Ordering::SeqCst), scanned + 1, "opened again within the wait");
+    reads();
+
+    // Tried again after each wait (1 s, then 2 s), until it has failed EIO_TRIES times.
+    let tries = sacdfs::tree::EIO_TRIES as usize;
+    let start = Instant::now();
+    while opens.load(Ordering::SeqCst) < scanned + tries {
+        assert!(start.elapsed() < Duration::from_secs(10), "not tried again after the wait");
+        assert_eq!(listed(), ["good"]);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Then left out for good: no more opens, however long and often it is listed.
+    std::thread::sleep(Duration::from_secs(5));
+    for _ in 0..10 {
+        assert_eq!(listed(), ["good"]);
+        assert!(tree.lookup(ino, OsStr::new("bad")).is_none());
+    }
+    assert_eq!(opens.load(Ordering::SeqCst), scanned + tries, "tried again after it was left out");
+    assert!(!tree.retrying(ino), "still waiting to try again");
+    reads();
 }
