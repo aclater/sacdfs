@@ -39,6 +39,33 @@ the BusyBox and Fedora 44 test containers that CI runs, and from the 0.6.3-rc.1 
 QuTScloud and Synology DSM in VMs, not on the vendor's hardware; 0.6.2's installer doesn't have this
 check.)*
 
+**A system sacdfs can't run on** makes it stop before it downloads anything, since 0.6.4: a
+processor other than 64-bit x86-64 or aarch64 (also for the container route), a 64-bit kernel
+that runs 32-bit programs (Raspberry Pi OS 32-bit on a Pi 4 or 5 reports `aarch64`), a glibc
+older than 2.17 or musl instead of glibc (for the binary; the container brings its own), no
+`/dev/fuse` that `modprobe fuse` can load, or `--method compose` with no Docker or Podman that
+answers. It then prints a short block of system details and a link to the
+[unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml):
+paste the block there to ask for that system. After a download, it still tries the binary
+before installing it, and stops the same way if it doesn't start. A Mac or Windows PC gets the
+"Linux only" message, with no block.
+
+**`--report`** prints the same block on any Linux system and changes nothing. It needs neither
+root nor `--iso-dir`:
+
+```sh
+curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sh -s -- --report
+```
+
+The block holds the installer's version, the check that stopped it, the processor (`uname -m`,
+32- or 64-bit programs, model, cores), memory, the OS and NAS firmware version, kernel, C
+library, `/dev/fuse`, systemd and the container engine. It holds no host name, address, serial
+number, user name or folder, and nothing is sent anywhere: it is only printed.
+*(0.6.3 and older don't have `--report`. Checked with BusyBox 1.37 `sh`, dash and bash, in the
+BusyBox and Fedora 44 test containers that CI runs, with a fake `uname`, `getconf` and `ldd`:
+i686, armv7l, aarch64 with 32-bit programs, glibc 2.12 and musl each stop with status 1, the
+block and the link, and a local server the installer was pointed at got no request.)*
+
 **To read it before you run it,** download it, check it, and run it:
 
 ```sh
@@ -70,7 +97,8 @@ attestation passes; see [the installer on 0.6.2](../test-plan.md#results-install
 It downloads the release archive it was published with (`--version` picks another), checks it
 against the release's checksum, and tries the binary before installing anything. It never writes
 under `--iso-dir`. A second run changes nothing, `--uninstall` removes what it installed (your
-images stay), and `--help` lists the rest (`--mount`, `--prefix`, `--share-name`, `--method`).
+images stay), and `--help` lists the rest (`--mount`, `--prefix`, `--share-name`, `--method`,
+`--report`).
 On QNAP, the installer switches on "Run user defined processes" if it is off, so that
 `autorun.sh` starts sacdfs at boot. Since 0.6.3, `--uninstall` switches it off
 again only if the installer switched it on and `autorun.sh` runs nothing else; otherwise it leaves

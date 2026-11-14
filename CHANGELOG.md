@@ -6,6 +6,21 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The installer stops on a system it can't support before it downloads anything, and prints
+  the details to ask for it (#382).** Before, the container route never checked the processor
+  (on i686 or 32-bit ARM it pulled an image that can't run), a 64-bit kernel with 32-bit
+  programs (Raspberry Pi OS 32-bit on a Pi 4 or 5) got the aarch64 build, and an old glibc or
+  musl was only found when the downloaded binary failed to start. Now the processor and the
+  programs' word size are checked for every route, and glibc 2.17 or later (not musl) for the
+  binary routes, before the root check and any download; FUSE is checked before the download
+  too. On those stops, a missing FUSE, `--method compose` with no engine, and a binary that
+  doesn't start after all, it prints a short block (installer version, the check, processor,
+  memory, OS and NAS version, kernel, C library, FUSE, systemd, container engine; no host name,
+  address, serial number, user name or folder) and a link to the unsupported system form. A Mac
+  or Windows PC still gets the "Linux only" message, with no block. `install.sh --report` prints
+  the block on any Linux system, as a normal user, and changes nothing, for beta test reports.
+
 ### Changed
 - **Every request sacdfs fails with an I/O error is logged with what failed, where and why, and
   the lines are rate-limited (part of #339).** A read that fails has a `warn` line with the image,

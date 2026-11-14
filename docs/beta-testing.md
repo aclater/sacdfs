@@ -37,6 +37,25 @@ You run them in a terminal on the NAS, usually over SSH. Most NAS systems have S
 you turn it on in their settings; your vendor's help explains how. If you'd rather not use a terminal,
 fill in what you know on the form and skip the rest.
 
+### The installer's report (0.6.4 and later)
+
+The installer prints the system details for you. Run this, as a normal user, on the NAS, and paste
+its block into the form (with your result, whether it worked or not):
+
+```sh
+curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sh -s -- --report
+```
+
+It changes nothing and sends nothing. The block covers the processor, memory, OS and NAS version,
+kernel, C library, FUSE, systemd and the container engine, with no host name, address, serial
+number, user name or folder. If the installer stopped because your system isn't supported, it
+already printed this block, with a link to the
+[unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml).
+The block replaces sections 1 and 2 below; the log (section 3) is still useful.
+*(Checked in the BusyBox and Fedora 44 test containers. Until 0.6.4 is
+released, the `latest` address serves an installer without `--report`, which stops with
+"unknown option": then use sections 1 and 2.)*
+
 ### 1. System details (all platforms)
 
 This block works on any Linux-based NAS. It prints the CPU, RAM, kernel, whether `/dev/fuse` exists,
