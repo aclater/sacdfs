@@ -33,10 +33,11 @@ RUN if [ -z "$RUSTFLAGS" ] && [ "$(uname -m)" = x86_64 ]; then RUSTFLAGS="-C tar
  && RUSTFLAGS="$RUSTFLAGS" cargo build --release --locked --bin sacdfs \
  && install -D -m 0755 target/release/sacdfs /out/sacdfs
 
-# Runtime stage: Fedora, for Samba, NFS-Ganesha and fusermount3.
+# Runtime stage: Fedora, for Samba, NFS-Ganesha and fusermount3; util-linux for setpriv, with
+# which the entry point gives each program only the capabilities it needs (#386).
 FROM registry.fedoraproject.org/fedora:44@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
 RUN dnf -y --setopt=install_weak_deps=False install \
-        samba nfs-ganesha nfs-ganesha-vfs fuse3 procps-ng \
+        samba nfs-ganesha nfs-ganesha-vfs fuse3 procps-ng util-linux \
  && dnf clean all \
  && rm -rf /var/cache/dnf /var/log/dnf* \
  && mkdir -p /images /srv/sacd /cache /var/lib/nfs/ganesha /run/ganesha

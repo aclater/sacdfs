@@ -29,7 +29,7 @@ services:
 YAML
 # SELinux host (to run this by hand on Fedora): LABEL_DISABLE=1 adds label=disable.
 if [ -n "${LABEL_DISABLE:-}" ]; then
-    printf '    security_opt:\n      - apparmor=unconfined\n      - label=disable\n' >>"$override"
+    printf '    security_opt:\n      - no-new-privileges:true\n      - apparmor=unconfined\n      - label=disable\n' >>"$override"
 fi
 dc() { "${compose[@]}" -p sacdfs-nas -f "$here/nas-compose.yaml" -f "$override" "$@"; }
 cleanup() {

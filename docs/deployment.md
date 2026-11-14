@@ -148,21 +148,81 @@ persistent file identity ([#18](https://github.com/aclater/sacdfs/issues/18), se
 
 ## Privileges
 
-| What | Why | When |
+The container drops the runtime's whole default set of capabilities and adds back only the
+seven its programs need (#386). The Compose files, the TrueNAS app and the Unraid template set
+all of this already; with `docker run` or `podman run`, pass:
+
+```sh
+--device /dev/fuse --cap-drop ALL \
+--cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
+--cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \
+--security-opt no-new-privileges:true --security-opt apparmor=unconfined
+```
+
+| What | Who uses it, and why | When |
 |---|---|---|
 | `--device /dev/fuse` | sacdfs is a FUSE filesystem | always |
-| `--cap-add SYS_ADMIN` | mounting the FUSE filesystem (`fusermount3` calls `mount(2)`) | always |
-| `--cap-add DAC_READ_SEARCH` | NFS-Ganesha opens files by NFS file handle (`open_by_handle_at(2)`), which needs it; Docker's default seccomp profile also allows that call only with this capability | with NFS (the default); not needed with `NFS=0` |
-| `--security-opt apparmor=unconfined` | Docker's default AppArmor profile forbids `mount(2)` even with `CAP_SYS_ADMIN`. Only on hosts that use AppArmor (Ubuntu, Debian, TrueNAS SCALE); SELinux hosts (Fedora, RHEL) don't need it | AppArmor hosts |
+| `SYS_ADMIN` | sacdfs, to mount the FUSE filesystem (`mount(2)`); the entry point, to clear a stale mount | always |
+| `DAC_OVERRIDE` | sacdfs, to read the images (and write a tags folder) whatever their owner and mode on the host; `useradd` in the entry point, which writes `/etc/shadow` (mode 0000) for `SMB_USER` | always |
+| `DAC_READ_SEARCH` | NFS-Ganesha opens files by NFS file handle (`open_by_handle_at(2)`), which needs it; Docker's default seccomp profile also allows that call only with this capability | with NFS (the default); can be left out with `NFS=0` |
+| `SETUID`, `SETGID` | smbd, to act as the connecting user or the guest account | always (with SMB) |
+| `NET_BIND_SERVICE` | smbd, to listen on port 445 (with host networking the host's limit on ports under 1024 applies) | always (with SMB) |
+| `SETPCAP` | the entry point, to drop from each program the capabilities it doesn't need (below) | always |
+| `no-new-privileges` | no program in the container can gain privileges through a setuid or file-capability program. FUSE doesn't need the setuid `fusermount3`: sacdfs mounts as root in the container | always |
+| `apparmor=unconfined` | Docker's default AppArmor profile forbids `mount(2)` even with `CAP_SYS_ADMIN`, so sacdfs can't mount under it. Only on hosts that use AppArmor (Ubuntu, Debian, TrueNAS SCALE); SELinux hosts (Fedora, RHEL) ignore it | AppArmor hosts |
 
 Nothing else: no `--privileged`, no host network, no host paths but the images and the
-cache. Ports 445 and 2049 are below 1024, which a container may bind by default
-(`CAP_NET_BIND_SERVICE` is in the default set).
+cache.
+
+### Capabilities
+
+Each program gets only its own share of the container's set. The entry point starts each one
+with `setpriv` and a reduced bounding set, so neither it nor anything it starts can get the
+others back:
+
+| Program | Capabilities |
+|---|---|
+| sacdfs | `SYS_ADMIN`, `DAC_OVERRIDE` |
+| smbd | `SETUID`, `SETGID`, `NET_BIND_SERVICE` |
+| NFS-Ganesha | `DAC_READ_SEARCH` only: the export is read-only, and Ganesha takes on a client's identity only to create files |
+| the entry point | `SYS_ADMIN`, `DAC_OVERRIDE`, `SETPCAP`, and what it hands on |
+
+At its start, the entry point also drops from itself every capability that none of these
+need, so a container started with the runtime's default set (an older Compose file, for
+example) holds no more than these either. With `NFS=0` nothing keeps `DAC_READ_SEARCH`, and with
+`SMB=0` nothing keeps `SETUID`, `SETGID` or `NET_BIND_SERVICE`. Without `SETPCAP` the
+container still runs, each program with the container's whole set, and the log says so in a
+warning.
+
+How the set was found: the share tests ran with each of the seven left out in turn, and every
+one is needed by the case named above (without `SETUID` or `SETGID` smbd refuses every
+connection or doesn't start; without `DAC_OVERRIDE`, `SMB_USER` fails; without
+`NET_BIND_SERVICE`, smbd can't bind port 445 on the host network). NFS-Ganesha and smbd were
+also checked to refuse writes (creating a file and a folder over NFS, a file over SMB) with
+their reduced sets.
+
+**SELinux** (Fedora, RHEL, in enforcing mode): the container runs under its normal label
+(`container_t`) and mounts FUSE there. Only the images folder's label matters: `container_t`
+may read files labelled `container_file_t` or `container_ro_file_t`, and, with the boolean
+`container_read_public_content` on, `public_content_t`. Any other label (a home folder, a
+Samba share's `samba_share_t`) gives `/images: Permission denied`. Either relabel the folder
+(`:z` on the volume, or `chcon -R -t container_ro_file_t`), which changes what other services
+on the host may read; or label it `public_content_t` and `setsebool -P
+container_read_public_content on`; or turn labelling off for this container
+(`--security-opt label=disable`), which leaves the folder's labels alone but runs the container
+without SELinux confinement.
 
 **Rootful or rootless.** Docker on a NAS is rootful, and everything works there. Under
 rootless Podman, SMB works, but NFS does not: `open_by_handle_at(2)` needs
 `CAP_DAC_READ_SEARCH` in the host's user namespace, which a rootless container doesn't have.
-Run it rootful (`sudo podman ...`) for NFS, or set `NFS=0`.
+Run it rootful (`sudo podman ...`) for NFS, or set `NFS=0` (and leave out `DAC_READ_SEARCH`).
+
+**Where this was checked** (0.6.4 development, #386): the CI share test on GitHub's Ubuntu
+runners (Docker and rootful Podman, AppArmor; x86_64 and arm64), and Fedora 44 in a VM with
+SELinux enforcing (Docker 29 and rootful Podman 6, `docker compose` and `podman-compose`,
+rootless Podman for SMB): SMB as guest and as a user, NFS, every DSF and WAV file of the corpus
+against its manifest, writes refused, a restart with files held open, a stop with files held
+open, the health check, and the Compose file brought up and stopped eight times.
 
 ## Settings
 
@@ -193,7 +253,7 @@ All settings are environment variables.
 | `SACDFS_INDEX_CACHE` | `/cache` | `--index-cache` directory (keep it on a volume so it survives updates); `off` for `--no-index-cache` |
 | `SACDFS_VERBOSE` | `1` | `0` warnings only, `1` (`-v`), `2` (`-vv`) |
 | `SMB` | `1` | `0` to turn the SMB server off |
-| `NFS` | `1` | `0` to turn the NFS server off (then `CAP_DAC_READ_SEARCH` isn't needed) |
+| `NFS` | `1` | `0` to turn the NFS server off (then `CAP_DAC_READ_SEARCH` isn't needed, and no process keeps it) |
 | `SHARE_NAME` | `sacd` | the SMB share name, and the NFS export path (`/sacd`) |
 | `SMB_USER` | (none: guest access) | a user name: the share then needs it and `SMB_PASSWORD`, and refuses guests |
 | `SMB_PASSWORD` / `SMB_PASSWORD_FILE` | | the password, or a file holding it (for Docker or Podman secrets) |
@@ -590,18 +650,20 @@ disk, but it is longer than the 60 s the container used to wait. The container n
 
 ```sh
 docker run -d --name sacdfs --restart unless-stopped \
-  --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
-  --security-opt apparmor=unconfined \
+  --device /dev/fuse --cap-drop ALL \
+  --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
+  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \
+  --security-opt no-new-privileges:true --security-opt apparmor=unconfined \
   -p 445:445 -p 2049:2049 \
   -v /path/to/images:/images:ro \
   -v sacdfs-cache:/cache \
   sacdfs
 ```
 
-With Podman on an SELinux host, add `:z` to the images volume only if the directory may be
-relabelled (`-v /path/to/images:/images:ro,z`); don't relabel a directory that other
-services or a network share use. Use `--security-opt label=disable` instead to leave labels
-alone.
+The options are explained under [Privileges](#privileges). On an SELinux host, add `:z` to the
+images volume only if the directory may be relabelled (`-v /path/to/images:/images:ro,z`); don't
+relabel a directory that other services or a network share use. The other choices are under
+[Privileges](#privileges), SELinux.
 
 For a health check under Podman, add `--health-cmd /usr/local/bin/healthcheck.sh
 --health-interval 30s --health-timeout 10s --health-start-period 300s --health-retries 3`
@@ -673,10 +735,18 @@ The names of screens and fields may differ between releases.
        restart: unless-stopped
        devices:
          - /dev/fuse
-       cap_add:
+       cap_drop:
+         - ALL
+       cap_add:                     # why each one: see Privileges, above
          - SYS_ADMIN
+         - DAC_OVERRIDE
          - DAC_READ_SEARCH
+         - SETUID
+         - SETGID
+         - NET_BIND_SERVICE
+         - SETPCAP
        security_opt:
+         - no-new-privileges:true
          - apparmor=unconfined
        ports:                       # with an alias address; or "10445:445", "12049:2049"
          - "192.0.2.20:445:445"
@@ -715,7 +785,7 @@ The names of screens and fields may differ between releases.
 
 The same YAML, without the TrueNAS paths, works on other NAS systems that run Docker
 (Unraid, Synology Container Manager, OpenMediaVault), as far as they allow `/dev/fuse` and
-the two capabilities.
+the capabilities.
 
 #### Roon on the same NAS
 
@@ -859,8 +929,10 @@ Compose file below, on TrueNAS:
 ```sh
 mkdir -p /srv/sacdfs-mnt
 docker run -d --name sacdfs --restart unless-stopped \
-  --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
-  --security-opt apparmor=unconfined \
+  --device /dev/fuse --cap-drop ALL \
+  --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
+  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \
+  --security-opt no-new-privileges:true --security-opt apparmor=unconfined \
   -e SACDFS_FORMATS=dsf -e SACDFS_FLATTEN=1 \
   -v /path/to/images:/images:ro -v sacdfs-cache:/cache \
   -v /srv/sacdfs-mnt:/srv:rshared \
@@ -882,10 +954,10 @@ services:
     restart: unless-stopped
     devices:
       - /dev/fuse
-    cap_add:
-      - SYS_ADMIN
-      - DAC_READ_SEARCH
+    cap_drop: [ALL]
+    cap_add: [SYS_ADMIN, DAC_OVERRIDE, DAC_READ_SEARCH, SETUID, SETGID, NET_BIND_SERVICE, SETPCAP]
     security_opt:
+      - no-new-privileges:true
       - apparmor=unconfined
     volumes:
       - /mnt/pool/music:/images:ro

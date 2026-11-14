@@ -31,7 +31,10 @@ Podman (SMB only); step 4 was not. See [Details](#details).
 
    ```sh
    sudo podman run -d --name sacdfs --restart unless-stopped \
-     --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
+     --device /dev/fuse --cap-drop ALL \
+     --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
+     --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \
+     --security-opt no-new-privileges:true \
      --security-opt label=disable \
      -p 445:445 -p 2049:2049 \
      -v /srv/music:/images:ro \
@@ -45,7 +48,10 @@ Podman (SMB only); step 4 was not. See [Details](#details).
 
    ```sh
    sudo docker run -d --name sacdfs --restart unless-stopped \
-     --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
+     --device /dev/fuse --cap-drop ALL \
+     --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
+     --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \
+     --security-opt no-new-privileges:true \
      --security-opt label=disable \
      -p 445:445 -p 2049:2049 \
      -v /srv/music:/images:ro \
@@ -54,7 +60,9 @@ Podman (SMB only); step 4 was not. See [Details](#details).
    ```
 
    *You should see* a long hexadecimal ID. On Debian or Ubuntu, write `--security-opt apparmor=unconfined`
-   in place of `--security-opt label=disable`. `:ro` keeps your discs read-only.
+   in place of `--security-opt label=disable`. `:ro` keeps your discs read-only. The `--cap-*` lines
+   give the container only the capabilities it needs, and nothing more
+   ([why each one](../deployment.md#privileges)); keep them all.
 
 3. **Wait for it to be healthy.** Type this every few seconds, until it says `healthy` (up to a minute;
    a big library on a slow disk takes longer):
@@ -129,8 +137,8 @@ Clients then name the ports when they mount: see [linux-client.md](linux-client.
 - **Who may mount over NFS:** `-e NFS_CLIENTS=192.168.1.0/24` (default: everyone).
 - **The `--health-*` lines:** the published image is in OCI format, which has no field for a health
   check, so Podman needs them. Docker reads the check from the image.
-- **Rootless Podman** works for SMB only: add `-e NFS=0` and the `--health-*` options (NFS needs root,
-  see [privileges](../deployment.md#privileges)).
+- **Rootless Podman** works for SMB only: add `-e NFS=0` and the `--health-*` options, and leave out
+  `--cap-add DAC_READ_SEARCH` (NFS needs root, see [privileges](../deployment.md#privileges)).
 - **Keep the SMB server's identity across a recreate:** add `--hostname sacdfs` ([SMB and restarts](../deployment.md#smb-and-restarts)).
 - **Memory limit** (`--memory`): sacdfs sets its cache, decoder threads and listings from it. See
   [under a memory limit](../deployment.md#under-a-memory-limit).

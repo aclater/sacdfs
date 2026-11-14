@@ -16,12 +16,12 @@
 &#xD;
 Unraid's own SMB and NFS services hold ports 445 and 2049, so this container publishes 10445 (SMB) and 12049 (NFS). Without a user name and password the share is open, read-only, to everyone on your network.&#xD;
 &#xD;
-Needs the FUSE device and two capabilities (SYS_ADMIN to mount, DAC_READ_SEARCH for NFS), set in Extra Parameters; the container is not privileged. See https://github.com/aclater/sacdfs/blob/main/docs/install/store-apps.md</Overview>
+Needs the FUSE device and a short list of capabilities (SYS_ADMIN to mount, DAC_READ_SEARCH for NFS, and five that Samba and the entry point need), set in Extra Parameters with all others dropped; the container is not privileged. See https://github.com/aclater/sacdfs/blob/main/docs/install/store-apps.md</Overview>
   <Category>MediaServer:Music Tools:</Category>
   <WebUI/>
   <TemplateURL>https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/unraid/sacdfs.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/icon.png</Icon>
-  <ExtraParams>--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined --stop-timeout=30 --health-cmd=/usr/local/bin/healthcheck.sh --health-interval=30s --health-timeout=10s --health-start-period=300s --health-retries=3</ExtraParams>
+  <ExtraParams>--device=/dev/fuse --cap-drop=ALL --cap-add=SYS_ADMIN --cap-add=DAC_OVERRIDE --cap-add=DAC_READ_SEARCH --cap-add=SETUID --cap-add=SETGID --cap-add=NET_BIND_SERVICE --cap-add=SETPCAP --security-opt no-new-privileges:true --security-opt apparmor=unconfined --stop-timeout=30 --health-cmd=/usr/local/bin/healthcheck.sh --health-interval=30s --health-timeout=10s --health-start-period=300s --health-retries=3</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DateInstalled/>
