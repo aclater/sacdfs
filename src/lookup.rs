@@ -876,9 +876,23 @@ fn fetch_one<T: Transport>(
     let nothing =
         first.0.iter().all(Option::is_none) && !first.1.iter().flatten().any(|w| w.starts_with("ambiguous"));
     let (found, why) = match acoustid {
-        Some(ac) if nothing => {
-            fingerprint_step(&disc, image, &mut facts, options, client, ac, say)?.unwrap_or(first)
-        }
+        Some(ac) if nothing => match fingerprint_step(&disc, image, &mut facts, options, client, ac, say)? {
+            // Still nothing: say why for every step, the earlier ones first.
+            Some((found, why)) if found.iter().all(Option::is_none) => {
+                let why = first
+                    .1
+                    .iter()
+                    .zip(why)
+                    .map(|(a, b)| match (a, b) {
+                        (Some(a), Some(b)) => Some(format!("{a}; then {b}")),
+                        (a, b) => b.or_else(|| a.clone()),
+                    })
+                    .collect();
+                (found, why)
+            }
+            Some(outcomes) => outcomes,
+            None => first,
+        },
         _ => first,
     };
     let pending: Vec<&AreaFacts> = facts.areas.iter().collect();
