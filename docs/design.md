@@ -2094,7 +2094,11 @@ decisions, each with its reason:
   that survive a restart; CI checks this with NFS-Ganesha.
 - **Privileges:** `/dev/fuse` and `CAP_SYS_ADMIN` for FUSE, `CAP_DAC_READ_SEARCH` for NFS
   only (`NFS=0` drops the need), and on AppArmor hosts `apparmor=unconfined`, since Docker's
-  default profile forbids `mount(2)`. No `--privileged`.
+  default profile forbids `mount(2)`. No `--privileged`. Since 0.6.4 (#386) the container drops
+  the runtime's default capabilities and adds back seven, and the entry point starts each program
+  with `setpriv` and only its own share in its bounding set: sacdfs `SYS_ADMIN` and
+  `DAC_OVERRIDE`, smbd `SETUID`, `SETGID` and `NET_BIND_SERVICE`, NFS-Ganesha `DAC_READ_SEARCH`
+  alone. The reasons for each are in [deployment.md](deployment.md#privileges).
 - **NFSv4 only** (4.0 for macOS, 4.1 and 4.2 for Linux), TCP, port 2049: no rpcbind, no
   mountd, no lock manager, so one port to publish. **Graceless:** a read-only export has no
   locks or opens worth recovering, so a restarted server answers at once instead of
