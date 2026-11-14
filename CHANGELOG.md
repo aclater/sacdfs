@@ -80,6 +80,12 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **A panic in a request answered on fuser's own threads fails that request, not the mount
+  (#389).** Lookups, attributes, listings, `statfs` and the start of opens and reads are answered
+  on fuser's threads, which catch no panic: one would have ended the session and taken the mount
+  down for every client. Each FUSE callback now runs under `catch_unwind`: a panic answers that
+  request with `EIO`, logs an error line, and the mount keeps serving, as the request threads
+  already did. No such panic has been seen.
 - **A player that starts beside copies gets its first reads sooner (#363).** A player starting
   while another plays and copies start can't be told from the copies in its first half second, and
   every one of them read ahead 2 s of audio, so its first reads waited behind about 600 frames of
