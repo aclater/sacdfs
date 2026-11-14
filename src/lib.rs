@@ -10,6 +10,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod area_data;
 pub mod disc;
 pub mod dsf;
 pub mod engine;
@@ -27,6 +28,7 @@ pub mod sidecar;
 pub mod tags;
 pub mod tags_cli;
 pub mod track;
+pub mod track_ranges;
 pub mod tree;
 pub mod verify;
 pub mod vfs;
