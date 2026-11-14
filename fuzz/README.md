@@ -15,6 +15,7 @@ sacdfs's package or its build.
 | `verify_container` | one or two DSF or DFF files | The `verify` readers: the audio stream has the length the header says, and a search of one stream in another ends |
 | `verify_id3` | one or two ID3v2 tags | The `verify` and `tags import` readers: no panic, and the report's form of what they find reads back |
 | `lookup_json` | a MusicBrainz response (`sacdfs tags fetch`) | No panic, whatever is malformed. Matched against a real disc's areas, what would be written reads back as the same tags |
+| `read_path` | a corpus image (plain DSD or DST, each sector size), damage to it, settings and reads | Every read of a DSF or WAV file, at any offset and length, on readers that stay open with their read-ahead and through small caches whose buffers are reused, returns the right length and the same bytes as a new reader with no cache (#390) |
 | `verify_report` | a line of a `verify` report | Any bytes survive a field's escaping, and a line read is written back the same |
 
 `verify` reads DSF and DFF files, not FLAC, so there is no FLAC target. The persistent seek

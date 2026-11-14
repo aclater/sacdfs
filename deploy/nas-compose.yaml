@@ -16,14 +16,30 @@ services:
     container_name: sacdfs
     # hostname: sacdfs   # keeps the SMB server identity across a recreate (docs/deployment.md#smb-and-restarts)
     restart: unless-stopped
-    # FUSE needs the device and CAP_SYS_ADMIN (to mount). NFS-Ganesha needs
-    # CAP_DAC_READ_SEARCH (open_by_handle_at, how it reopens files by NFS file handle).
+    # Least privilege (docs/deployment.md, "Capabilities"): none of the runtime's default set,
+    # only these. The entry point then gives each program only its own share of them:
+    #   SYS_ADMIN        sacdfs, to mount FUSE (with the device below)
+    #   DAC_OVERRIDE     sacdfs, to read the images whatever their owner; useradd for SMB_USER
+    #   DAC_READ_SEARCH  NFS-Ganesha (open_by_handle_at); with NFS: "0" nothing keeps it
+    #   SETUID, SETGID   smbd, to act as the connecting user or guest
+    #   NET_BIND_SERVICE smbd, for port 445
+    #   SETPCAP          the entry point, to take from each program what it does not need
     devices:
       - /dev/fuse
+    cap_drop:
+      - ALL
     cap_add:
       - SYS_ADMIN
+      - DAC_OVERRIDE
       - DAC_READ_SEARCH
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+      - SETPCAP
     security_opt:
+      # No program can gain privileges through a setuid file (FUSE does not need it: sacdfs
+      # mounts as root in the container, without the setuid fusermount3).
+      - no-new-privileges:true
       # Docker's default AppArmor profile forbids mount(2) even with CAP_SYS_ADMIN, on NAS
       # systems that use AppArmor. Harmless where there is none (ADM, DSM, SELinux hosts).
       - apparmor=unconfined
