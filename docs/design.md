@@ -1831,6 +1831,20 @@ everything:
 - The root's `getattr` starts a sweep of the source for changes (#123). It does not wait for
   a sweep already running (held up by a stalled source, say): it answers with the times
   known, and the running sweep moves them when it is done.
+- **Names in log lines are escaped
+  ([#391](https://github.com/aclater/sacdfs/issues/391)).** Every line the daemon logs goes
+  through `printable::EscapingLogger`, installed in front of env_logger, which writes control
+  characters (C0, DEL, C1), Unicode format characters (category Cf: bidi controls, zero-width
+  characters, the BOM) and U+2028/U+2029 escaped, as `\n`, `\r`, `\t` or `\u{…}`. *Why:* the
+  lines carry names from SOURCE and disc text, directly and inside error messages, and a file
+  name can hold any byte but `/` and NUL. A raw newline split a line in two, so that the second
+  half could pass for a line of its own, an escape sequence changed a terminal's display, and a
+  bidi control showed a line in another order than its bytes. *Why at the logger, not at each of
+  the hundred or so log calls:* the names also arrive inside `io::Error` and scarletbook's
+  errors, which the calls don't build, and lines added later are covered too. The line format
+  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are, and the
+  names on the mount don't change: whether file names should drop format characters is a
+  separate question (#392). `sacdfs verify` and `sacdfs tags` keep their own loggers.
 - **A hung image's reads are capped once they have failed
   ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
   free the thread, which stays blocked until the source answers, so each retry by a client took
