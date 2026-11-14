@@ -29,7 +29,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    ```
 
    *You should see* a line starting with `crw`.
-3. **Make the folders and go into the first.** `/Volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs.
+3. **Make the folders and go into the first.** `/Volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs. Keep both folders at the top of the data volume, `/Volume1`, not inside a shared folder: sacdfs runs as root, and a user who can write to the top of a shared folder could swap the folders for their own (`ls -ld /Volume1` should show `drwxr-xr-x` and the owner `root`; [why](README.md#where-the-files-go)).
 
    ```sh
    mkdir -p /Volume1/sacdfs /Volume1/sacd
@@ -65,8 +65,8 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
    ```sh
    cat > /etc/default/sacdfs <<'EOF'
-   SACDFS_IMAGES=/Volume1/music
-   SACDFS_MOUNT=/Volume1/sacd
+   SACDFS_IMAGES='/Volume1/music'
+   SACDFS_MOUNT='/Volume1/sacd'
    EOF
    ```
 8. **Start sacdfs, and make it start with the NAS.**
