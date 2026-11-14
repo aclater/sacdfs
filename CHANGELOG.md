@@ -40,6 +40,16 @@ All notable changes to sacdfs are recorded here. The format follows
   `Unknown lvalue` and runs the unit without it. Checked on Fedora 44, RHEL 10.1, TerraMaster
   TOS 7.0, Debian 12 with UGREEN's kernel and ReadyNAS OS 6.10 (systemd 230), each in a VM, not on
   the vendor's hardware.
+- **The image upgrades Fedora's own packages when it is built, and a weekly scan checks the
+  published image (#399).** The runtime stage starts from the digest-pinned Fedora 44 base as
+  before, then runs `dnf upgrade` before it installs Samba and the rest, so the base's packages
+  get Fedora 44's updates too. A scan of the 0.6.3 image with grype found 39 known
+  vulnerabilities, all fixed in Fedora 44 updates: 16 High in pcre2 and 23 Medium in dnf5,
+  libgcc, libstdc++, libgomp, libmodulemd and tpm2-tss. None were in Samba, NFS-Ganesha or fuse3.
+  An image built with the upgrade has none. The image is about 35 MB larger uncompressed (the
+  upgraded files sit on top of the pinned base layer). A new workflow, `image-scan.yml`, scans the
+  latest published image every week, and on demand, and fails on High or Critical findings that
+  have a fix.
 - **The container gives each program only the capabilities it needs (#386).** The Compose files,
   the TrueNAS app and the Unraid template now drop the runtime's whole default set
   (`cap_drop: ALL`) and add back seven: `SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`,
