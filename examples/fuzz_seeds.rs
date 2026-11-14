@@ -252,6 +252,29 @@ fn main() {
         from_image(&mut out, path, &engine);
     }
 
+    // The read path: each image of `read_path` with every setting, read in a few patterns (a
+    // sequential start, a seek, the end, the header), undamaged.
+    let read = |file: u8, flags: u8, offset: u32, len: u32| -> Vec<u8> {
+        let mut r = vec![file, flags];
+        r.extend_from_slice(&offset.to_le_bytes());
+        r.extend_from_slice(&len.to_le_bytes()[..3]);
+        r
+    };
+    for pick in 0..4u8 {
+        for settings in [0x15u8, 0x26, 0x00, 0x3d, 0x1a] {
+            let mut ops = Vec::new();
+            for f in [0u8, 3] {
+                ops.extend(read(f, 0, 0, 1 << 16));
+                ops.extend(read(f, 0, 1 << 16, 1 << 16));
+                ops.extend(read(f, 0, 400_000, 70_000));
+                ops.extend(read(f, 1, 50_000, 1 << 16));
+            }
+            let mut seed = vec![pick, settings];
+            seed.extend_from_slice(&joined(&[&ops, b""]));
+            out.seed("read_path", &seed);
+        }
+    }
+
     for text in TAGS {
         assert!(text.contains('[') && (TagsFile::parse(text).is_ok() || text.contains("track.0")));
         out.seed("tags_toml", text.as_bytes());

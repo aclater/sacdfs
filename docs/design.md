@@ -2686,8 +2686,16 @@ the owner's NAS already used.
   mapping. Fuzzing the image layer's parsers is scarletbook's job.
 - **Fuzzing (#161).** `fuzz/` has cargo-fuzz targets for what sacdfs adds on top of the
   library: tags files, sidecar paths, names, the tag and header writers, the tree, and the
-  `verify` readers; fuzz/README.md lists them. They check more than "no panic": a name the
-  kernel accepts, a tag with its true size, nothing read from outside SOURCE. *Why in CI as a
+  `verify` readers, and the audio read path (`read_path`, #390); fuzz/README.md lists them.
+  They check more than "no panic": a name the kernel accepts, a tag with its true size,
+  nothing read from outside SOURCE. `read_path` damages a corpus image (plain DSD or DST, each
+  sector size), reads its DSF and WAV files at offsets and lengths from the input, on readers
+  that stay open with their read-ahead, through engines whose small caches and buffer pools
+  live for the whole run, and checks every read against a new reader on an engine with no
+  cache: the same length and the same bytes. *Why against a reader with no cache:* the cache,
+  its reused buffers, the read-ahead and the demultiplexer state carried between reads are
+  what random access adds; with no cache, each read is converted from the image afresh, so a
+  frame from another range, file or image showing through is a difference. *Why in CI as a
   job of its own, not required:* a fuzzer's result depends on the run, and a new crash in old
   code shouldn't block an unrelated pull request. *Why a crate of its own:* cargo-fuzz needs a
   nightly toolchain, which stays away from sacdfs's build and locked dependencies.

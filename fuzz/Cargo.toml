@@ -92,3 +92,10 @@ path = "fuzz_targets/lookup_json.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "read_path"
+path = "fuzz_targets/read_path.rs"
+test = false
+doc = false
+bench = false
