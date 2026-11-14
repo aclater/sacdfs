@@ -349,8 +349,8 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
                         if !fits {
                             sum.not_kept.push(format!(
                                 "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
-                                row.path.display(),
-                                image.display(),
+                                shown(&row.path),
+                                shown(image),
                                 p.len() >> 10,
                                 tags::MAX_ART_BYTES >> 10
                             ));
@@ -372,9 +372,10 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
                                 fields.insert(name.to_owned(), f.value.clone());
                             }
                             Err(why) => sum.not_kept.push(format!(
-                                "{} (disc {}): {name}, {why}",
-                                row.path.display(),
-                                image.display()
+                                "{} (disc {}): {}, {why}",
+                                shown(&row.path),
+                                shown(image),
+                                safe_file::one_line(name)
                             )),
                         }
                     }
@@ -451,8 +452,8 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         sum.not_kept.truncate(listed);
         sum.not_kept.push(format!(
             "disc {}: its tags file {} would be {} KiB, over the {} KiB import writes; nothing added",
-            image.display(),
-            path.display(),
+            shown(image),
+            shown(&path),
             t.len() >> 10,
             MAX_FILE_BYTES >> 10
         ));
