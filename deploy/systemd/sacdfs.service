@@ -2,9 +2,8 @@
 # Install:  cp sacdfs.service /etc/systemd/system/ && systemctl daemon-reload
 # Settings: /etc/default/sacdfs (see deploy/sacdfs.conf.example); then
 #           systemctl enable --now sacdfs
-# Written for old systemd too (Debian 8 has v215): no newer directives.
-# No hardening options such as PrivateDevices= or ProtectSystem=: they would hide
-# /dev/fuse or the mount from the other programs on the NAS.
+# Written for old systemd too (Debian 8 has v215). The hardening options below are newer;
+# a systemd that doesn't know one logs "Unknown lvalue" and ignores it (#387).
 [Unit]
 Description=SACD images as DSF and WAV files (sacdfs)
 After=local-fs.target network.target
@@ -25,6 +24,44 @@ TimeoutStopSec=30
 ExecStopPost=-/bin/umount -l ${SACDFS_MOUNT}
 Restart=on-failure
 RestartSec=5
+
+# Hardening (#387). Only options that leave the mount namespace alone: the mount must be
+# visible to the rest of the system. Each was checked to keep the mount working (see
+# docs/deployment.md, "systemd unit"). Left out on purpose, because each gives the service
+# its own mount namespace, and the FUSE mount made in there is then seen by no other
+# program: ProtectSystem=, ProtectHome=, PrivateTmp=, PrivateDevices=, ProtectKernelTunables=,
+# ProtectKernelModules=, ProtectKernelLogs=, ProtectControlGroups=, ProtectProc=,
+# ProcSubset=, PrivateIPC=, PrivateMounts=, ReadOnlyPaths= and the like. PrivateNetwork=,
+# IPAddressDeny=: --musicbrainz looks discs up over the network.
+#
+# The pre-start and post-stop lines above (modprobe, mkdir, umount) run without these
+# limits; only sacdfs itself gets them. (The "+" prefix would do the same per line, but
+# systemd before v231 doesn't know it.)
+PermissionsStartOnly=yes
+# Mounting needs CAP_SYS_ADMIN; reading the images, and writing the index cache and tags
+# folders, whatever their owner and mode, CAP_DAC_OVERRIDE. Nothing else.
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE
+# fusermount3 is setuid root, but sacdfs runs as root and mounts with mount(2) itself.
+NoNewPrivileges=yes
+# /dev/fuse, and the pseudo devices every program may use (/dev/null, /dev/urandom...).
+DevicePolicy=closed
+DeviceAllow=/dev/fuse rw
+# The journal and systemd's notify socket (AF_UNIX); MusicBrainz lookups (AF_INET, AF_INET6).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectClock=yes
+ProtectHostname=yes
+SystemCallArchitectures=native
+# A deny list, not an allow list: a systemd too old to know a group ignores it and filters
+# less, never more. Calls in these groups fail with EPERM instead of killing sacdfs. Not
+# denied: @mount (sacdfs mounts and unmounts), @resources (the lookup worker lowers its
+# priority with setpriority).
+SystemCallFilter=~@clock @cpu-emulation @debug @module @obsolete @privileged @raw-io @reboot @swap
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target
