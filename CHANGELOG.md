@@ -148,6 +148,16 @@ All notable changes to sacdfs are recorded here. The format follows
   those servers counts as one; its reader then lets an earlier player go first, and its audio is
   the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
 
+### Documentation
+- **TrueNAS and Unraid app files name 0.6.3, and were checked on TrueNAS (part of #284).** The
+  TrueNAS catalog app (`deploy/truenas/sacdfs`) named the 0.5.0 image; it now names 0.6.3, with
+  `app.yaml` as the catalog's metadata generator writes it (`version` 1.0.1, three capability
+  descriptions reworded). On TrueNAS SCALE 25.10.8 in a VM, the app rendered for both test value
+  sets and installed as custom apps, the custom-app YAML of `truenas-scale.md`, and a TrueNAS
+  restart each served the corpus files identically over SMB and NFS (`store-apps.md`,
+  `truenas-scale.md`). The Unraid template's container settings were run again on 0.6.3 with
+  Podman. CONTRIBUTING's release steps now list the files that name the version.
+
 ## [0.6.3] - 2026-11-13
 
 Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1

@@ -100,7 +100,13 @@ never moved.
    `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
    `gh attestation verify`. A version with a hyphen (`0.2.0-rc.1`) is marked as a
    pre-release and doesn't move `:latest`.
-7. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
+7. **Install instructions:** point them at the new version in a docs pull request: the guides
+   in `docs/install/`, `deploy/nas-compose.yaml`, the Unraid template
+   (`deploy/unraid/sacdfs.xml`, `<Repository>`) and the TrueNAS catalog app
+   (`deploy/truenas/sacdfs/ix_values.yaml`, `images.image.tag`, and `app_version` in
+   `app.yaml`; then the catalog's `generate_metadata.py` raises `version` by one patch step,
+   as [store-apps.md](docs/install/store-apps.md#checked-with-the-stores-own-tooling) describes).
+8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
    in aclater/sacd (the minor version's summary and release list).
 
 **crates.io (#155).** On a tag of a final version (no hyphen, so not `0.4.0-rc.1`), the
