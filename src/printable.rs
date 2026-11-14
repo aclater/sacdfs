@@ -206,6 +206,9 @@ mod tests {
                 .build(),
         );
         l.log(&log::Record::builder().level(log::Level::Debug).args(format_args!("dropped")).build());
+        assert!(l.enabled(&log::Metadata::builder().level(log::Level::Info).build()));
+        assert!(!l.enabled(&log::Metadata::builder().level(log::Level::Trace).build()));
+        l.flush();
         let lines = LINES.lock().unwrap();
         assert_eq!(*lines, ["WARN sacdfs::tree evil\\n[ERROR] forged\\u{202e}: not shown"]);
     }
