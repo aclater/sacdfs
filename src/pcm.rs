@@ -477,6 +477,7 @@ mod tests {
         assert_eq!(r, Err(ConvertError));
         assert!(out.iter().all(|&b| b == 0));
         assert_eq!(clips, [0; 3]);
+        assert_eq!(ConvertError.to_string(), "the DSD to PCM conversion failed");
         // The same converter, once it works again, converts as a new one does.
         c.fail = false;
         let mut a = vec![0u8; c.frame_bytes()];
