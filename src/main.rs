@@ -243,7 +243,10 @@ fn main() -> ExitCode {
             }
         }
     }
-    logger.init();
+    // Names from SOURCE in the log are escaped where lines are written (#391).
+    if let Err(e) = sacdfs::printable::install(logger.build()) {
+        eprintln!("sacdfs: {e}");
+    }
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         // A daemon that told the waiting parent, which printed it: once is enough (#282).
