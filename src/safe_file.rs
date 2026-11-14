@@ -159,6 +159,11 @@ pub fn printable(s: &str) -> Cow<'_, str> {
     escape_controls(s, true)
 }
 
+/// `s` on one line: every control character escaped, line ends included (a key, a name).
+pub fn one_line(s: &str) -> Cow<'_, str> {
+    escape_controls(s, false)
+}
+
 /// A path as shown on a terminal or in a log: as [`Path::display`], with every control
 /// character escaped.
 #[derive(Debug)]
@@ -257,5 +262,6 @@ mod tests {
         assert_eq!(shown(p).to_string(), "/a/\\x1b[31mred\\x9b\\x0a.iso");
         assert_eq!(printable("a\x1bb\nc\t"), "a\\x1bb\nc\\x09");
         assert!(matches!(printable("plain\n"), Cow::Borrowed(_)));
+        assert_eq!(one_line("TXXX:a\nb\x1b"), "TXXX:a\\x0ab\\x1b");
     }
 }
