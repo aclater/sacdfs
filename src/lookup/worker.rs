@@ -274,7 +274,7 @@ impl Worker {
 /// Nice 19 and the idle I/O class for this thread, where the system allows: the worker's TOC
 /// reads and its CPU come after everything a client asks for. Best effort.
 #[allow(unsafe_code)]
-fn lower_priority() {
+pub(crate) fn lower_priority() {
     // SAFETY: plain system calls on the calling thread, with no pointers.
     unsafe {
         // The raw call: glibc before 2.30 (the release's oldest baseline) has no gettid().

@@ -273,6 +273,16 @@ All settings are environment variables.
 | `NFS_CLIENTS` | `*` | who may mount over NFS: a comma-separated list of hosts, networks (`192.0.2.0/24`) or `*` |
 | `NFS_LOG_LEVEL` | `EVENT` | NFS-Ganesha's log level (`WARN`, `EVENT`, `INFO`, `DEBUG`) |
 
+The image also carries Chromaprint's `fpcalc`, for `sacdfs tags fetch --acoustid` (a lookup by audio
+fingerprint, run by hand or from cron, not by the mount; see the
+[user guide](user-guide.md#by-audio-fingerprint---acoustid)). Run it in the running container, with
+your own AcoustID application key, against the images and a read-write tags directory:
+
+```sh
+podman exec -e ACOUSTID_API_KEY=your-application-key sacdfs \
+    sacdfs tags fetch --tags /tags --acoustid /images/disc.iso
+```
+
 The shares are always read-only. **Guest access** (the default) lets anyone on the network
 read the files; NFS has no passwords (`sec=sys`), so limit it with `NFS_CLIENTS` or a
 firewall, or turn it off. Every NFS client is mapped to the `nobody` user (`all_squash`),

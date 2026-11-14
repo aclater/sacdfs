@@ -16,6 +16,8 @@
 //!   they don't, the match is ambiguous and nothing is written ([`decide`]). Ids and dates only
 //!   some of them share are left out.
 
+pub mod acoustid;
+pub mod fingerprint;
 mod mb;
 pub mod worker;
 
@@ -68,6 +70,9 @@ pub enum Step {
     Name,
     /// By the durations alone (`--lookup-durations`).
     Durations,
+    /// By the stereo area's audio fingerprints, through AcoustID (`--acoustid`, #296): the last
+    /// resort.
+    Fingerprint,
 }
 
 impl Step {
@@ -82,6 +87,9 @@ impl Step {
             Step::Number => Limits { mean: 5.0, worst: 15.0 },
             Step::Name => Limits { mean: 3.0, worst: 6.0 },
             Step::Durations => Limits { mean: 1.0, worst: 2.5 },
+            // The fingerprints name the recordings, so the durations only guard against another
+            // edition's track list: as for a name. Judged, as no real disc has tested it yet.
+            Step::Fingerprint => Limits { mean: 3.0, worst: 6.0 },
         }
     }
 
@@ -90,6 +98,7 @@ impl Step {
             Step::Number => "barcode or catalogue number",
             Step::Name => "name",
             Step::Durations => "durations",
+            Step::Fingerprint => "audio fingerprint",
         }
     }
 }
@@ -168,6 +177,8 @@ pub struct DiscFacts {
     pub artist: Option<String>,
     /// The year in the image's path, if any.
     pub year: Option<String>,
+    /// The stereo area's fingerprints as AcoustID answered them, once taken (`--acoustid`).
+    pub prints: Option<acoustid::Prints>,
 }
 
 impl DiscFacts {
@@ -222,6 +233,7 @@ impl DiscFacts {
             album: album.or(guess.album),
             artist: artist.or(guess.artist),
             year: fallback::year(image),
+            prints: None,
         }
     }
 }
@@ -263,6 +275,8 @@ pub struct Evidence {
     pub worst: f64,
     /// Tracks whose ISRC the recording has.
     pub isrc_hits: usize,
+    /// Tracks whose fingerprinted recording the medium has at their place (`--acoustid`).
+    pub print_hits: usize,
 }
 
 /// An ISRC for comparing: some writers include hyphens.
@@ -312,7 +326,7 @@ pub fn confirm(area: &AreaFacts, medium: &Medium, limits: Limits) -> Result<Evid
     if misses > hits {
         return Err(format!("ISRCs disagree on {misses} tracks, agree on {hits}"));
     }
-    Ok(Evidence { mean, worst, isrc_hits: hits })
+    Ok(Evidence { mean, worst, isrc_hits: hits, print_hits: 0 })
 }
 
 /// The physical disc of each medium: MusicBrainz may list each layer of one disc as its own
@@ -387,8 +401,23 @@ fn carries(release: &Release, facts: &DiscFacts, step: Step) -> Result<(), Strin
             }
             Ok(())
         }
-        Step::Durations => Ok(()),
+        Step::Durations | Step::Fingerprint => Ok(()),
     }
+}
+
+/// The tracks of `medium` that are the fingerprinted recordings at their place, and how many must
+/// be: `None` for an area without fingerprints (the multichannel area, which may take the release
+/// its stereo area's audio names, if its durations fit).
+fn print_hits(area: &AreaFacts, medium: &Medium, facts: &DiscFacts) -> Option<(usize, usize)> {
+    let prints = facts.prints.as_ref().filter(|_| area.slot == Slot::TwoChannel)?;
+    let answered = prints.recordings.iter().filter(|r| !r.is_empty()).count();
+    let hits = medium
+        .tracks
+        .iter()
+        .zip(&prints.recordings)
+        .filter(|(t, r)| t.recording.as_ref().is_some_and(|id| r.contains(id)))
+        .count();
+    Some((hits, acoustid::required_hits(answered)))
 }
 
 /// Whether two titles are the same, but for case, punctuation, or words added after the end of
@@ -416,7 +445,18 @@ fn candidates_of(
     let mut passed: Vec<(u16, Candidate)> = Vec::new();
     let mut why: Vec<String> = Vec::new();
     for (i, m) in release.media.iter().enumerate() {
-        match confirm(area, m, step.limits()) {
+        let mut confirmed = confirm(area, m, step.limits());
+        if step == Step::Fingerprint {
+            if let (Ok(e), Some((hits, need))) = (&mut confirmed, print_hits(area, m, facts)) {
+                e.print_hits = hits;
+                if hits < need {
+                    confirmed = Err(format!(
+                        "{hits} of its tracks are the fingerprinted recordings in order, {need} needed"
+                    ));
+                }
+            }
+        }
+        match confirmed {
             Ok(evidence) => passed.push((
                 discs.get(i).copied().unwrap_or(0),
                 Candidate {
@@ -507,6 +547,9 @@ pub fn decide(area: &AreaFacts, facts: &DiscFacts, step: Step, cands: Vec<Candid
     left.retain(|c| c.rank == best);
     let hits = left.iter().map(|c| c.evidence.isrc_hits).max().unwrap_or(0);
     left.retain(|c| c.evidence.isrc_hits == hits);
+    // The release holding the most of the fingerprinted recordings, in order.
+    let prints = left.iter().map(|c| c.evidence.print_hits).max().unwrap_or(0);
+    left.retain(|c| c.evidence.print_hits == prints);
     // The year only chooses between candidates, since a folder's year may be a reissue's.
     if let Some(y) = &facts.year {
         let dated = |c: &Candidate| c.release.date.as_deref().is_some_and(|d| d.starts_with(y.as_str()));
@@ -669,7 +712,7 @@ pub fn fetch_image<T: Transport>(
 ) -> Result<Outcome, Failure> {
     let mut sum = Summary::default();
     client.next_disc();
-    fetch_one(dir, image, options, client, &mut say, &mut sum)?;
+    fetch_one(dir, image, options, client, None, &mut say, &mut sum)?;
     Ok(if sum.done > 0 {
         Outcome::Done
     } else if sum.complete > 0 {
@@ -705,6 +748,19 @@ pub fn fetch<T: Transport>(
     images: &[PathBuf],
     options: Options,
     client: &mut Client<T>,
+    say: impl FnMut(String),
+) -> Summary {
+    fetch_with(dir, images, options, client, None, say)
+}
+
+/// [`fetch`], and with `acoustid`, by audio fingerprint for the discs nothing else identifies
+/// (`--acoustid`, #296).
+pub fn fetch_with<T: Transport>(
+    dir: &Path,
+    images: &[PathBuf],
+    options: Options,
+    client: &mut Client<T>,
+    mut acoustid: Option<&mut acoustid::Session>,
     mut say: impl FnMut(String),
 ) -> Summary {
     let mut sum = Summary::default();
@@ -725,13 +781,14 @@ pub fn fetch<T: Transport>(
             failed_in_a_row = 0;
         }
         let Some(image) = queue.get(i).copied() else { break };
+        stopped |= acoustid.as_ref().is_some_and(|a| a.stopped());
         if stopped || failed_in_a_row >= MAX_FAILED_IN_A_ROW {
             sum.not_tried = queue.len() - i;
             break;
         }
         i += 1;
         client.next_disc();
-        match fetch_one(dir, image, options, client, &mut say, &mut sum) {
+        match fetch_one(dir, image, options, client, acoustid.as_deref_mut(), &mut say, &mut sum) {
             Ok(()) => failed_in_a_row = 0,
             Err(Failure::Network(e)) => {
                 failed_in_a_row += 1;
@@ -783,6 +840,7 @@ fn fetch_one<T: Transport>(
     image: &Path,
     options: Options,
     client: &mut Client<T>,
+    acoustid: Option<&mut acoustid::Session>,
     say: &mut impl FnMut(String),
     sum: &mut Summary,
 ) -> Result<(), Failure> {
@@ -794,7 +852,7 @@ fn fetch_one<T: Transport>(
     let path = dir.join(format!("{key}.toml"));
     // Before anything is asked: a tags file that can't be merged into can't be written.
     let existing = read_tags(&path).map_err(Failure::Local)?;
-    let facts = DiscFacts::new(toc, image);
+    let mut facts = DiscFacts::new(toc, image);
     let shown = image.display();
 
     // Once per disc: an area that didn't fit the release its sibling matched gets no second try by
@@ -810,9 +868,20 @@ fn fetch_one<T: Transport>(
         sum.complete += 1;
         return Ok(());
     }
+    let first = {
+        let pending: Vec<&AreaFacts> = facts.areas.iter().collect();
+        look_up(&facts, &pending, options, client)?
+    };
+    // The last resort: only when no step found anything, not even an ambiguity.
+    let nothing =
+        first.0.iter().all(Option::is_none) && !first.1.iter().flatten().any(|w| w.starts_with("ambiguous"));
+    let (found, why) = match acoustid {
+        Some(ac) if nothing => {
+            fingerprint_step(&disc, image, &mut facts, options, client, ac, say)?.unwrap_or(first)
+        }
+        _ => first,
+    };
     let pending: Vec<&AreaFacts> = facts.areas.iter().collect();
-
-    let (found, why) = look_up(&facts, &pending, options, client)?;
     let matched = found.iter().filter(|m| m.is_some()).count();
     for (a, reason) in pending.iter().zip(&why) {
         if let Some(reason) = reason {
@@ -885,6 +954,69 @@ fn fetch_one<T: Transport>(
     Ok(())
 }
 
+/// Fingerprints the disc's stereo area and asks by [`Step::Fingerprint`] (`--acoustid`, #296).
+/// `None` if the disc isn't fingerprinted (said why): the earlier steps' outcome stands.
+fn fingerprint_step<T: Transport>(
+    disc: &Disc,
+    image: &Path,
+    facts: &mut DiscFacts,
+    options: Options,
+    client: &mut Client<T>,
+    ac: &mut acoustid::Session,
+    say: &mut impl FnMut(String),
+) -> Result<Option<Outcomes>, Failure> {
+    use acoustid::{Settled, Skip};
+    let shown = image.display();
+    let Some(area) = disc.toc().areas.iter().position(|a| a.slot == Slot::TwoChannel) else {
+        say(format!("{shown}: not fingerprinted: no stereo area"));
+        return Ok(None);
+    };
+    match ac.begin(image) {
+        Ok(()) => {}
+        Err(Skip::Settled(why)) => {
+            say(format!("{shown}: not fingerprinted: {why}"));
+            return Ok(None);
+        }
+        Err(Skip::Budget(n)) => {
+            say(format!(
+                "{shown}: not fingerprinted: today's budget of {n} discs is spent; run again tomorrow"
+            ));
+            return Ok(None);
+        }
+        Err(Skip::Local(e) | Skip::Network(e) | Skip::Stop(e)) => return Err(Failure::Local(e)),
+        Err(Skip::Stopped) => return Err(Failure::Stop("stopped".to_owned())),
+    }
+    let (cpu, started) = (acoustid::cpu_seconds(), std::time::Instant::now());
+    let prints = match ac.identify(disc, area, &mut |l| say(format!("{shown}: {l}"))) {
+        Ok(p) => p,
+        Err(e) => {
+            ac.abandon();
+            return Err(match e {
+                Skip::Stopped => Failure::Stop("stopped: nothing kept of this disc".to_owned()),
+                Skip::Stop(e) => Failure::Stop(e),
+                Skip::Network(e) => Failure::Network(e),
+                Skip::Local(e) | Skip::Settled(e) => Failure::Local(e),
+                Skip::Budget(_) => Failure::Local("budget".to_owned()),
+            });
+        }
+    };
+    facts.prints = Some(prints);
+    let areas: Vec<&AreaFacts> = facts.areas.iter().collect();
+    let outcomes = look_up_steps(facts, &areas, &[Step::Fingerprint], client)?;
+    let matched = outcomes.0.iter().any(Option::is_some);
+    if !options.dry_run {
+        ac.settle(image, if matched { Settled::Matched } else { Settled::Refused })
+            .map_err(Failure::Local)?;
+    }
+    say(format!(
+        "{shown}: fingerprint lookup {} in {:.1} s, {:.1} CPU seconds",
+        if matched { "matched" } else { "found no confident match" },
+        started.elapsed().as_secs_f64(),
+        acoustid::cpu_seconds() - cpu
+    ));
+    Ok(Some(outcomes))
+}
+
 /// What to do after a refusal, if the reason calls for it: a release refused because the disc's
 /// ISRCs disagree with it. *Why that refusal stays, though most such releases proved right on real
 /// discs:* a wrong tag in a library costs more than a disc left unmatched, so a person decides.
@@ -922,7 +1054,6 @@ pub fn look_up<T: Transport>(
     options: Options,
     client: &mut Client<T>,
 ) -> Result<Outcomes, Failure> {
-    let mut tried: Vec<String> = Vec::new();
     let mut steps = vec![Step::Number];
     if options.by_name {
         steps.push(Step::Name);
@@ -930,9 +1061,20 @@ pub fn look_up<T: Transport>(
     if options.by_durations {
         steps.push(Step::Durations);
     }
+    look_up_steps(facts, areas, &steps, client)
+}
+
+/// [`look_up`] with the steps `steps`, in order.
+pub fn look_up_steps<T: Transport>(
+    facts: &DiscFacts,
+    areas: &[&AreaFacts],
+    steps: &[Step],
+    client: &mut Client<T>,
+) -> Result<Outcomes, Failure> {
+    let mut tried: Vec<String> = Vec::new();
     let mut releases: HashMap<String, Option<Release>> = HashMap::new();
     let mut notes: Vec<Vec<String>> = vec![Vec::new(); areas.len()];
-    for step in steps {
+    for &step in steps {
         let mut found: Vec<Option<Match>> = Vec::new();
         let mut why: Vec<Option<String>> = Vec::new();
         let mut any = false;
@@ -1078,6 +1220,13 @@ fn hits_for<T: Transport>(
         Step::Name => match (&facts.album, &facts.artist) {
             (Some(album), Some(artist)) => Ok(Ok(client.by_name(album, artist).map_err(net)?)),
             _ => Ok(Err("no album and artist to search by, on the disc or in its path".to_owned())),
+        },
+        Step::Fingerprint => match &facts.prints {
+            Some(p) if !p.releases.is_empty() => Ok(Ok(p.releases.clone())),
+            Some(_) => Ok(Err(
+                "by audio fingerprint: AcoustID knows no release holding most of the tracks".to_owned()
+            )),
+            None => Ok(Err("not fingerprinted".to_owned())),
         },
         Step::Durations => {
             if area.tracks.len() < MIN_DURATION_TRACKS {

@@ -7,6 +7,19 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`sacdfs tags fetch --acoustid`: a lookup by audio fingerprint for discs nothing else
+  identifies (part of #296).** When the barcode or catalogue number, the name and the durations
+  find nothing, it fingerprints the first two minutes of each stereo track (10 s or longer) with
+  Chromaprint's `fpcalc`, fed sacdfs's own 11,025 Hz mono PCM, looks the fingerprints up in
+  AcoustID with the user's own application key (`ACOUSTID_API_KEY` or `--acoustid-key-file`), and
+  confirms the release holding the most of those recordings, in order, as the other steps do.
+  One disc at a time at nice 19 and the idle I/O class, a wait while the load is high
+  (`--max-load`), a daily budget of discs (`--acoustid-budget`, default 20) kept with each disc's
+  verdict in the tags directory, at most 2.5 requests a second, and a clean stop on Ctrl-C or
+  SIGTERM. The audio streams in under 1 MiB of heap. `fpcalc` is a program run, not a library
+  linked, so the release binaries gain no dependency; the container image now includes it.
+  Tested with synthetic discs and recorded answers; a run with a real application key and the soak
+  that the in-process switch waits for are still to come.
 - **A fuzz target for the audio read path (#390).** `fuzz/fuzz_targets/read_path.rs` reads
   the DSF and WAV files of damaged corpus images (plain DSD and DST, 2048-, 2054- and 2064-byte
   sectors) at any offset and length, with read-ahead and small caches whose buffers are reused

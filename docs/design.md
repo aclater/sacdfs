@@ -2824,6 +2824,71 @@ the owner's NAS already used.
   its samples equal to the raw bytes; a sparse 4.76 GB six-channel RF64 file reads in FFmpeg
   and libsndfile.
 
+
+### Looking tags up by audio fingerprint (#296, step 1)
+
+`sacdfs tags fetch --acoustid` (`src/lookup/acoustid.rs`, `src/lookup/fingerprint.rs`) is step 1 of
+#296: out of process, run by hand or from cron. Step 2, the switch on the `--musicbrainz` worker,
+waits for step 1's soak.
+
+- **Chromaprint is `fpcalc`, run as a program.** *Why:* the release's binaries link only glibc and
+  libgcc_s, for their glibc-2.17 baseline; linking Chromaprint's C library would add a native
+  dependency (and FFmpeg's or FFTW's behind it) to every build, for a step few users run. No
+  maintained Rust port of Chromaprint exists as a crate, and writing one is a project of its own
+  that would have to match Chromaprint bit for bit for AcoustID to know its fingerprints. `fpcalc`
+  is packaged by Fedora (`chromaprint-tools` 1.6.1, checked), EPEL 10 (1.5.1, from its repository
+  metadata; not run) and Debian. *How:* sacdfs decodes and converts the audio itself and gives
+  `fpcalc` 16-bit mono PCM at 11,025 Hz, Chromaprint's own working rate, on standard input
+  (`-format s16le -rate 11025 -channels 1 -length 120 -json -`), so `fpcalc` reads no file and
+  resamples nothing, and no FFmpeg demuxer sees disc data. *Alternatives:* the C library behind a
+  Cargo feature (rejected: a second kind of release build to test and ship, for the same result); a
+  Rust port (rejected above). *Trade-off:* a program to install, and a process per track.
+- **The audio:** DSD to 88.2 kHz PCM through the same converter as the WAV files (30 kHz band),
+  the channels averaged, then a 127-tap windowed-sinc low-pass at 4.8 kHz and decimation by 8.
+  Chromaprint looks at about 28 Hz to 3.5 kHz, so the filter's band is enough, and its stop band
+  keeps what would fold under 5.5 kHz out. *Why not the mount's frame cache:* the bound of #185 says a
+  decoder of its own; this also keeps the serving side's memory and locks untouched.
+- **Memory:** a frame of DSD and PCM before and after the one converted, the filter and a second
+  of output: 688 KiB of heap at the peak for two minutes of a DST stereo track, the same as for one
+  second (tests/acoustid_memory.rs, under dhat; the test's ceiling is #185's 32 MiB).
+- **Which releases:** each track's AcoustID results of score 0.5 or more give recordings and their
+  releases. The 5 releases holding the most tracks, and more than half of those AcoustID knows,
+  are read from MusicBrainz, and a medium must have more than half of those recordings at the same
+  positions ("in order", #185). Then the checks of every step: track count, durations
+  (`Step::Fingerprint`: 6 s per track, 3 s mean, as a name, since the recordings are known and the
+  durations only tell editions apart; judged, no real disc tested), and agreement of the text.
+  Ties go to the medium holding the most recordings. Like a name, a fingerprint finds the album,
+  not the pressing: no date or release ID is written. *Why not pick by AcoustID alone:* its release
+  lists are long for popular recordings (compilations, reissues), and the duration and agreement
+  checks are what keep a wrong match out elsewhere.
+- **Tracks under 10 s are left out.** `fpcalc` gives no fingerprint for under about 3 s of audio
+  (measured: 1 and 2 s of noise fail, 3 s gives an 18-character fingerprint), and a few seconds
+  identify little. They count as unknown, so a disc of short tracks needs the others to agree.
+- **Bounds (#185's, for step 1):**
+  - one disc at a time on the command's thread; the process at nice 19 and the idle I/O class,
+    inherited by `fpcalc`;
+  - a wait while the 1-minute load average is over `--max-load` (default: the CPU count). *Not
+    yet:* a pause while a client reads audio, which needs the mount's knowledge and comes with the
+    in-process switch;
+  - 120 s of PCM per track at most, stereo area only;
+  - a daily budget of discs (default 20), counted in `.acoustid-state` in the tags directory with
+    what became of each disc, so a restart or the next day goes on where it was. A refusal is
+    asked again after 30 days, as AcoustID grows; an image whose size or mtime changes is asked
+    again at once;
+  - AcoustID at 1 request per 400 ms (it allows 3 a second), each with ureq's 15 s connect and 60 s
+    overall timeouts, 4 tries with growing waits (429 and 5xx, honouring `Retry-After`); `fpcalc`
+    killed after 120 s; a refused key (error codes 4 to 6) ends the run;
+  - Ctrl-C and SIGTERM stop between seconds of audio or between discs; a disc stopped half done
+    writes nothing and gets its budget back. The queue is the command line plus the state file,
+    so stopping loses nothing;
+  - a line per disc (tracks, seconds of audio, CPU seconds) and the counters at the end (queued,
+    fingerprinted, skipped, left for another day, tracks, requests, CPU seconds).
+- **Not yet done, before #296 closes:** a live run with an application key (the only key on hand
+  is a user key, which AcoustID refuses for lookups: checked, error code 4), and the soak of 300
+  or more discs while serving reads. Both need the key. The request's form follows AcoustID's
+  documentation (`meta=recordings+releaseids`); the parser reads `results[].recordings[].releases[].id`
+  and was tested on recorded answers of that shape only.
+
 ### Leaks (#151)
 
 The owner asked for leak tracing and profiling: sacdfs runs for days on a NAS. How to run

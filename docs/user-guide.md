@@ -383,8 +383,8 @@ sacdfs tags fetch --tags ~/music/sacd-tags ~/music/sacd-images/disc.iso
 sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations ~/music/sacd-images/*.iso
 ```
 
-There is no lookup by audio fingerprint (AcoustID) yet; it is planned in [#296](https://github.com/aclater/sacdfs/issues/296).
-A disc nothing else identifies keeps its generated names until then.
+A disc that none of the steps below identifies can be identified by its audio with `--acoustid`
+([below](#by-audio-fingerprint---acoustid)).
 
 It and the mount's `--musicbrainz` ([below](#in-the-background---musicbrainz)) are the only parts of
 sacdfs that use the network, and nothing is sent unless you run this command or turn that option
@@ -445,6 +445,67 @@ Tested on real discs with their text hidden, which showed no wrong match: by num
 which 44 got tags for at least one area, and by name on 30, of which 15 did. 19 of 21 discs without
 text matched, and their folder names agreed. `--lookup-durations` alone matched only 2 real discs that
 were checked, both right, so its limits are still a judgement.
+
+### By audio fingerprint: `--acoustid`
+
+`sacdfs tags fetch --acoustid` (or `--lookup-acoustid`) is the last resort, for discs with no
+barcode or catalogue number, no usable name and no matching durations. Only when the other steps
+find nothing, not even an ambiguity, it fingerprints the first two minutes of each track of the
+stereo area and looks the fingerprints up in [AcoustID](https://acoustid.org), which names the
+MusicBrainz recordings. The release holding the most of those recordings, at their places on the
+disc, then goes through the same checks as the other steps.
+
+```sh
+export ACOUSTID_API_KEY=...   # your own application key, see below
+sacdfs tags fetch --tags ~/music/sacd-tags --acoustid --dry-run ~/music/sacd-images/disc.iso
+sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations --acoustid ~/music/sacd-images/*.iso
+```
+
+- **What it needs:** Chromaprint's `fpcalc` program (Fedora: `dnf install chromaprint-tools`;
+  RHEL 10: `chromaprint-tools` from EPEL 10, untested; Debian and Ubuntu:
+  `libchromaprint-tools`, untested), on `PATH` or given with `--fpcalc PATH`. The container image
+  includes it. And an AcoustID **application** key of your own: sign in at acoustid.org and
+  register an application ("New application"); the key it shows goes in `ACOUSTID_API_KEY`, or in
+  a file named by `--acoustid-key-file FILE`. A user key (the one acoustid.org shows for
+  submitting fingerprints) is refused for lookups, and the run says so. sacdfs ships no key.
+- **What is sent to AcoustID** (api.acoustid.org, over HTTPS): your key, and for each track of the
+  stereo area 10 s long or more (shorter ones are left out) its Chromaprint fingerprint (made from its first two minutes at most, a compact
+  summary from which the audio can't be rebuilt) and its length in seconds. Nothing else: no
+  names, no paths, no catalogue numbers. MusicBrainz is then asked for the releases AcoustID named,
+  by ID, as in the other steps. AcoustID also sees your IP address, as any site does.
+- **What makes a match:** more than half of the tracks AcoustID knows must be, on a medium of the
+  release, the same recordings at the same places; then the release must pass the other steps'
+  checks, with each track within 6 s and the mean within 3 s (a judgement: no real disc has
+  tested these limits yet). Of several such releases, the one holding the most recordings wins; if
+  those left disagree in any text, nothing is written. A multichannel area isn't fingerprinted: it
+  may take the release its stereo area's audio names, if its own tracks fit it.
+- **What it writes:** as a match by name: the names, the release group and recording IDs, and no
+  date or release ID, since a fingerprint finds the recordings, not the pressing.
+- **How hard it works:** one disc at a time, on one thread, at the lowest CPU priority (nice 19) and
+  the idle I/O class; `fpcalc` inherits both. The audio is decoded as it is fingerprinted, a
+  second at a time, with a decoder of its own, in under 1 MiB of memory (32 MiB is the bound the
+  tests enforce). While the 1-minute load average is over `--max-load` (default: the number of
+  CPUs), it waits. At most `--acoustid-budget` discs a day are fingerprinted (default 20); the rest
+  are left for the next run, which makes it suited to a daily cron job. At most 2.5 requests a
+  second go to AcoustID (it allows 3), each with a timeout and up to 4 tries; a refused key ends
+  the run.
+- **What it keeps:** the day's count, and what became of each disc fingerprinted, in
+  `.acoustid-state` in the tags directory (by a hash of the image's path, with its size and
+  modification time). A disc fingerprinted without a match isn't fingerprinted again for 30 days,
+  unless its image changes; a match is also in its tags file, so it isn't asked about again at all.
+  Within a run, each answer is kept, so nothing is asked twice. `--dry-run` counts against the
+  budget but keeps no verdict.
+- **Stopping:** Ctrl-C or SIGTERM stops at the next second of audio or the next disc: nothing is
+  written for a disc half done, its budget is given back, and the next run starts where this one
+  stopped. A second Ctrl-C ends the run at once.
+- **What it says:** a line per disc fingerprinted (tracks, seconds of audio, tracks AcoustID knows,
+  releases read, the time and CPU seconds), and at the end `acoustid: N queued, N fingerprinted,
+  N skipped, N left for another day; N tracks, N requests; N CPU seconds`.
+
+Not yet: fingerprinting inside a mount (with `--musicbrainz`), which waits for a soak of 300 discs or
+more ([#296](https://github.com/aclater/sacdfs/issues/296)). This step was tested with synthetic
+discs, a stand-in for `fpcalc` and recorded answers, and the real `fpcalc` on synthetic audio; it
+has not yet been run against AcoustID with an application key or on real discs.
 
 ### In the background: `--musicbrainz`
 

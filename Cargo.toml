@@ -35,7 +35,8 @@ log = "0.4"
 lru = "0.19"
 # statvfs of SOURCE for statfs (#62), without `unsafe` in sacdfs. Already in the graph
 # through fuser, with the same feature.
-nix = { version = "0.31", default-features = false, features = ["fs"] }
+# getrusage, for the CPU seconds `tags fetch --acoustid` reports (#296): the same crate.
+nix = { version = "0.31", default-features = false, features = ["fs", "resource"] }
 rayon = "1.10"
 signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 # Names and checksums of the persistent seek index's files.
