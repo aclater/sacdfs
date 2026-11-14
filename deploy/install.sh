@@ -955,11 +955,18 @@ unquote() {
     sed -n "1{s/^'\\(.*\\)'\$/\\1/;s/'\\\\''/'/g;p;}"
 }
 
-# syno_task_cmd TASK: the command a Task Scheduler task runs.
+# syno_task_cmd TASK: the command a Task Scheduler task runs. esynoscheduler --list prints
+# JSON with sorted keys, so each task's "operation" comes before its "task_name".
 syno_task_cmd() {
-    esynoscheduler --list 2>/dev/null | awk -v t="\"$1\"" '
-        index($0, t) { f = 1 }
-        f && /"operation"/ { sub(/^[^:]*: *"/, ""); sub(/",? *$/, ""); gsub(/\\"/, "\""); gsub(/\\\\/, "\\"); print; exit }'
+    esynoscheduler --list 2>/dev/null | awk -v t="$1" '
+        /"operation" *:/ { op = $0; sub(/^[^:]*: *"/, "", op); sub(/",? *$/, "", op) }
+        /"task_name" *:/ {
+            n = $0; sub(/^[^:]*: *"/, "", n); sub(/",? *$/, "", n)
+            if (n == t) {
+                gsub(/\\\//, "/", op); gsub(/\\"/, "\"", op); gsub(/\\\\/, "\\", op)
+                print op; exit
+            }
+        }'
 }
 
 # hook_conf: the settings file the NAS's start-at-boot hook names now (from an earlier
@@ -971,7 +978,8 @@ hook_conf() {
             ;;
         synology)
             command -v esynoscheduler >/dev/null 2>&1 || return 0
-            syno_task_cmd sacdfs-start | sed -n 's/^SACDFS_CONF=\(.*\) [^ ]* start$/\1/p' | unquote
+            syno_task_cmd sacdfs-start |
+                sed -n "s/^SACDFS_CONF=\('[^']*'\) .* start\$/\1/p; t; s/^SACDFS_CONF=\([^ ']*\) .* start\$/\1/p" | unquote
             ;;
         qnap)
             [ "$(id -u)" = 0 ] || return 0
