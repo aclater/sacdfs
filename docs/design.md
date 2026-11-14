@@ -2014,6 +2014,7 @@ alternatives and the trade-off.
 - `convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM (`frame_bytes()` long) and returns the clip count. `None` neighbours are silence.
 - `convert_run(prev, frames, next, out, clips)` converts consecutive frames: the same bytes as `convert` on each, plus each frame's clip count.
 - `convert_f32` gives the same samples as floats, for tools and tests.
+- `try_convert` and `try_convert_run` are the same, but return `ConvertError` if scarletbook-pcm refuses the conversion. On failure, all four leave `out` all zeros, never what it held before. *Why (#388):* the engine converts into reused slots of its frame cache, which may hold another frame's audio. It uses the `try_` forms and fails the read with `EIO`, so nothing from a failed run is served or cached. The lengths sacdfs passes make a failure impossible today. The check is there in case scarletbook-pcm adds one.
 - `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
 - A short frame (which the decoder never makes) is padded with silence.
 
