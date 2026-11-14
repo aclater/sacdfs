@@ -1145,10 +1145,11 @@ change built from the repository's Containerfile. Seconds, median (range), 5 run
   switched 3,291 times in one area. The 0.4.1 binary in main's image and main's binary in
   0.4.1's image were each as fast as 0.4.1 or faster (one to two clean runs each, 6-channel WAV), so the
   binaries are not the difference: the settings the container passes are.
-- **The 16 MiB default stays.** It was chosen for players beside scans on small machines
-  (#237, #230; [deployment](deployment.md#under-a-memory-limit)): a single copy is 14 to 17 %
-  slower with it, and a player beside whole-file readers keeps real time. Without a memory limit,
-  or above 512 MiB, the cache is 32 MiB.
+- **The 16 MiB default is unchanged here.** It was chosen because a 6-channel player kept real
+  time beside whole-file scanners at 8, 16 and 32 MiB, and a local scan alone ran as fast at 16 as
+  at 32, in 16 MiB less (#237, #230; [deployment](deployment.md#under-a-memory-limit)). Over SMB a
+  single WAV copy is 14 to 17 % slower with it. Changing it is a trade of memory against copy
+  speed, left open in #271. Without a memory limit, or above 512 MiB, the cache is 32 MiB.
 - **DSF over SMB**, which #271 had left open: within 2 % of 0.4.1 for stereo and 2 to 4 % for
   6 channels, on every release; not measured with a 32 MiB cache.
 - **Not measured here:** other memory limits or none, NFS, macOS and Windows clients (Windows:

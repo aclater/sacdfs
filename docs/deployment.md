@@ -285,7 +285,8 @@ An option you set yourself always wins. The smaller cache costs whole-file copie
 Linux kernel SMB client, one reader copying an area's WAV files took 14 to 17 % longer at
 16 MiB than at 32 MiB (`SACDFS_CACHE_MB=32`, on 4 cores with a 512 MiB limit;
 [performance](performance.md#one-reader-over-smb-by-release-and-the-cache-under-a-memory-limit-271-2026-11-14)).
-It is the default because a player beside such copies keeps real time with it on a small machine.
+It was made the default because a local scan alone measured as fast at 16 MiB as at 32, and it
+saves 16 MiB; copies over SMB weren't measured then.
 
 **Listings.** A listed image holds its TOC and text, and for each of its files a header, tag and
 node: about 56 KiB per image with DSF and WAV shown. Past the budget, the images not used lately
