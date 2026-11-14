@@ -40,6 +40,15 @@ podman run --rm -it --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD:/src:Z" -w /
 # then: dnf -y install git-core gcc fuse3 python3, install Rust, and run cargo test as a normal user
 ```
 
+## Image scan
+
+`.github/workflows/image-scan.yml` scans the published image `ghcr.io/aclater/sacdfs:latest` with
+grype every Wednesday, for linux/amd64 and linux/arm64, and on demand from the Actions tab with
+any image reference. grype is the release binary, pinned by version and SHA-256. The job fails
+when a High or Critical finding has a fixed package version; the full table of fixable findings
+is in the log and the job summary. To run it by hand:
+`grype registry:ghcr.io/aclater/sacdfs:latest --platform linux/amd64 --only-fixed --fail-on high`.
+
 ## The no-growth test
 
 `tests/no_growth.rs` mounts the filesystem in its own process, on a `fuser` background
