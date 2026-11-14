@@ -94,6 +94,14 @@ jobs:
             echo "::notice::dry run of sacdfs $version from $REF_NAME: nothing will be published"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # A tag publishes only a commit that is on main or on a release/X.Y.Z branch (a patch
+      # release cut from an earlier tag), never one from a pull request's branch or one never
+      # pushed to a branch. The script fetches those branches' history first.
+      - name: The tag's commit is on main or a release/* branch
+        if: github.ref_type == 'tag'
+        env:
+          TAG_SHA: ${{ github.sha }}
+        run: sh .github/scripts/check-tag-reachable.sh "$TAG_SHA"
       - name: Release notes from CHANGELOG.md
         env:
           REF_TYPE: ${{ github.ref_type }}

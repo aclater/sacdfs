@@ -842,5 +842,7 @@ A final tag needs all of:
   needed (the final carries only the version change on top of a candidate that passed);
 - [clients.md](clients.md) states the versions and results of this release, and anything not run is
   stated as untested.
+- the tagged commit is on `main` or on a `release/X.Y.Z` branch pushed before the tag: the release
+  workflow's first job refuses any other commit (`.github/scripts/check-tag-reachable.sh`).
 
 If a gate cannot be run, the release report says so; it is never counted as passed.
