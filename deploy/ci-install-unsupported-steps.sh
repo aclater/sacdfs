@@ -177,4 +177,13 @@ if grep -q '^c library: *glibc 2.17' "$work/out" && grep -q '^processor: *x86_64
 else
     res report-fakes FAIL
 fi
+# No getconf answers: the word size comes from the ELF class of /bin/sh (64-bit here).
+mkdir -p "$f/nogetconf"
+printf '#!/bin/sh\nexit 1\n' >"$f/nogetconf/getconf"
+chmod 0755 "$f/nogetconf/getconf"
+if PATH="$f/nogetconf:$PATH" sh -s -- --report <"$script" 2>&1 | grep -q '^processor: .*, 64-bit programs'; then
+    res report-elf-class pass
+else
+    res report-elf-class FAIL
+fi
 exit "$fails"

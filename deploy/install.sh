@@ -132,7 +132,7 @@ probe_machine() {
     case $WORD in
         32 | 64) ;;
         *)
-            case $(od -An -tu1 -j4 -N1 /bin/sh 2>/dev/null | tr -d ' \n') in
+            case $(dd if=/bin/sh bs=1 skip=4 count=1 2>/dev/null | tr '\001\002' '12') in
                 1) WORD=32 ;;
                 2) WORD=64 ;;
                 *) WORD=unknown ;;
