@@ -52,6 +52,8 @@ the release binary with systemd or the NAS's own start-at-boot hook. Run it as r
   --archive FILE       a downloaded release archive to use instead of downloading
   --dry-run            show every change, make none
   --uninstall          stop sacdfs and remove what this script installs
+  --report             print this system's details for a support request or a beta
+                       test report, and change nothing (no root, no --iso-dir needed)
   -h, --help           this text
 EOF
 }
@@ -108,12 +110,198 @@ glibc_version() {
     [ -n "$v" ] || v=$(ldd --version 2>&1 | sed -n '1s/.* \([0-9][0-9]*\.[0-9][0-9]*\)$/\1/p')
     echo "$v"
 }
-find_engine() {
+
+# ---------------------------------------------------------------------------------------
+# The machine (#382): what the release builds need, read before anything is downloaded.
+# Every probe gives "unknown" when it can't tell, and never stops the script.
+
+# probe_machine: ARCH (the build's name, or ARCH_BAD=1), WORD (32 or 64: the programs, not the
+# kernel), LIBC and LIBC_VER (glibc, musl or unknown).
+probe_machine() {
+    UNAME_M=$(uname -m 2>/dev/null)
+    ARCH=$UNAME_M ARCH_BAD=
+    case $ARCH in
+        x86_64 | amd64) ARCH=x86_64 ;;
+        aarch64 | arm64) ARCH=aarch64 ;;
+        *) ARCH_BAD=1 ;;
+    esac
+    # uname -m names the kernel: a 64-bit kernel can run 32-bit programs only (Raspberry Pi OS
+    # 32-bit on a Pi 4 or 5 says aarch64). getconf is one of those programs; else the ELF
+    # class (byte 5: 1 is 32-bit, 2 is 64-bit) of the shell's own binary.
+    WORD=$(getconf LONG_BIT 2>/dev/null)
+    case $WORD in
+        32 | 64) ;;
+        *)
+            case $(dd if=/bin/sh bs=1 skip=4 count=1 2>/dev/null | tr '\001\002' '12') in
+                1) WORD=32 ;;
+                2) WORD=64 ;;
+                *) WORD=unknown ;;
+            esac
+            ;;
+    esac
+    LIBC=unknown LIBC_VER=$(glibc_version)
+    if [ -n "$LIBC_VER" ]; then
+        LIBC=glibc
+    else
+        # musl's ldd says "musl libc (x86_64)", then "Version 1.2.4", on stderr.
+        out=$(ldd --version 2>&1 | head -n 2)
+        case $out in
+            *musl*) LIBC=musl LIBC_VER=$(printf '%s\n' "$out" | sed -n 's/^Version \([0-9][0-9.]*\).*/\1/p') ;;
+            *) for f in /lib/ld-musl-*.so.1; do [ -e "$f" ] && LIBC=musl; done ;;
+        esac
+    fi
+}
+
+# libc_line: "glibc 2.36", "musl 1.2.4" or "unknown".
+libc_line() {
+    if [ "$LIBC" = unknown ]; then echo unknown; else echo "$LIBC ${LIBC_VER:-(version unknown)}"; fi
+}
+
+# older_than A B: version A (such as 2.12) is older than B (2.17). False when A isn't a version.
+older_than() {
+    case $1 in '' | *[!0-9.]* | .* | *..*) return 1 ;; esac
+    a1=${1%%.*} b1=${2%%.*}
+    a2=${1#"$a1"} b2=${2#"$b1"}
+    a2=${a2#.} b2=${b2#.}
+    a2=${a2%%.*} b2=${b2%%.*}
+    [ "$a1" -lt "$b1" ] || { [ "$a1" -eq "$b1" ] && [ "${a2:-0}" -lt "${b2:-0}" ]; }
+}
+
+# clean: one line of printable text from stdin, or "unknown".
+clean() {
+    v=$(head -n 1 | tr -d '\000-\037\177' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/[[:space:]][[:space:]]*/ /g')
+    echo "${v:-unknown}"
+}
+
+# value KEY FILE: KEY=value or KEY = value from a settings file, without quotes. Only that
+# key: these files also hold names a report must not show.
+value() {
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 | sed 's/^"//; s/"$//'
+}
+
+# shellcheck disable=SC2016 # dpkg-query's own ${Version}
+# nas_version: the NAS firmware's version, from the files detect_platform looks at.
+nas_version() {
+    case $PLATFORM in
+        synology)
+            f=/etc.defaults/VERSION
+            v="DSM $(value productversion $f)-$(value buildnumber $f)"
+            u=$(value smallfixnumber $f)
+            case $u in '' | 0) ;; *) v="$v Update $u" ;; esac
+            echo "$v"
+            ;;
+        qnap)
+            f=/etc/config/uLinux.conf
+            v=$(getcfg System Version -f $f 2>/dev/null)
+            [ -n "$v" ] || v=$(value Version $f)
+            b=$(getcfg System 'Build Number' -f $f 2>/dev/null)
+            [ -n "$b" ] || b=$(value 'Build Number' $f)
+            echo "$v${b:+ build $b}"
+            ;;
+        asustor) echo "ADM $(value Version /etc/nas.conf)" ;;
+        terramaster)
+            v=$(head -n 1 /etc/tos/config/version 2>/dev/null)
+            [ -n "$v" ] || v=$(value version /etc/tos/conf/tos.conf)
+            echo "$v"
+            ;;
+        truenas) head -n 1 /etc/version 2>/dev/null ;;
+        unraid) value version /etc/unraid-version ;;
+        openmediavault) dpkg-query -W -f '${Version}' openmediavault 2>/dev/null ;;
+    esac
+}
+
+cpu_model() {
+    for k in 'model name' Model Hardware 'cpu model' 'Processor'; do
+        v=$(sed -n "s/^${k}[[:space:]]*:[[:space:]]*//p" /proc/cpuinfo 2>/dev/null | head -n 1)
+        [ -n "$v" ] && { echo "$v"; return; }
+    done
+    sed -n 's/^CPU part[[:space:]]*:[[:space:]]*/CPU part /p' /proc/cpuinfo 2>/dev/null | head -n 1
+}
+cpu_count() {
+    n=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+    case $n in '' | 0 | *[!0-9]*) n=$(getconf _NPROCESSORS_ONLN 2>/dev/null) ;; esac
+    case $n in '' | 0 | *[!0-9]*) echo unknown ;; *) echo "$n" ;; esac
+}
+
+# engine_line: the container engine, as find_engine sees it, or one that is here but doesn't
+# answer (often: not root).
+engine_line() {
+    [ -n "${ENGINE_PROBED:-}" ] || { find_engine; ENGINE_PROBED=1; }
+    if [ -n "$COMPOSE" ]; then
+        echo "$ENGINE, with $COMPOSE"
+        return
+    fi
+    v=
+    for e in docker podman; do command -v "$e" >/dev/null 2>&1 && v="$v${v:+, }$e"; done
+    if [ -n "$v" ]; then echo "$v found, but no engine with Compose answers"; else echo none; fi
+}
+
+FORM="https://github.com/$REPO/issues/new?template=unsupported-system.yml"
+
+# report CHECK: the block for a support request: no host name, address, serial number, user
+# or path.
+report() {
+    os=unknown
+    if [ -r /etc/os-release ]; then
+        os=$(value PRETTY_NAME /etc/os-release)
+        [ -n "$os" ] || os="$(value NAME /etc/os-release) $(value VERSION /etc/os-release)"
+    fi
+    nas=
+    [ -n "${PLATFORM:-}" ] && [ "$PLATFORM" != linux ] && nas="$NAME $(nas_version | clean)"
+    mem=$(awk '/^MemTotal:/ { printf "%d MB", $2 / 1024 }' /proc/meminfo 2>/dev/null)
+    say "--- sacdfs system report (nothing is sent; no names, addresses or folders) ---"
+    say "installer:      sacdfs install.sh $DEFAULT_VERSION"
+    say "stopped by:     $1"
+    if [ "$WORD" = unknown ]; then w="programs' word size unknown"; else w="$WORD-bit programs"; fi
+    say "processor:      $(echo "$UNAME_M" | clean), $w"
+    say "cpu:            $(cpu_model | clean), $(cpu_count) cores"
+    say "memory:         $(echo "$mem" | clean)"
+    say "os:             $(echo "$os" | clean)"
+    [ -n "$nas" ] && say "nas:            $nas"
+    say "kernel:         $(uname -r 2>/dev/null | clean)"
+    say "c library:      $(libc_line | clean)"
+    say "fuse:           $([ -e /dev/fuse ] && echo '/dev/fuse present' || echo '/dev/fuse missing')"
+    say "systemd:        $([ -d /run/systemd/system ] && echo yes || echo no)"
+    say "containers:     $(engine_line | clean)"
+    say "---"
+}
+
+# unsupported CHECK MESSAGE: stop for a reason of the machine's, with the report and the form.
+unsupported() {
+    {
+        printf 'install.sh: %s\n\n' "$2"
+        report "$1"
+        say "If you would like sacdfs on this system, ask for it here and paste the block above:"
+        say "  $FORM"
+    } >&2
+    exit 1
+}
+
+# check_machine [libc]: stop on a processor or word size with no release build; with
+# "libc", also on a C library the release binary can't use.
+check_machine() {
+    [ -z "$ARCH_BAD" ] ||
+        unsupported "processor ($UNAME_M)" "there is no sacdfs release for this processor ($UNAME_M): only 64-bit x86-64 and aarch64. Nothing was downloaded or changed. Building from source: $DOCS/binary.md#from-source"
+    [ "$WORD" != 32 ] ||
+        unsupported "32-bit programs on a 64-bit kernel" "this system runs 32-bit programs (its kernel is $UNAME_M), and sacdfs needs a 64-bit system. Nothing was downloaded or changed."
+    [ "${1:-}" = libc ] || return 0
+    if [ "$LIBC" = musl ]; then
+        unsupported "C library (musl)" "this system's C library is musl, and the sacdfs binary needs glibc 2.17 or later. Nothing was downloaded or changed. With Docker or Podman, the container works here (--method compose)."
+    fi
+    if [ "$LIBC" = glibc ] && older_than "$LIBC_VER" 2.17; then
+        unsupported "C library (glibc $LIBC_VER)" "this system has glibc $LIBC_VER, and the sacdfs binary needs 2.17 or later. Nothing was downloaded or changed. With Docker or Podman, the container works here (--method compose)."
+    fi
+}
+# engine_path: the folders NAS packages install Docker in, added to PATH.
+engine_path() {
     for d in /usr/local/bin /var/packages/ContainerManager/target/usr/bin \
         /share/CACHEDEV1_DATA/.qpkg/container-station/bin /Volume1/@apps/DockerEngine/dockerd/bin \
         /usr/local/AppCentral/docker-ce/bin; do
         [ -x "$d/docker" ] && case :$PATH: in *":$d:"*) ;; *) PATH=$PATH:$d ;; esac
     done
+}
+find_engine() {
+    engine_path
     if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         if docker compose version >/dev/null 2>&1; then
             ENGINE=docker COMPOSE="docker compose"
@@ -270,13 +458,15 @@ check_binary() {
     if ! { cp "$(file_of sacdfs)" "$TMP/sacdfs-check" && chmod 0755 "$TMP/sacdfs-check"; }; then
         die "cannot copy the binary to $TMP"
     fi
-    out=$("$TMP/sacdfs-check" --version 2>&1) || die "the sacdfs binary doesn't run here: $out (glibc 2.17 or later is needed; see $DOCS/binary.md#binaries)"
+    out=$("$TMP/sacdfs-check" --version 2>&1) ||
+        unsupported "the release binary didn't start" "the sacdfs binary doesn't run here: $out (glibc 2.17 or later is needed; see $DOCS/binary.md#binaries). Nothing was changed."
     say "  $out runs here"
 }
 
 ensure_fuse() {
     [ -e /dev/fuse ] && return 0
-    run modprobe fuse || die "/dev/fuse is missing and 'modprobe fuse' failed"
+    run modprobe fuse ||
+        unsupported "FUSE (/dev/fuse missing, modprobe fuse failed)" "/dev/fuse is missing and 'modprobe fuse' failed: sacdfs needs FUSE. Nothing was downloaded or changed."
 }
 
 host_address() {
@@ -420,9 +610,9 @@ check_mount() {
 
 install_systemd() {
     say "Route: release binary under systemd ($UNIT)"
+    ensure_fuse
     fetch_files sacdfs sacdfs.service
     check_binary
-    ensure_fuse
     changed=0
     put "$(file_of sacdfs)" "$BIN" 0755 && changed=1
     put "$(file_of sacdfs.service)" "$UNIT" 0644 && { changed=1; run systemctl daemon-reload; }
@@ -570,9 +760,9 @@ EOF
 
 install_ctl() {
     say "Route: release binary with sacdfs-ctl, files in $PREFIX"
+    ensure_fuse
     fetch_files sacdfs sacdfs-ctl
     check_binary
-    ensure_fuse
     changed=0
     put "$(file_of sacdfs)" "$BIN" 0755 && changed=1
     put "$(file_of sacdfs-ctl)" "$CTL" 0755 && changed=1
@@ -618,7 +808,7 @@ quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 # what is missing is an error with the usage.
 parse_args() {
     ISO_DIR='' SHARE=both SHARE_NAME=sacd MOUNT='' PREFIX='' METHOD=auto PLATFORM='' VERSION=''
-    ARCHIVE='' DRY=0 UNINSTALL=0
+    ARCHIVE='' DRY=0 UNINSTALL=0 REPORT=0
     # The arguments again, quoted for the shell, for the line to re-run with sudo.
     ARGS_Q=''
     for a in "$@"; do ARGS_Q="$ARGS_Q $(quote "$a")"; done
@@ -644,6 +834,7 @@ parse_args() {
             --archive) need_arg "$@"; ARCHIVE=$2; shift ;;
             --dry-run) DRY=1 ;;
             --uninstall) UNINSTALL=1 ;;
+            --report) REPORT=1 ;;
             -h | --help)
                 usage | sed "s/DEFAULT)/$DEFAULT_VERSION)/"
                 exit 0
@@ -659,7 +850,7 @@ parse_args() {
         '' | *[!A-Za-z0-9._-]*) die "--share-name: use letters, digits, '.', '_' and '-' only" ;;
     esac
     case $VERSION in *[!0-9A-Za-z.+-]*) die "--version: a version such as $DEFAULT_VERSION" ;; esac
-    if [ -z "$ISO_DIR" ]; then
+    if [ -z "$ISO_DIR" ] && [ "$REPORT" = 0 ]; then
         usage | sed "s/DEFAULT)/$DEFAULT_VERSION)/" >&2
         die "--iso-dir PATH is required: the folder that holds your SACD images"
     fi
@@ -701,6 +892,17 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
         *) die "--platform: unknown system '$PLATFORM' (see --help)" ;;
     esac
     DOCS=https://github.com/$REPO/blob/main/docs/install
+    probe_machine
+    COMPOSE=
+    ENGINE=
+
+    # --report: the details for a support request or a beta test report. Prints only.
+    if [ "$REPORT" = 1 ]; then
+        report "nothing (--report)"
+        say "Attach this block to a beta test report. For a system sacdfs doesn't support yet:"
+        say "  $FORM"
+        exit 0
+    fi
 
     say "sacdfs installer: $NAME detected$([ "$DRY" = 1 ] && echo ' (dry run: nothing is changed)')"
 
@@ -721,6 +923,19 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
             exit 0
             ;;
     esac
+
+    # A machine no release build runs on: stop before asking for root or downloading (#382).
+    # The C library matters only to the binary; checked here unless a container engine may
+    # take the install (then again once the route is known).
+    if [ "$UNINSTALL" = 0 ]; then
+        engine_path
+        if [ "$METHOD" = systemd ] || [ "$METHOD" = ctl ] ||
+            { [ "$METHOD" = auto ] && ! command -v docker >/dev/null 2>&1 && ! command -v podman >/dev/null 2>&1; }; then
+            check_machine libc
+        else
+            check_machine
+        fi
+    fi
 
     if [ "$(id -u)" != 0 ]; then
         if [ "$DRY" = 1 ]; then
@@ -747,23 +962,15 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
     # ---------------------------------------------------------------------------------------
     # The machine: architecture, glibc, FUSE, systemd, container engine.
 
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64 | amd64) ARCH=x86_64 ;;
-        aarch64 | arm64) ARCH=aarch64 ;;
-        *) ARCH_BAD=1 ;;
-    esac
-    GLIBC=$(glibc_version)
-
+    # (probe_machine read the processor and C library above.)
     if [ -d /run/systemd/system ]; then HAS_SYSTEMD=1; else HAS_SYSTEMD=0; fi
 
     # A container engine that answers, and a Compose for it. NAS packages install Docker
     # outside the login's PATH.
-    COMPOSE=
-    ENGINE=
     find_engine
+    ENGINE_PROBED=1
 
-    say "  CPU $(uname -m), glibc ${GLIBC:-unknown}, FUSE $([ -e /dev/fuse ] && echo present || echo 'not loaded'), systemd $([ "$HAS_SYSTEMD" = 1 ] && echo yes || echo no), containers ${COMPOSE:-none}"
+    say "  CPU $UNAME_M ($WORD-bit), C library $(libc_line), FUSE $([ -e /dev/fuse ] && echo present || echo 'not loaded'), systemd $([ "$HAS_SYSTEMD" = 1 ] && echo yes || echo no), containers ${COMPOSE:-none}"
 
     # How to run sacdfs here.
     if [ "$METHOD" = auto ]; then
@@ -780,11 +987,12 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
         fi
     fi
     case $METHOD in
-        compose) [ -n "$COMPOSE" ] || [ "$UNINSTALL" = 1 ] || die "--method compose: no Docker or Podman with Compose answers here" ;;
+        compose) [ -n "$COMPOSE" ] || [ "$UNINSTALL" = 1 ] ||
+            unsupported "container engine (--method compose, none answers)" "--method compose: no Docker or Podman with Compose answers here. Nothing was downloaded or changed." ;;
         systemd) [ "$HAS_SYSTEMD" = 1 ] || die "--method systemd: systemd isn't running here" ;;
     esac
     if [ "$METHOD" != compose ] && [ "$UNINSTALL" = 0 ]; then
-        [ -z "${ARCH_BAD:-}" ] || die "no release binary for $(uname -m); see $DOCS/binary.md#from-source"
+        check_machine libc
     fi
 
     # The paths.

@@ -13,6 +13,7 @@
 #   deploy/ci-install-test.sh nas-sim       # simulated NAS layouts (github.com/aclater/nas-sim)
 #   deploy/ci-install-test.sh host-systemd  # this host, as root through sudo (systemd unit)
 #   deploy/ci-install-test.sh host-compose  # this host, as root through sudo (Compose)
+#   deploy/ci-install-test.sh unsupported   # unsupported systems and --report (#382)
 #
 # Run from the repository root. RUNTIME: docker (default) or podman. LABEL_DISABLE=1 on an
 # SELinux host. Needs curl, python3 and the corpus in tests/corpus/images.
@@ -40,6 +41,50 @@ cleanup() {
     rm -rf "$work" 2>/dev/null || sudo rm -rf "$work"
 }
 trap cleanup EXIT
+
+# Systems the installer can't support (#382), and --report: deploy/ci-install-unsupported-steps.sh
+# on this host (the runner's dash, not root) and as root in the BusyBox and Fedora
+# containers (no /dev/fuse there, so a FUSE that can't be loaded is covered too). The releases
+# URL points at a server that serves nothing and logs every request: there must be none.
+if [ "$mode" = unsupported ]; then
+    mkdir -p "$work/empty"
+    python3 -I -m http.server --bind 127.0.0.1 --directory "$work/empty" "$port" >>"$work/http.log" 2>&1 &
+    server=$!
+    for _ in $(seq 50); do curl -s -o /dev/null "$url/" && break; sleep 0.2; done
+    : >"$work/http.log"
+    chmod -R a+rX "$work"
+    failed=()
+    steps=$here/ci-install-unsupported-steps.sh
+    # The runner's dash, as the user: the stops come before the root check.
+    echo "::group::host, dash"
+    dash "$steps" "$here/install.sh" "$url" "$work/http.log" || failed+=(host-dash)
+    echo "::endgroup::"
+    sed "s|@BUILDER@|$HUMMINGBIRD_BUILDER|" "$here/ci-busybox.Containerfile" >"$work/Containerfile.busybox"
+    "$rt" build -q --target busybox -t sacdfs-ci-busybox -f "$work/Containerfile.busybox" "$work" >/dev/null
+    uopts=(--network host)
+    [ -n "${LABEL_DISABLE:-}" ] && uopts+=(--security-opt label=disable)
+    for image in sacdfs-ci-busybox "$FEDORA"; do
+        echo "::group::$image"
+        "$rt" run --rm "${uopts[@]}" -v "$here/install.sh:/install.sh:ro" -v "$steps:/steps.sh:ro" \
+            -v "$work/http.log:/http.log:ro" "$image" sh /steps.sh /install.sh "$url" /http.log ||
+            failed+=("$image")
+        echo "::endgroup::"
+    done
+    if grep '"GET ' "$work/http.log"; then
+        echo "the server had requests (above): the installer downloaded something"
+        failed+=(requests)
+    fi
+    # The server logs requests at all: one to it now must show up.
+    curl -s -o /dev/null "$url/canary"
+    sleep 1
+    grep -q '"GET /aclater/sacdfs/releases/canary' "$work/http.log" || { echo "the server's log doesn't work"; failed+=(log); }
+    if [ "${#failed[@]}" -gt 0 ]; then
+        echo "failed: ${failed[*]}"
+        exit 1
+    fi
+    echo "all passed"
+    exit 0
+fi
 
 # The release, served in GitHub's layout.
 rel=$work/srv/aclater/sacdfs/releases
@@ -142,7 +187,7 @@ case $mode in
             failed+=("$mode")
         ;;
     *)
-        echo "usage: $0 containers|host-systemd|host-compose" >&2
+        echo "usage: $0 containers|nas-sim|host-systemd|host-compose|unsupported" >&2
         exit 2
         ;;
 esac

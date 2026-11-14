@@ -4,7 +4,10 @@
 #   - in containers: BusyBox only (sh is BusyBox ash, BusyBox wget), BusyBox with no C library
 #     (the script must refuse before changing anything), Fedora 44, and UBI 7 (glibc 2.17);
 #   - on the runner as root: with the systemd unit, and with Docker Compose;
-#   - in the BusyBox and Fedora containers, a failed or cut-short download must fail loudly (#352).
+#   - in the BusyBox and Fedora containers, a failed or cut-short download must fail loudly (#352);
+#   - unsupported systems (#382), with a fake uname, getconf and ldd: i686, armv7l, aarch64 with
+#     32-bit programs, glibc 2.12, musl, the container route on such a processor, no Compose
+#     engine, no FUSE: each must stop with the report and download nothing; and --report.
 # See deploy/ci-install-test.sh.
 name: installer
 
@@ -39,8 +42,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends devscripts busybox-static dash
-          shellcheck -s sh deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/sacdfs-ctl
-          checkbashisms -p deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/sacdfs-ctl
+          shellcheck -s sh deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/ci-install-unsupported-steps.sh deploy/sacdfs-ctl
+          checkbashisms -p deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/ci-install-unsupported-steps.sh deploy/sacdfs-ctl
           dash -n deploy/install.sh
           busybox sh -n deploy/install.sh
           # No terminal, no --iso-dir: an error that shows the usage, never a prompt.
@@ -61,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [containers, host-systemd, host-compose]
+        mode: [containers, host-systemd, host-compose, unsupported]
     env:
       MODE: ${{ matrix.mode }}
     steps:
