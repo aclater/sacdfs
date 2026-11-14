@@ -22,6 +22,8 @@ image=$2
 read -r -a dk <<<"${DOCKER:-docker}"
 client_image=${CLIENT:-sacdfs-client:ci}
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=deploy/ci-caps.sh
+. "$here/ci-caps.sh"
 srv=sacdfs-restart
 cli=sacdfs-restart-client
 # Not the same ports for both runtimes: Podman refuses a port with TIME_WAIT sockets left on it.
@@ -43,9 +45,7 @@ cleanup() {
 trap cleanup EXIT
 
 export RUNTIME="${rt[*]}"
-"${rt[@]}" run -d --name "$srv" \
-    --device /dev/fuse --cap-add SYS_ADMIN --cap-add DAC_READ_SEARCH \
-    --security-opt apparmor=unconfined --security-opt label=disable \
+"${rt[@]}" run -d --name "$srv" "${SERVER_OPTS[@]}" --security-opt label=disable \
     -p "127.0.0.1:$nfs_port:2049" -p "127.0.0.1:$smb_port:445" \
     -v "$PWD/tests/corpus/images:/images:ro" "$image" >/dev/null
 "$here/ci-wait-healthy.sh" "$srv"
