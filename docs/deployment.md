@@ -127,6 +127,16 @@ or move it as a file: `podman save sacdfs | gzip > sacdfs.tar.gz`, then
   the container itself was tested on current kernels only.
 - Both bases are pinned by digest in `Containerfile`, so a rebuild gets the same base until
   the pin is updated (Dependabot proposes updates).
+- **The runtime stage upgrades the base's packages at build time** (`dnf upgrade`, #399), as it
+  installs Samba and the rest: the pin fixes the starting point, not the package versions, so an
+  image gets Fedora 44's updates when it is built. Before 0.6.4 the base's own packages stayed as
+  old as the pin, and a scan of the 0.6.3 image found 39 known vulnerabilities with fixes in Fedora
+  44's updates: 16 High (pcre2) and 23 Medium (dnf5, libgcc and libstdc++, libmodulemd, tpm2-tss).
+  None were in Samba, NFS-Ganesha or fuse3. An image built with the upgrade had none (grype,
+  database of 2026-11-14). The image is about 35 MB larger uncompressed, because the upgraded
+  files are stored again on top of the pinned base layer; the files themselves take 4 MB less.
+- A weekly workflow (`image-scan.yml`) scans the latest published image and fails on High or
+  Critical findings that have a fix ([development.md](development.md)).
 
 ### The NFS server: NFS-Ganesha, and why not the kernel's
 
