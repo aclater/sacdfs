@@ -148,6 +148,14 @@ All notable changes to sacdfs are recorded here. The format follows
   those servers counts as one; its reader then lets an earlier player go first, and its audio is
   the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
 
+### Documentation
+- **The install start page reads top to bottom (part of #310).** `docs/install/README.md` opens
+  with the installer in the guide shape (what you need, three steps with a dry run first, check
+  it worked, the three common problems), then the guide chooser. The installer's background
+  (what it does per system, the `wget` and BusyBox notes, cut-short downloads, unsupported
+  systems, `--report`, reading it before running it, where it was checked) moved to Details at
+  the end, unchanged.
+
 ## [0.6.3] - 2026-11-13
 
 Tested as release candidate 0.6.3-rc.1; the results are in docs/test-plan.md ("Results: 0.6.3-rc.1
