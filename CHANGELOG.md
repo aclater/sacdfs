@@ -46,6 +46,16 @@ All notable changes to sacdfs are recorded here. The format follows
   `Unknown lvalue` and runs the unit without it. Checked on Fedora 44, RHEL 10.1, TerraMaster
   TOS 7.0, Debian 12 with UGREEN's kernel and ReadyNAS OS 6.10 (systemd 230), each in a VM, not on
   the vendor's hardware.
+- **The image upgrades Fedora's own packages when it is built, and a weekly scan checks the
+  published image (#399).** The runtime stage starts from the digest-pinned Fedora 44 base as
+  before, then runs `dnf upgrade` before it installs Samba and the rest, so the base's packages
+  get Fedora 44's updates too. A scan of the 0.6.3 image with grype found 39 known
+  vulnerabilities, all fixed in Fedora 44 updates: 16 High in pcre2 and 23 Medium in dnf5,
+  libgcc, libstdc++, libgomp, libmodulemd and tpm2-tss. None were in Samba, NFS-Ganesha or fuse3.
+  An image built with the upgrade has none. The image is about 35 MB larger uncompressed (the
+  upgraded files sit on top of the pinned base layer). A new workflow, `image-scan.yml`, scans the
+  latest published image every week, and on demand, and fails on High or Critical findings that
+  have a fix.
 - **The container gives each program only the capabilities it needs (#386).** The Compose files,
   the TrueNAS app and the Unraid template now drop the runtime's whole default set
   (`cap_drop: ALL`) and add back seven: `SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`,
@@ -86,6 +96,25 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **A WAV read whose conversion fails is an I/O error, never old audio (#388).** If the DSD to
+  PCM conversion ever refused a run, the engine's buffer (which may be a reused slot of the frame
+  cache that held another frame's audio) was served and cached as if converted. Now the read fails
+  with `EIO`, through the logged I/O error line, and nothing of it is cached. In the library,
+  `pcm::Converter::convert` and `convert_run` fill the output with zeros on failure, and the new
+  `try_convert` and `try_convert_run` return the error. No failure has been seen; the conversion
+  can't fail with the lengths sacdfs gives it.
+- **A panic in a request answered on fuser's own threads fails that request, not the mount
+  (#389).** Lookups, attributes, listings, `statfs` and the start of opens and reads are answered
+  on fuser's threads, which catch no panic: one would have ended the session and taken the mount
+  down for every client. Each FUSE callback now runs under `catch_unwind`: a panic answers that
+  request with `EIO`, logs an error line, and the mount keeps serving, as the request threads
+  already did. No such panic has been seen.
+- **Names in the daemon's log lines can't split or disguise a line (#391).** Image paths, folder
+  names, disc text and error causes were logged as they were, so a name with a newline split a
+  line in two, an escape sequence changed how a terminal showed the rest, and a bidi control made
+  a line display in another order. Now every log line escapes control characters, Unicode format
+  characters and U+2028/U+2029 as `\n`, `\t`, `\r` or `\u{…}`, on the console and with
+  `--log-file`. The names on the mount are unchanged.
 - **A player that starts beside copies gets its first reads sooner (#363).** A player starting
   while another plays and copies start can't be told from the copies in its first half second, and
   every one of them read ahead 2 s of audio, so its first reads waited behind about 600 frames of

@@ -1773,6 +1773,12 @@ converted to PCM, on a separate rayon pool (`--threads`), with `DstDecoder`s and
   wait, on the same thread, for the demultiplexer lock the first one holds.
 - Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O error on
   that read.
+- So does every FUSE callback, on fuser's own threads, where the requests answered from memory
+  (lookups and attributes of known entries, cached listings, `statfs`) are answered inline
+  (#389). fuser 0.18 catches no panic, and one on its thread ended the session: the mount was
+  gone for every client. Now the callback's reply, dropped unsent as the panic unwinds, is
+  answered `EIO` by fuser, an error line is logged, and the mount stays. A test makes each kind
+  of inline callback panic through a test-only hook (`fuse::tests`).
 
 ### A stalled source (#63, #72)
 
@@ -1856,6 +1862,20 @@ everything:
   *Trade-off:* the second failure of an image within a minute has no line of its own, only a
   count. So an `EIO` that a client saw is in the log, or counted in a later line, unless the
   kernel or fuser made it (fuser logs its own at `warn`).
+- **Names in log lines are escaped
+  ([#391](https://github.com/aclater/sacdfs/issues/391)).** Every line the daemon logs goes
+  through `printable::EscapingLogger`, installed in front of env_logger, which writes control
+  characters (C0, DEL, C1), Unicode format characters (category Cf: bidi controls, zero-width
+  characters, the BOM) and U+2028/U+2029 escaped, as `\n`, `\r`, `\t` or `\u{…}`. *Why:* the
+  lines carry names from SOURCE and disc text, directly and inside error messages, and a file
+  name can hold any byte but `/` and NUL. A raw newline split a line in two, so that the second
+  half could pass for a line of its own, an escape sequence changed a terminal's display, and a
+  bidi control showed a line in another order than its bytes. *Why at the logger, not at each of
+  the hundred or so log calls:* the names also arrive inside `io::Error` and scarletbook's
+  errors, which the calls don't build, and lines added later are covered too. The line format
+  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are, and the
+  names on the mount don't change: whether file names should drop format characters is a
+  separate question (#392). `sacdfs verify` and `sacdfs tags` keep their own loggers.
 - **A hung image's reads are capped once they have failed
   ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
   free the thread, which stays blocked until the source answers, so each retry by a client took
@@ -2014,6 +2034,7 @@ alternatives and the trade-off.
 - `convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM (`frame_bytes()` long) and returns the clip count. `None` neighbours are silence.
 - `convert_run(prev, frames, next, out, clips)` converts consecutive frames: the same bytes as `convert` on each, plus each frame's clip count.
 - `convert_f32` gives the same samples as floats, for tools and tests.
+- `try_convert` and `try_convert_run` are the same, but return `ConvertError` if scarletbook-pcm refuses the conversion. On failure, all four leave `out` all zeros, never what it held before. *Why (#388):* the engine converts into reused slots of its frame cache, which may hold another frame's audio. It uses the `try_` forms and fails the read with `EIO`, so nothing from a failed run is served or cached. The lengths sacdfs passes make a failure impossible today. The check is there in case scarletbook-pcm adds one.
 - `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
 - A short frame (which the decoder never makes) is padded with silence.
 
