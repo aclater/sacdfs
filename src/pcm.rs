@@ -34,6 +34,19 @@ pub const FRAME_BYTES: usize = 4704;
 /// last frame of an area. It converts to exact zero.
 pub const DSD_SILENCE: u8 = 0x69;
 
+/// A conversion that failed (#388): scarletbook-pcm refused the run. The output buffer then
+/// holds zeros, never what it held before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConvertError;
+
+impl std::fmt::Display for ConvertError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the DSD to PCM conversion failed")
+    }
+}
+
+impl std::error::Error for ConvertError {}
+
 /// A PCM output rate: DSD64 divided by a power of two.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum PcmRate {
@@ -157,6 +170,9 @@ pub struct Converter {
     /// Output that does not fit the caller's buffer, and per-frame clip counts.
     spill: Vec<u8>,
     counts: Vec<u64>,
+    /// Tests only: every conversion fails, as if scarletbook-pcm had refused it.
+    #[cfg(test)]
+    fail: bool,
 }
 
 impl Converter {
@@ -177,7 +193,23 @@ impl Converter {
             pad: [Vec::new(), Vec::new()],
             spill: Vec::new(),
             counts: Vec::new(),
+            #[cfg(test)]
+            fail: false,
         }
+    }
+
+    /// Tests only: a converter whose every conversion fails ([`ConvertError`]).
+    #[cfg(test)]
+    pub(crate) fn failing(channels: u8, cfg: &PcmConfig) -> Converter {
+        Converter { fail: true, ..Converter::new(channels, cfg) }
+    }
+
+    /// Whether conversions are to fail (tests only).
+    fn fails(&self) -> bool {
+        #[cfg(test)]
+        return self.fail;
+        #[cfg(not(test))]
+        false
     }
 
     /// The configuration.
@@ -207,10 +239,28 @@ impl Converter {
     /// ([`frame_bytes`](Self::frame_bytes) long). `prev` and `next` are the neighbouring
     /// timeline frames; `None` means DSD silence (the edges of an area). Missing bytes of a
     /// short frame count as silence, and only whole sample frames that fit in `out` are
-    /// written. Returns the number of clipped samples.
+    /// written. Returns the number of clipped samples. If the conversion fails, `out` is all
+    /// zeros (digital silence) and 0 is returned: see [`try_convert`](Self::try_convert).
     pub fn convert(&mut self, prev: Option<&[u8]>, cur: &[u8], next: Option<&[u8]>, out: &mut [u8]) -> u32 {
+        self.try_convert(prev, cur, next, out).unwrap_or(0)
+    }
+
+    /// As [`convert`](Self::convert), but a failed conversion is an error, with `out` all
+    /// zeros. *Why zeros (#388):* the engine converts into reused buffers of its frame cache,
+    /// which may hold another frame's audio; a failure must never leave that to be served.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError`] if scarletbook-pcm refuses the conversion.
+    pub fn try_convert(
+        &mut self,
+        prev: Option<&[u8]>,
+        cur: &[u8],
+        next: Option<&[u8]>,
+        out: &mut [u8],
+    ) -> Result<u32, ConvertError> {
         let mut k = [0u32];
-        self.convert_run(prev, &[cur], next, out, &mut k)
+        self.try_convert_run(prev, &[cur], next, out, &mut k)
     }
 
     /// Converts a run of consecutive DSD frames at once: the same bytes as
@@ -218,7 +268,9 @@ impl Converter {
     /// `prev` before the first and `next` after the last), concatenated. The frames are read
     /// in place. `out` is `frames.len() × frame_bytes()` long; only whole sample frames that
     /// fit are written. Returns the number of clipped samples, and puts each frame's in
-    /// `clips` (as far as it is long), as [`convert`](Self::convert) would return them.
+    /// `clips` (as far as it is long), as [`convert`](Self::convert) would return them. If the
+    /// conversion fails, `out` is all zeros and 0 is returned: see
+    /// [`try_convert_run`](Self::try_convert_run).
     pub fn convert_run(
         &mut self,
         prev: Option<&[u8]>,
@@ -227,10 +279,28 @@ impl Converter {
         out: &mut [u8],
         clips: &mut [u32],
     ) -> u32 {
+        self.try_convert_run(prev, frames, next, out, clips).unwrap_or(0)
+    }
+
+    /// As [`convert_run`](Self::convert_run), but a failed conversion is an error, with `out`
+    /// all zeros and every clip count 0.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError`] if scarletbook-pcm refuses the conversion.
+    pub fn try_convert_run(
+        &mut self,
+        prev: Option<&[u8]>,
+        frames: &[&[u8]],
+        next: Option<&[u8]>,
+        out: &mut [u8],
+        clips: &mut [u32],
+    ) -> Result<u32, ConvertError> {
         clips.iter_mut().for_each(|k| *k = 0);
         if frames.is_empty() {
-            return 0;
+            return Ok(0);
         }
+        let fail = self.fails();
         let whole = self.channels * FRAME_BYTES;
         let need = frames.len() * self.frame_bytes();
         self.counts.clear();
@@ -244,9 +314,11 @@ impl Converter {
             self.spill.resize(need, 0);
         }
         let dst: &mut [u8] = if direct { &mut out[..need] } else { &mut self.spill };
-        let r = if frames.iter().all(|f| f.len() == whole) {
+        let r = if fail {
+            Err(ConvertError)
+        } else if frames.iter().all(|f| f.len() == whole) {
             let run = sb::Run::new(frames).with_before(before).with_after(after);
-            self.conv.convert(run, sb::PcmOut::S24le(dst), Some(&mut self.counts))
+            self.conv.convert(run, sb::PcmOut::S24le(dst), Some(&mut self.counts)).map_err(|_| ConvertError)
         } else {
             self.input.clear();
             for f in frames {
@@ -255,12 +327,13 @@ impl Converter {
                 self.input.resize(self.input.len() + whole - n, DSD_SILENCE);
             }
             let run = sb::Run::new(self.input.as_slice()).with_before(before).with_after(after);
-            self.conv.convert(run, sb::PcmOut::S24le(dst), Some(&mut self.counts))
+            self.conv.convert(run, sb::PcmOut::S24le(dst), Some(&mut self.counts)).map_err(|_| ConvertError)
         };
-        // The lengths are right by construction, so this does not fail; if it ever did, the
-        // output stays as it was and nothing is counted.
-        if r.is_err() {
-            return 0;
+        // The lengths are right by construction, so this does not fail. If it ever did, `out`
+        // would hold what it held before, or part of a conversion: zeros instead (#388).
+        if let Err(e) = r {
+            out.fill(0);
+            return Err(e);
         }
         if !direct {
             let block = self.channels * 3;
@@ -275,7 +348,7 @@ impl Converter {
                 *k = c;
             }
         }
-        total
+        Ok(total)
     }
 
     /// As [`convert`](Self::convert), but writes the samples as f32 (1.0 is full scale):
@@ -309,7 +382,10 @@ pub fn convert_area(channels: u8, cfg: &PcmConfig, dsd: &[u8]) -> (Vec<u8>, u32)
     let run = sb::Run::new(&dsd[..frames * whole]);
     match c.conv.convert(run, sb::PcmOut::S24le(&mut out), None) {
         Ok(stats) => (out, u32::try_from(stats.clipped_total()).unwrap_or(u32::MAX)),
-        Err(_) => (out, 0),
+        Err(_) => {
+            out.fill(0);
+            (out, 0)
+        }
     }
 }
 
@@ -378,6 +454,37 @@ mod tests {
         c.convert(Some(&[1, 2, 3]), &[], None, &mut out);
         let (pcm, _) = convert_area(2, &PcmConfig::default(), &[0u8; 100]);
         assert!(pcm.is_empty());
+    }
+
+    /// A failed conversion leaves zeros, never the buffer's old bytes, and is an error to
+    /// `try_convert` and `try_convert_run` (#388).
+    #[test]
+    fn a_failed_conversion_leaves_zeros() {
+        let cfg = PcmConfig::default();
+        let mut c = Converter::failing(2, &cfg);
+        let cur = [0x5au8; 2 * FRAME_BYTES];
+        for len in [c.frame_bytes(), 100] {
+            let mut out = vec![0xabu8; len];
+            assert_eq!(c.try_convert(None, &cur, None, &mut out), Err(ConvertError));
+            assert!(out.iter().all(|&b| b == 0), "{len} bytes");
+            out.fill(0xab);
+            assert_eq!(c.convert(None, &cur, None, &mut out), 0);
+            assert!(out.iter().all(|&b| b == 0), "{len} bytes");
+        }
+        let mut out = vec![0xabu8; 3 * c.frame_bytes()];
+        let mut clips = [7u32; 3];
+        let r = c.try_convert_run(None, &[&cur, &cur, &cur], None, &mut out, &mut clips);
+        assert_eq!(r, Err(ConvertError));
+        assert!(out.iter().all(|&b| b == 0));
+        assert_eq!(clips, [0; 3]);
+        assert_eq!(ConvertError.to_string(), "the DSD to PCM conversion failed");
+        // The same converter, once it works again, converts as a new one does.
+        c.fail = false;
+        let mut a = vec![0u8; c.frame_bytes()];
+        let mut b = vec![0u8; c.frame_bytes()];
+        c.convert(None, &cur, None, &mut a);
+        Converter::new(2, &cfg).convert(None, &cur, None, &mut b);
+        assert_eq!(a, b);
     }
 
     #[test]

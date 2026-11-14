@@ -80,6 +80,13 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **A WAV read whose conversion fails is an I/O error, never old audio (#388).** If the DSD to
+  PCM conversion ever refused a run, the engine's buffer (which may be a reused slot of the frame
+  cache that held another frame's audio) was served and cached as if converted. Now the read fails
+  with `EIO`, through the logged I/O error line, and nothing of it is cached. In the library,
+  `pcm::Converter::convert` and `convert_run` fill the output with zeros on failure, and the new
+  `try_convert` and `try_convert_run` return the error. No failure has been seen; the conversion
+  can't fail with the lengths sacdfs gives it.
 - **A player that starts beside copies gets its first reads sooner (#363).** A player starting
   while another plays and copies start can't be told from the copies in its first half second, and
   every one of them read ahead 2 s of audio, so its first reads waited behind about 600 frames of
