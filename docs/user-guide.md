@@ -362,7 +362,9 @@ It writes only what the mount uses: a picture of up to 960 KiB; per track, value
 picture and the disc's own text); and up to about 2 MiB of text per disc, since every track's
 tag is built from that tags file. A value over a limit is left out whole, never cut. Each
 picture or value left out is listed as `not kept:`, with its extract and disc: keep those
-extracts, as their tags file lacks it.
+extracts, as their tags file lacks it. A disc whose tags file, with what import adds, would be
+over 3 MiB gets nothing added and is listed as `not kept:` too; the file is left as it was.
+The summary lists at most 32 `not kept:` lines and counts the rest.
 
 **Exit status:** 0 when every extract was handled, as `sacdfs verify` means it: each DSF and DFF
 file matched and its tags were read (a FLAC or WAV file can't be compared, and doesn't count

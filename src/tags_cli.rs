@@ -199,8 +199,11 @@ impl ImportSummary {
                 self.not_imported
             ));
         }
-        for n in &self.not_kept {
+        for n in self.not_kept.iter().take(MAX_LISTED) {
             s.push_str(&format!("not kept: {n}\n"));
+        }
+        if self.not_kept.len() > MAX_LISTED {
+            s.push_str(&format!("not kept: +{} more\n", self.not_kept.len() - MAX_LISTED));
         }
         if !self.not_kept.is_empty() {
             s.push_str("keep those extracts: their tags files lack what is listed as not kept\n");
@@ -230,6 +233,11 @@ pub const MAX_TRACK_BYTES: usize = 32 << 10;
 /// The most text import adds to one disc's tags file, as `cost` counts it. *Why:* the mount
 /// builds every track's tag from that file, so it is kept bounded (under 2 MiB as written).
 pub const MAX_DISC_BYTES: usize = (2 << 20) - (64 << 10);
+/// The largest tags file import writes, in bytes. *Why:* what import adds merges into the tags
+/// file there may already be, which can be large; past this the disc's file is left as it was.
+pub const MAX_FILE_BYTES: usize = 3 << 20;
+/// The most "not kept" lines the summary lists; the rest are counted.
+pub const MAX_LISTED: usize = 32;
 
 /// What `key = value` costs: its bytes, with room for escaping in the tags file and for the
 /// frame header in the tag.
@@ -302,6 +310,8 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
     let mut areas: [AreaFields; 2] = Default::default();
     let mut art: Option<Vec<u8>> = None;
     let mut disc_bytes = 0;
+    // Where this disc's "not kept" lines start.
+    let listed = sum.not_kept.len();
     for row in rows {
         let slot = if row.area == "Multichannel" { Slot::Multichannel } else { Slot::TwoChannel };
         let Some(number) = row.track else { continue };
@@ -413,14 +423,11 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         file.multichannel.album.remove(k);
     }
     file.album = shared;
+    let mut picture = None;
     if let Some(bytes) = &art {
         let ext = if tags::picture_mime(bytes) == Some("image/png") { "png" } else { "jpg" };
         let name = format!("{key}.{ext}");
-        let p = dir.join(&name);
-        if !p.exists() {
-            write_atomic(&p, bytes)?;
-            sum.pictures += 1;
-        }
+        picture = Some(dir.join(&name));
         file.album.insert(ART.to_owned(), name);
     }
     if file.is_empty() {
@@ -437,10 +444,28 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
     let created = existing.is_none();
     let mut merged = existing.unwrap_or_default();
     let added = merge(&mut merged, &file);
-    if added == 0 {
+    // The file as it would be written, with what was there: over its bound, the disc gets
+    // nothing, and that is all there is to say about it.
+    let text = (added > 0).then(|| merged.to_text());
+    if let Some(t) = text.as_ref().filter(|t| t.len() > MAX_FILE_BYTES) {
+        sum.not_kept.truncate(listed);
+        sum.not_kept.push(format!(
+            "disc {}: its tags file {} would be {} KiB, over the {} KiB import writes; nothing added",
+            image.display(),
+            path.display(),
+            t.len() >> 10,
+            MAX_FILE_BYTES >> 10
+        ));
         return Ok(());
     }
-    write_atomic(&path, merged.to_text().as_bytes())?;
+    if let (Some(p), Some(bytes)) = (&picture, &art) {
+        if !p.exists() {
+            write_atomic(p, bytes)?;
+            sum.pictures += 1;
+        }
+    }
+    let Some(text) = text else { return Ok(()) };
+    write_atomic(&path, text.as_bytes())?;
     sum.written += 1;
     sum.created += usize::from(created);
     sum.keys += added;

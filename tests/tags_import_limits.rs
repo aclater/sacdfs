@@ -10,13 +10,13 @@
 mod common;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sacdfs::disc::{Disc, Tuning};
 use sacdfs::engine::Engine;
 use sacdfs::tags::{self, TagsFile};
-use sacdfs::tags_cli::{MAX_TRACK_KEYS, MAX_VALUE_BYTES};
+use sacdfs::tags_cli::{MAX_FILE_BYTES, MAX_LISTED, MAX_TRACK_KEYS, MAX_VALUE_BYTES};
 use sacdfs::track::Reader;
 use sacdfs::tree::{SourceDir, Tree};
 use scarletbook::Slot;
@@ -50,6 +50,102 @@ fn txxx(tag: &mut Vec<u8>, desc: &str, value: &str) {
     frame(tag, b"TXXX", &body);
 }
 
+/// Writes into `ext` an extract of each stereo DSF track of the image in `lib`, its tag as the
+/// mount serves it plus what `add` appends (with the track's number and its index). The tracks'
+/// numbers, in order.
+fn write_extracts(lib: &Path, ext: &Path, mut add: impl FnMut(u32, usize, &mut Vec<u8>)) -> Vec<u32> {
+    let engine = Engine::new(2, 32 << 20).unwrap();
+    let tree = Tree::new(SourceDir::scan(lib).unwrap());
+    let mut stereo: Vec<(PathBuf, _)> = tree
+        .all_files()
+        .into_iter()
+        .filter(|(p, _)| p.to_string_lossy().contains("Stereo") && p.extension().is_some_and(|e| e == "dsf"))
+        .collect();
+    stereo.sort_by(|a, b| a.0.cmp(&b.0));
+    assert!(stereo.len() >= 2, "the stereo area has {} tracks", stereo.len());
+    fs::create_dir_all(ext).unwrap();
+    let mut numbers = Vec::new();
+    for (i, (p, f)) in stereo.iter().enumerate() {
+        let number = common::track_number(&p.file_name().unwrap().to_string_lossy());
+        numbers.push(number);
+        let (bytes, _) = Reader::new(f.clone()).read(&engine, 0, f.size).unwrap();
+        let end = f.data_end() as usize;
+        let mut tag = f.tag().to_vec();
+        assert!(tag.starts_with(b"ID3\x04"), "{p:?}");
+        tag.truncate(10 + tag[6..10].iter().fold(0usize, |a, &b| (a << 7) | usize::from(b & 0x7F)));
+        add(number, i, &mut tag);
+        let mut out = bytes[..end].to_vec();
+        out.extend_from_slice(&tag);
+        let total = (out.len() as u64).to_le_bytes();
+        out[12..20].copy_from_slice(&total);
+        fs::write(ext.join(format!("{number:02}.dsf")), &out).unwrap();
+    }
+    numbers
+}
+
+/// Runs `sacdfs tags import` of the extracts in `ext` against `lib` into `tags_dir`: its exit
+/// status and what it said.
+fn import(lib: &Path, ext: &Path, tags_dir: &Path) -> (Option<i32>, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .args(["tags", "import", "-q", "--pauses", "dropped", "--tags"])
+        .arg(tags_dir)
+        .arg("--map")
+        .arg(ext)
+        .arg(lib)
+        .arg(lib)
+        .arg(ext)
+        .output()
+        .unwrap();
+    (out.status.code(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+/// A tags file there already, near the bound on what import writes: what import would add to
+/// it is not written, and the disc is listed as not kept. Many values too large are listed up
+/// to `MAX_LISTED`, then counted.
+#[test]
+fn import_leaves_a_full_tags_file_and_bounds_its_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = dir.path().join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    let iso = format!("{TAGGED}.iso");
+    std::os::unix::fs::symlink(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    let ext = dir.path().join("ext");
+    let big = "b".repeat(MAX_VALUE_BYTES + 1);
+    let many = MAX_LISTED + 8;
+    let numbers = write_extracts(&lib, &ext, |_, i, tag| {
+        frame(tag, b"TCON", b"\x03New Genre");
+        if i == 0 {
+            for k in 0..many {
+                txxx(tag, &format!("Big {k:02}"), &big);
+            }
+        }
+    });
+    let tags_dir = dir.path().join("tags");
+    fs::create_dir_all(&tags_dir).unwrap();
+    let key = tags::disc_key(Disc::open(&lib.join(&iso), 0, Tuning::default()).unwrap().toc());
+    let path = tags_dir.join(format!("{key}.toml"));
+
+    // Many values too large, and no tags file yet: listed up to the bound.
+    let (code, say) = import(&lib, &ext, &tags_dir);
+    assert_eq!(code, Some(2), "{say}");
+    let not_kept: Vec<&str> = say.lines().filter(|l| l.starts_with("not kept: ")).collect();
+    assert_eq!(not_kept.len(), MAX_LISTED + 1, "{say}");
+    assert_eq!(not_kept[MAX_LISTED], format!("not kept: +{} more", many - MAX_LISTED), "{say}");
+    let written = TagsFile::parse(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(written.fields_for(Slot::TwoChannel, numbers[0] as u8).contains_key("genre"));
+
+    // A tags file near the bound, without that genre: left as it was, and the disc listed.
+    let own = format!("[album]\ncopyright = \"{}\"\n", "c".repeat(MAX_FILE_BYTES - 100));
+    fs::write(&path, &own).unwrap();
+    let (code, say) = import(&lib, &ext, &tags_dir);
+    assert_eq!(code, Some(2), "{say}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), own);
+    let not_kept: Vec<&str> = say.lines().filter(|l| l.starts_with("not kept: ")).collect();
+    assert_eq!(not_kept.len(), 1, "{say}");
+    assert!(not_kept[0].contains(&format!("{key}.toml")) && not_kept[0].contains("nothing added"), "{say}");
+    assert!(say.contains("keep those extracts"), "{say}");
+}
+
 #[test]
 fn import_keeps_only_what_the_mount_serves() {
     common::skip_without_fuse!();
@@ -62,17 +158,7 @@ fn import_keeps_only_what_the_mount_serves() {
     // Extracts of the stereo DSF tracks, as a tagger would leave them: each with a genre, a
     // value of its own and a 1.2 MiB cover; track 1 with a 3 MiB text field as well, and
     // track 2 with more keys than a track can have.
-    let engine = Engine::new(2, 32 << 20).unwrap();
-    let tree = Tree::new(SourceDir::scan(&lib).unwrap());
-    let mut stereo: Vec<(PathBuf, _)> = tree
-        .all_files()
-        .into_iter()
-        .filter(|(p, _)| p.to_string_lossy().contains("Stereo") && p.extension().is_some_and(|e| e == "dsf"))
-        .collect();
-    stereo.sort_by(|a, b| a.0.cmp(&b.0));
-    assert!(stereo.len() >= 2, "the stereo area has {} tracks", stereo.len());
     let ext = dir.path().join("ext");
-    fs::create_dir_all(&ext).unwrap();
     let mut cover = b"\xFF\xD8\xFF\xE0".to_vec();
     cover.resize(1200 << 10, 0x55);
     let mut apic = vec![0u8];
@@ -80,47 +166,25 @@ fn import_keeps_only_what_the_mount_serves() {
     apic.extend_from_slice(&cover);
     let notes = "n".repeat(3 << 20);
     let many = MAX_TRACK_KEYS + 6;
-    let mut numbers = Vec::new();
-    for (p, f) in &stereo {
-        let number = common::track_number(&p.file_name().unwrap().to_string_lossy());
-        numbers.push(number);
-        let (bytes, _) = Reader::new(f.clone()).read(&engine, 0, f.size).unwrap();
-        let end = f.data_end() as usize;
-        let mut tag = f.tag().to_vec();
-        assert!(tag.starts_with(b"ID3\x04"), "{p:?}");
-        tag.truncate(10 + tag[6..10].iter().fold(0usize, |a, &b| (a << 7) | usize::from(b & 0x7F)));
-        frame(&mut tag, b"TCON", b"\x03Kept Genre");
-        txxx(&mut tag, "Own", &format!("kept-own-{number}"));
-        frame(&mut tag, b"APIC", &apic);
-        if number == numbers[0] {
-            txxx(&mut tag, "Liner Notes", &notes);
+    let numbers = write_extracts(&lib, &ext, |number, i, tag| {
+        frame(tag, b"TCON", b"\x03Kept Genre");
+        txxx(tag, "Own", &format!("kept-own-{number}"));
+        frame(tag, b"APIC", &apic);
+        if i == 0 {
+            txxx(tag, "Liner Notes", &notes);
         }
-        if numbers.len() == 2 {
-            for i in 0..many {
-                txxx(&mut tag, &format!("Key {i:02}"), &format!("many-{i:02}"));
+        if i == 1 {
+            for k in 0..many {
+                txxx(tag, &format!("Key {k:02}"), &format!("many-{k:02}"));
             }
         }
-        let mut out = bytes[..end].to_vec();
-        out.extend_from_slice(&tag);
-        let total = (out.len() as u64).to_le_bytes();
-        out[12..20].copy_from_slice(&total);
-        fs::write(ext.join(format!("{number:02}.dsf")), &out).unwrap();
-    }
+    });
+    let stereo = &numbers;
 
     let tags_dir = dir.path().join("tags");
-    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
-        .args(["tags", "import", "-q", "--pauses", "dropped", "--tags"])
-        .arg(&tags_dir)
-        .arg("--map")
-        .arg(&ext)
-        .arg(&lib)
-        .arg(&lib)
-        .arg(&ext)
-        .output()
-        .unwrap();
-    let say = String::from_utf8_lossy(&out.stderr).into_owned();
+    let (code, say) = import(&lib, &ext, &tags_dir);
     // Something not kept: 2, and each is listed with its extract.
-    assert_eq!(out.status.code(), Some(2), "{say}");
+    assert_eq!(code, Some(2), "{say}");
     let not_kept: Vec<&str> = say.lines().filter(|l| l.starts_with("not kept: ")).collect();
     assert_eq!(not_kept.iter().filter(|l| l.contains("picture of 1200 KiB")).count(), stereo.len(), "{say}");
     assert_eq!(
