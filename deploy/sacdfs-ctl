@@ -4,34 +4,207 @@
 # Reads /etc/default/sacdfs, or the file in $SACDFS_CONF (see deploy/sacdfs.conf.example).
 # Stop sends SIGTERM and waits; it never starts with kill -9, which leaves a dead mount.
 # Exit codes: 0 done / running; 1 failed; 2 usage; 3 not running (status).
+#
+# The settings file is read as NAME=value lines and never run as shell code: values may be
+# in single quotes ('R&B', with ' written '\''), in double quotes without $ or `, or bare
+# (as older installers wrote them). Run as root, it refuses a settings file, a program or
+# its own file that a user other than root could change or replace: root runs them.
 
 CONF=${SACDFS_CONF:-/etc/default/sacdfs}
 if [ ! -r "$CONF" ]; then
     echo "sacdfs-ctl: cannot read $CONF; copy deploy/sacdfs.conf.example there and edit it" >&2
     exit 1
 fi
-# shellcheck disable=SC1090
-. "$CONF"
+
+# --- Who can change the files root runs. The same two functions are in install.sh.
+
+# entry_unsafe PATH: why a user other than root could change PATH (one entry; a symbolic link
+# itself, not what it points to), printed with the fix, status 0; status 1 when only root can.
+entry_unsafe() {
+    _eu_l=$(LC_ALL=C ls -ldn "$1" 2>/dev/null) || {
+        echo "can't be read"
+        return 0
+    }
+    set -f
+    # shellcheck disable=SC2086 # split into the ls fields on purpose
+    set -- "$1" $_eu_l
+    set +f
+    if [ "$4" != 0 ]; then
+        echo "is owned by user $4, not root (fix: chown 0 '$1', or use another folder)"
+        return 0
+    fi
+    case $2 in l*) return 1 ;; esac
+    case $2 in
+        ?????w* | ????????w*)
+            case $2 in d????????[tT]*) ;; *)
+                echo "can be written by its group or by other users ($2) (fix: chmod go-w '$1', or use another folder)"
+                return 0
+                ;;
+            esac
+            ;;
+    esac
+    case $2 in ??????????+*)
+        echo "has an access control list ($2), which may let other users write to it (fix: setfacl -b '$1', or use another folder)"
+        return 0
+        ;;
+    esac
+    return 1
+}
+
+# path_unsafe PATH: walks PATH from / down, through symbolic links, and prints the first
+# folder, link or file on the way that a user other than root could change or replace, with
+# why; status 1 when there is none. Parts that don't exist yet are not checked.
+path_unsafe() {
+    if _pu_r=$(entry_unsafe /); then
+        echo "/ $_pu_r"
+        return 0
+    fi
+    _pu_todo=${1#/} _pu_cur='' _pu_n=0
+    while [ -n "$_pu_todo" ]; do
+        _pu_part=${_pu_todo%%/*}
+        case $_pu_todo in */*) _pu_todo=${_pu_todo#*/} ;; *) _pu_todo= ;; esac
+        case $_pu_part in
+            '' | .) continue ;;
+            ..)
+                _pu_cur=${_pu_cur%/*}
+                continue
+                ;;
+        esac
+        _pu_next=$_pu_cur/$_pu_part
+        if [ -L "$_pu_next" ]; then
+            if _pu_r=$(entry_unsafe "$_pu_next"); then
+                echo "$_pu_next $_pu_r"
+                return 0
+            fi
+            _pu_n=$((_pu_n + 1))
+            _pu_t=$(readlink "$_pu_next") && [ "$_pu_n" -le 40 ] || {
+                echo "$_pu_next is a symbolic link that can't be followed"
+                return 0
+            }
+            case $_pu_t in /*) _pu_cur= ;; esac
+            _pu_todo=${_pu_t#/}${_pu_todo:+/$_pu_todo}
+            continue
+        fi
+        [ -e "$_pu_next" ] || return 1
+        if _pu_r=$(entry_unsafe "$_pu_next"); then
+            echo "$_pu_next $_pu_r"
+            return 0
+        fi
+        _pu_cur=$_pu_next
+    done
+    return 1
+}
+
+if [ "$(id -u)" = 0 ]; then
+    case $0 in /*) SELF=$0 ;; *) SELF=$(pwd)/$0 ;; esac
+    for f in "$SELF" "$CONF"; do
+        if why=$(path_unsafe "$f"); then
+            echo "sacdfs-ctl: not run as root: $why. Root would run what is there; reinstall sacdfs in a folder only root can change (install.sh does this)." >&2
+            exit 1
+        fi
+    done
+fi
+
+# --- The settings: NAME=value lines, never run as shell code.
+
+# shellcheck disable=SC2016 # awk's own program, in single quotes on purpose
+CONF_AWK='
+function fail(m) { printf "sacdfs-ctl: %s, line %d: %s\n", FILENAME, NR, m > "/dev/stderr"; bad = 1; exit 1 }
+{
+    line = $0
+    sub(/\r$/, "", line)
+    sub(/^[ \t]+/, "", line)
+    if (line == "" || substr(line, 1, 1) == "#") next
+    if (!match(line, /^[A-Za-z_][A-Za-z0-9_]*=/)) fail("not a NAME=value line")
+    name = substr(line, 1, RLENGTH - 1)
+    rest = substr(line, RLENGTH + 1)
+    val = ""; i = 1; n = length(rest); q = "\047"
+    while (i <= n) {
+        c = substr(rest, i, 1)
+        if (c == q) {
+            j = index(substr(rest, i + 1), q)
+            if (!j) fail("a quote that is not closed")
+            val = val substr(rest, i + 1, j - 1); i += j + 1
+            continue
+        }
+        if (c == "\"") {
+            i++
+            for (;;) {
+                if (i > n) fail("a quote that is not closed")
+                c = substr(rest, i, 1)
+                if (c == "\"") { i++; break }
+                if (c == "$" || c == "`") fail("$ and ` are not allowed: this file is never run as shell code")
+                if (c == "\\") {
+                    d = substr(rest, i + 1, 1)
+                    if (d == "\"" || d == "\\" || d == "$" || d == "`") { val = val d; i += 2; continue }
+                }
+                val = val c; i++
+            }
+            continue
+        }
+        if (c == "$" || c == "`") fail("$ and ` are not allowed: this file is never run as shell code")
+        if (c == "\\") { val = val substr(rest, i + 1, 1); i += 2; continue }
+        if (c == " " || c == "\t") {
+            tail = substr(rest, i)
+            sub(/^[ \t]+/, "", tail)
+            if (tail != "" && substr(tail, 1, 1) != "#") fail("a space outside quotes (put the value in single quotes)")
+            break
+        }
+        val = val c; i++
+    }
+    printf "%s=%s\n", name, val
+}
+END { if (bad) exit 1 }'
+settings=$(LC_ALL=C awk "$CONF_AWK" "$CONF") || exit 1
+while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    v=${l#*=}
+    case ${l%%=*} in
+        SACDFS_IMAGES) SACDFS_IMAGES=$v ;;
+        SACDFS_MOUNT) SACDFS_MOUNT=$v ;;
+        SACDFS_OPTIONS) SACDFS_OPTIONS=$v ;;
+        SACDFS_INDEX_CACHE) SACDFS_INDEX_CACHE=$v ;;
+        SACDFS_BIN) SACDFS_BIN=$v ;;
+        SACDFS_PIDFILE) SACDFS_PIDFILE=$v ;;
+        SACDFS_LOG) SACDFS_LOG=$v ;;
+        SACDFS_STOP_WAIT) SACDFS_STOP_WAIT=$v ;;
+        *) echo "sacdfs-ctl: $CONF: ${l%%=*} is not a sacdfs-ctl setting; ignored" >&2 ;;
+    esac
+done <<EOF
+$settings
+EOF
+
 SACDFS_MOUNT=${SACDFS_MOUNT%/}
 BIN=${SACDFS_BIN:-/usr/local/bin/sacdfs}
 PIDFILE=${SACDFS_PIDFILE:-/var/run/sacdfs.pid}
 LOG=${SACDFS_LOG:-/var/log/sacdfs.log}
 WAIT=${SACDFS_STOP_WAIT:-30}
+case $WAIT in '' | *[!0-9]*)
+    echo "sacdfs-ctl: SACDFS_STOP_WAIT must be a number of seconds" >&2
+    exit 1
+    ;;
+esac
 # Wait longer than sacdfs's own --stop-grace (#276) if SACDFS_OPTIONS sets a larger one.
 if [ -z "${SACDFS_STOP_WAIT:-}" ]; then
-    grace=$(printf '%s\n' " $SACDFS_OPTIONS " | sed -n 's/.* --stop-grace[= ]\([0-9][0-9]*\) .*/\1/p')
+    grace=$(printf '%s\n' " ${SACDFS_OPTIONS:-} " | sed -n 's/.* --stop-grace[= ]\([0-9][0-9]*\) .*/\1/p')
     if [ -n "$grace" ] && [ "$((grace + 15))" -gt "$WAIT" ]; then WAIT=$((grace + 15)); fi
 fi
-if [ -z "$SACDFS_IMAGES" ] || [ -z "$SACDFS_MOUNT" ]; then
+if [ -z "${SACDFS_IMAGES:-}" ] || [ -z "$SACDFS_MOUNT" ]; then
     echo "sacdfs-ctl: SACDFS_IMAGES and SACDFS_MOUNT must be set in $CONF" >&2
     exit 1
 fi
+if [ "$(id -u)" = 0 ] && why=$(path_unsafe "$BIN"); then
+    echo "sacdfs-ctl: not run as root: $why. Root would run what is there; reinstall sacdfs in a folder only root can change (install.sh does this)." >&2
+    exit 1
+fi
 
+# The mount folder as /proc/mounts writes it: space, tab, newline and \ as octal escapes.
+MOUNT_ESC=$(printf '%s\n' "$SACDFS_MOUNT" | sed 's/\\/\\134/g; s/ /\\040/g; s/	/\\011/g')
 # The type column of the mount, empty when nothing is mounted there.
 mount_type() {
     t=
     while read -r _ dir type _; do
-        [ "$dir" = "$SACDFS_MOUNT" ] && t=$type
+        [ "$dir" = "$MOUNT_ESC" ] && t=$type
     done < /proc/mounts
     echo "$t"
 }
@@ -95,13 +268,18 @@ start_unlocked() {
             ;;
     esac
     mkdir -p "$SACDFS_MOUNT" || return 1
-    # Not quoted on purpose: the options are separated by spaces.
+    # The options are separated by spaces, without file name patterns; the index cache's
+    # folder is one argument whatever it holds.
+    set -f
     # shellcheck disable=SC2086
+    set -- ${SACDFS_OPTIONS:-}
+    set +f
+    [ -n "${SACDFS_INDEX_CACHE:-}" ] && set -- "$@" --index-cache "$SACDFS_INDEX_CACHE"
     # setsid (where there is one) keeps a hang-up of the login from reaching sacdfs.
     if command -v setsid >/dev/null 2>&1; then
-        setsid "$BIN" -f $SACDFS_OPTIONS "$SACDFS_IMAGES" "$SACDFS_MOUNT" </dev/null >>"$LOG" 2>&1 &
+        setsid "$BIN" -f "$@" "$SACDFS_IMAGES" "$SACDFS_MOUNT" </dev/null >>"$LOG" 2>&1 &
     else
-        "$BIN" -f $SACDFS_OPTIONS "$SACDFS_IMAGES" "$SACDFS_MOUNT" </dev/null >>"$LOG" 2>&1 &
+        "$BIN" -f "$@" "$SACDFS_IMAGES" "$SACDFS_MOUNT" </dev/null >>"$LOG" 2>&1 &
     fi
     echo $! >"$PIDFILE"
     i=0
