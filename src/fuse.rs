@@ -467,7 +467,7 @@ mod tests {
         let engine = Arc::new(Engine::new(1, 1 << 20).unwrap());
         let meta = std::fs::metadata(source.path()).unwrap();
         let (uid, gid) = (meta.uid(), meta.gid());
-        let fs = SacdFs::new(tree, engine, 4, uid, gid).unwrap();
+        let fs = SacdFs::new(tree, engine, 4, uid, gid).unwrap().with_request_timeout(None).unwrap();
         let panic_in = fs.panic_in.clone();
         let at = tempfile::tempdir().unwrap();
         let mut config = Config::default();
@@ -482,10 +482,11 @@ mod tests {
             let (tx, rx) = std::sync::mpsc::channel();
             let p = mp.clone();
             std::thread::spawn(move || tx.send(op(&p)));
-            rx.recv_timeout(Duration::from_secs(10)).unwrap_or_else(|_| {
+            let r = rx.recv_timeout(Duration::from_secs(10));
+            if r.is_err() {
                 let _ = Command::new("fusermount3").arg("-uz").arg(&mp).status();
-                panic!("{what}: the mount stopped answering");
-            })
+            }
+            r.unwrap_or_else(|_| panic!("{what}: the mount stopped answering"))
         };
         let eio = |r: io::Result<()>, what: &str| {
             let e = r.expect_err(what);
@@ -519,8 +520,12 @@ mod tests {
         set(None);
         on_mount("readdir after", list).unwrap();
 
-        // Still the same session, still answering.
+        // Still the same session, still answering, and the other callbacks too.
         on_mount("statfs at the end", statfs).unwrap();
+        on_mount("access", |p| {
+            nix::unistd::access(p, nix::unistd::AccessFlags::R_OK).map_err(io::Error::from)
+        })
+        .unwrap();
         session.umount_and_join().unwrap();
     }
 }
