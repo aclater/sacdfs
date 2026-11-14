@@ -2343,7 +2343,16 @@ MusicBrainz IDs on 26.
   folders, which now key their mtime on that path, move with their ancestors. An area listed
   again re-makes its track files; one whose tag changed replaces its node under the same
   number (`Tree::renew`), and a file whose tag is the same keeps its node, so open files and
-  caches stay as they are (an open handle keeps the file it opened). The mtime of a bump is
+  caches stay as they are. A file open while its tag changes fails its next read, and its
+  close, with `EIO` once the kernel sees the new generation, through any lookup or listing of it
+  by any client (#339). The kernel takes a known number with a new generation for a new file and
+  marks the old inode bad (`fuse_iget` in `fs/fuse/inode.c`, "nodeid was reused"). It fails the
+  old descriptor itself, with no request to sacdfs, so sacdfs logs nothing. Reopening reads the
+  new file. *Alternatives, not taken:* keeping the generation would leave NFS handles and the
+  open file's page cache mixing old and new bytes; keeping the old node while a handle is open
+  and renewing it at release would show the edit later and need a second bump; a FUSE node ID
+  apart from the inode number is not possible through fuser, which uses one for both. The
+  mtime of a bump is
   the tags file's when it moved forward (a remount shows the same), else the time now (a
   removal, or an older time put back), so that the folders always move.
   *Why the image's path, not the disc key:* scanners walk folders, and the image's path is

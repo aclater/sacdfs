@@ -303,6 +303,9 @@ The mount stays read-only; the files are edited out of band.
   so players that skip unchanged folders (Roon) find the edit on their next scan. Edits made
   while sacdfs is stopped show after the mount the same way (sacdfs keeps which disc each image
   is in its cache directory). With a single image as SOURCE, remount after editing.
+- **Files open during an edit:** a file a player has open when its tags change fails with an
+  I/O error at its next read once anything looks it up or lists its folder again, because the kernel drops the
+  old version of the file. Opening it again reads the new one.
 
 Each file holds its own copy of a cover. Under a [memory limit](deployment.md#under-a-memory-limit), that
 means few images stay listed, and going through the library takes longer. A disc listed again reads its
