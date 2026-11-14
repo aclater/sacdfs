@@ -23,6 +23,7 @@ pub mod memory;
 pub mod names;
 pub mod pcm;
 pub mod printable;
+pub mod safe_file;
 pub mod sidecar;
 pub mod tags;
 pub mod tags_cli;

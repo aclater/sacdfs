@@ -19,6 +19,7 @@ use scarletbook::Slot;
 
 use crate::disc::{Disc, Tuning};
 use crate::lookup;
+use crate::safe_file::{self, shown};
 use crate::tags::{self, ART, Fields, Key, TagsFile};
 use crate::track::TrackFile;
 use crate::verify::{self, container, id3};
@@ -95,7 +96,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     let r = match cli.cmd {
         Cmd::Key { tags, images } => key(tags.as_deref(), &images),
         Cmd::Import { tags, verify } => import(&tags, verify).map(|s| {
-            eprint!("{}", s.render());
+            eprint!("{}", safe_file::printable(&s.render()));
             s.all_handled()
         }),
         Cmd::Fetch { tags, lookup_name, lookup_durations, dry_run, no_multichannel_album_suffix, images } => {
@@ -107,8 +108,10 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
                 only_wanting: false,
             };
             let mut client = lookup::Client::new(lookup::Http::new());
-            let s = lookup::fetch(&tags, &images, options, &mut client, |line| println!("{line}"));
-            eprint!("{}", s.render());
+            let s = lookup::fetch(&tags, &images, options, &mut client, |line| {
+                println!("{}", safe_file::printable(&line));
+            });
+            eprint!("{}", safe_file::printable(&s.render()));
             Ok(s.all_handled())
         }
     };
@@ -116,7 +119,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(2),
         Err(e) => {
-            eprintln!("sacdfs tags: {e}");
+            eprintln!("sacdfs tags: {}", safe_file::printable(&e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -125,15 +128,15 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
 fn key(dir: Option<&Path>, images: &[PathBuf]) -> io::Result<bool> {
     for image in images {
         let disc = Disc::open(image, 0, Tuning::default())
-            .map_err(|e| io::Error::other(format!("{}: {e}", image.display())))?;
+            .map_err(|e| io::Error::other(format!("{}: {e}", shown(image))))?;
         let key = tags::disc_key(disc.toc());
         match dir {
             Some(d) => {
                 let p = d.join(format!("{key}.toml"));
                 let state = if p.exists() { "exists" } else { "none" };
-                println!("{key}\t{}\t{state}\t{}", p.display(), image.display());
+                println!("{key}\t{}\t{state}\t{}", shown(&p), shown(image));
             }
-            None => println!("{key}\t{}", image.display()),
+            None => println!("{key}\t{}", shown(image)),
         }
     }
     Ok(true)
@@ -179,7 +182,7 @@ impl ImportSummary {
             s.push_str(&format!("failed: {f}\n"));
         }
         if self.not_imported > 0 {
-            let report = self.report.as_deref().map_or(String::new(), |p| format!("; see {}", p.display()));
+            let report = self.report.as_deref().map_or(String::new(), |p| format!("; see {}", shown(p)));
             s.push_str(&format!(
                 "not imported: {} extracts that verify did not match or could not check{report}\n",
                 self.not_imported
@@ -225,7 +228,7 @@ pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
     };
     for (image, rows) in by_image {
         if let Err(e) = import_disc(&dir, &image, &rows, &mut sum) {
-            sum.failed.push(format!("{}: {e}", image.display()));
+            sum.failed.push(format!("{}: {e}", shown(&image)));
         }
     }
     Ok(sum)
@@ -250,7 +253,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
             // No tag: nothing to keep.
             Ok(None) => continue,
             Err(e) => {
-                sum.failed.push(format!("{}: {e}", row.path.display()));
+                sum.failed.push(format!("{}: {e}", shown(&row.path)));
                 continue;
             }
         };
@@ -337,12 +340,12 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         return Ok(());
     }
     let path = dir.join(format!("{key}.toml"));
-    let existing = match fs::read_to_string(&path) {
-        Ok(text) => {
-            Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", path.display())))?)
+    let existing = match safe_file::read_text(&path) {
+        Ok((text, _)) => {
+            Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", shown(&path))))?)
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e),
+        Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", shown(&path)))),
     };
     let created = existing.is_none();
     let mut merged = existing.unwrap_or_default();
@@ -399,11 +402,10 @@ pub(crate) fn merge(into: &mut TagsFile, from: &TagsFile) -> usize {
         + tracks(&mut into.multichannel.track, &from.multichannel.track)
 }
 
-/// Writes `bytes` to `path` through a temporary file in the same directory, renamed over it.
+/// Writes `bytes` to `path` through a new temporary file in the same directory, renamed over it
+/// ([`safe_file::write_atomic`]).
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("tmp~");
-    fs::write(&tmp, bytes)?;
-    fs::rename(&tmp, path)
+    safe_file::write_atomic(path, bytes, safe_file::MODE)
 }
 
 /// The ID3 tag of an extract, read only.
@@ -524,5 +526,33 @@ mod tests {
             assert_eq!(front_cover(&tag), Some(jpg.clone()), "v2.{major}");
         }
         assert_eq!(front_cover(b"ID3\x04\0\0\0\0\0\0"), None);
+    }
+
+    /// Tags files and covers are written through a new temporary file: a link at the old
+    /// temporary name, or at a name made of the process ID and a counter, is never written
+    /// through.
+    #[test]
+    fn writes_through_no_link() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        fs::write(&victim, b"precious").unwrap();
+        for name in ["0123.toml", "0123.jpg"] {
+            let path = dir.path().join(name);
+            let _ = symlink(&victim, path.with_extension("tmp~"));
+            for n in 0..64 {
+                let guess = dir.path().join(format!(".{name}.{}.{n}.tmp", std::process::id()));
+                symlink(&victim, guess).unwrap();
+            }
+            write_atomic(&path, b"new").unwrap();
+            write_atomic(&path, b"newer").unwrap();
+            assert_eq!(fs::read(&path).unwrap(), b"newer");
+        }
+        assert_eq!(fs::read(&victim).unwrap(), b"precious");
+        // A tags file that is a link is not read.
+        let toml = dir.path().join("4567.toml");
+        fs::write(&victim, "[album]\ngenre = \"Jazz\"\n").unwrap();
+        symlink(&victim, &toml).unwrap();
+        assert!(safe_file::read_text(&toml).is_err());
     }
 }
