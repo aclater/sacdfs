@@ -1773,6 +1773,12 @@ converted to PCM, on a separate rayon pool (`--threads`), with `DstDecoder`s and
   wait, on the same thread, for the demultiplexer lock the first one holds.
 - Every read runs under `catch_unwind`, so even an unexpected panic becomes an I/O error on
   that read.
+- So does every FUSE callback, on fuser's own threads, where the requests answered from memory
+  (lookups and attributes of known entries, cached listings, `statfs`) are answered inline
+  (#389). fuser 0.18 catches no panic, and one on its thread ended the session: the mount was
+  gone for every client. Now the callback's reply, dropped unsent as the panic unwinds, is
+  answered `EIO` by fuser, an error line is logged, and the mount stays. A test makes each kind
+  of inline callback panic through a test-only hook (`fuse::tests`).
 
 ### A stalled source (#63, #72)
 
@@ -2028,6 +2034,7 @@ alternatives and the trade-off.
 - `convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM (`frame_bytes()` long) and returns the clip count. `None` neighbours are silence.
 - `convert_run(prev, frames, next, out, clips)` converts consecutive frames: the same bytes as `convert` on each, plus each frame's clip count.
 - `convert_f32` gives the same samples as floats, for tools and tests.
+- `try_convert` and `try_convert_run` are the same, but return `ConvertError` if scarletbook-pcm refuses the conversion. On failure, all four leave `out` all zeros, never what it held before. *Why (#388):* the engine converts into reused slots of its frame cache, which may hold another frame's audio. It uses the `try_` forms and fails the read with `EIO`, so nothing from a failed run is served or cached. The lengths sacdfs passes make a failure impossible today. The check is there in case scarletbook-pcm adds one.
 - `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
 - A short frame (which the decoder never makes) is padded with silence.
 
