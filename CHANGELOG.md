@@ -80,6 +80,12 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **Names in the daemon's log lines can't split or disguise a line (#391).** Image paths, folder
+  names, disc text and error causes were logged as they were, so a name with a newline split a
+  line in two, an escape sequence changed how a terminal showed the rest, and a bidi control made
+  a line display in another order. Now every log line escapes control characters, Unicode format
+  characters and U+2028/U+2029 as `\n`, `\t`, `\r` or `\u{…}`, on the console and with
+  `--log-file`. The names on the mount are unchanged.
 - **A player that starts beside copies gets its first reads sooner (#363).** A player starting
   while another plays and copies start can't be told from the copies in its first half second, and
   every one of them read ahead 2 s of audio, so its first reads waited behind about 600 frames of
