@@ -138,6 +138,22 @@ or move it as a file: `podman save sacdfs | gzip > sacdfs.tar.gz`, then
 - A weekly workflow (`image-scan.yml`) scans the latest published image and fails on High or
   Critical findings that have a fix ([development.md](development.md)).
 
+### AcoustID and the container
+
+The image doesn't carry Chromaprint's `fpcalc`, which `sacdfs tags fetch --acoustid` needs (a
+lookup by audio fingerprint, run by hand or from cron, never by the mount; see the
+[user guide](user-guide.md#by-audio-fingerprint---acoustid)). *Why:* Fedora's `chromaprint-tools`
+needs FFmpeg's libraries, which bring LLVM and Mesa with them: installed in the runtime stage, it
+took an image of this branch from about 409 MB to 800 MB (checked with `podman build`; the
+`fpcalc` in it fingerprinted PCM from standard input). That doubles every pull for a last-resort
+step few run. Instead:
+
+- run `sacdfs tags fetch --acoustid` on a host that has `fpcalc` (Fedora: `dnf install
+  chromaprint-tools`), with the same images and the tags directory the container reads; or
+- build an image of your own on top of this one, with `RUN dnf -y install chromaprint-tools` in a
+  Containerfile that starts `FROM` it (untested as such: the same install in the runtime stage was
+  what was checked).
+
 ### The NFS server: NFS-Ganesha, and why not the kernel's
 
 Samba is the only choice for SMB. For NFS there are two servers:
@@ -272,16 +288,6 @@ All settings are environment variables.
 | `SMB_EXTRA_GLOBAL` | | one extra line for smb.conf's `[global]` section (for example `server min protocol = SMB3`) |
 | `NFS_CLIENTS` | `*` | who may mount over NFS: a comma-separated list of hosts, networks (`192.0.2.0/24`) or `*` |
 | `NFS_LOG_LEVEL` | `EVENT` | NFS-Ganesha's log level (`WARN`, `EVENT`, `INFO`, `DEBUG`) |
-
-The image also carries Chromaprint's `fpcalc`, for `sacdfs tags fetch --acoustid` (a lookup by audio
-fingerprint, run by hand or from cron, not by the mount; see the
-[user guide](user-guide.md#by-audio-fingerprint---acoustid)). Run it in the running container, with
-your own AcoustID application key, against the images and a read-write tags directory:
-
-```sh
-podman exec -e ACOUSTID_API_KEY=your-application-key sacdfs \
-    sacdfs tags fetch --tags /tags --acoustid /images/disc.iso
-```
 
 The shares are always read-only. **Guest access** (the default) lets anyone on the network
 read the files; NFS has no passwords (`sec=sys`), so limit it with `NFS_CLIENTS` or a

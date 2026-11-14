@@ -17,7 +17,8 @@ All notable changes to sacdfs are recorded here. The format follows
   (`--max-load`), a daily budget of discs (`--acoustid-budget`, default 20) kept with each disc's
   verdict in the tags directory, at most 2.5 requests a second, and a clean stop on Ctrl-C or
   SIGTERM. The audio streams in under 1 MiB of heap. `fpcalc` is a program run, not a library
-  linked, so the release binaries gain no dependency; the container image now includes it.
+  linked, so the release binaries gain no dependency. The container image doesn't include it, since
+  its FFmpeg dependencies would double the image (docs/deployment.md, "AcoustID and the container").
   Tested with synthetic discs and recorded answers; a run with a real application key and the soak
   that the in-process switch waits for are still to come.
 - **A fuzz target for the audio read path (#390).** `fuzz/fuzz_targets/read_path.rs` reads

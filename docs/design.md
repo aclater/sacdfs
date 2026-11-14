@@ -2837,7 +2837,9 @@ waits for step 1's soak.
   maintained Rust port of Chromaprint exists as a crate, and writing one is a project of its own
   that would have to match Chromaprint bit for bit for AcoustID to know its fingerprints. `fpcalc`
   is packaged by Fedora (`chromaprint-tools` 1.6.1, checked), EPEL 10 (1.5.1, from its repository
-  metadata; not run) and Debian. *How:* sacdfs decodes and converts the audio itself and gives
+  metadata; not run) and Debian. The container image doesn't include it: with FFmpeg's libraries and what they bring
+  (LLVM, Mesa), it took the image from about 409 MB to 800 MB, a cost every NAS pull would pay for a
+  step few run (docs/deployment.md, "AcoustID and the container"). *How:* sacdfs decodes and converts the audio itself and gives
   `fpcalc` 16-bit mono PCM at 11,025 Hz, Chromaprint's own working rate, on standard input
   (`-format s16le -rate 11025 -channels 1 -length 120 -json -`), so `fpcalc` reads no file and
   resamples nothing, and no FFmpeg demuxer sees disc data. *Alternatives:* the C library behind a
