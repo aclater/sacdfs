@@ -807,6 +807,9 @@ pub struct ReadAhead {
     pub end: u32,
 }
 
+/// Whether a process is a network file server's ([`Reader::opened_by`]).
+pub type IsServer = fn(u32) -> bool;
+
 #[derive(Debug, Default)]
 struct Seq {
     /// The furthest byte read so far.
@@ -827,7 +830,7 @@ struct Seq {
     networked: bool,
     /// The process that opened the file, and how to tell whether it is a network file
     /// server's, until that is asked ([`Reader::opened_by`]).
-    opener: Option<(u32, fn(u32) -> bool)>,
+    opener: Option<(u32, IsServer)>,
     /// When the first read of audio came, and where it started.
     started: Option<(std::time::Instant, u64)>,
     /// Frames below this one (file index) are given up already ([`Engine::give_up`]).
@@ -906,7 +909,7 @@ impl Reader {
     /// below that its pace is a player's either way. *Why not at the open (#403):* the answer
     /// costs two reads of `/proc`, about 25 microseconds, and a scan of short files opened
     /// through the mount was 10 % slower for it.
-    pub fn opened_by(file: Arc<TrackFile>, pid: u32, is_server: fn(u32) -> bool) -> Self {
+    pub fn opened_by(file: Arc<TrackFile>, pid: u32, is_server: IsServer) -> Self {
         Reader {
             file,
             stream: Mutex::new(Stream::default()),
