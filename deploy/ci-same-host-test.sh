@@ -20,6 +20,8 @@ read -r -a rt <<<"${RUNTIME:-docker}"
 export RUNTIME="${rt[*]}"
 client_image=${CLIENT:-sacdfs-client:ci}
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=deploy/ci-caps.sh
+. "$here/ci-caps.sh"
 srv=sacdfs-same-host
 reader=sacdfs-same-host-reader
 dir=$(mktemp -d)
@@ -41,8 +43,7 @@ cleanup() {
 trap cleanup EXIT
 
 "${rt[@]}" run -d --security-opt label=disable --name "$srv" --restart unless-stopped \
-    --device /dev/fuse --cap-add SYS_ADMIN \
-    --security-opt apparmor=unconfined \
+    "${SERVER_OPTS[@]}" \
     -e SMB=0 -e NFS=0 -e SACDFS_FORMATS=dsf \
     -v "$PWD/tests/corpus/images:/images:ro" -v "$dir:/srv:rshared" "$image" >/dev/null
 "$here/ci-wait-healthy.sh" "$srv"

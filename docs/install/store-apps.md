@@ -6,8 +6,10 @@ review by each store's maintainers). This page says what is in the repository, h
 the Unraid template today, and what was checked where.
 
 Both entries run the same published image as [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml):
-`ghcr.io/aclater/sacdfs:0.5.0`, with the FUSE device, the capabilities `SYS_ADMIN` and
-`DAC_READ_SEARCH`, AppArmor unconfined, SMB on port 10445 and NFS on 12049 (the NAS's own
+`ghcr.io/aclater/sacdfs:0.5.0`, with the FUSE device, all capabilities dropped but the seven
+the programs need (`SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`, `SETGID`,
+`NET_BIND_SERVICE`, `SETPCAP`; [why each one](../deployment.md#privileges)), no new privileges,
+AppArmor unconfined, SMB on port 10445 and NFS on 12049 (the NAS's own
 services hold 445 and 2049), the images mounted read-only at `/images`, and the index cache at
 `/cache`. Every setting is in the [deployment guide](../deployment.md).
 
@@ -15,7 +17,7 @@ services hold 445 and 2049), the images mounted read-only at `/images`, and the 
 
 File: [deploy/unraid/sacdfs.xml](../../deploy/unraid/sacdfs.xml). The steps (copy it into Unraid's user templates, then Docker, Add Container, pick `sacdfs`) are in [unraid.md](unraid.md); they are untested on Unraid.
 
-The template does not make the container privileged. It passes the device and capabilities in **Extra Parameters** (`--device=/dev/fuse --cap-add=SYS_ADMIN --cap-add=DAC_READ_SEARCH --security-opt apparmor=unconfined`), plus a 30 second stop timeout and the health check. If you edit that field, keep those.
+The template does not make the container privileged. It passes the device and capabilities in **Extra Parameters** (`--device=/dev/fuse --cap-drop=ALL --cap-add=SYS_ADMIN --cap-add=DAC_OVERRIDE --cap-add=DAC_READ_SEARCH --cap-add=SETUID --cap-add=SETGID --cap-add=NET_BIND_SERVICE --cap-add=SETPCAP --security-opt no-new-privileges:true --security-opt apparmor=unconfined`), plus a 30 second stop timeout and the health check. If you edit that field, keep those.
 
 **What was checked.** The template's container, with its Extra Parameters, ports, paths and variables, was started with rootful Podman on a Linux host (Fedora) from the 0.5.0 image and a test set of 135 image files. It turned healthy, and the SMB share on 10445 listed the folders and the 457 DSF files, as a guest. **Not checked:** loading the file in Unraid's Docker tab, whether Unraid lets the container use `/dev/fuse` and `SYS_ADMIN`, the Community Applications listing, the icon in Unraid, and NFS from the template. Treat the Unraid steps as untested until someone reports them on [#82](https://github.com/aclater/sacdfs/issues/82).
 
@@ -43,13 +45,14 @@ That nothing was run on TrueNAS or Unraid is why neither guide above is marked v
 
 Two things the catalog's maintainers will weigh, noted here so nobody is surprised:
 
-- The app runs as root with `SYS_ADMIN`, `DAC_READ_SEARCH` and `/dev/fuse`. sacdfs
-  cannot mount without them ([why](../deployment.md)). The catalog's inclusion policy accepts
+- The app runs as root with `/dev/fuse` and seven capabilities, among them `SYS_ADMIN` and
+  `DAC_READ_SEARCH`. sacdfs cannot mount without them, nor NFS-Ganesha serve
+  ([why each one](../deployment.md#privileges)); each program holds only its own share. The catalog's inclusion policy accepts
   only apps that stay within their container's boundaries; whether a FUSE mount does is their
   call.
-- The catalog normally drops all capabilities and adds back a few. Samba and NFS-Ganesha
-  fail to start that way (`smbd` aborts), so the template keeps the container runtime's
-  default set and adds the two. This was found by running it.
+- The catalog drops all capabilities and adds back a few, and the template now keeps that
+  default (#386): it adds back the seven above. Before 0.6.4 it kept the runtime's default set,
+  because Samba aborted without `SETUID` and `SETGID`.
 
 ## The icon
 
@@ -79,9 +82,13 @@ Unraid.
   `generate_metadata.py` and `check_metadata.py` report the metadata up to date;
   `port_validation.py` passes; the catalog's own `apps_dev_charts_validate validate` (the
   `ghcr.io/truenas/apps_validation` image) exits 0 over the whole catalog with the app in place.
-  Run on a Linux host with rootless Podman standing in for Docker. One message is logged on every
-  render and is not an error exit: "No cap_drop for service: sacdfs", because the app keeps the
-  runtime's default capabilities (see above). Reviewers may ask about it.
+  Run on a Linux host with rootless Podman standing in for Docker. Up to 0.6.3 one message was
+  logged on every render: "No cap_drop for service: sacdfs", because the app kept the runtime's
+  default capabilities; from 0.6.4 the app drops them all (see above).
+- **Re-run for 0.6.4 (#386):** `ci.py --render-only` with the catalog's library 2.3.18 renders
+  both test value sets with `cap_drop: [ALL]`, the seven capabilities in `cap_add`, and
+  `no-new-privileges`. Run on Fedora 44 in a VM with Docker. The app itself was not installed on
+  TrueNAS.
 - **Unraid Community Applications:** `deploy/unraid/sacdfs.xml` and `ca_profile.xml` are well
   formed and pass a check of the elements and `Config` attributes that the community CA starter
   kit's validator requires (written out by hand here, because Unraid publishes no validator).

@@ -40,6 +40,24 @@ All notable changes to sacdfs are recorded here. The format follows
   `Unknown lvalue` and runs the unit without it. Checked on Fedora 44, RHEL 10.1, TerraMaster
   TOS 7.0, Debian 12 with UGREEN's kernel and ReadyNAS OS 6.10 (systemd 230), each in a VM, not on
   the vendor's hardware.
+- **The container gives each program only the capabilities it needs (#386).** The Compose files,
+  the TrueNAS app and the Unraid template now drop the runtime's whole default set
+  (`cap_drop: ALL`) and add back seven: `SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`,
+  `SETGID`, `NET_BIND_SERVICE` and `SETPCAP`, with `no-new-privileges`. Inside, the entry point
+  starts each program with `setpriv` and a reduced bounding set: sacdfs keeps `SYS_ADMIN` and
+  `DAC_OVERRIDE`, smbd `SETUID`, `SETGID` and `NET_BIND_SERVICE`, and NFS-Ganesha
+  `DAC_READ_SEARCH` alone; neither server can mount, and only NFS-Ganesha can open files by
+  handle. At its start the entry point also drops whatever none of them need, so a container
+  started with an older Compose file holds no more either, and with `NFS=0` no process keeps
+  `DAC_READ_SEARCH`. Every capability in the list was checked to be needed by leaving it out.
+  Checked with the CI share test (Docker and rootful Podman, AppArmor) and on Fedora 44 in a VM
+  with SELinux enforcing (Docker, rootful and rootless Podman, both Compose tools); copying the
+  corpus over SMB and NFS took as long as before. **To upgrade:** take the new `cap_drop`,
+  `cap_add` and `security_opt` lines from [deploy/nas-compose.yaml](deploy/nas-compose.yaml), or
+  the `docker run` options in [docs/deployment.md](docs/deployment.md#privileges). An older file
+  keeps working, with the per-program limits applied. Under SELinux, the container mounts with
+  its normal label: [docs/deployment.md](docs/deployment.md#privileges) lists the labels it can
+  read the images under.
 - **The security policy says more about disclosure and about how a report is handled.**
   [SECURITY.md](SECURITY.md) now has the terms of coordinated disclosure (private until a fixed
   release or 90 days, a CVE when warranted), what to do when GitHub's private reporting can't
