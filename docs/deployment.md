@@ -281,7 +281,11 @@ limit, none of this applies.
 | Memory watch | see below |
 | NFS-Ganesha's cache of entries, in the container | what an eighth of the limit holds at about 2 KiB each: 16,384 entries at 256 MiB, against its default of 100,000. From about 1.5 GiB, its default |
 
-An option you set yourself always wins.
+An option you set yourself always wins. The smaller cache costs whole-file copies: through the
+Linux kernel SMB client, one reader copying an area's WAV files took 14 to 17 % longer at
+16 MiB than at 32 MiB (`SACDFS_CACHE_MB=32`, on 4 cores with a 512 MiB limit;
+[performance](performance.md#one-reader-over-smb-by-release-and-the-cache-under-a-memory-limit-271-2026-11-14)).
+It is the default because a player beside such copies keeps real time with it on a small machine.
 
 **Listings.** A listed image holds its TOC and text, and for each of its files a header, tag and
 node: about 56 KiB per image with DSF and WAV shown. Past the budget, the images not used lately
