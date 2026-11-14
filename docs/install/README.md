@@ -168,7 +168,9 @@ TOS shared folder `public` refused and then moved, `--uninstall`) and Synology D
 0.6.3 install with `--prefix` in a shared folder moved, both Task Scheduler tasks replaced, a
 restart that started the new one, `--uninstall`). Each time all 28 DSF and WAV files of three
 corpus images were identical to a reference. Also on ReadyNAS OS 6.10.10 (systemd 230; Debian's
-`/usr/local` is `root:staff` 2775 there, and the `staff` group counts as administrators): the
+`/usr/local` and `/usr/local/bin` are `root:staff` 2775 there; those two are accepted only while
+the `staff` group has no members, listed or as a primary group, including directory-service
+ones, and otherwise refused with the members named): the
 systemd route upgraded from 0.6.3, single-quoted `Rock & Roll` and `Live (1972)` read by systemd,
 a fresh install, `--uninstall`; and on ASUSTOR ADM 5.1.4: a 0.6.3 install with `--prefix` in a
 shared folder moved through `S99sacdfs`, the boot scripts and a restart starting the new one, a
