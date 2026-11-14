@@ -1338,6 +1338,22 @@ decoding them twice.
   its first reads waited behind about 600 frames of the copies' work (0.4 to 0.9 s on 4 cores,
   on every release). *Trade-off:* a reader's first half second beside a player decodes on
   demand, in pieces.
+- **A reader is judged a player on evidence (#362).** A reader that reads no faster than a
+  player counts as one only once it has read 4 MiB, or has read for as long as 4 MiB takes at
+  1.5 times the file's byte rate (0.9 s for a 6-channel WAV file, 2.6 s for a stereo one, 4 s
+  for a stereo DSF file); until then it is not yet judged, as in its first 0.5 s. The time
+  counts from its first read of audio, so a player that seeks is judged again at once. *Why:*
+  with the small window of the previous point, copies starting beside a player on a busy server
+  read about as fast as the player in their first half second (1.1 to 2.1 times playing time,
+  the player 1.3 with its client's read-ahead; NFS, four 6-channel copies on 2 slow cores). Each
+  then counted as a player with a 2 s window until it reached 4 MiB, a fraction of a second
+  later, and the player beside four of them waited up to 0.4 s, 0.6 to 0.8 s after they
+  started, in every run. *Alternatives:* judging them players with the small window until they
+  have shown their pace (measured the same within the spread); no small window for readers not
+  yet judged (the stall stayed). *Trade-off:* a player that starts while another plays reads
+  ahead 16 frames for up to 4 s instead of 0.5 s, unless its client reads 4 MiB sooner (the
+  kernel SMB client fetches its first 4 to 8 MiB at once), and it lets no copy wait for it until
+  then.
 - **The pace behind a network client (#271).** A jump, for the pace, is a read more than
   64 MiB from the furthest byte read so far, and the pace counts the bytes read since, but no
   further than the reader got. A reader one of whose reads has landed more than 2 MiB behind
@@ -1394,7 +1410,8 @@ decoding them twice.
   counts as a player until it jumps; and a copy that starts within 5 s of a player pausing
   without closing its file lets that player go first if it comes back. Copies served by an NFS
   server whose reads reach sacdfs in order were not seen as behind a network client until #362,
-  which tells them by the server's process; one in another PID namespace still isn't.
+  which tells them by the server's process. A server in a PID namespace that sacdfs can't see
+  still isn't: see [the file server's process](#the-file-servers-process-362).
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
@@ -1460,6 +1477,30 @@ bytes, or ruled out:
   the image's. It also needs root. Sidecar files could use it, but they aren't what's slow.
 - *Splice:* fuser 0.18 replies by `writev` and has no way to reply from a pipe, and the kernel would
   copy into the page cache anyway. Not measured.
+
+### The file server's process (#362)
+
+A file opened by a network file server's process is behind a network client from its first read
+(above). FUSE gives the process of each request as a number in the PID namespace of the process
+that mounted it, and 0 for a process outside that namespace. So:
+
+- **sacdfs on the host, the server in a container** (Samba in a container sharing the host's
+  mount): the server's processes are visible from the host, the number resolves, and its reader
+  counts as behind a network client. Checked with Samba 4.24 in a Fedora 44 container and the
+  Linux 7.2 kernel SMB client.
+- **sacdfs in a container, the server outside it** (another container, or the host): the number is
+  0 for the server and for any other reader outside sacdfs's container alike, such as a player on
+  the NAS reading through the shared `/srv` mount. Checked with sacdfs in one container and Samba
+  in another, and a reader on the host.
+- **The container image**, sacdfs with its own Samba and NFS-Ganesha: one namespace, so the
+  number resolves.
+
+**Decision:** a reader whose process is 0 is judged by the order of its reads, as before #362.
+*Why not count it as behind a network client:* a local player outside the container would be too,
+and then it would read for throughput beside an earlier player until its reads paused, and a
+local scanner would need to get 32 MiB ahead of playing time first. *Trade-off:* copies served by
+an NFS server outside sacdfs's container, whose reads arrive in order, count as players by their
+pace, as on 0.6.3.
 
 ## Kernel caching
 
