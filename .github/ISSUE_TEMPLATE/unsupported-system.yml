@@ -1,0 +1,43 @@
+name: Unsupported system
+description: sacdfs or its installer stopped because your NAS or computer isn't supported. Tell us what it is.
+title: "Unsupported system: <make and model>"
+labels: ["unsupported-system"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Requests like this tell us which systems are worth a new build.
+        **First, check whether someone has already asked for the same system:** [existing requests](https://github.com/aclater/sacdfs/issues?q=label%3Aunsupported-system). If yours is there, add a comment or a 👍 to it instead.
+
+        sacdfs runs on Linux: a NAS or a Linux computer, with a 64-bit Intel or AMD (x86-64) or 64-bit ARM (aarch64) processor and glibc 2.17 or later. Macs and Windows PCs play from it over the network; sacdfs doesn't run on them, so there is nothing to request for those.
+  - type: input
+    id: model
+    attributes:
+      label: NAS or computer make and model
+      placeholder: "for example: ASUSTOR AS-302T, Raspberry Pi 4 with Raspberry Pi OS 32-bit"
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: System details
+      description: |
+        Paste the block the installer printed when it stopped. If it printed none, log in to the system over SSH and paste what this prints:
+
+        `uname -m; getconf LONG_BIT; ldd --version 2>&1 | head -1; uname -r; cat /etc/os-release 2>/dev/null | head -3; free -m | head -2; ls -l /dev/fuse`
+
+        Leave out host names, IP addresses, serial numbers and folder names: we don't need them.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: message
+    attributes:
+      label: What the installer or sacdfs said
+      description: The message it stopped with, if any.
+      render: text
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: "Optional: how you'd play from it (Roon, Plex, a file share...), and whether you can test a build for it."
