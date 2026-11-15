@@ -58,6 +58,11 @@ pub struct Args {
     pub mount_options: Vec<String>,
     #[command(flatten)]
     pub limits: core::Limits,
+    /// macOS: instead of serving, write a launchd agent that runs this same command (without
+    /// this option) at each login, to ~/Library/LaunchAgents/io.github.aclater.sacdfs-nfs.plist,
+    /// and say how to start and stop it.
+    #[arg(long, requires = "mountpoint")]
+    pub launch_agent: bool,
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -65,7 +70,17 @@ pub struct Args {
 
 /// Runs `sacdfs-nfs` with `args` (the program name first).
 pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
-    let args = Args::parse_from(args);
+    let argv: Vec<OsString> = args.into_iter().collect();
+    let args = Args::parse_from(&argv);
+    if args.launch_agent {
+        return match super::agent::write(&argv) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("sacdfs-nfs: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let level = match args.verbose {
         0 => "info",
         1 => "debug",

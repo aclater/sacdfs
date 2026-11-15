@@ -16,6 +16,7 @@
 //!   unless [`Callers::Anyone`]. A local client can forge it: this guards against mistakes,
 //!   not attacks. Anyone who can reach the port can read the files, as with `--allow-other`.
 
+pub mod agent;
 pub mod cli;
 pub mod handle;
 pub mod proto;
