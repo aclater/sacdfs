@@ -176,7 +176,10 @@ All notable changes to sacdfs are recorded here. The format follows
   copies 130 s in every run (0.6.3: 130 to 235 s), 6 % less CPU. The player's worst read is
   higher there, 484 ms against 367 (median 407 against 281). A local program named like one of
   those servers counts as one; its reader then lets an earlier player go first, and its audio is
-  the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
+  the same. The server's process is looked up once a reader has read 4 MiB, when it first matters,
+  not at every open: looked up at the open, it cost about 25 microseconds per open and made a scan
+  of short plain-DSD files 10 % slower (#403). Audio bytes are unchanged: only when frames are
+  decoded ahead changes.
 
 ### Documentation
 - **Installer restarts and the container route, checked on NAS VMs (part of #340, #283).** With

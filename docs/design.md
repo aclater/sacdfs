@@ -1417,7 +1417,9 @@ decoding them twice.
   the furthest byte read is behind a network client, and so is one whose file a network file
   server's process opened (#362: Samba's `smbd`, `ganesha.nfsd`, the kernel's `nfsd` or `ksmbd`,
   told by the name of the request's thread group; NFS-Ganesha's reads can arrive in order, and a
-  local program with one of those names counts too). Such a reader reads for throughput once
+  local program with one of those names counts too). The name is looked up once the reader has
+  read 4 MiB, the first time it matters: looked up at every open, its two reads of `/proc` cost about 25
+  microseconds per open and made a scan of short files 10 % slower (#403). Such a reader reads for throughput once
   it is also 32 MiB ahead of playing time. Until then it is *unsure*: it plays if no player has
   been reading since before it, and otherwise reads for throughput, letting that player go
   first. *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a
