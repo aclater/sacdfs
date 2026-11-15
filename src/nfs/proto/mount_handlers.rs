@@ -1,13 +1,17 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
 use std::io::{Read, Write};
 
+use log::debug;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::cast::{FromPrimitive, ToPrimitive};
-use tracing::debug;
 
-use crate::context::RPCContext;
-use crate::mount::*;
-use crate::rpc::*;
-use crate::xdr::*;
+use super::context::RPCContext;
+use super::mount::*;
+use super::rpc::*;
+use super::xdr::*;
 
 /*
 From RFC 1813 Appendix I
@@ -42,7 +46,7 @@ pub async fn handle_mount(
     input: &mut impl Read,
     output: &mut impl Write,
     context: &RPCContext,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), std::io::Error> {
     let prog = MountProgram::from_u32(call.proc).unwrap_or(MountProgram::INVALID);
 
     match prog {
@@ -53,12 +57,12 @@ pub async fn handle_mount(
         MountProgram::MOUNTPROC3_EXPORT => mountproc3_export(xid, input, output, context)?,
         _ => {
             proc_unavail_reply_message(xid).serialize(output)?;
-        },
+        }
     }
     Ok(())
 }
 
-pub fn mountproc3_null(xid: u32, _: &mut impl Read, output: &mut impl Write) -> Result<(), anyhow::Error> {
+pub fn mountproc3_null(xid: u32, _: &mut impl Read, output: &mut impl Write) -> Result<(), std::io::Error> {
     debug!("mountproc3_null({:?}) ", xid);
     // build an RPC reply
     let msg = make_success_reply(xid);
@@ -80,7 +84,7 @@ pub async fn mountproc3_mnt(
     input: &mut impl Read,
     output: &mut impl Write,
     context: &RPCContext,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), std::io::Error> {
     let mut path = dirpath::new();
     path.deserialize(input)?;
     let utf8path = std::str::from_utf8(&path).unwrap_or_default();
@@ -100,11 +104,9 @@ pub async fn mountproc3_mnt(
     };
     if let Ok(fileid) = context.vfs.path_to_id(&path).await {
         let response = mountres3_ok {
-            fhandle: context.vfs.id_to_fh(fileid).data,
-            auth_flavors: vec![
-                auth_flavor::AUTH_NULL.to_u32().unwrap(),
-                auth_flavor::AUTH_UNIX.to_u32().unwrap(),
-            ],
+            fhandle: context.vfs.id_to_fh(fileid).await.data,
+            // sacdfs: AUTH_SYS only, whose uid is checked (`NFSFileSystem::permits`).
+            auth_flavors: vec![auth_flavor::AUTH_UNIX as u32],
         };
         debug!("{:?} --> {:?}", xid, response);
         if let Some(ref chan) = context.mount_signal {
@@ -160,7 +162,7 @@ pub fn mountproc3_export(
     _: &mut impl Read,
     output: &mut impl Write,
     context: &RPCContext,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), std::io::Error> {
     debug!("mountproc3_export({:?}) ", xid);
     make_success_reply(xid).serialize(output)?;
     true.serialize(output)?;
@@ -178,7 +180,7 @@ pub async fn mountproc3_umnt(
     input: &mut impl Read,
     output: &mut impl Write,
     context: &RPCContext,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), std::io::Error> {
     let mut path = dirpath::new();
     path.deserialize(input)?;
     let utf8path = std::str::from_utf8(&path).unwrap_or_default();
@@ -196,7 +198,7 @@ pub async fn mountproc3_umnt_all(
     _input: &mut impl Read,
     output: &mut impl Write,
     context: &RPCContext,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), std::io::Error> {
     debug!("mountproc3_umnt_all({:?}) ", xid);
     if let Some(ref chan) = context.mount_signal {
         let _ = chan.send(false).await;

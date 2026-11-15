@@ -6,6 +6,17 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`sacdfs-nfs`: SACD images served over NFSv3, for the system's own NFS client (#420; feature
+  `nfs`).** The route to macOS, where the Mac's NFS client mounts it as the user with nothing
+  installed, and a way to serve NFS clients on Linux without FUSE. It listens on 127.0.0.1 only
+  by default, on a port per user, and answers only its own user's calls (a guard against
+  mistakes: any local user can read the files). File handles stay valid across a server
+  restart, open files included, and the volume's size is the images' total, as on Linux. With
+  a MOUNTPOINT it mounts and, when stopped, unmounts. The protocol layer is vendored from
+  nfsserve 0.11.0 (BSD-3-Clause), with bounded decoding and a fuzz target
+  ([design](docs/design.md#the-nfs-front-end-420)). Part of #420.
+
 ### Changed
 - **The core builds for Windows and macOS (#419, #420).** The calls that differ between
   systems are now in one module, `sacdfs::platform`, and the Linux behaviour is unchanged.

@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
 use std::io::{Read, Write};
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 pub type XDREndian = BigEndian;
-use crate::nfs::nfsstring;
+use super::nfs::nfsstring;
 
 /// See https://datatracker.ietf.org/doc/html/rfc1014
 #[allow(clippy::upper_case_acronyms)]
@@ -14,7 +18,6 @@ pub trait XDR {
 /// Serializes a basic enumeration.
 /// Casts everything as u32 BigEndian
 #[allow(non_camel_case_types)]
-#[macro_export]
 macro_rules! xdr_enum_serde {
     ($t:ident) => {
         impl XDR for $t {
@@ -120,8 +123,13 @@ impl XDR for Vec<u8> {
     fn deserialize<R: Read>(&mut self, src: &mut R) -> std::io::Result<()> {
         let mut length: u32 = 0;
         length.deserialize(src)?;
-        self.resize(length as usize, 0);
-        src.read_exact(self)?;
+        // sacdfs: the bytes as they arrive, never `length` of them allocated up front: a
+        // 4-byte length could otherwise ask for 4 GiB.
+        self.clear();
+        src.by_ref().take(u64::from(length)).read_to_end(self)?;
+        if self.len() != length as usize {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
         // read padding
         let pad = ((4 - length % 4) % 4) as usize;
         let mut zeros: [u8; 4] = [0, 0, 0, 0];
@@ -152,16 +160,18 @@ impl XDR for Vec<u32> {
     fn deserialize<R: Read>(&mut self, src: &mut R) -> std::io::Result<()> {
         let mut length: u32 = 0;
         length.deserialize(src)?;
-        self.resize(length as usize, 0);
-        for i in self {
+        // sacdfs: one at a time, as they arrive (see above).
+        self.clear();
+        for _ in 0..length {
+            let mut i = 0u32;
             i.deserialize(src)?;
+            self.push(i);
         }
         Ok(())
     }
 }
 
 #[allow(non_camel_case_types)]
-#[macro_export]
 macro_rules! xdr_struct {
     (
         $t:ident,
@@ -195,7 +205,6 @@ macro_rules! xdr_struct {
 /// The serde methods can be generated with XDRBoolUnion(pre_op_attr, attributes, wcc_attr)
 /// The "true" type must have the Default trait
 #[allow(non_camel_case_types)]
-#[macro_export]
 macro_rules! xdr_bool_union {
     (
         $t:ident, $enumcase:ident, $enumtype:ty
@@ -205,11 +214,11 @@ macro_rules! xdr_bool_union {
                 match self {
                     $t::Void => {
                         false.serialize(dest)?;
-                    },
+                    }
                     $t::$enumcase(v) => {
                         true.serialize(dest)?;
                         v.serialize(dest)?;
-                    },
+                    }
                 }
                 Ok(())
             }

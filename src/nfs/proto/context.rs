@@ -1,16 +1,20 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
 use std::fmt;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::transaction_tracker::TransactionTracker;
-use crate::vfs::NFSFileSystem;
+use super::transaction_tracker::TransactionTracker;
+use super::vfs::NFSFileSystem;
 
 #[derive(Clone)]
 pub struct RPCContext {
     pub local_port: u16,
     pub client_addr: String,
-    pub auth: crate::rpc::auth_unix,
+    pub auth: super::rpc::auth_unix,
     pub vfs: Arc<dyn NFSFileSystem + Send + Sync>,
     pub mount_signal: Option<mpsc::Sender<bool>>,
     pub export_name: Arc<String>,

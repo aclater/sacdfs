@@ -1,11 +1,11 @@
-use std::cmp::Ordering;
-use std::sync::Once;
-use std::time::SystemTime;
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
 
 use async_trait::async_trait;
 
-use crate::nfs;
-use crate::nfs::*;
+use super::nfs;
+use super::nfs::*;
 #[derive(Default, Debug)]
 pub struct DirEntrySimple {
     pub fileid: fileid3,
@@ -34,27 +34,9 @@ impl ReadDirSimpleResult {
         let entries: Vec<DirEntrySimple> = result
             .entries
             .iter()
-            .map(|e| DirEntrySimple {
-                fileid: e.fileid,
-                name: e.name.clone(),
-            })
+            .map(|e| DirEntrySimple { fileid: e.fileid, name: e.name.clone() })
             .collect();
-        ReadDirSimpleResult {
-            entries,
-            end: result.end,
-        }
-    }
-}
-
-static mut GENERATION_NUMBER: u64 = 0;
-static GENERATION_NUMBER_INIT: Once = Once::new();
-
-fn get_generation_number() -> u64 {
-    unsafe {
-        GENERATION_NUMBER_INIT.call_once(|| {
-            GENERATION_NUMBER = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-        });
-        GENERATION_NUMBER
+        ReadDirSimpleResult { entries, end: result.end }
     }
 }
 
@@ -69,10 +51,9 @@ pub enum VFSCapabilities {
 /// Opaque FH
 /// ---------
 /// Files are only uniquely identified by a 64-bit file id. (basically an inode number)
-/// We automatically produce internally the opaque filehandle which is comprised of
-///  - A 64-bit generation number derived from the server startup time
-///   (i.e. so the opaque file handle expires when the NFS server restarts)
-///  - The 64-bit file id
+/// The implementation makes the opaque file handle from it ([`NFSFileSystem::id_to_fh`]) and
+/// checks it ([`NFSFileSystem::fh_to_id`]). *sacdfs:* nfsserve's own handles held the
+/// server's start time, so every handle went stale when the server restarted.
 //
 /// readdir pagination
 /// ------------------
@@ -130,7 +111,12 @@ pub trait NFSFileSystem: Sync {
     /// Creates a file with the following attributes.
     /// If not supported due to readonly file system
     /// this should return Err(nfsstat3::NFS3ERR_ROFS)
-    async fn create(&self, dirid: fileid3, filename: &filename3, attr: sattr3) -> Result<(fileid3, fattr3), nfsstat3>;
+    async fn create(
+        &self,
+        dirid: fileid3,
+        filename: &filename3,
+        attr: sattr3,
+    ) -> Result<(fileid3, fattr3), nfsstat3>;
 
     /// Creates a file if it does not already exist
     /// this should return Err(nfsstat3::NFS3ERR_ROFS)
@@ -174,8 +160,15 @@ pub trait NFSFileSystem: Sync {
 
     /// Simple version of readdir.
     /// Only need to return filename and id
-    async fn readdir_simple(&self, dirid: fileid3, count: usize) -> Result<ReadDirSimpleResult, nfsstat3> {
-        Ok(ReadDirSimpleResult::from_readdir_result(&self.readdir(dirid, 0, count).await?))
+    /// *sacdfs:* takes `start_after` too: nfsserve's READDIR always listed from the start, so
+    /// a folder longer than one reply was listed again and again.
+    async fn readdir_simple(
+        &self,
+        dirid: fileid3,
+        start_after: fileid3,
+        count: usize,
+    ) -> Result<ReadDirSimpleResult, nfsstat3> {
+        Ok(ReadDirSimpleResult::from_readdir_result(&self.readdir(dirid, start_after, count).await?))
     }
 
     /// Makes a symlink with the following attributes.
@@ -209,37 +202,18 @@ pub trait NFSFileSystem: Sync {
             wtmult: 1024 * 1024,
             dtpref: 1024 * 1024,
             maxfilesize: 128 * 1024 * 1024 * 1024,
-            time_delta: nfs::nfstime3 {
-                seconds: 0,
-                nseconds: 1000000,
-            },
+            time_delta: nfs::nfstime3 { seconds: 0, nseconds: 1000000 },
             properties: nfs::FSF_SYMLINK | nfs::FSF_HOMOGENEOUS | nfs::FSF_CANSETTIME,
         };
         Ok(res)
     }
 
-    /// Converts the fileid to an opaque NFS file handle. Optional.
-    fn id_to_fh(&self, id: fileid3) -> nfs_fh3 {
-        let gennum = get_generation_number();
-        let mut ret: Vec<u8> = Vec::new();
-        ret.extend_from_slice(&gennum.to_le_bytes());
-        ret.extend_from_slice(&id.to_le_bytes());
-        nfs_fh3 { data: ret }
-    }
-    /// Converts an opaque NFS file handle to a fileid.  Optional.
-    fn fh_to_id(&self, id: &nfs_fh3) -> Result<fileid3, nfsstat3> {
-        if id.data.len() != 16 {
-            return Err(nfsstat3::NFS3ERR_BADHANDLE);
-        }
-        let gen = u64::from_le_bytes(id.data[0..8].try_into().unwrap());
-        let id = u64::from_le_bytes(id.data[8..16].try_into().unwrap());
-        let gennum = get_generation_number();
-        match gen.cmp(&gennum) {
-            Ordering::Less => Err(nfsstat3::NFS3ERR_STALE),
-            Ordering::Greater => Err(nfsstat3::NFS3ERR_BADHANDLE),
-            Ordering::Equal => Ok(id),
-        }
-    }
+    /// Converts the fileid to an opaque NFS file handle. *sacdfs:* required, and async, so that
+    /// the handle can carry what is needed to check it again after a restart.
+    async fn id_to_fh(&self, id: fileid3) -> nfs_fh3;
+    /// Converts an opaque NFS file handle to a fileid: `NFS3ERR_BADHANDLE` if it is not one,
+    /// `NFS3ERR_STALE` if its file is gone. *sacdfs:* required and async (see above).
+    async fn fh_to_id(&self, id: &nfs_fh3) -> Result<fileid3, nfsstat3>;
     /// Converts a complete path to a fileid.  Optional.
     /// The default implementation walks the directory structure with lookup()
     async fn path_to_id(&self, path: &[u8]) -> Result<fileid3, nfsstat3> {
@@ -254,8 +228,29 @@ pub trait NFSFileSystem: Sync {
         Ok(fid)
     }
 
-    fn serverid(&self) -> cookieverf3 {
-        let gennum = get_generation_number();
-        gennum.to_le_bytes()
-    }
+    /// The write and cookie verifier. *sacdfs:* required: stable across restarts.
+    fn serverid(&self) -> cookieverf3;
+
+    /// Dynamic file system information (FSSTAT). *sacdfs:* added; nfsserve answered a fixed
+    /// 1 TiB, all of it free.
+    async fn fsstat(&self, root_fileid: fileid3) -> Result<FsStat, nfsstat3>;
+
+    /// Whether a call with these credentials may be answered: `auth` is the AUTH_SYS
+    /// credential, `None` for any other flavour. *sacdfs:* added.
+    fn permits(&self, auth: Option<&super::rpc::auth_unix>) -> bool;
+}
+
+/// What FSSTAT reports, without its attributes. *sacdfs:* added.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FsStat {
+    /// Bytes in total, free, and free to this user.
+    pub tbytes: u64,
+    pub fbytes: u64,
+    pub abytes: u64,
+    /// Files (inodes) in total, free, and free to this user.
+    pub tfiles: u64,
+    pub ffiles: u64,
+    pub afiles: u64,
+    /// Seconds for which the answer does not change (0: may change at any time).
+    pub invarsec: u32,
 }

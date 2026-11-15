@@ -25,6 +25,8 @@ pub mod index_cache;
 pub mod lookup;
 pub mod memory;
 pub mod names;
+#[cfg(feature = "nfs")]
+pub mod nfs;
 pub mod pcm;
 pub mod platform;
 pub mod printable;

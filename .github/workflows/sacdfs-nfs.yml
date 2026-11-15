@@ -1,0 +1,57 @@
+# The NFS front end, `sacdfs-nfs` (#420): macOS's way to mount, and NFS clients' without FUSE.
+# On Linux: clippy and the tests with the `nfs` feature, then the corpus served by sacdfs-nfs
+# and mounted by the kernel's NFS client, compared file by file with a FUSE mount of the same
+# commit, across a server restart with a file open (tests/macos-nfs.sh).
+name: sacdfs-nfs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+
+jobs:
+  linux:
+    name: sacdfs-nfs (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal --component clippy && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
+      - name: Install fusermount3 and the NFS client
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3 nfs-common
+      - run: cargo clippy --locked --features nfs --all-targets -- -D warnings
+      - name: The NFS front end's tests
+        run: |
+          cargo test --locked --features nfs --lib nfs::
+          cargo test --locked --features nfs --test nfs
+      - run: cargo build --locked --release --features nfs --bins
+      - name: Hash every file of a FUSE mount of the corpus
+        run: |
+          mkdir -p "$RUNNER_TEMP/mnt"
+          target/release/sacdfs tests/corpus/images "$RUNNER_TEMP/mnt"
+          (cd "$RUNNER_TEMP/mnt" && find . -type f -print0 | xargs -0 sha256sum) | LC_ALL=C sort > fuse.sha256
+          fusermount3 -u "$RUNNER_TEMP/mnt"
+          wc -l < fuse.sha256
+      - name: NFS mount by the kernel's client, compared with FUSE
+        run: |
+          tests/macos-nfs.sh target/release/sacdfs-nfs nfs.sha256
+          cmp fuse.sha256 nfs.sha256
+          echo "$(wc -l < nfs.sha256) files: identical"

@@ -1,13 +1,17 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
 use std::io::{Read, Write};
 
+use log::{debug, error};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::cast::FromPrimitive;
-use tracing::{debug, error};
 
-use crate::context::RPCContext;
-use crate::portmap;
-use crate::rpc::*;
-use crate::xdr::*;
+use super::context::RPCContext;
+use super::portmap;
+use super::rpc::*;
+use super::xdr::*;
 
 /*
  From RFC 1057 Appendix A
@@ -43,7 +47,7 @@ pub fn handle_portmap(
     input: &mut impl Read,
     output: &mut impl Write,
     context: &RPCContext,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), std::io::Error> {
     if call.vers != portmap::VERSION {
         error!("Invalid Portmap Version number {} != {}", call.vers, portmap::VERSION);
         prog_mismatch_reply_message(xid, portmap::VERSION).serialize(output)?;
@@ -56,12 +60,12 @@ pub fn handle_portmap(
         PortmapProgram::PMAPPROC_GETPORT => pmapproc_getport(xid, input, output, context)?,
         _ => {
             proc_unavail_reply_message(xid).serialize(output)?;
-        },
+        }
     }
     Ok(())
 }
 
-pub fn pmapproc_null(xid: u32, _: &mut impl Read, output: &mut impl Write) -> Result<(), anyhow::Error> {
+pub fn pmapproc_null(xid: u32, _: &mut impl Read, output: &mut impl Write) -> Result<(), std::io::Error> {
     debug!("pmapproc_null({:?}) ", xid);
     // build an RPC reply
     let msg = make_success_reply(xid);
@@ -78,7 +82,7 @@ pub fn pmapproc_getport(
     read: &mut impl Read,
     output: &mut impl Write,
     context: &RPCContext,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), std::io::Error> {
     let mut mapping = portmap::mapping::default();
     mapping.deserialize(read)?;
     debug!("pmapproc_getport({:?}, {:?}) ", xid, mapping);

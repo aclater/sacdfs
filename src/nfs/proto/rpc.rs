@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
 // this is just a complete enumeration of everything in the RFC
 #![allow(dead_code)]
 // And its nice to keep the original RFC names and case
@@ -9,7 +13,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::cast::FromPrimitive;
 
-use crate::xdr::*;
+use super::xdr::*;
 // Transcribed from RFC 1057
 
 #[allow(non_camel_case_types)]
@@ -104,8 +108,9 @@ xdr_enum_serde!(auth_flavor);
 pub struct auth_unix {
     stamp: u32,
     machinename: Vec<u8>,
-    uid: u32,
-    gid: u32,
+    // sacdfs: public, for `NFSFileSystem::permits`.
+    pub uid: u32,
+    pub gid: u32,
     gids: Vec<u32>,
 }
 xdr_struct!(auth_unix, stamp, machinename, uid, gid, gids);
@@ -137,10 +142,7 @@ pub struct opaque_auth {
 xdr_struct!(opaque_auth, flavor, body);
 impl Default for opaque_auth {
     fn default() -> opaque_auth {
-        opaque_auth {
-            flavor: auth_flavor::AUTH_NULL,
-            body: Vec::new(),
-        }
+        opaque_auth { flavor: auth_flavor::AUTH_NULL, body: Vec::new() }
     }
 }
 
@@ -180,11 +182,11 @@ impl XDR for rpc_body {
             rpc_body::CALL(v) => {
                 0_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
             rpc_body::REPLY(v) => {
                 1_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
         }
         Ok(())
     }
@@ -288,11 +290,11 @@ impl XDR for reply_body {
             reply_body::MSG_ACCEPTED(v) => {
                 0_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
             reply_body::MSG_DENIED(v) => {
                 1_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
         }
         Ok(())
     }
@@ -359,20 +361,20 @@ impl XDR for accept_body {
         match self {
             accept_body::SUCCESS => {
                 0_u32.serialize(dest)?;
-            },
+            }
             accept_body::PROG_UNAVAIL => {
                 1_u32.serialize(dest)?;
-            },
+            }
             accept_body::PROG_MISMATCH(v) => {
                 2_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
             accept_body::PROC_UNAVAIL => {
                 3_u32.serialize(dest)?;
-            },
+            }
             accept_body::GARBAGE_ARGS => {
                 4_u32.serialize(dest)?;
-            },
+            }
         }
         Ok(())
     }
@@ -425,11 +427,11 @@ impl XDR for rejected_reply {
             rejected_reply::RPC_MISMATCH(v) => {
                 0_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
             rejected_reply::AUTH_ERROR(v) => {
                 1_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
         }
         Ok(())
     }
@@ -454,51 +456,33 @@ pub fn proc_unavail_reply_message(xid: u32) -> rpc_msg {
         verf: opaque_auth::default(),
         reply_data: accept_body::PROC_UNAVAIL,
     });
-    rpc_msg {
-        xid,
-        body: rpc_body::REPLY(reply),
-    }
+    rpc_msg { xid, body: rpc_body::REPLY(reply) }
 }
 pub fn prog_unavail_reply_message(xid: u32) -> rpc_msg {
     let reply = reply_body::MSG_ACCEPTED(accepted_reply {
         verf: opaque_auth::default(),
         reply_data: accept_body::PROG_UNAVAIL,
     });
-    rpc_msg {
-        xid,
-        body: rpc_body::REPLY(reply),
-    }
+    rpc_msg { xid, body: rpc_body::REPLY(reply) }
 }
 pub fn prog_mismatch_reply_message(xid: u32, accepted_ver: u32) -> rpc_msg {
     let reply = reply_body::MSG_ACCEPTED(accepted_reply {
         verf: opaque_auth::default(),
-        reply_data: accept_body::PROG_MISMATCH(mismatch_info {
-            low: accepted_ver,
-            high: accepted_ver,
-        }),
+        reply_data: accept_body::PROG_MISMATCH(mismatch_info { low: accepted_ver, high: accepted_ver }),
     });
-    rpc_msg {
-        xid,
-        body: rpc_body::REPLY(reply),
-    }
+    rpc_msg { xid, body: rpc_body::REPLY(reply) }
 }
 pub fn garbage_args_reply_message(xid: u32) -> rpc_msg {
     let reply = reply_body::MSG_ACCEPTED(accepted_reply {
         verf: opaque_auth::default(),
         reply_data: accept_body::GARBAGE_ARGS,
     });
-    rpc_msg {
-        xid,
-        body: rpc_body::REPLY(reply),
-    }
+    rpc_msg { xid, body: rpc_body::REPLY(reply) }
 }
 
 pub fn rpc_vers_mismatch(xid: u32) -> rpc_msg {
     let reply = reply_body::MSG_DENIED(rejected_reply::RPC_MISMATCH(mismatch_info::default()));
-    rpc_msg {
-        xid,
-        body: rpc_body::REPLY(reply),
-    }
+    rpc_msg { xid, body: rpc_body::REPLY(reply) }
 }
 
 pub fn make_success_reply(xid: u32) -> rpc_msg {
@@ -506,8 +490,11 @@ pub fn make_success_reply(xid: u32) -> rpc_msg {
         verf: opaque_auth::default(),
         reply_data: accept_body::SUCCESS,
     });
-    rpc_msg {
-        xid,
-        body: rpc_body::REPLY(reply),
-    }
+    rpc_msg { xid, body: rpc_body::REPLY(reply) }
+}
+
+/// sacdfs: a call refused for its credentials.
+pub fn auth_error_reply_message(xid: u32, stat: auth_stat) -> rpc_msg {
+    let reply = reply_body::MSG_DENIED(rejected_reply::AUTH_ERROR(stat));
+    rpc_msg { xid, body: rpc_body::REPLY(reply) }
 }

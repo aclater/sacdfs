@@ -1,14 +1,16 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
 use std::io::{Cursor, Read, Write};
 
-use anyhow::anyhow;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
-use tokio::sync::mpsc;
-use tracing::{debug, error, trace, warn};
+use log::{debug, error, trace, warn};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::context::RPCContext;
-use crate::rpc::*;
-use crate::xdr::*;
-use crate::{mount, mount_handlers, nfs, nfs_handlers, portmap, portmap_handlers};
+use super::context::RPCContext;
+use super::rpc::*;
+use super::xdr::*;
+use super::{mount, mount_handlers, nfs, nfs_handlers, portmap, portmap_handlers};
 
 // Information from RFC 5531
 // https://datatracker.ietf.org/doc/html/rfc5531
@@ -17,19 +19,30 @@ const NFS_ACL_PROGRAM: u32 = 100227;
 const NFS_ID_MAP_PROGRAM: u32 = 100270;
 const NFS_METADATA_PROGRAM: u32 = 200024;
 
-async fn handle_rpc(
+/// Answers one call (`input`, a whole record) into `output`: `Ok(false)` for no reply.
+pub async fn handle_rpc(
     input: &mut impl Read,
     output: &mut impl Write,
     mut context: RPCContext,
-) -> Result<bool, anyhow::Error> {
+) -> Result<bool, std::io::Error> {
     let mut recv = rpc_msg::default();
     recv.deserialize(input)?;
     let xid = recv.xid;
     if let rpc_body::CALL(call) = recv.body {
-        if let auth_flavor::AUTH_UNIX = call.cred.flavor {
+        let unix = if let auth_flavor::AUTH_UNIX = call.cred.flavor {
             let mut auth = auth_unix::default();
             auth.deserialize(&mut Cursor::new(&call.cred.body))?;
             context.auth = auth;
+            true
+        } else {
+            false
+        };
+        // sacdfs: only callers the file system permits, but anyone may ping (procedure 0).
+        if call.proc != 0 && !context.vfs.permits(unix.then_some(&context.auth)) {
+            debug!("refused call {xid} (program {}, procedure {}): credentials", call.prog, call.proc);
+            let stat = if unix { auth_stat::AUTH_BADCRED } else { auth_stat::AUTH_TOOWEAK };
+            auth_error_reply_message(xid, stat).serialize(output)?;
+            return Ok(true);
         }
         if call.rpcvers != 2 {
             warn!("Invalid RPC version {} != 2", call.rpcvers);
@@ -40,7 +53,10 @@ async fn handle_rpc(
         if context.transaction_tracker.is_retransmission(xid, &context.client_addr) {
             // This is a retransmission
             // Drop the message and return
-            debug!("Retransmission detected, xid: {}, client_addr: {}, call: {:?}", xid, context.client_addr, call);
+            debug!(
+                "Retransmission detected, xid: {}, client_addr: {}, call: {:?}",
+                xid, context.client_addr, call
+            );
             return Ok(false);
         }
 
@@ -69,110 +85,58 @@ async fn handle_rpc(
         res
     } else {
         error!("Unexpectedly received a Reply instead of a Call");
-        Err(anyhow!("Bad RPC Call format"))
+        Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Bad RPC Call format"))
     }
 }
 
-/// RFC 1057 Section 10
-/// When RPC messages are passed on top of a byte stream transport
-/// protocol (like TCP), it is necessary to delimit one message from
-/// another in order to detect and possibly recover from protocol errors.
-/// This is called record marking (RM).  Sun uses this RM/TCP/IP
-/// transport for passing RPC messages on TCP streams.  One RPC message
-/// fits into one RM record.
+/// RFC 5531 section 11, record marking: a record is fragments, each a 4-byte header (the top
+/// bit set on the last, the low 31 bits its length) and its bytes.
 ///
-/// A record is composed of one or more record fragments.  A record
-/// fragment is a four-byte header followed by 0 to (2**31) - 1 bytes of
-/// fragment data.  The bytes encode an unsigned binary number; as with
-/// XDR integers, the byte order is from highest to lowest.  The number
-/// encodes two values -- a boolean which indicates whether the fragment
-/// is the last fragment of the record (bit value 1 implies the fragment
-/// is the last fragment) and a 31-bit unsigned binary value which is the
-/// length in bytes of the fragment's data.  The boolean value is the
-/// highest-order bit of the header; the length is the 31 low-order bits.
-/// (Note that this record specification is NOT in XDR standard form!)
-async fn read_fragment(socket: &mut DuplexStream, append_to: &mut Vec<u8>) -> Result<bool, anyhow::Error> {
-    let mut header_buf = [0_u8; 4];
-    socket.read_exact(&mut header_buf).await?;
-    let fragment_header = u32::from_be_bytes(header_buf);
-    let is_last = (fragment_header & (1 << 31)) > 0;
-    let length = (fragment_header & ((1 << 31) - 1)) as usize;
-    trace!("Reading fragment length:{}, last:{}", length, is_last);
-    let start_offset = append_to.len();
-    append_to.resize(append_to.len() + length, 0);
-    socket.read_exact(&mut append_to[start_offset..]).await?;
-    trace!("Finishing Reading fragment length:{}, last:{}", length, is_last);
-    Ok(is_last)
-}
+/// sacdfs: replaces nfsserve's reader, which allocated whatever length a header said (up to
+/// 2 GiB) before reading it. A record longer than [`MAX_RECORD`] ends the connection.
+pub const MAX_RECORD: usize = 256 * 1024;
 
-pub async fn write_fragment(socket: &mut tokio::net::TcpStream, buf: &[u8]) -> Result<(), anyhow::Error> {
-    // TODO: split into many fragments
-    assert!(buf.len() < (1 << 31));
-    // set the last flag
-    let fragment_header = buf.len() as u32 + (1 << 31);
-    let header_buf = u32::to_be_bytes(fragment_header);
-    socket.write_all(&header_buf).await?;
-    trace!("Writing fragment length:{}", buf.len());
-    socket.write_all(buf).await?;
-    Ok(())
-}
-
-pub type SocketMessageType = Result<Vec<u8>, anyhow::Error>;
-
-/// The Socket Message Handler reads from a TcpStream and spawns off
-/// subtasks to handle each message. replies are queued into the
-/// reply_send_channel.
-#[derive(Debug)]
-pub struct SocketMessageHandler {
-    cur_fragment: Vec<u8>,
-    socket_receive_channel: DuplexStream,
-    reply_send_channel: mpsc::UnboundedSender<SocketMessageType>,
-    context: RPCContext,
-}
-
-impl SocketMessageHandler {
-    /// Creates a new SocketMessageHandler with the receiver for queued message replies
-    pub fn new(context: &RPCContext) -> (Self, DuplexStream, mpsc::UnboundedReceiver<SocketMessageType>) {
-        let (socksend, sockrecv) = tokio::io::duplex(256000);
-        let (msgsend, msgrecv) = mpsc::unbounded_channel();
-        (
-            Self {
-                cur_fragment: Vec::new(),
-                socket_receive_channel: sockrecv,
-                reply_send_channel: msgsend,
-                context: context.clone(),
-            },
-            socksend,
-            msgrecv,
-        )
-    }
-
-    /// Reads a fragment from the socket. This should be looped.
-    pub async fn read(&mut self) -> Result<(), anyhow::Error> {
-        let is_last = read_fragment(&mut self.socket_receive_channel, &mut self.cur_fragment).await?;
-        if is_last {
-            let fragment = std::mem::take(&mut self.cur_fragment);
-            let context = self.context.clone();
-            let send = self.reply_send_channel.clone();
-            tokio::spawn(async move {
-                let mut write_buf: Vec<u8> = Vec::new();
-                let mut write_cursor = Cursor::new(&mut write_buf);
-                let maybe_reply = handle_rpc(&mut Cursor::new(fragment), &mut write_cursor, context).await;
-                match maybe_reply {
-                    Err(e) => {
-                        error!("RPC Error: {:?}", e);
-                        let _ = send.send(Err(e));
-                    },
-                    Ok(true) => {
-                        let _ = std::io::Write::flush(&mut write_cursor);
-                        let _ = send.send(Ok(write_buf));
-                    },
-                    Ok(false) => {
-                        // do not reply
-                    },
-                }
-            });
+/// Reads one record into `buf` (cleared first): `Ok(false)` at the end of the stream before
+/// a record starts.
+pub async fn read_record(src: &mut (impl AsyncRead + Unpin), buf: &mut Vec<u8>) -> std::io::Result<bool> {
+    buf.clear();
+    loop {
+        let mut header = [0u8; 4];
+        match src.read_exact(&mut header).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof && buf.is_empty() => return Ok(false),
+            Err(e) => return Err(e),
         }
-        Ok(())
+        let header = u32::from_be_bytes(header);
+        let last = header & (1 << 31) != 0;
+        let length = (header & !(1 << 31)) as usize;
+        if buf.len() + length > MAX_RECORD {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("record longer than {MAX_RECORD} bytes"),
+            ));
+        }
+        trace!("Reading fragment length:{}, last:{}", length, last);
+        let start = buf.len();
+        src.take(length as u64).read_to_end(buf).await?;
+        if buf.len() - start != length {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        if last {
+            return Ok(true);
+        }
     }
+}
+
+/// Writes `buf` as one record of one fragment.
+pub async fn write_fragment(dest: &mut (impl AsyncWrite + Unpin), buf: &[u8]) -> std::io::Result<()> {
+    let length = u32::try_from(buf.len())
+        .ok()
+        .filter(|l| *l < 1 << 31)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "reply too long"))?;
+    let mut out = Vec::with_capacity(buf.len() + 4);
+    out.extend_from_slice(&(length | 1 << 31).to_be_bytes());
+    out.extend_from_slice(buf);
+    trace!("Writing fragment length:{}", buf.len());
+    dest.write_all(&out).await
 }

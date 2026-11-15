@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
 // this is just a complete enumeration of everything in the RFC
 #![allow(dead_code)]
 // And its nice to keep the original RFC names and case
@@ -7,11 +11,10 @@ use std::fmt;
 use std::io::{Read, Write};
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use filetime;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::cast::FromPrimitive;
 
-use crate::xdr::*;
+use super::xdr::*;
 
 // Transcribed from RFC 1813.
 
@@ -254,12 +257,6 @@ pub struct nfstime3 {
 }
 xdr_struct!(nfstime3, seconds, nseconds);
 
-impl From<nfstime3> for filetime::FileTime {
-    fn from(time: nfstime3) -> Self {
-        filetime::FileTime::from_unix_time(time.seconds as i64, time.nseconds)
-    }
-}
-
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct fattr3 {
@@ -441,14 +438,14 @@ impl XDR for set_atime {
         match self {
             set_atime::DONT_CHANGE => {
                 0_u32.serialize(dest)?;
-            },
+            }
             set_atime::SET_TO_SERVER_TIME => {
                 1_u32.serialize(dest)?;
-            },
+            }
             set_atime::SET_TO_CLIENT_TIME(v) => {
                 2_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
         }
         Ok(())
     }
@@ -485,14 +482,14 @@ impl XDR for set_mtime {
         match self {
             set_mtime::DONT_CHANGE => {
                 0_u32.serialize(dest)?;
-            },
+            }
             set_mtime::SET_TO_SERVER_TIME => {
                 1_u32.serialize(dest)?;
-            },
+            }
             set_mtime::SET_TO_CLIENT_TIME(v) => {
                 2_u32.serialize(dest)?;
                 v.serialize(dest)?;
-            },
+            }
         }
         Ok(())
     }

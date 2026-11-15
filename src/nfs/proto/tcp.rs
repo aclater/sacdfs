@@ -1,214 +1,138 @@
-use std::io;
-use std::net::{IpAddr, SocketAddr};
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face): see
+// mod.rs and this folder's LICENSE.
+// sacdfs: rewritten from nfsserve's tcp.rs. Each connection reads whole records (bounded,
+// `rpcwire::read_record`), answers at most `IN_FLIGHT` calls at a time and writes the replies
+// from one task; the listener survives a failed accept (out of descriptors). nfsserve's
+// `auto` addresses (127.88.x.x) are gone: sacdfs binds where it is told.
+
+use std::io::{self, Cursor};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow;
-use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpListener;
-use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use log::{debug, info, warn};
+use tokio::io::BufReader;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{Semaphore, mpsc};
 
-use crate::context::RPCContext;
-use crate::rpcwire::*;
-use crate::transaction_tracker::TransactionTracker;
-use crate::vfs::NFSFileSystem;
+use super::context::RPCContext;
+use super::rpcwire::{handle_rpc, read_record, write_fragment};
+use super::transaction_tracker::TransactionTracker;
+use super::vfs::NFSFileSystem;
 
-/// A NFS Tcp Connection Handler
+/// Calls answered at once per connection; the next record is read when one is done.
+pub const IN_FLIGHT: usize = 64;
+
+/// Connections served at once; more wait to be accepted.
+pub const MAX_CONNECTIONS: usize = 64;
+
+/// The NFS server's listening socket.
 pub struct NFSTcpListener<T: NFSFileSystem + Send + Sync + 'static> {
     listener: TcpListener,
     port: u16,
     arcfs: Arc<T>,
-    mount_signal: Option<mpsc::Sender<bool>>,
     export_name: Arc<String>,
     transaction_tracker: Arc<TransactionTracker>,
 }
 
-pub fn generate_host_ip(hostnum: u16) -> String {
-    format!("127.88.{}.{}", ((hostnum >> 8) & 0xFF) as u8, (hostnum & 0xFF) as u8)
+impl<T: NFSFileSystem + Send + Sync + 'static> std::fmt::Debug for NFSTcpListener<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NFSTcpListener").field("listener", &self.listener).finish_non_exhaustive()
+    }
 }
 
-/// processes an established socket
-async fn process_socket(mut socket: tokio::net::TcpStream, context: RPCContext) -> Result<(), anyhow::Error> {
-    let (mut message_handler, mut socksend, mut msgrecvchan) = SocketMessageHandler::new(&context);
+/// Serves one connection until the client closes it or sends what is not a record.
+async fn process_socket(socket: TcpStream, context: RPCContext) {
     let _ = socket.set_nodelay(true);
-
-    tokio::spawn(async move {
-        loop {
-            if let Err(e) = message_handler.read().await {
-                debug!("Message loop broken due to {:?}", e);
+    let (rd, mut wr) = socket.into_split();
+    let mut rd = BufReader::with_capacity(64 * 1024, rd);
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(IN_FLIGHT);
+    let writer = tokio::spawn(async move {
+        while let Some(reply) = rx.recv().await {
+            if let Err(e) = write_fragment(&mut wr, &reply).await {
+                debug!("write: {e}");
                 break;
             }
         }
     });
+    let slots = Arc::new(Semaphore::new(IN_FLIGHT));
     loop {
-        tokio::select! {
-            _ = socket.readable() => {
-                let mut buf = [0; 128000];
-
-                match socket.try_read(&mut buf) {
-                    Ok(0) => {
-                        return Ok(());
-                    }
-                    Ok(n) => {
-                        let _ = socksend.write_all(&buf[..n]).await;
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        continue;
-                    }
-                    Err(e) => {
-                        debug!("Message handling closed : {:?}", e);
-                        return Err(e.into());
-                    }
-                }
-
-            },
-            reply = msgrecvchan.recv() => {
-                match reply {
-                    Some(Err(e)) => {
-                        debug!("Message handling closed : {:?}", e);
-                        return Err(e);
-                    }
-                    Some(Ok(msg)) => {
-                        if let Err(e) = write_fragment(&mut socket, &msg).await {
-                            error!("Write error {:?}", e);
-                        }
-                    }
-                    None => {
-                        return Err(anyhow::anyhow!("Unexpected socket context termination"));
-                    }
-                }
+        let mut record = Vec::new();
+        match read_record(&mut rd, &mut record).await {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(e) => {
+                debug!("connection from {}: {e}", context.client_addr);
+                break;
             }
         }
+        let Ok(slot) = slots.clone().acquire_owned().await else { break };
+        let (context, tx) = (context.clone(), tx.clone());
+        tokio::spawn(async move {
+            let mut out = Vec::new();
+            match handle_rpc(&mut Cursor::new(record), &mut out, context).await {
+                Ok(true) => {
+                    let _ = tx.send(out).await;
+                }
+                Ok(false) => {}
+                // A call that does not decode gets no reply, as from nfsserve.
+                Err(e) => debug!("call: {e}"),
+            }
+            drop(slot);
+        });
     }
-}
-
-#[async_trait]
-pub trait NFSTcp: Send + Sync {
-    /// Gets the true listening port. Useful if the bound port number is 0
-    fn get_listen_port(&self) -> u16;
-
-    /// Gets the true listening IP. Useful on windows when the IP may be random
-    fn get_listen_ip(&self) -> IpAddr;
-
-    /// Sets a mount listener. A "true" signal will be sent on a mount
-    /// and a "false" will be sent on an unmount
-    fn set_mount_listener(&mut self, signal: mpsc::Sender<bool>);
-
-    /// Loops forever and never returns handling all incoming connections.
-    async fn handle_forever(&self) -> io::Result<()>;
+    drop(tx);
+    let _ = writer.await;
 }
 
 impl<T: NFSFileSystem + Send + Sync + 'static> NFSTcpListener<T> {
-    /// Binds to a ipstr of the form [ip address]:port. For instance
-    /// "127.0.0.1:12000". fs is an instance of an implementation
-    /// of NFSFileSystem.
-    pub async fn bind(ipstr: &str, fs: T) -> io::Result<NFSTcpListener<T>> {
-        let (ip, port) = ipstr
-            .split_once(':')
-            .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, "IP Address must be of form ip:port"))?;
-        let port = port
-            .parse::<u16>()
-            .map_err(|_| io::Error::new(io::ErrorKind::AddrNotAvailable, "Port not in range 0..=65535"))?;
-
-        let arcfs: Arc<T> = Arc::new(fs);
-
-        if ip == "auto" {
-            let mut num_tries_left = 32;
-
-            for try_ip in 1u16.. {
-                let ip = generate_host_ip(try_ip);
-
-                let result = NFSTcpListener::bind_internal(&ip, port, arcfs.clone()).await;
-
-                match &result {
-                    Err(_) => {
-                        if num_tries_left == 0 {
-                            return result;
-                        } else {
-                            num_tries_left -= 1;
-                            continue;
-                        }
-                    },
-                    Ok(_) => {
-                        return result;
-                    },
-                }
-            }
-            unreachable!(); // Does not detect automatically that loop above never terminates.
-        } else {
-            // Otherwise, try this.
-            NFSTcpListener::bind_internal(ip, port, arcfs).await
-        }
-    }
-
-    async fn bind_internal(ip: &str, port: u16, arcfs: Arc<T>) -> io::Result<NFSTcpListener<T>> {
-        let ipstr = format!("{ip}:{port}");
-        let listener = TcpListener::bind(&ipstr).await?;
-        info!("Listening on {:?}", &ipstr);
-
-        let port = match listener.local_addr().unwrap() {
-            SocketAddr::V4(s) => s.port(),
-            SocketAddr::V6(s) => s.port(),
-        };
+    /// Listens on `addr` and serves `fs` there.
+    pub async fn bind(addr: SocketAddr, fs: T) -> io::Result<NFSTcpListener<T>> {
+        let listener = TcpListener::bind(addr).await?;
+        let port = listener.local_addr()?.port();
         Ok(NFSTcpListener {
             listener,
             port,
-            arcfs,
-            mount_signal: None,
+            arcfs: Arc::new(fs),
             export_name: Arc::from("/".to_string()),
             transaction_tracker: Arc::new(TransactionTracker::new(Duration::from_secs(60))),
         })
     }
 
-    /// Sets an optional NFS export name.
-    ///
-    /// - `export_name`: The desired export name without slashes.
-    ///
-    /// Example: Name `foo` results in the export path `/foo`.
-    /// Default path is `/` if not set.
-    pub fn with_export_name<S: AsRef<str>>(&mut self, export_name: S) {
-        self.export_name = Arc::new(format!("/{}", export_name.as_ref().trim_end_matches('/').trim_start_matches('/')))
-    }
-}
-
-#[async_trait]
-impl<T: NFSFileSystem + Send + Sync + 'static> NFSTcp for NFSTcpListener<T> {
-    /// Gets the true listening port. Useful if the bound port number is 0
-    fn get_listen_port(&self) -> u16 {
-        let addr = self.listener.local_addr().unwrap();
-        addr.port()
+    /// The address listened on: the port the system chose for port 0.
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.listener.local_addr()
     }
 
-    fn get_listen_ip(&self) -> IpAddr {
-        let addr = self.listener.local_addr().unwrap();
-        addr.ip()
-    }
-
-    /// Sets a mount listener. A "true" signal will be sent on a mount
-    /// and a "false" will be sent on an unmount
-    fn set_mount_listener(&mut self, signal: mpsc::Sender<bool>) {
-        self.mount_signal = Some(signal);
-    }
-
-    /// Loops forever and never returns handling all incoming connections.
-    async fn handle_forever(&self) -> io::Result<()> {
+    /// Serves connections until the task is dropped.
+    pub async fn handle_forever(&self) -> io::Result<()> {
+        let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
         loop {
-            let (socket, _) = self.listener.accept().await?;
+            let Ok(slot) = connections.clone().acquire_owned().await else { return Ok(()) };
+            let (socket, peer) = match self.listener.accept().await {
+                Ok(s) => s,
+                Err(e) => {
+                    // Out of descriptors, or a connection reset before it was accepted: the
+                    // listener stays.
+                    warn!("accept: {e}");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
             let context = RPCContext {
                 local_port: self.port,
-                client_addr: socket.peer_addr().unwrap().to_string(),
-                auth: crate::rpc::auth_unix::default(),
+                client_addr: peer.to_string(),
+                auth: super::rpc::auth_unix::default(),
                 vfs: self.arcfs.clone(),
-                mount_signal: self.mount_signal.clone(),
+                mount_signal: None,
                 export_name: self.export_name.clone(),
                 transaction_tracker: self.transaction_tracker.clone(),
             };
-            info!("Accepting connection from {}", context.client_addr);
-            debug!("Accepting socket {:?} {:?}", socket, context);
+            info!("connection from {}", context.client_addr);
             tokio::spawn(async move {
-                let _ = process_socket(socket, context).await;
+                process_socket(socket, context).await;
+                drop(slot);
             });
         }
     }

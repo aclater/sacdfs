@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
 // this is just a complete enumeration of everything in the RFC
 #![allow(dead_code)]
 // And its nice to keep the original RFC names and case
@@ -5,7 +9,7 @@
 
 use std::io::{Read, Write};
 
-use crate::xdr::*;
+use super::xdr::*;
 // Transcribed from RFC 1057 Appendix A
 
 /// Device Number information. Ex: Major / Minor device
