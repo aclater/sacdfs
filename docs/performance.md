@@ -1112,7 +1112,7 @@ The same one-reader copy, measured again for 0.4.1 to main. It was still 10 to 1
 container is limited to 512 MiB here, and under a limit of 512 MiB or less sacdfs's cache of
 frames is 16 MiB by default ([deployment](deployment.md#under-a-memory-limit)), where the 0.4.1
 container always passed `--cache-mb 32`. With the same cache, current releases are faster than
-0.4.1.
+0.4.1. So the default is now 32 MiB from a 256 MiB limit up (below).
 
 **How measured:** a laptop with a Ryzen AI 9 HX 370 on mains, `performance` profile. The sacdfs
 container was pinned to the 4 Zen 5 cores with 512 MiB, and `cat` to a Zen 5c core. The Linux 7.2
@@ -1145,14 +1145,25 @@ change built from the repository's Containerfile. Seconds, median (range), 5 run
   switched 3,291 times in one area. The 0.4.1 binary in main's image and main's binary in
   0.4.1's image were each as fast as 0.4.1 or faster (one to two clean runs each, 6-channel WAV), so the
   binaries are not the difference: the settings the container passes are.
-- **The 16 MiB default is unchanged here.** It was chosen because a 6-channel player kept real
-  time beside whole-file scanners at 8, 16 and 32 MiB, and a local scan alone ran as fast at 16 as
-  at 32, in 16 MiB less (#237, #230; [deployment](deployment.md#under-a-memory-limit)). Over SMB a
-  single WAV copy is 14 to 17 % slower with it. Changing it is a trade of memory against copy
-  speed, left open in #271. Without a memory limit, or above 512 MiB, the cache is 32 MiB.
+- **The default changes (#271):** 32 MiB from a 256 MiB limit up, 16 only below. The rule set for
+  the default after #230 was 16 if it holds the player and a scan alone stays within 5 % of 32,
+  otherwise 32 ([design](design.md#memory-a-budget-for-listings-237)); it was measured locally,
+  and over SMB the second condition fails. Measured on main, a Linux test host with an Intel Core
+  i9-13900H (the #357 harness: server on 2 or 4 efficiency cores, 256 or 512 MiB, 6-channel WAV
+  player at real time, copies of 6-channel WAV tracks through the kernel SMB client), 3 runs
+  each, 16 MiB (main's default there) against `SACDFS_CACHE_MB=32`:
+
+  | Cell | Player worst read, ms, max (median): 16 / 32 MiB | Copies, s: 16 / 32 MiB | sacdfs CPU, s | Peak resident, MiB |
+  |---|---|---|---|---|
+  | 1 copy alone, 4 cores, 512 MiB | | 17.65 / **15.37** (-12.9 %) | 58 / 50 | 39 / 55 |
+  | 1 copy beside a player, 4 cores, 512 MiB | 33 (32) / 31 (31) | 24.18 / **18.46** (-23.7 %) | 73 / 62 | 41 / 56 |
+  | 4 copies beside a player, 4 cores, 512 MiB | 33 (32) / 31 (31) | 110.77 / **93.63** (-15.5 %) | 415 / 352 | 52 / 67 |
+  | 2 players and 4 copies, 4 cores, 512 MiB: second player | 75 (62) / 77 (62) | 115.91 / **103.45** (-10.8 %) | 434 / 387 | 53 / 67 |
+  | 4 copies beside a player, 2 slow cores, 256 MiB (#357) | 3,445 (2,839) / **993 (54)** | 233.39 / **190.95** (-18.2 %) | 456 / 372 | 45 / 62 |
+
 - **DSF over SMB**, which #271 had left open: within 2 % of 0.4.1 for stereo and 2 to 4 % for
   6 channels, on every release; not measured with a 32 MiB cache.
-- **Not measured here:** other memory limits or none, NFS, macOS and Windows clients (Windows:
+- **Not measured here:** limits below 256 MiB or none, NFS, macOS and Windows clients (Windows:
   [test plan](test-plan.md)), and a physical Mac.
 
 ## A player beside copies on a slow server (#357)

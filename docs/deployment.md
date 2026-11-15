@@ -351,12 +351,12 @@ limit, none of this applies.
 | Memory watch | see below |
 | NFS-Ganesha's cache of entries, in the container | what an eighth of the limit holds at about 2 KiB each: 16,384 entries at 256 MiB, against its default of 100,000. From about 1.5 GiB, its default |
 
-An option you set yourself always wins. The smaller cache costs whole-file copies: through the
-Linux kernel SMB client, one reader copying an area's WAV files took 14 to 17 % longer at
-16 MiB than at 32 MiB (`SACDFS_CACHE_MB=32`, on 4 cores with a 512 MiB limit;
-[performance](performance.md#one-reader-over-smb-by-release-and-the-cache-under-a-memory-limit-271-2026-11-14)).
-It was made the default because a local scan alone measured as fast at 16 MiB as at 32, and it
-saves 16 MiB; copies over SMB weren't measured then.
+An option you set yourself always wins. *Why 32 MiB from 256 MiB up (#271):* through the Linux
+kernel SMB client, 16 MiB made whole-file WAV copies 12 to 31 % slower than 32 at limits of 256
+and 512 MiB, and a player beside four copies on 2 slow cores stalled longer
+([performance](performance.md#one-reader-over-smb-by-release-and-the-cache-under-a-memory-limit-271-2026-11-14)).
+The larger cache takes about 16 MiB more, which the memory watch below gives back above 85 % of
+the limit. Below 256 MiB, 16 MiB was kept; it wasn't measured there.
 
 **Listings.** A listed image holds its TOC and text, and for each of its files a header, tag and
 node: about 56 KiB per image with DSF and WAV shown. Past the budget, the images not used lately
@@ -600,7 +600,7 @@ these limits. At 8 MiB the player holds real time too, but scans run 18 to 28 % 
 
 **From 0.5.0 to 0.6.4 the default under a memory limit up to 512 MiB was 16 MiB**, and since then it
 is 16 MiB only below 256 MiB ([design](design.md#memory-a-budget-for-listings-237);
-over SMB, 16 made copies 12 to 18 % slower and a player beside them stall longer). Locally it held the player as 32 does, and a
+over SMB, 16 made copies 12 to 31 % slower and a player beside them stall longer). Locally it held the player as 32 does, and a
 scan alone ran as fast, in about 16 MiB less. Measured on the same machine's P-cores (2 cores: one
 physical core with its SMT sibling; 4 cores: two), client on other cores, same method, 3 runs each:
 

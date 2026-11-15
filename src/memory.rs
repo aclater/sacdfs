@@ -28,7 +28,7 @@ pub const CACHE_MB: usize = 32;
 pub const CACHE_MB_SMALL: usize = 16;
 
 /// Limits below this are small, for the cache's default. *Why 256 MiB, not 512 as before (#271):*
-/// over SMB, at limits of 256 and 512 MiB, 16 MiB made whole-file WAV copies 12 to 18 % slower
+/// over SMB, at limits of 256 and 512 MiB, 16 MiB made whole-file WAV copies 12 to 31 % slower
 /// than 32 (one copy on 4 cores 17.65 s against 15.37 s, four 110.8 s against 93.6 s), and on 2
 /// slow cores beside four copies a player's worst read was 3.4 s against 1.0 s, with 23 % more
 /// CPU: frames were evicted before they were read. 32 MiB took about 16 MiB more resident memory there, and the

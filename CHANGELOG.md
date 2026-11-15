@@ -28,6 +28,16 @@ All notable changes to sacdfs are recorded here. The format follows
   the block on any Linux system, as a normal user, and changes nothing, for beta test reports.
 
 ### Changed
+- **The cache of frames is 32 MiB under a memory limit of 256 MiB or more; 16 MiB stays only
+  below 256 MiB (#271).** It was 16 MiB up to a 512 MiB limit. Through the Linux kernel SMB client
+  that made whole-file WAV copies 12 to 31 % slower than at 32 MiB, and on 2 slow cores at 256 MiB
+  a player beside four copies stalled up to 3.4 s, against 1.0 s at 32 MiB with 18 % less CPU;
+  the default had been measured only with local reads. This is also why one WAV copy over SMB
+  was still 10 to 12 % slower than 0.4.1 for 6 channels (0.4.1's container always passed 32): at
+  32 MiB, 0.6.3 and main are 5 to 11 % faster than 0.4.1. The larger cache takes about 16 MiB
+  more, which the memory watch gives back above 85 % of the limit. `SACDFS_CACHE_MB` or
+  `--cache-mb` still set it
+  ([performance](docs/performance.md#one-reader-over-smb-by-release-and-the-cache-under-a-memory-limit-271-2026-11-14)).
 - **The systemd unit limits what sacdfs may do, and the mount stays visible (#387).** The unit in
   the release archive now keeps sacdfs to the rights to mount and to read the images
   (`CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE`). It also sets:
