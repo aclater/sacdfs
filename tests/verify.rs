@@ -541,12 +541,12 @@ fn report_to_a_descriptor_redirected_to_a_file() {
     // Standard output, also through a link of the user's, and with --resume.
     let link = dir.path().join("link");
     std::os::unix::fs::symlink("/dev/stdout", &link).unwrap();
-    for (o, resume) in [
-        ("/dev/stdout", false),
-        ("/dev/stdout", true),
-        ("/proc/self/fd/1", false),
-        (link.to_str().unwrap(), false),
-    ] {
+    let mut cases = vec![("/dev/stdout", false), ("/dev/stdout", true), (link.to_str().unwrap(), false)];
+    // /proc: Linux only.
+    if cfg!(target_os = "linux") {
+        cases.push(("/proc/self/fd/1", false));
+    }
+    for (o, resume) in cases {
         let mut c = verify(o);
         if resume {
             c.arg("--resume");
