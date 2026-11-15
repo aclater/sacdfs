@@ -132,7 +132,7 @@ must mount it again** after every upgrade or restart. Never stop sacdfs with `ki
 stop step in your guide ([why](nas-binary.md#start-at-boot-and-stop-safely)).
 
 Upgrading from 0.4.0 with albums catalogued by beets-pysacd: follow
-[these steps](../user-guide.md#discs-without-text) before any `beet update`.
+[these steps](../user-guide.md#tagging-behaviour) ("Upgrading from 0.4.0 with beets-pysacd") before any `beet update`.
 
 ## Details
 
