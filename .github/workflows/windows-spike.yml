@@ -51,16 +51,17 @@ jobs:
         run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
       - run: cargo build --release --locked
       - name: Mount the corpus and hash every file
+        # The mount point under /tmp, as the tests' (fusermount3 refuses the runner's temp folder).
         run: |
-          mkdir -p "$RUNNER_TEMP/mnt"
-          target/release/sacdfs tests/corpus/images "$RUNNER_TEMP/mnt" --no-index-cache
-          (cd "$RUNNER_TEMP/mnt" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$RUNNER_TEMP/linux.sha256"
-          fusermount3 -u "$RUNNER_TEMP/mnt"
-          wc -l "$RUNNER_TEMP/linux.sha256"
+          mnt=$(mktemp -d)
+          target/release/sacdfs tests/corpus/images "$mnt" --no-index-cache
+          (cd "$mnt" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > linux.sha256
+          fusermount3 -u "$mnt"
+          wc -l linux.sha256
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: linux-sha256
-          path: ${{ runner.temp }}/linux.sha256
+          path: linux.sha256
 
   windows:
     name: Windows (WinFsp) build, unit tests and corpus mount
