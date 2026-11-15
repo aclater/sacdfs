@@ -24,7 +24,9 @@
         "arm64"
       ],
       "id": "sacdfs",
-      "screenshots": [],
+      "screenshots": [
+        "https://raw.githubusercontent.com/aclater/sacdfs/store-apps/deploy/cosmos/servapps/sacdfs/screenshots/1.png"
+      ],
       "artefacts": {},
       "icon": "https://raw.githubusercontent.com/aclater/sacdfs/store-apps/deploy/cosmos/servapps/sacdfs/icon.png",
       "compose": "https://raw.githubusercontent.com/aclater/sacdfs/store-apps/deploy/cosmos/servapps/sacdfs/cosmos-compose.json"
