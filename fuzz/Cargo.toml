@@ -12,9 +12,12 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-sacdfs = { path = ".." }
+# `nfs`: the NFS protocol layer (nfs_rpc).
+sacdfs = { path = "..", features = ["nfs"] }
 # The version sacdfs pins: the same crate, so that its types are the same types.
 scarletbook = "0.5"
+# The NFS server's runtime, as sacdfs uses it (nfs_rpc).
+tokio = { version = "1", default-features = false, features = ["rt"] }
 
 # As sacdfs's release build, so that an overflow is the crash it would be there.
 [profile.release]
@@ -96,6 +99,13 @@ bench = false
 [[bin]]
 name = "read_path"
 path = "fuzz_targets/read_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nfs_rpc"
+path = "fuzz_targets/nfs_rpc.rs"
 test = false
 doc = false
 bench = false

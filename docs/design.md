@@ -1936,6 +1936,85 @@ system's differences can be read and reviewed in one place, and the Linux code i
 code that was there before. *Alternative:* a crate per platform; with this little code, a module
 is enough.
 
+## The NFS front end (#420)
+
+macOS has no FUSE layer in sacdfs. `sacdfs-nfs` (feature `nfs`, `src/nfs/`) serves the
+[`Volume`](#the-core-and-its-front-ends-22-piece-a) over NFSv3, and the system's own NFS client
+mounts it: on macOS as the user, with nothing to install and no security setting changed. Linux
+can use it too, for NFS clients without FUSE. *Why not FUSE-T, macFUSE or FSKit:* the comparison
+is in #420. FUSE-T is itself an NFS server on loopback, closed source and licensed per use;
+macFUSE needs a kernel extension or GUI approval; FSKit needs an app extension, signing and GUI
+approval.
+
+- **The protocol layer is vendored from nfsserve 0.11.0** (`src/nfs/proto`, BSD-3-Clause, its
+  licence beside it). nfsserve answers FSSTAT with a fixed 1 TiB and builds file handles from
+  the server's start time, so every handle went stale on a restart; neither has a hook.
+  *Alternatives:* our own read-only NFSv3 server (about 1,500 lines of new XDR and RPC parsing,
+  all new attack surface for any local user), or a fork as a git dependency (crates.io refuses a
+  crate with one). The vendored copy is changed where marked `sacdfs:` (the list is in
+  `src/nfs/proto/mod.rs`): handles and FSSTAT from the file system, a credential check, bounded
+  records, decoding that never allocates from a declared length, bounded calls in flight and
+  connections, and READDIR from its cookie. The copy is temporary: sacdfs is not to maintain an
+  NFS server of its own, and moves to a maintained crate once these changes are upstream there.
+  Only two files face the server crate: `src/nfs/mod.rs` (the file system it calls) and
+  `src/nfs/serve.rs` (its listener); handles, the command line and the mount don't. The
+  decoder is fuzzed (`fuzz/fuzz_targets/nfs_rpc.rs`).
+- **File handles** are 25 bytes: a version, a volume ID (a hash of SOURCE's canonical path),
+  the inode number and its generation ([File identity](#file-identity-and-nfs-export)). The
+  same SOURCE gives the same handles on every run, so a mount survives a server restart, open
+  files included. A handle is checked through the open file, the tree's node, or a lookup of
+  `.` in its inode number, which finds a number not made yet in this run, as for the kernel's
+  NFS export. A changed generation or another SOURCE's volume ID answers `NFS3ERR_STALE`.
+- **Who is answered.** Calls whose AUTH_SYS uid is the server's user, or root; others get
+  AUTH_ERROR, and AUTH_NONE is refused (anyone may ping). A local program can claim any uid, so
+  this guards against mistakes, such as another user mounting the port, and is not a security
+  boundary: **any local user can read the served files**, as with `--allow-other` on Linux.
+  `--allow-other` answers every uid, as clients on other computers need; it is the default as
+  root, as for `sacdfs` ([Other users](#other-users-on-by-default-as-root)), and
+  `--no-allow-other` turns it off.
+- **Listening:** 127.0.0.1 by default; `--listen` takes another address, with a warning. The
+  default port is 20000 plus the user ID modulo 10000: one per user of a Mac, below the
+  ephemeral port ranges, and the same on every run, so that a restarted server is found by the
+  old mount. Root's is 1007.
+- **A mount left behind** (the server killed with SIGKILL, or an unmount that failed) points
+  at a port nothing answers on, and whoever listens there next answers for it. So the mount is
+  always `ro,nosuid,nodev,noexec` after the user's `-o` (which may not say `rw`, `suid`, `dev`
+  or `exec`), and root's port is below 1024, where no other user can listen. Every way out of
+  the server unmounts, and a failed unmount is an error. As root, a mount point under a folder
+  another user can write is refused, and the path is unmounted only while it is still this
+  mount (its device number). `mount` and `umount` run by absolute path with a fixed
+  environment, each with a time limit.
+- **Bounds against one client holding the server:** 16 calls in flight per connection, 128 in
+  all, 2 replies queued; a reply not taken within 30 s closes the connection, as does a first
+  call not sent within 10 s or 5 minutes of silence; 64 connections at once; listings are cut
+  to 1 MiB and 1024 entries a call; 1024 files open for NFS reads, the least recently read
+  closed first.
+- **Opens:** NFS has no open or close. A file is opened in the core on its first read and
+  closed after 60 s without one.
+- **Mount options on macOS:** `vers=3,tcp,port=P,mountport=P` (no port mapper or lock manager),
+  `rdonly`, `nfc` (lookups in NFD find the NFC names), `locallocks` (locks are the client's, so
+  software that locks what it reads still can), `hard,intr,deadtimeout=60` (a read waits
+  while the server restarts; a server gone for good fails reads after about a minute and macOS
+  unmounts the folder itself, which also ends a mount left behind; `soft` failed every read
+  after 6 to 8 s on macOS 27.2, whatever `timeo` and `retrans` said), `rsize=1048576` and
+  `rdirplus`. On Linux: `soft,timeo=10,retrans=30`.
+- **Signing and notarisation: the owner's decision, nothing bought.** The release archives hold
+  binaries signed ad hoc by the linker (which Apple Silicon needs to run them) and nothing more.
+  The options:
+  - *As now:* free. Files fetched with `curl` aren't marked by macOS and run; a browser
+    download needs `xattr -d com.apple.quarantine` first (the guide says so).
+  - *Developer ID signing and notarisation:* an Apple Developer Program membership (99 USD a
+    year; the account's name is what macOS shows users). The release job would import the
+    certificate into a temporary keychain, sign with the hardened runtime and a timestamp, and
+    send each archive to `notarytool` with an App Store Connect API key, all three kept as
+    repository secrets. A bare binary can't carry the notarisation ticket (only an app, a
+    disk image or an installer package can), so Gatekeeper checks it online on first run;
+    a `.pkg` installer would carry it.
+  - *Homebrew:* a formula in a tap of this project's, building from source or fetching the
+    archive. Homebrew's downloads aren't marked, so nothing needs signing; whether
+    homebrew-core or homebrew-cask would take it is their reviewers' call. `nobrowse` is not set by default, so the mount shows
+  in the Finder; `-o nobrowse` hides it.
+
 ## Concurrency
 
 fuser reads requests from the kernel on 4 threads, and they only hand requests over: what

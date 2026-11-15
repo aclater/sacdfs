@@ -7,6 +7,14 @@
 #     sacdfs-<version>-aarch64-linux.tar.gz, each with COPYING,
 #     README.md, CHANGELOG.md, sacdfs-ctl, sacdfs.service, sacdfs.conf.example, install.sh and
 #     nas-compose.yaml, a .sha256 checksum and a build provenance attestation;
+#   - two macOS archives (#420), sacdfs-<version>-aarch64-macos.tar.gz (Apple Silicon) and
+#     sacdfs-<version>-x86_64-macos.tar.gz (Intel), each with sacdfs-nfs (the mount, over the
+#     Mac's own NFS client), sacdfs (verify and tags), COPYING, README.md, CHANGELOG.md and
+#     NFSSERVE-LICENSE (the vendored NFS layer's BSD-3-Clause notice), with a .sha256 checksum
+#     and an attestation. Not signed or notarised (docs/install/macos.md). Built and tested on
+#     every run, but published only when the repository variable SACDFS_MACOS_RELEASE is
+#     "true": it stays off until the NFS layer moves from the vendored copy to a maintained
+#     crate (#420);
 #   - the installer, install.sh (#340), with this version as its default and the SHA-256 of
 #     this release's archives built in (it checks downloads against those), also as an asset
 #     of its own with a .sha256 checksum and an attestation, so that
@@ -267,6 +275,75 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # macOS (#420): built and tested on the matching runner, then the packaged sacdfs-nfs
+  # mounts the corpus with the Mac's own NFS client (tests/macos-nfs.sh).
+  macos:
+    name: binary (${{ matrix.name }}-macos)
+    needs: preflight
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: aarch64, runner: macos-latest}
+          - {name: x86_64, runner: macos-15-intel}
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      NAME: ${{ matrix.name }}
+      # The oldest macOS the binaries start on.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_STABLE" --profile minimal
+          rustup default "$RUST_STABLE"
+          sw_vers
+          uname -m
+          # The runner's paths are left out of the binary.
+          echo "RUSTFLAGS=--remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$GITHUB_WORKSPACE=/sacdfs" >> "$GITHUB_ENV"
+      - name: Build and test
+        run: |
+          cargo build --release --locked --features nfs --bins
+          cargo test --release --locked --features nfs
+      - name: Package
+        run: |
+          pkg="sacdfs-$VERSION-$NAME-macos"
+          mkdir -p "dist/$pkg"
+          install -m 0755 target/release/sacdfs-nfs target/release/sacdfs "dist/$pkg/"
+          install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
+          # The vendored NFS layer's licence asks for its notice with binaries.
+          install -m 0644 src/nfs/proto/LICENSE "dist/$pkg/NFSSERVE-LICENSE"
+          lipo -archs "dist/$pkg/sacdfs-nfs"
+          otool -L "dist/$pkg/sacdfs-nfs"
+          # Fixed order, owner and times (the commit's), no gzip timestamp.
+          stamp=$(date -r "$(git log -1 --format=%ct)" +%Y%m%d%H%M.%S)
+          find "dist/$pkg" -exec touch -h -t "$stamp" {} +
+          (cd dist && find "$pkg" | LC_ALL=C sort > files.txt \
+            && tar --uid 0 --gid 0 --no-recursion -cf - -T files.txt | gzip -n -9 > "$pkg.tar.gz" \
+            && rm files.txt)
+          (cd dist && shasum -a 256 "$pkg.tar.gz" > "$pkg.tar.gz.sha256" && cat "$pkg.tar.gz.sha256")
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+      - name: The packaged sacdfs-nfs mounts the corpus as this user
+        run: |
+          mkdir -p "$RUNNER_TEMP/check"
+          tar -C "$RUNNER_TEMP/check" -xzf "dist/$PKG.tar.gz"
+          "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" --version
+          "$RUNNER_TEMP/check/$PKG/sacdfs" verify --help > /dev/null
+          tests/macos-nfs.sh "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" macos.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: mac-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   # The installer (#340), packed once the binaries are built: its default version set to this
   # release's, so one-liner users get the release it came with unless they pass --version,
   # and the SHA-256 of the three archives built in (.github/scripts/stamp-installer.sh, which
@@ -352,12 +429,17 @@ jobs:
   dry-run:
     name: dry run summary
     if: github.ref_type != 'tag'
-    needs: [preflight, binaries, image, installer]
+    needs: [preflight, binaries, macos, image, installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: bin-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: mac-*
           path: dist
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -385,7 +467,7 @@ jobs:
   release:
     name: GitHub release
     if: github.ref_type == 'tag'
-    needs: [preflight, binaries, image, installer]
+    needs: [preflight, binaries, macos, image, installer]
     runs-on: ubuntu-latest
     permissions:
       # Creating the release and uploading its assets.
@@ -397,10 +479,18 @@ jobs:
       VERSION: ${{ needs.preflight.outputs.version }}
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
+      MACOS_RELEASE: ${{ vars.SACDFS_MACOS_RELEASE }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: bin-*
+          path: dist
+          merge-multiple: true
+      # macOS archives only once SACDFS_MACOS_RELEASE is "true" (see the top of this file).
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        if: vars.SACDFS_MACOS_RELEASE == 'true'
+        with:
+          pattern: mac-*
           path: dist
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -449,6 +539,13 @@ jobs:
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
             echo "- \`sacdfs-$VERSION-aarch64-linux.tar.gz\`: aarch64 (64-bit ARM)."
             echo
+            if [[ "$MACOS_RELEASE" == true ]]; then
+            echo "macOS 11 or later, mounted by the Mac's own NFS client with nothing else installed (\`sacdfs-nfs\`; [macOS guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/macos.md)). Not signed or notarised: download with \`curl\`, as the guide shows."
+            echo
+            echo "- \`sacdfs-$VERSION-aarch64-macos.tar.gz\`: Apple Silicon."
+            echo "- \`sacdfs-$VERSION-x86_64-macos.tar.gz\`: Intel."
+            echo
+            fi
             echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic CPU; amd64 and arm64)."
             echo
             echo "Installer: \`install.sh\` finds the system (a NAS or Linux computer) and sets sacdfs up ([install guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/README.md)). Over SSH:"
