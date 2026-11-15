@@ -1,0 +1,44 @@
+[package]
+name = "sacdfs-winfsp"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Spike (#419): sacdfs's Windows front end on WinFsp, over the core (sacdfs::vfs::Volume)"
+publish = false
+
+# Not a member of sacdfs's package: its own lock file and build, so that the Linux build and
+# the crates.io package are unchanged.
+[workspace]
+
+[[bin]]
+name = "sacdfs-win"
+path = "src/main.rs"
+
+[dependencies]
+sacdfs = { path = ".." }
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
+log = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+# GPL-3.0(-only), compatible with GPL-3.0-or-later. Loads winfsp-x64.dll lazily (delayload), so
+# the binary starts without WinFsp and can say that it is missing. Not its `system` feature:
+# that reads the registry in the build script, so it only builds on Windows; the front end
+# finds WinFsp's install folder itself (`load_winfsp`).
+winfsp = { version = "=0.13.2", default-features = false, features = ["delayload"] }
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+] }
+
+[build-dependencies]
+winfsp = { version = "=0.13.2", default-features = false, features = ["delayload"] }
+
+[profile.release]
+overflow-checks = true
+
+[profile.release.package.scarletbook]
+codegen-units = 1

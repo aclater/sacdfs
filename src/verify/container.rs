@@ -18,7 +18,6 @@
 
 use std::fs::File;
 use std::io;
-use std::os::unix::fs::FileExt;
 
 use sha2::{Digest, Sha256};
 
@@ -63,6 +62,7 @@ impl FileSource {
     /// The open does not block: a FIFO or device put in place of a file after it was listed
     /// is refused instead of holding the caller forever. Blocking reads are restored once
     /// the descriptor is known to be a regular file.
+    #[cfg(unix)]
     pub fn open(path: &std::path::Path) -> io::Result<FileSource> {
         use nix::fcntl::{FcntlArg, OFlag, fcntl};
         use std::os::unix::fs::OpenOptionsExt;
@@ -78,6 +78,17 @@ impl FileSource {
         fcntl(&file, FcntlArg::F_SETFL(flags - OFlag::O_NONBLOCK))?;
         Ok(FileSource { file, len: meta.len() })
     }
+
+    /// Opens `path`, which must be a regular file (Windows: no FIFOs to block on).
+    #[cfg(not(unix))]
+    pub fn open(path: &std::path::Path) -> io::Result<FileSource> {
+        let file = File::open(path)?;
+        let meta = file.metadata()?;
+        if !meta.is_file() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
+        }
+        Ok(FileSource { file, len: meta.len() })
+    }
 }
 
 impl Source for FileSource {
@@ -85,7 +96,7 @@ impl Source for FileSource {
         self.len
     }
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
-        self.file.read_exact_at(buf, offset)
+        crate::platform::read_exact_at(&self.file, buf, offset)
     }
 }
 

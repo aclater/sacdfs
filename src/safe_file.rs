@@ -17,6 +17,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{BuildHasher, Hasher};
 use std::io::{self, Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,7 +52,13 @@ fn temp_name(path: &Path) -> PathBuf {
 /// Creates the new file `path` for writing, with `mode`: it must not exist, not even as a
 /// symbolic link (`O_EXCL`, `O_NOFOLLOW`).
 pub fn create_new(path: &Path, mode: u32) -> io::Result<File> {
-    OpenOptions::new().write(true).create_new(true).mode(mode).custom_flags(libc::O_NOFOLLOW).open(path)
+    let mut o = OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    o.mode(mode).custom_flags(libc::O_NOFOLLOW);
+    #[cfg(not(unix))]
+    let _ = mode;
+    o.open(path)
 }
 
 /// A new temporary file in the folder of `path`, with `mode`, and its path.
@@ -98,17 +105,17 @@ pub fn write_atomic_with(
 /// The bytes of the regular file `path`, of at most `max` bytes, read through one descriptor
 /// that doesn't follow a symbolic link, and its metadata from that descriptor.
 pub fn read_regular(path: &Path, max: u64) -> io::Result<(Vec<u8>, fs::Metadata)> {
-    let f = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
-        .open(path)
-        .map_err(|e| {
-            if e.raw_os_error() == Some(libc::ELOOP) {
-                io::Error::new(io::ErrorKind::InvalidInput, "a symbolic link: not read")
-            } else {
-                e
-            }
-        })?;
+    let mut o = OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY);
+    let f = o.open(path).map_err(|e| {
+        if e.raw_os_error() == Some(libc::ELOOP) {
+            io::Error::new(io::ErrorKind::InvalidInput, "a symbolic link: not read")
+        } else {
+            e
+        }
+    })?;
     let meta = f.metadata()?;
     if !meta.is_file() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));

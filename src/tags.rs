@@ -653,8 +653,7 @@ pub struct Watch {
 
 /// The name of an image in the file of [`Watch`]: a hash of its path.
 fn path_hash(p: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_bytes())[..16])
+    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_encoded_bytes())[..16])
 }
 
 impl Watch {

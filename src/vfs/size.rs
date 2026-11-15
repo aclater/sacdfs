@@ -44,8 +44,16 @@ impl ShareSize {
 }
 
 /// The total size of the filesystem holding `path`, in blocks of the returned size.
+#[cfg(unix)]
 fn statvfs(path: &std::path::Path) -> io::Result<(u64, u32)> {
     let st = nix::sys::statvfs::statvfs(path).map_err(io::Error::from)?;
     let frsize = if st.fragment_size() > 0 { st.fragment_size() } else { st.block_size() };
     Ok((st.blocks(), u32::try_from(frsize).unwrap_or(1 << 16).max(1)))
+}
+
+/// Windows (spike, #419): not read yet (`GetDiskFreeSpaceExW` is the equivalent); only a
+/// source without images uses it.
+#[cfg(not(unix))]
+fn statvfs(_path: &std::path::Path) -> io::Result<(u64, u32)> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
 }

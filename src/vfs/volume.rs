@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
-use std::os::unix::fs::FileExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -207,7 +206,7 @@ fn read_plain(file: &std::fs::File, offset: u64, size: u32) -> io::Result<Vec<u8
     let mut buf = vec![0u8; size as usize];
     let mut got = 0;
     while got < buf.len() {
-        match file.read_at(&mut buf[got..], offset + got as u64) {
+        match crate::platform::read_at(file, &mut buf[got..], offset + got as u64) {
             Ok(0) => break,
             Ok(n) => got += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -761,8 +760,7 @@ impl Shared {
                 match self.tree.open_sidecar(s) {
                     Ok(file) => Open::Sidecar(Arc::new(SidecarOpen { file, _slot: slot }), s.clone()),
                     Err(e) => {
-                        let gone =
-                            e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(libc::ESTALE);
+                        let gone = e.kind() == io::ErrorKind::NotFound || crate::platform::is_stale(&e);
                         if gone {
                             // A cover removed or replaced: the client asks again (#235).
                             log::info!("sidecar {}: open: {e}", s.target.display());

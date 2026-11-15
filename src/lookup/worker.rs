@@ -125,8 +125,7 @@ struct State {
 }
 
 fn path_hash(p: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_bytes())[..16])
+    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_encoded_bytes())[..16])
 }
 
 fn now_secs() -> u64 {
@@ -276,6 +275,7 @@ impl Worker {
 
 /// Nice 19 and the idle I/O class for this thread, where the system allows: the worker's TOC
 /// reads and its CPU come after everything a client asks for. Best effort.
+#[cfg(unix)]
 #[allow(unsafe_code)]
 fn lower_priority() {
     // SAFETY: plain system calls on the calling thread, with no pointers.
@@ -293,6 +293,11 @@ fn lower_priority() {
         }
     }
 }
+
+/// *Windows (spike, #419):* not lowered yet; `SetThreadPriority` with
+/// `THREAD_MODE_BACKGROUND_BEGIN` lowers both CPU and I/O priority.
+#[cfg(not(unix))]
+fn lower_priority() {}
 
 fn run<T: Transport>(config: &Config, mut client: Client<T>, images: impl Fn() -> Vec<PathBuf>, stop: &Stop) {
     let mut state = State::load(config.state.clone());

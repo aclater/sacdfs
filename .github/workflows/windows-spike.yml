@@ -1,0 +1,118 @@
+# Spike (#419): the Windows front end on WinFsp, built and mounted on GitHub's Windows runner.
+# A Linux job mounts the corpus with the FUSE front end and hashes every file; the Windows job
+# installs WinFsp from its MSI, builds sacdfs-win, mounts the same corpus as a drive letter and
+# checks that every file is there with the same bytes (winfsp/ci/compare.py).
+name: windows-spike
+
+on:
+  pull_request:
+    paths:
+      - "winfsp/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/windows-spike.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+  # WinFsp 2.1 (2.1.25156), the release the spike was tested with.
+  WINFSP_MSI: https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi
+  WINFSP_SHA256: 073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a
+
+jobs:
+  linux-reference:
+    name: Linux mount hashes (reference)
+    runs-on: ubuntu-latest
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest, as in ci.yml. FUSE: the device and the right to mount.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+      options: --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 python3 && dnf clean all
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
+      - run: cargo build --release --locked
+      - name: Mount the corpus and hash every file
+        run: |
+          mkdir -p "$RUNNER_TEMP/mnt"
+          target/release/sacdfs tests/corpus/images "$RUNNER_TEMP/mnt" --no-index-cache
+          (cd "$RUNNER_TEMP/mnt" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$RUNNER_TEMP/linux.sha256"
+          fusermount3 -u "$RUNNER_TEMP/mnt"
+          wc -l "$RUNNER_TEMP/linux.sha256"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: linux-sha256
+          path: ${{ runner.temp }}/linux.sha256
+
+  windows:
+    name: Windows (WinFsp) build, unit tests and corpus mount
+    needs: linux-reference
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup toolchain install $env:RUST_STABLE --profile minimal --component clippy
+          rustup default $env:RUST_STABLE
+      - name: WinFsp (MSI, checked against its SHA-256)
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP "winfsp.msi"
+          Invoke-WebRequest $env:WINFSP_MSI -OutFile $msi
+          if ((Get-FileHash $msi -Algorithm SHA256).Hash -ne $env:WINFSP_SHA256) { throw "WinFsp MSI: SHA-256 differs" }
+          $p = Start-Process msiexec.exe -ArgumentList "/i", $msi, "/qn", "/norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec: $($p.ExitCode)" }
+          Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\WinFsp" | Select-Object InstallDir
+      - name: The core's library on Windows (clippy)
+        run: cargo clippy --lib --locked -- -D warnings
+      - name: Front end (clippy, unit tests, build)
+        working-directory: winfsp
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: |
+          cargo clippy --locked -- -D warnings
+          cargo test --locked
+          cargo build --release --locked
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: linux-sha256
+          path: ${{ runner.temp }}
+      - name: Mount the corpus at X:, compare with Linux, read at and past the end
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "sacdfs-win.log"
+          $p = Start-Process winfsp\target\release\sacdfs-win.exe -ArgumentList "tests\corpus\images", "X:" -PassThru -RedirectStandardError $log
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          while (-not (Test-Path X:\) -and $sw.Elapsed.TotalSeconds -lt 60) { Start-Sleep -Milliseconds 100 }
+          if (-not (Test-Path X:\)) { Get-Content $log; throw "X: did not appear" }
+          python -I winfsp\ci\compare.py (Join-Path $env:RUNNER_TEMP "linux.sha256") X:\
+          $ok = $LASTEXITCODE -eq 0
+          $w = Get-ChildItem X:\ -Recurse -File -Filter *.wav | Select-Object -First 1
+          $s = [IO.File]::OpenRead($w.FullName); $b = New-Object byte[] 100
+          [void]$s.Seek($w.Length - 10, "Begin"); $n1 = $s.Read($b, 0, 100)
+          [void]$s.Seek($w.Length, "Begin"); $n2 = $s.Read($b, 0, 100); $s.Close()
+          "read 10 bytes before the end: $n1; at the end: $n2"
+          try { Set-Content X:\new.txt "x" -ErrorAction Stop; "create allowed"; $ok = $false } catch { "create refused: $($_.Exception.Message)" }
+          Stop-Process -Id $p.Id -Force
+          if (-not $ok -or $n1 -ne 10 -or $n2 -ne 0) { Get-Content $log -Tail 30; exit 1 }

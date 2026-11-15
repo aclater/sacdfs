@@ -36,10 +36,12 @@
 //! 9408 bytes per stereo frame against 2048 bytes a sector: at most about 4.6 times it).
 
 use std::fs::File;
+#[cfg(unix)]
 use std::os::fd::AsFd;
-use std::os::unix::fs::FileExt;
 
+#[cfg(unix)]
 use nix::errno::Errno;
+#[cfg(unix)]
 use nix::unistd::{Whence, lseek};
 use scarletbook::Area;
 use scarletbook::audio::audio_sector_range;
@@ -60,6 +62,7 @@ pub const MAX_PROBES: u64 = 64;
 
 /// The most hole/data boundaries followed in one area: a file fragmented into more is
 /// treated as holding data past them.
+#[cfg(unix)]
 const MAX_EXTENTS: usize = 4096;
 
 /// The sector count to check the tracks of `area` of `disc` against: see the module
@@ -108,6 +111,7 @@ pub fn gap_sectors(file: &File, stored: u64, area: &Area, n: u64) -> u64 {
 
 /// The sector ranges of `[start, end)` that lie wholly in a hole of at least
 /// [`MIN_GAP_BYTES`], in order.
+#[cfg(unix)]
 fn holes(file: &File, stored: u64, start: u64, end: u64) -> Vec<(u64, u64)> {
     let fd = file.as_fd();
     let (first, last) = (start * stored, end * stored);
@@ -141,6 +145,7 @@ fn holes(file: &File, stored: u64, start: u64, end: u64) -> Vec<(u64, u64)> {
     out
 }
 
+#[cfg(unix)]
 fn off(at: u64, whence: Whence, fd: std::os::fd::BorrowedFd<'_>) -> Result<u64, Errno> {
     let at = i64::try_from(at).map_err(|_| Errno::EOVERFLOW)?;
     lseek(fd, at, whence).map(|p| u64::try_from(p).unwrap_or(0))
@@ -148,8 +153,16 @@ fn off(at: u64, whence: Whence, fd: std::os::fd::BorrowedFd<'_>) -> Result<u64, 
 
 /// `lseek` from `at`; `None` on an error, including `ENXIO` (no hole or data past `at`)
 /// and `EINVAL` (not supported): either way, nothing more is found.
+#[cfg(unix)]
 fn seek(fd: std::os::fd::BorrowedFd<'_>, at: u64, whence: Whence) -> Option<u64> {
     off(at, whence, fd).ok()
+}
+
+/// Windows (spike, #419): no holes are found; `FSCTL_QUERY_ALLOCATED_RANGES` is the
+/// equivalent of `SEEK_HOLE`. The zero-run sampling still runs.
+#[cfg(not(unix))]
+fn holes(_file: &File, _stored: u64, _start: u64, _end: u64) -> Vec<(u64, u64)> {
+    Vec::new()
 }
 
 /// `[start, end)` less the sorted, disjoint ranges `holes`.
@@ -191,8 +204,9 @@ fn zero_sectors(file: &File, stored: u64, data: &[(u64, u64)], present: u64) -> 
     }
     let mut buf = vec![0u8; stored as usize];
     let mut zero = |sector: Option<u64>| {
-        sector
-            .is_some_and(|s| file.read_exact_at(&mut buf, s * stored).is_ok() && buf.iter().all(|&b| b == 0))
+        sector.is_some_and(|s| {
+            crate::platform::read_exact_at(file, &mut buf, s * stored).is_ok() && buf.iter().all(|&b| b == 0)
+        })
     };
     let mut found = 0;
     for k in 0..segments {

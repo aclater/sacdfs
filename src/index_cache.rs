@@ -21,7 +21,8 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -75,8 +76,8 @@ impl ImageKey {
         Ok(ImageKey::from_parts(
             canonical.as_os_str().as_encoded_bytes(),
             meta.len(),
-            meta.mtime(),
-            meta.mtime_nsec(),
+            crate::platform::mtime(meta).0,
+            crate::platform::mtime(meta).1,
         ))
     }
 
@@ -427,6 +428,7 @@ impl IndexCache {
         let bytes = encode(key, shapes, areas);
         if !self.dir.is_dir() {
             fs::create_dir_all(&self.dir)?;
+            #[cfg(unix)]
             fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))?;
         }
         let name = key.file_name();
@@ -437,12 +439,11 @@ impl IndexCache {
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         let result = (|| {
-            let mut f = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(&tmp)?;
+            let mut o = OpenOptions::new();
+            o.write(true).create_new(true);
+            #[cfg(unix)]
+            o.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+            let mut f = o.open(&tmp)?;
             f.write_all(&bytes)?;
             drop(f);
             fs::rename(&tmp, self.dir.join(&name))
@@ -500,7 +501,11 @@ impl IndexCache {
 /// The contents of a regular file of at most [`MAX_FILE`] bytes, not following a
 /// symbolic link.
 fn read_bounded(path: &Path) -> io::Result<Vec<u8>> {
-    let f = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)?;
+    let mut o = OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    let f = o.open(path)?;
     let meta = f.metadata()?;
     if !meta.is_file() || meta.len() > MAX_FILE {
         return Err(io::Error::other("not an index file"));

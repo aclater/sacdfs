@@ -18,12 +18,27 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io;
+#[cfg(unix)]
 use std::os::fd::OwnedFd;
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime};
+#[cfg(unix)]
+use std::time::Duration;
+use std::time::SystemTime;
 
+#[cfg(unix)]
 use nix::fcntl::{AtFlags, OFlag, openat, readlinkat};
+#[cfg(unix)]
 use nix::sys::stat::{FileStat, Mode, SFlag, fstat, fstatat};
+
+/// SOURCE's directory, open, that sidecars are resolved under: a descriptor on Unix, the path
+/// on Windows (spike, #419).
+#[cfg(unix)]
+pub type Root = OwnedFd;
+/// SOURCE's directory, open, that sidecars are resolved under: a descriptor on Unix, the path
+/// on Windows (spike, #419).
+#[cfg(not(unix))]
+#[derive(Debug)]
+pub struct Root(PathBuf);
 
 /// The default allow-list: images, playlists and two folder names.
 pub const DEFAULT: &str = "jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/";
@@ -206,6 +221,7 @@ pub struct Meta {
     pub ctime: SystemTime,
 }
 
+#[cfg(unix)]
 fn time(secs: i64, nanos: i64) -> SystemTime {
     let nanos = u32::try_from(nanos.clamp(0, 999_999_999)).unwrap_or(0);
     if secs >= 0 {
@@ -216,6 +232,7 @@ fn time(secs: i64, nanos: i64) -> SystemTime {
     }
 }
 
+#[cfg(unix)]
 impl Meta {
     fn of(st: &FileStat) -> Meta {
         Meta {
@@ -228,11 +245,13 @@ impl Meta {
     }
 }
 
+#[cfg(unix)]
 fn kind(st: &FileStat) -> SFlag {
     SFlag::from_bits_truncate(st.st_mode & SFlag::S_IFMT.bits())
 }
 
 /// Opens SOURCE's directory (followed if it is a link: it was given by the user).
+#[cfg(unix)]
 pub fn open_root(root: &Path) -> io::Result<OwnedFd> {
     let fd = nix::fcntl::open(root, OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC, Mode::empty())?;
     Ok(fd)
@@ -249,6 +268,7 @@ fn names(rel: &Path) -> io::Result<Vec<&OsStr>> {
 }
 
 /// Opens directory `rel` of `root`, one name at a time, following no symbolic link.
+#[cfg(unix)]
 pub fn open_dir(root: &OwnedFd, rel: &Path) -> io::Result<OwnedFd> {
     let flags = OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
     let mut fd = openat(root, ".", flags, Mode::empty())?;
@@ -259,6 +279,7 @@ pub fn open_dir(root: &OwnedFd, rel: &Path) -> io::Result<OwnedFd> {
 }
 
 /// The attributes of directory `rel` of `root` (not followed if a link).
+#[cfg(unix)]
 pub fn stat_dir(root: &OwnedFd, rel: &Path) -> io::Result<Meta> {
     let fd = open_dir(root, rel)?;
     Ok(Meta::of(&fstat(&fd)?))
@@ -268,18 +289,18 @@ pub fn stat_dir(root: &OwnedFd, rel: &Path) -> io::Result<Meta> {
 /// it names, resolved by name inside SOURCE. Refused (`EXDEV`) if that leaves SOURCE or
 /// lies under `exclude` (MOUNTPOINT, relative to SOURCE, when it is inside it).
 pub fn target(
-    root: &OwnedFd,
+    root: &Root,
     root_path: &Path,
     rel: &Path,
     link: bool,
     exclude: Option<&Path>,
 ) -> io::Result<PathBuf> {
-    let escape = || io::Error::from_raw_os_error(libc::EXDEV);
+    let escape = crate::platform::cross_device;
     let out = if link {
         let parent = rel.parent().unwrap_or(Path::new(""));
         let name = rel.file_name().ok_or_else(escape)?;
         let dir = open_dir(root, parent)?;
-        let to = PathBuf::from(readlinkat(&dir, name)?);
+        let to = read_link_in(&dir, name)?;
         if to.is_absolute() {
             parent_free(to.strip_prefix(root_path).map_err(|_| escape())?)?
         } else {
@@ -302,7 +323,7 @@ fn parent_free(rel: &Path) -> io::Result<PathBuf> {
             Component::Normal(n) => out.push(n),
             Component::CurDir => {}
             Component::ParentDir if out.pop() => {}
-            _ => return Err(io::Error::from_raw_os_error(libc::EXDEV)),
+            _ => return Err(crate::platform::cross_device()),
         }
     }
     Ok(out)
@@ -318,6 +339,7 @@ fn not_regular() -> io::Error {
 }
 
 /// The attributes of the regular file at `rel` (a [`target`]), following no link.
+#[cfg(unix)]
 pub fn stat_file(root: &OwnedFd, rel: &Path) -> io::Result<Meta> {
     let (dir, name) = split(rel)?;
     let dir = open_dir(root, dir)?;
@@ -330,6 +352,7 @@ pub fn stat_file(root: &OwnedFd, rel: &Path) -> io::Result<Meta> {
 
 /// Opens the regular file at `rel` (a [`target`]) for reading, following no link, with its
 /// attributes now.
+#[cfg(unix)]
 pub fn open_file(root: &OwnedFd, rel: &Path) -> io::Result<(File, Meta)> {
     let (dir, name) = split(rel)?;
     let dir = open_dir(root, dir)?;
@@ -342,6 +365,96 @@ pub fn open_file(root: &OwnedFd, rel: &Path) -> io::Result<(File, Meta)> {
         return Err(not_regular());
     }
     Ok((File::from(fd), Meta::of(&st)))
+}
+
+#[cfg(unix)]
+fn read_link_in(dir: &OwnedFd, name: &OsStr) -> io::Result<PathBuf> {
+    Ok(PathBuf::from(readlinkat(dir, name)?))
+}
+
+// Windows (spike, #419): by path, checking each folder on the way for a link (a reparse
+// point) before using it. Not race-free like `openat`: a folder replaced by a link between
+// the check and the open is followed. The equivalent of the Unix branch is `NtCreateFile`
+// relative to a directory handle, with `FILE_FLAG_OPEN_REPARSE_POINT`.
+
+#[cfg(not(unix))]
+impl Meta {
+    fn of(m: &std::fs::Metadata) -> Meta {
+        let t = |r: io::Result<SystemTime>| r.unwrap_or(SystemTime::UNIX_EPOCH);
+        Meta {
+            size: m.len(),
+            blocks: m.len().div_ceil(512),
+            atime: t(m.accessed()),
+            mtime: t(m.modified()),
+            ctime: t(m.modified()),
+        }
+    }
+}
+
+/// Opens SOURCE's directory (followed if it is a link: it was given by the user).
+#[cfg(not(unix))]
+pub fn open_root(root: &Path) -> io::Result<Root> {
+    let path = root.canonicalize()?;
+    if !std::fs::metadata(&path)?.is_dir() {
+        return Err(io::Error::new(io::ErrorKind::NotADirectory, "not a folder"));
+    }
+    Ok(Root(path))
+}
+
+/// Directory `rel` of `root`, one name at a time, following no link.
+#[cfg(not(unix))]
+pub fn open_dir(root: &Root, rel: &Path) -> io::Result<PathBuf> {
+    let mut at = root.0.clone();
+    for name in names(rel)? {
+        at.push(name);
+        let m = std::fs::symlink_metadata(&at)?;
+        if m.file_type().is_symlink() || !m.is_dir() {
+            return Err(io::Error::new(io::ErrorKind::NotADirectory, "not a folder"));
+        }
+    }
+    Ok(at)
+}
+
+#[cfg(not(unix))]
+fn read_link_in(dir: &Path, name: &OsStr) -> io::Result<PathBuf> {
+    std::fs::read_link(dir.join(name))
+}
+
+/// The attributes of directory `rel` of `root` (not followed if a link).
+#[cfg(not(unix))]
+pub fn stat_dir(root: &Root, rel: &Path) -> io::Result<Meta> {
+    let dir = open_dir(root, rel)?;
+    Ok(Meta::of(&std::fs::symlink_metadata(dir)?))
+}
+
+/// The attributes of the regular file at `rel` (a [`target`]), following no link.
+#[cfg(not(unix))]
+pub fn stat_file(root: &Root, rel: &Path) -> io::Result<Meta> {
+    let (dir, name) = split(rel)?;
+    let m = std::fs::symlink_metadata(open_dir(root, dir)?.join(name))?;
+    if m.file_type().is_symlink() || !m.is_file() {
+        return Err(not_regular());
+    }
+    Ok(Meta::of(&m))
+}
+
+/// Opens the regular file at `rel` (a [`target`]) for reading, following no link, with its
+/// attributes now.
+#[cfg(not(unix))]
+pub fn open_file(root: &Root, rel: &Path) -> io::Result<(File, Meta)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // FILE_FLAG_OPEN_REPARSE_POINT: a link is opened as itself, and refused below.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let (dir, name) = split(rel)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(open_dir(root, dir)?.join(name))?;
+    let m = file.metadata()?;
+    if m.file_type().is_symlink() || !m.is_file() {
+        return Err(not_regular());
+    }
+    Ok((file, Meta::of(&m)))
 }
 
 #[cfg(test)]

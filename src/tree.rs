@@ -31,7 +31,6 @@ use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, TryLockError, Weak};
@@ -501,7 +500,6 @@ thread_local! {
 /// that cannot be read now counts as a candidate: opening it later reports why. An answer is kept
 /// while the image's size and time stay the same ([`LOOKED_AT`]).
 fn may_be_sacd(path: &Path) -> bool {
-    use std::os::unix::fs::FileExt;
     let Ok(meta) = fs::metadata(path) else { return true };
     let (len, mtime) = (meta.len(), meta.modified().ok());
     let with_map = |f: &mut dyn FnMut(&mut Looks)| {
@@ -524,7 +522,7 @@ fn may_be_sacd(path: &Path) -> bool {
         if at + 8 > len {
             continue;
         }
-        match file.read_exact_at(&mut sig, at) {
+        match crate::platform::read_exact_at(&file, &mut sig, at) {
             Ok(()) if &sig == b"SACDMTOC" => {
                 answer = true;
                 break;
@@ -906,7 +904,7 @@ pub struct Tree {
     /// Seconds added to the WAV files' mtime for the PCM options (issue #64).
     wav_mtime_offset: u64,
     /// SOURCE, opened when a sidecar is first looked at.
-    root_fd: OnceLock<Option<OwnedFd>>,
+    root_fd: OnceLock<Option<sidecar::Root>>,
     /// MOUNTPOINT relative to SOURCE, when it is inside it: no sidecar is served from there.
     exclude: Option<PathBuf>,
     /// Whether directories are re-read when their source changes (#101).
@@ -1286,7 +1284,7 @@ impl Tree {
     }
 
     /// SOURCE's directory, opened on first use.
-    fn root_fd(&self) -> Option<&OwnedFd> {
+    fn root_fd(&self) -> Option<&sidecar::Root> {
         self.root_fd
             .get_or_init(|| match sidecar::open_root(self.source()) {
                 Ok(fd) => Some(fd),
@@ -1313,7 +1311,7 @@ impl Tree {
         };
         if now.size != f.meta.size || now.mtime != f.meta.mtime {
             self.art_changed();
-            return Err(io::Error::from_raw_os_error(libc::ESTALE));
+            return Err(crate::platform::stale());
         }
         Ok(file)
     }
@@ -2484,7 +2482,7 @@ impl Tree {
                 };
                 match node {
                     Ok(n) => Some(n),
-                    Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                    Err(e) if crate::platform::is_cross_device(&e) => {
                         log::warn!(
                             "{}: link not followed: it points outside SOURCE or into the mount",
                             sc.path.display()

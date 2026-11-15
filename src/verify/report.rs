@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufWriter, Write};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -150,10 +150,10 @@ impl Row {
         let opt = |v: Option<String>| v.unwrap_or_default();
         let fields = [
             self.status.as_str().to_owned(),
-            escape(self.path.as_os_str().as_bytes()),
+            escape(self.path.as_os_str().as_encoded_bytes()),
             self.bytes.to_string(),
             self.mtime.clone(),
-            opt(self.image.as_ref().map(|p| escape(p.as_os_str().as_bytes()))),
+            opt(self.image.as_ref().map(|p| escape(p.as_os_str().as_encoded_bytes()))),
             escape(self.area.as_bytes()),
             opt(self.track.map(|t| t.to_string())),
             opt(self.channels.map(|c| c.to_string())),
@@ -172,7 +172,7 @@ impl Row {
             return None;
         }
         let text = |s: &str| String::from_utf8_lossy(&unescape(s)).into_owned();
-        let path = |s: &str| PathBuf::from(OsString::from_vec(unescape(s)));
+        let path = |s: &str| PathBuf::from(crate::platform::os_from_bytes(unescape(s)));
         Some(Row {
             status: Status::parse(f[0])?,
             path: path(f[1]),
@@ -327,7 +327,13 @@ fn open_stream(path: &Path) -> io::Result<Box<dyn Write + Send>> {
         Some(1) => Box::new(io::stdout()),
         Some(2) => Box::new(io::stderr()),
         Some(_) => Box::new(OpenOptions::new().append(true).open(path)?),
-        None => Box::new(OpenOptions::new().append(true).custom_flags(libc::O_NOFOLLOW).open(path)?),
+        None => {
+            let mut o = OpenOptions::new();
+            o.append(true);
+            #[cfg(unix)]
+            o.custom_flags(libc::O_NOFOLLOW);
+            Box::new(o.open(path)?)
+        }
     })
 }
 
@@ -497,8 +503,13 @@ mod tests {
 
     #[test]
     fn rows_round_trip() {
-        let mut r =
-            Row::new(PathBuf::from(OsString::from_vec(b"/a\tb\\c\nd\xff.dsf".to_vec())), 12, "1.5".into());
+        let mut r = Row::new(
+            PathBuf::from(<OsString as std::os::unix::ffi::OsStringExt>::from_vec(
+                b"/a\tb\\c\nd\xff.dsf".to_vec(),
+            )),
+            12,
+            "1.5".into(),
+        );
         r = r.with(Status::Different, "x\ty".into());
         r.image = Some("/i.iso".into());
         r.track = Some(3);

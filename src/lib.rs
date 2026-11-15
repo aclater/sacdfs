@@ -16,6 +16,7 @@ pub mod dsf;
 pub mod engine;
 pub mod errlog;
 pub mod fallback;
+#[cfg(unix)]
 pub mod fuse;
 pub mod handles;
 pub mod ident;
@@ -24,6 +25,7 @@ pub mod lookup;
 pub mod memory;
 pub mod names;
 pub mod pcm;
+pub mod platform;
 pub mod printable;
 pub mod safe_file;
 pub mod sidecar;
