@@ -179,6 +179,14 @@ All notable changes to sacdfs are recorded here. The format follows
   (what it does per system, the `wget` and BusyBox notes, cut-short downloads, unsupported
   systems, `--report`, reading it before running it, where it was checked) moved to Details at
   the end, unchanged.
+- **TrueNAS and Unraid app files name 0.6.3, and were checked on TrueNAS (part of #284).** The
+  TrueNAS catalog app (`deploy/truenas/sacdfs`) named the 0.5.0 image; it now names 0.6.3, with
+  `app.yaml` as the catalog's metadata generator writes it (`version` 1.0.1, three capability
+  descriptions reworded). On TrueNAS SCALE 25.10.8 in a VM, the app rendered for both test value
+  sets and installed as custom apps, the custom-app YAML of `truenas-scale.md`, and a TrueNAS
+  restart each served the corpus files identically over SMB and NFS (`store-apps.md`,
+  `truenas-scale.md`). The Unraid template's container settings were run again on 0.6.3 with
+  Podman. CONTRIBUTING's release steps now list the files that name the version.
 
 ## [0.6.3] - 2026-11-13
 
