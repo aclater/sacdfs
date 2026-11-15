@@ -888,3 +888,37 @@ A final tag needs all of:
   workflow's first job refuses any other commit (`.github/scripts/check-tag-reachable.sh`).
 
 If a gate cannot be run, the release report says so; it is never counted as passed.
+
+## Results: 0.6.4 gate
+
+0.6.4 is 0.6.3 plus security fixes and hardening. Each check ran on the release commit, or where noted on an earlier build of the same branch; the changes after that build were limited to the tags and verify commands. 0.6.3 is the baseline. Anything missing here is untested on 0.6.4.
+
+- **Checks:**
+  - Formatting, clippy, docs and cargo-deny pass.
+  - The full test suite with FUSE tests passes (406 tests), as do the file-handle tests as root and the NFS loopback export.
+  - The three archives were built as the release workflow builds them; the newest glibc symbol is 2.17. The stamped `install.sh` carries the three archive checksums and version 0.6.4.
+- **Audio:** all 914 DSF and WAV files of the test corpus are byte-identical to 0.6.3's. That holds in five output configurations (default, 88.2 and 352.8 kHz WAV, flattened, DSF only), on the x86_64 and x86_64-v3 builds.
+- **Container,** with Podman:
+  - **Shares:** tested over SMB with guest access, SMB with a user and NFS 4.2, with the least-privilege options and with an older Compose file. Every file is identical to a local mount and to 0.6.3.
+  - **Capabilities:** each program holds only its own, also with the older file:
+    - sacdfs: SYS_ADMIN and DAC_OVERRIDE;
+    - smbd: SETUID, SETGID and NET_BIND_SERVICE;
+    - NFS-Ganesha: DAC_READ_SEARCH, which no process holds with NFS off.
+  - **Scan:** no known vulnerabilities (0.6.3: 16 High and 23 Medium, all with fixes).
+  - **Open-files limit:** with a low limit and clients holding hundreds of cover files open over a guest share, opens past sacdfs's bound are refused and logged once. Every image stays listed and every track reads. On 0.6.3, images disappeared from their folders until a restart.
+- **Installer,** checked on QNAP QuTScloud 5.2.9, Synology DSM 7.4.1 and TerraMaster TOS 7.0, each in a VM, not on the vendor's hardware, from a local copy of the release files:
+  - **Fresh install, upgrade and removal:** a fresh install; an upgrade from 0.6.3 installed by its own installer, which on QNAP moved out of the shared folder; and `--uninstall`. All corpus files were identical, and the start-at-boot hook was updated and then removed.
+  - **Checksum:** on TerraMaster, an archive not matching the built-in checksum was refused with nothing changed.
+  - **Container suites:** the installer's suites pass on BusyBox, Fedora 44 and UBI 7, as do the unsupported-system and new security cases.
+- **Clients:**
+  - **Linux, NFS 4.2 and SMB 3.1.1:** 22 of 22 checks on Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12 and Ubuntu 26.04. Ubuntu 24.04 passed 21 of 22, failing the known non-ASCII SMB `stat` problem, as on 0.6.3.
+  - **Bytes and requests:** a 221-file tree (126 GB) is identical to 0.6.3's by `cmp` on the mount and through the Linux SMB client. Requests per workload equal 0.6.3's apart from one fewer GETATTR.
+  - **Windows 11,** in a VM, not on physical hardware, over SMB 3.1.1: Robocopy copied 111 files, all hashing like the server's read. Listing, special-character names, WAV tags, thumbnails and write refusals behave as on 0.6.3.
+- **Soak:** `scripts/soak.py`, side by side with 0.6.3 on the same five images.
+  - **Runs:** twice 6 h on an idle 32-thread desktop held to 16 threads (the second on the release commit), and twice 3 h on a 24-thread laptop.
+  - **Resources:** memory was flat on all runs (second-half trends between −0.20 and +0.30 MiB/h). Threads and open files were level with 0.6.3.
+  - **Unexpected read errors:** 0.6.4 had 0, 0, 3 and 0; 0.6.3 had 1, 1, 0 and 1. These are EIOs with no line in sacdfs's log (#339). A kernel trace of one on 0.6.3 showed no EIO reply from sacdfs, so the kernel produced it. Their cause, a tags edit renewing a file that is still open, is described in #339.
+  - **Read watchdog:** 0.6.4 refuses to open an image that is not a regular file, so the soak's FIFO stalls no longer reach the read watchdog. The test suite covers the watchdog.
+  - **Stop checks** (SIGTERM with a file open, SIGTERM at start, an outside unmount) gave the same results as 0.6.3.
+
+**Not run:** macOS, Tier 1 scripted servers, aarch64 builds on hardware, the arm64 image, the NAS container route, a real restart on QNAP, players.
