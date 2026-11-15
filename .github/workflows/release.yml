@@ -20,6 +20,10 @@
 #     of its own with a .sha256 checksum and an attestation, so that
 #     releases/latest/download/install.sh is the newest release's. It is packed after the
 #     binaries are built (job "installer"); the copy inside each archive has the version only;
+#   - the Windows front end (#419), sacdfs-<version>-x86_64-windows.zip: sacdfs-win.exe (static C
+#     runtime; needs WinFsp installed), COPYING, CHANGELOG.md and the Windows install guide as
+#     README.md, with a .sha256 checksum and an attestation, after the packed program served the
+#     corpus with the Linux binary's bytes (job "windows");
 #   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
 #     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
 #   - the crate on crates.io (#155), for final versions only (no hyphen: not 0.4.0-rc.1),
@@ -45,6 +49,8 @@ on:
       - "deploy/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "winfsp/**"
+      - "docs/install/windows.md"
 
 permissions:
   contents: read
@@ -266,6 +272,14 @@ jobs:
               umount /mnt/s'
           wc -l /tmp/host.sha256 /tmp/ubi7.sha256
           cmp /tmp/host.sha256 /tmp/ubi7.sha256
+      # The Windows binary is checked against these bytes (job "windows").
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: matrix.name == 'x86_64'
+        with:
+          name: corpus-sha256
+          path: /tmp/host.sha256
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: bin-${{ matrix.name }}
@@ -340,6 +354,78 @@ jobs:
           name: mac-${{ matrix.name }}
           path: |
             dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # The Windows front end (winfsp/, #419): built on the Windows runner with the C runtime linked
+  # in (no Visual C++ redistributable needed), packed as a zip with COPYING, CHANGELOG.md and
+  # its README (which carries WinFsp's notice), then the packed program is mounted on the corpus
+  # and checked against the generic Linux binary's hashes (winfsp/ci/checks.ps1). WinFsp itself
+  # is not in the zip: users install WinFsp's own signed MSI.
+  windows:
+    name: binary (x86_64-windows)
+    needs: [preflight, binaries]
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      # WinFsp 2.1 (2.1.25156), for the check only.
+      WINFSP_MSI: https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi
+      WINFSP_SHA256: 073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup toolchain install $env:RUST_STABLE --profile minimal
+          rustup default $env:RUST_STABLE
+      - name: WinFsp (MSI, checked against its SHA-256)
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP "winfsp.msi"
+          Invoke-WebRequest $env:WINFSP_MSI -OutFile $msi
+          if ((Get-FileHash $msi -Algorithm SHA256).Hash -ne $env:WINFSP_SHA256) { throw "WinFsp MSI: SHA-256 differs" }
+          $p = Start-Process msiexec.exe -ArgumentList "/i", $msi, "/qn", "/norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec: $($p.ExitCode)" }
+      - name: Build (release, C runtime linked in)
+        working-directory: winfsp
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          $ErrorActionPreference = "Stop"; $PSNativeCommandUseErrorActionPreference = $true
+          cargo build --release --locked
+          $v = (& target\release\sacdfs-win.exe --version) -join " "
+          if (-not $v.Contains("sacdfs-win $env:VERSION")) { throw "--version: $v" }
+          # No Visual C++ runtime DLL among its imports.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $deps = (& $dumpbin /nologo /dependents target\release\sacdfs-win.exe) -join "`n"
+          $deps
+          if ($deps -match "(?i)vcruntime|msvcp|api-ms-win-crt") { throw "depends on the Visual C++ runtime" }
+      - name: Package
+        run: |
+          $pkg = "sacdfs-$env:VERSION-x86_64-windows"
+          python -I .github/scripts/pack-windows.py $pkg winfsp/target/release/sacdfs-win.exe COPYING CHANGELOG.md docs/install/windows.md=README.md
+          "PKG=$pkg" >> $env:GITHUB_ENV
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: corpus-sha256
+          path: ${{ runner.temp }}
+      - name: The packed program serves the corpus as on Linux (winfsp/ci/checks.ps1)
+        shell: powershell
+        run: |
+          Expand-Archive "dist\$env:PKG.zip" "$env:RUNNER_TEMP\check"
+          winfsp\ci\checks.ps1 -Exe "$env:RUNNER_TEMP\check\sacdfs-win.exe" -Source tests\corpus\images `
+            -Mount X: -Reference (Join-Path $env:RUNNER_TEMP "host.sha256") -Work $env:RUNNER_TEMP
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: bin-windows
+          path: |
+            dist/*.zip
             dist/*.sha256
           if-no-files-found: error
           retention-days: 7
@@ -429,7 +515,7 @@ jobs:
   dry-run:
     name: dry run summary
     if: github.ref_type != 'tag'
-    needs: [preflight, binaries, macos, image, installer]
+    needs: [preflight, binaries, macos, windows, image, installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -467,7 +553,7 @@ jobs:
   release:
     name: GitHub release
     if: github.ref_type == 'tag'
-    needs: [preflight, binaries, macos, image, installer]
+    needs: [preflight, binaries, macos, windows, image, installer]
     runs-on: ubuntu-latest
     permissions:
       # Creating the release and uploading its assets.
@@ -504,7 +590,7 @@ jobs:
         run: |
           cd dist
           sha256sum -c ./*.sha256
-          cat ./*.tar.gz.sha256 install.sh.sha256 > SHA256SUMS
+          cat ./*.tar.gz.sha256 ./*.zip.sha256 install.sh.sha256 > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
         id: attest
@@ -513,6 +599,7 @@ jobs:
         with:
           subject-path: |
             dist/*.tar.gz
+            dist/*.zip
             dist/install.sh
       # The attestation also goes on the release as <asset>.intoto.jsonl (one bundle covers
       # both), so it can be checked offline; each copy is verified first.
@@ -520,7 +607,7 @@ jobs:
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
-          for f in dist/*.tar.gz dist/install.sh; do
+          for f in dist/*.tar.gz dist/*.zip dist/install.sh; do
             cp "$BUNDLE" "$f.intoto.jsonl"
             gh attestation verify "$f" --bundle "$f.intoto.jsonl" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
@@ -538,6 +625,8 @@ jobs:
             echo "- \`sacdfs-$VERSION-x86_64-linux.tar.gz\`: generic x86-64, for any x86_64 CPU."
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
             echo "- \`sacdfs-$VERSION-aarch64-linux.tar.gz\`: aarch64 (64-bit ARM)."
+            echo
+            echo "Windows (x86_64, Windows 10 or 11): \`sacdfs-$VERSION-x86_64-windows.zip\`, \`sacdfs-win.exe\`, which needs [WinFsp](https://winfsp.dev) 2.1 or later ([Windows guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/windows.md)). It uses WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos, https://github.com/winfsp/winfsp. Not code-signed."
             echo
             if [[ "$MACOS_RELEASE" == true ]]; then
             echo "macOS 11 or later, mounted by the Mac's own NFS client with nothing else installed (\`sacdfs-nfs\`; [macOS guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/macos.md)). Not signed or notarised: download with \`curl\`, as the guide shows."
@@ -563,7 +652,7 @@ jobs:
           [[ "$VERSION" == *-* ]] && pre=(--prerelease)
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
             --title "sacdfs $VERSION" --notes-file release-notes.md \
-            dist/*.tar.gz dist/*.sha256 dist/*.intoto.jsonl dist/SHA256SUMS dist/install.sh
+            dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.intoto.jsonl dist/SHA256SUMS dist/install.sh
 
   image-publish:
     name: publish image

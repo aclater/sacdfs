@@ -14,8 +14,9 @@ does. About 5 minutes.
 
 ### What you need
 
-- A NAS or computer running Linux. The installer doesn't set up a Mac or a Windows PC: a Mac
-  has [its own guide](macos.md), and either can play the discs over the network from a NAS.
+- A NAS or computer running Linux. The installer doesn't set up a Mac or a Windows PC: each has
+  its own guide ([macos.md](macos.md), [windows.md](windows.md)), and either can play the discs
+  over the network from a NAS.
 - A login over SSH (a way to type commands on the NAS from another computer) as an administrator.
 - The folder that holds your SACD images. This page uses `/volume1/music`; change it to yours.
 
@@ -106,6 +107,9 @@ Use [binary.md](binary.md) to run sacdfs on your own computer, or
 
 **A Mac, with the images on it or on a share it has mounted?**
 Use [macos.md](macos.md). It mounts the discs on the Mac itself, with nothing else to install.
+
+**A Windows PC that holds the images?**
+Use [windows.md](windows.md): `sacdfs-win` shows them as a drive letter on that PC.
 
 ## 2. How do other computers reach the discs?
 

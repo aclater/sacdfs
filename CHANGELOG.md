@@ -16,6 +16,12 @@ All notable changes to sacdfs are recorded here. The format follows
   contents until sacdfs-win reports a change: reading the corpus 4 KiB at a time takes half the
   spike's time, and a second pass a twentieth
   ([winfsp/README.md](winfsp/README.md)).
+- **A Windows download and install guide (#419).** Each release has
+  `sacdfs-<version>-x86_64-windows.zip` (`sacdfs-win.exe` with the C runtime built in; it needs
+  WinFsp installed), with a checksum and a build attestation, built and checked against the
+  corpus on Windows by the release workflow. The guide covers the install, Explorer, starting it
+  in the background or at logon through WinFsp.Launcher, a drive for every user, names, and
+  Microsoft Defender ([docs/install/windows.md](docs/install/windows.md)).
 - **`sacdfs-nfs`: SACD images served over NFSv3, for the system's own NFS client (#420; feature
   `nfs`).** The route to macOS, where the Mac's NFS client mounts it as the user with nothing
   installed, and a way to serve NFS clients on Linux without FUSE. It listens on 127.0.0.1 only
