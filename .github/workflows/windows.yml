@@ -130,7 +130,7 @@ jobs:
         with:
           name: linux-sha256
           path: ${{ runner.temp }}
-      - name: Mount the corpus at X: and check it (winfsp/ci/checks.ps1)
+      - name: "Mount the corpus at X: and check it (winfsp/ci/checks.ps1)"
         # Windows PowerShell: the script compiles its Ctrl+C helper with Add-Type, which
         # PowerShell 7 can't make into a program.
         shell: powershell

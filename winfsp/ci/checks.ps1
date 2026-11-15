@@ -65,8 +65,10 @@ public static class SacdfsWinCheck {
 # A Ctrl+C (0) or Ctrl+Break (1) to the console of process $id, sent by a small helper that
 # attaches to that console (so that this one keeps its own), as a user's Ctrl+C in a terminal
 # would arrive. Compiled by Windows PowerShell's Add-Type: run this script with powershell.exe.
-$ctrl = Join-Path $Work "sacdfs-win-ctrl.exe"
-if (-not (Test-Path $ctrl)) {
+# Made anew each run, never one found in $Work.
+$ctrl = Join-Path $Work "sacdfs-win-ctrl-$PID.exe"
+Remove-Item $ctrl -ErrorAction SilentlyContinue
+& {
     Add-Type -OutputAssembly $ctrl -OutputType ConsoleApplication -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
 public static class Ctrl {
@@ -93,7 +95,15 @@ function Send-Ctrl([int] $id, [int] $ev) {
 }
 
 $log = Join-Path $Work "sacdfs-win-checks.log"
+# The write tests run on $Mount: it must not be a drive already, and must be sacdfs-win's.
+function Assert-Free {
+    if (Test-Path "$Mount\") { throw "$Mount exists already: give a free drive letter (-Mount)" }
+}
+function Is-Sacdfs {
+    try { ([IO.DriveInfo]::new($Mount.TrimEnd(':'))).DriveFormat -like "*sacdfs*" } catch { $false }
+}
 function Start-Mount([string] $extra = "") {
+    Assert-Free
     $a = "`"$Source`" $Mount --log-file `"$log`" $extra"
     # A console of its own (hidden), so that a Ctrl+C reaches only it.
     $p = Start-Process $Exe -ArgumentList $a -PassThru -WindowStyle Hidden
@@ -101,7 +111,13 @@ function Start-Mount([string] $extra = "") {
     while (-not (Test-Path "$Mount\") -and $sw.Elapsed.TotalSeconds -lt 60 -and -not $p.HasExited) {
         Start-Sleep -Milliseconds 50
     }
-    Check "mount $extra" (Test-Path "$Mount\") "up after $([int]$sw.Elapsed.TotalMilliseconds) ms"
+    $up = (Test-Path "$Mount\") -and (Is-Sacdfs)
+    Check "mount $extra" $up "up after $([int]$sw.Elapsed.TotalMilliseconds) ms, file system $(([IO.DriveInfo]::new($Mount.TrimEnd(':'))).DriveFormat)"
+    if (-not $up) {
+        if (-not $p.HasExited) { Stop-Process $p.Id -Force }
+        Get-Content $log -Tail 30 -ErrorAction SilentlyContinue
+        throw "no sacdfs mount at $Mount"
+    }
     $p
 }
 function Stop-Mount($p, [int] $ev, [string] $what) {
@@ -177,7 +193,10 @@ try {
     Stop-Mount $p 0 "Ctrl+C"
 }
 $p = Start-Mount
-Stop-Mount $p 1 "Ctrl+Break"
+try { } finally {
+    Stop-Mount $p 1 "Ctrl+Break"
+}
+Remove-Item $ctrl -ErrorAction SilentlyContinue
 if ($failed.Count) {
     "FAILED: $($failed -join ', ')"
     Get-Content $log -Tail 30 -ErrorAction SilentlyContinue

@@ -69,10 +69,19 @@ pub fn too_long(name: &str) -> bool {
     name.encode_utf16().count() > MAX_UNITS
 }
 
-/// The key two names that Windows takes as the same have in common: upper case, by Unicode's
-/// simple mapping (close to, not the same as, NTFS's upcase table).
+/// The key two names that Windows takes as the same have in common: each character upper-cased
+/// where Unicode maps it to exactly one character, as NTFS's upcase table does, and kept where
+/// it maps to more (`ß` stays `ß`: `STRASSE` is another name, as on NTFS).
 pub fn fold(name: &str) -> String {
-    name.chars().flat_map(char::to_uppercase).collect()
+    name.chars()
+        .map(|c| {
+            let mut up = c.to_uppercase();
+            match (up.next(), up.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -113,5 +122,14 @@ mod tests {
     fn folding_ignores_case() {
         assert_eq!(fold("Foo.dsf"), fold("FOO.DSF"));
         assert_eq!(fold("Ärger"), fold("ärger"));
+    }
+
+    /// One character to one, as NTFS: names that only a one-to-many mapping would join stay
+    /// apart.
+    #[test]
+    fn folding_maps_one_character_to_one() {
+        assert_ne!(fold("Straße.dsf"), fold("STRASSE.dsf"));
+        assert_ne!(fold("\u{fb01}le"), fold("FILE"));
+        assert_eq!(fold("Straße"), "STRAßE");
     }
 }

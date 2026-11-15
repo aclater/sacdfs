@@ -31,12 +31,12 @@ struct Mounted {
     reads: std::sync::Arc<crate::winfs::Reads>,
 }
 pub fn main(args: Args) -> Result<(), String> {
-    load_winfsp();
-    let init = winfsp::winfsp_init().map_err(|_| {
-        "WinFsp is not installed (winfsp-x64.dll not found): install WinFsp 2.1 or later, \
-         from https://winfsp.dev/rel/ or with `winget install WinFsp.WinFsp`"
-            .to_owned()
-    })?;
+    let missing = "WinFsp is not installed (winfsp-x64.dll not found in WinFsp's folder): install \
+                   WinFsp 2.1 or later, from https://winfsp.dev/rel/ or with `winget install WinFsp.WinFsp`";
+    if !load_winfsp() {
+        return Err(missing.to_owned());
+    }
+    let init = winfsp::winfsp_init().map_err(|_| missing.to_owned())?;
     let failure = std::sync::Mutex::new(None::<String>);
     let mut service = FileSystemServiceBuilder::<Mounted>::new()
         .with_start(|| {
@@ -256,10 +256,11 @@ fn security_descriptor(sid: &str, everyone: bool) -> io::Result<Vec<u8>> {
     }
 }
 
-/// Loads winfsp-x64.dll from WinFsp's install folder (the registry's `InstallDir`), so that
-/// `winfsp_init`, which asks for it by name, finds it loaded. Best effort: without it, the DLL
-/// is looked for next to the program and on the search path.
-fn load_winfsp() {
+/// Loads winfsp-x64.dll from WinFsp's install folder (the registry's `InstallDir`, under
+/// HKLM), so that `winfsp_init` and the delay-loaded calls, which ask for it by name, find it
+/// loaded. Without it sacdfs-win doesn't start: a DLL of that name found next to the program or
+/// on the search path, where another user may have put one, is never loaded.
+fn load_winfsp() -> bool {
     use windows::Win32::System::LibraryLoader::LoadLibraryW;
     use windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
     use windows::core::{HSTRING, w};
@@ -281,15 +282,20 @@ fn load_winfsp() {
         if found.is_err() {
             continue;
         }
-        let len = buf.iter().position(|&c| c == 0).unwrap_or(0);
+        let Some(len) = buf.iter().position(|&c| c == 0).filter(|&n| n > 0) else { continue };
         let mut dir = String::from_utf16_lossy(&buf[..len]);
+        // A full path only: a relative one would be looked for on the search path.
+        if !std::path::Path::new(&dir).is_absolute() {
+            continue;
+        }
         if !dir.ends_with('\\') {
             dir.push('\\');
         }
         let dll = HSTRING::from(format!("{dir}bin\\winfsp-x64.dll"));
         // SAFETY: a plain library load by full path.
         if unsafe { LoadLibraryW(&dll) }.is_ok() {
-            return;
+            return true;
         }
     }
+    false
 }

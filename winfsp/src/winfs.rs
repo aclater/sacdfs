@@ -8,7 +8,7 @@
 //! is copied once, from the core's buffer straight into WinFsp's.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -177,7 +177,26 @@ fn fill(info: &mut FileInfo, a: &Attr) {
 
 /// The core, as [`Paths`] asks it.
 pub struct Core {
-    volume: Volume,
+    volume: Arc<Volume>,
+}
+
+/// The core's handle of an open file, released when the last user of it is done: the open file
+/// and any read still running on it.
+struct CoreHandle {
+    fh: u64,
+    volume: Arc<Volume>,
+}
+
+impl Drop for CoreHandle {
+    fn drop(&mut self) {
+        self.volume.release(self.fh);
+    }
+}
+
+impl std::fmt::Debug for CoreHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CoreHandle({})", self.fh)
+    }
 }
 
 impl Lister for Core {
@@ -202,8 +221,11 @@ pub struct Open {
     /// The path in stored case, for a folder's listing.
     path: String,
     /// The core's handle, for a file: opened with the file when it is opened to read its data,
-    /// else at its first read. Most opens (Explorer's, for attributes) never read.
-    fh: Mutex<Option<u64>>,
+    /// else at its first read. Most opens (Explorer's, for attributes) never read. Let go of at
+    /// cleanup (see [`WinFs::cleanup`]).
+    fh: Mutex<Option<Arc<CoreHandle>>>,
+    /// The program closed its last handle (cleanup); Windows may still read through this open.
+    cleaned: AtomicBool,
     /// Read-ahead for small sequential reads.
     ahead: Mutex<Ahead>,
     dir: DirBuffer,
@@ -239,7 +261,7 @@ impl Reads {
 
 impl WinFs {
     pub fn new(volume: Volume, security: Vec<u8>) -> WinFs {
-        WinFs { paths: Paths::new(Core { volume }), security, reads: Arc::default() }
+        WinFs { paths: Paths::new(Core { volume: Arc::new(volume) }), security, reads: Arc::default() }
     }
 
     /// The count of reads answered.
@@ -285,14 +307,23 @@ impl WinFs {
         Ok(got)
     }
 
-    /// The core's handle of `open`, opening it now if it isn't yet.
-    fn handle(&self, open: &Open) -> winfsp::Result<u64> {
+    /// Opens file `ino` in the core.
+    fn core_open(&self, ino: u64) -> winfsp::Result<Arc<CoreHandle>> {
+        let fh = call(|r| self.volume().open(ino, r)).map_err(status)?;
+        Ok(Arc::new(CoreHandle { fh, volume: self.paths.lister().volume.clone() }))
+    }
+
+    /// The core's handle of `open`, opening it now if it isn't yet. After cleanup (Windows's
+    /// cache manager reading a file its program closed) the handle is for this read only.
+    fn handle(&self, open: &Open) -> winfsp::Result<Arc<CoreHandle>> {
         let mut fh = open.fh.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(fh) = *fh {
-            return Ok(fh);
+        if let Some(h) = &*fh {
+            return Ok(h.clone());
         }
-        let new = call(|r| self.volume().open(open.attr.ino, r)).map_err(status)?;
-        *fh = Some(new);
+        let new = self.core_open(open.attr.ino)?;
+        if !open.cleaned.load(Ordering::Acquire) {
+            *fh = Some(new.clone());
+        }
         Ok(new)
     }
 }
@@ -336,7 +367,7 @@ impl FileSystemContext for WinFs {
             // Opened now when the data is wanted, so that an image that can't be read fails
             // the open, as on Linux.
             Kind::File if granted_access & (FILE_READ_DATA | FILE_EXECUTE) != 0 => {
-                Some(call(|r| self.volume().open(found.attr.ino, r)).map_err(status)?)
+                Some(self.core_open(found.attr.ino)?)
             }
             _ => None,
         };
@@ -347,6 +378,7 @@ impl FileSystemContext for WinFs {
             attr: found.attr,
             path: found.path,
             fh: Mutex::new(fh),
+            cleaned: AtomicBool::new(false),
             ahead: Mutex::default(),
             dir: DirBuffer::new(),
         })
@@ -369,15 +401,18 @@ impl FileSystemContext for WinFs {
         Err(nt(STATUS_MEDIA_WRITE_PROTECTED))
     }
 
-    /// The program closed its last handle of the file: its read-ahead window goes.
+    /// The program closed its last handle of the file: its read-ahead window and its core
+    /// handle go now, not at the close, which Windows may send much later for a file it caches.
+    /// *Why:* the core's handle of a cover keeps the source file open, and Windows refuses to
+    /// rename or delete a folder while a file inside it is open.
     fn cleanup(&self, context: &Self::FileContext, _file_name: Option<&U16CStr>, _flags: u32) {
+        context.cleaned.store(true, Ordering::Release);
+        context.fh.lock().unwrap_or_else(|p| p.into_inner()).take();
         context.ahead.lock().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
     fn close(&self, context: Self::FileContext) {
-        if let Some(fh) = *context.fh.lock().unwrap_or_else(|p| p.into_inner()) {
-            self.volume().release(fh);
-        }
+        drop(context);
     }
 
     fn get_file_info(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> winfsp::Result<()> {
@@ -446,7 +481,8 @@ impl FileSystemContext for WinFs {
         if offset >= size {
             return Err(nt(STATUS_END_OF_FILE));
         }
-        let fh = self.handle(context)?;
+        let handle = self.handle(context)?;
+        let fh = handle.fh;
         let want = buffer.len().min((size - offset) as usize);
         let buffer = &mut buffer[..want];
         // Small reads in sequence: from a window read ahead (see `crate::ahead`).

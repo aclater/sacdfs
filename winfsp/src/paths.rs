@@ -8,7 +8,7 @@
 //! its source changes (#101) is kept for as long as the core lets a client keep it, then
 //! listed again; what changed in it is queued for Windows's change notification.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -44,6 +44,8 @@ pub struct Folder {
     by_key: HashMap<String, usize>,
     listed: Instant,
     keep_for: Option<Duration>,
+    /// Names left out, each with why: logged once by [`Paths`].
+    hidden: Vec<(String, &'static str)>,
 }
 
 impl Folder {
@@ -56,6 +58,7 @@ impl Folder {
             by_key: HashMap::with_capacity(listing.len()),
             listed: Instant::now(),
             keep_for,
+            hidden: Vec::new(),
         };
         for (name, entry) in listing {
             if name == "." || name == ".." {
@@ -63,12 +66,12 @@ impl Folder {
             }
             let name = names::to_windows(&name);
             if names::too_long(&name) {
-                log::warn!("{}: a name of more than 255 UTF-16 units is not shown: {name}", folder.path);
+                folder.hidden.push((name, "a name of more than 255 UTF-16 units"));
                 continue;
             }
             let key = names::fold(&name);
             if folder.by_key.contains_key(&key) {
-                log::warn!("{}: {name} differs from another name only in case: not shown", folder.path);
+                folder.hidden.push((name, "differs from another name only in case"));
                 continue;
             }
             folder.by_key.insert(key, folder.entries.len());
@@ -133,6 +136,8 @@ pub struct Paths<L> {
     lister: L,
     folders: Mutex<HashMap<u64, Entry>>,
     changes: Mutex<Vec<Change>>,
+    /// Hidden names already logged, so that a folder listed every second logs each once.
+    warned: Mutex<HashSet<String>>,
 }
 
 #[derive(Debug)]
@@ -146,7 +151,7 @@ const UNUSED: Duration = Duration::from_secs(600);
 
 impl<L: Lister> Paths<L> {
     pub fn new(lister: L) -> Paths<L> {
-        Paths { lister, folders: Mutex::default(), changes: Mutex::default() }
+        Paths { lister, folders: Mutex::default(), changes: Mutex::default(), warned: Mutex::default() }
     }
 
     pub fn lister(&self) -> &L {
@@ -157,19 +162,31 @@ impl<L: Lister> Paths<L> {
     /// listed again, with what changed since queued (see [`Paths::take_changes`]).
     pub fn folder(&self, ino: u64, path: &str, fresh: bool) -> Result<Arc<Folder>, vfs::Error> {
         let now = Instant::now();
-        let old = {
+        {
             let mut folders = self.folders.lock().unwrap_or_else(|p| p.into_inner());
-            match folders.get_mut(&ino) {
-                Some(e) if !fresh || e.folder.fresh(now) => {
-                    e.used = now;
-                    return Ok(e.folder.clone());
-                }
-                Some(e) => Some(e.folder.clone()),
-                None => None,
+            if let Some(e) = folders.get_mut(&ino)
+                && (!fresh || e.folder.fresh(now))
+            {
+                e.used = now;
+                return Ok(e.folder.clone());
             }
-        };
+        }
+        self.relist(ino, path)
+    }
+
+    /// Folder `ino` listed again now; what changed since the listing kept, if any, is queued.
+    fn relist(&self, ino: u64, path: &str) -> Result<Arc<Folder>, vfs::Error> {
+        let old = self.folders.lock().unwrap_or_else(|p| p.into_inner()).get(&ino).map(|e| e.folder.clone());
         let path = old.as_ref().map_or(path, |f| f.path.as_str()).to_owned();
         let folder = Arc::new(Folder::new(path, self.lister.list(ino)?, self.lister.keep_for(ino)));
+        if !folder.hidden.is_empty() {
+            let mut warned = self.warned.lock().unwrap_or_else(|p| p.into_inner());
+            for (name, why) in &folder.hidden {
+                if warned.insert(folder.child_path(name)) {
+                    log::warn!("{}: {why}: not shown", folder.child_path(name));
+                }
+            }
+        }
         if let Some(old) = old {
             let changes = diff(&old, &folder);
             if !changes.is_empty() {
@@ -179,7 +196,7 @@ impl<L: Lister> Paths<L> {
         self.folders
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .insert(ino, Entry { folder: folder.clone(), used: now });
+            .insert(ino, Entry { folder: folder.clone(), used: Instant::now() });
         Ok(folder)
     }
 
@@ -224,8 +241,8 @@ impl<L: Lister> Paths<L> {
         if folder.listed.elapsed() < Duration::from_secs(1) {
             return self.folder(ino, &folder.path, false).map_err(Missing::Core);
         }
-        self.folders.lock().unwrap_or_else(|p| p.into_inner()).remove(&ino);
-        self.folder(ino, &folder.path, true).map_err(Missing::Core)
+        // Listed again with the old listing kept to compare: what changed is queued.
+        self.relist(ino, &folder.path).map_err(Missing::Core)
     }
 
     /// Lists again every folder kept that the core re-reads and that is due, and lets go of
@@ -419,6 +436,22 @@ mod tests {
         // A name missing from a folder kept for good is missing.
         assert_eq!(p.resolve("\\new"), Err(Missing::Name));
         assert_eq!(f.lists.load(Ordering::Relaxed), 2);
+    }
+
+    /// A name missing from a listing kept for a while lists the folder again, and the changes
+    /// found then are queued as well.
+    #[test]
+    fn a_miss_lists_again_and_keeps_the_changes() {
+        let f = fake(Some(Duration::from_secs(3600)));
+        let p = Paths::new(&f);
+        p.resolve("\\readme.txt").unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        f.dirs.lock().unwrap().get_mut(&ROOT).unwrap().push(("New.iso".to_owned(), 9, Kind::Dir, 0));
+        assert_eq!(p.resolve("\\NEW.iso").unwrap().path, "\\New.iso");
+        assert_eq!(
+            p.take_changes(),
+            vec![Change { path: "\\New.iso".into(), kind: Kind::Dir, what: ChangeKind::Added }]
+        );
     }
 
     #[test]

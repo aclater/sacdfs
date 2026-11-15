@@ -2,8 +2,8 @@
 
 `sacdfs-win` mounts SOURCE read-only as a drive letter or folder on Windows, through
 [WinFsp](https://github.com/winfsp/winfsp), over the same core (`sacdfs::vfs::Volume`) as the
-Linux FUSE front end. Users start at [docs/install/windows.md](../docs/install/windows.md);
-this page is for building and changing it.
+Linux FUSE front end. This page is for building and changing it; users start at the
+[install guide](../docs/install/README.md).
 
 WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos,
 <https://github.com/winfsp/winfsp>.
