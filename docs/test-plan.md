@@ -782,6 +782,48 @@ On the v0.6.3-rc.1 release binary and image, with 0.6.2 (and 0.6.1 for the playe
 
 Not run: Roon and Plex at scale (the project's own Roon and Plex test deployments run the candidate since the soak passed; the players weren't driven), Tier 2 tools, the NFS player-beside-copies cells, and a physical Windows or macOS client here (Windows above).
 
+## Results: Installer restarts and the container route on NAS VMs (main, 0.6.3 release files)
+
+The installer from `main` (Part of #340), run as `sh install.sh --iso-dir ... --version 0.6.3`,
+so that it downloaded the 0.6.3 release archive or image from GitHub and checked it. Each run
+was: a dry run, the install, all 28 DSF and WAV files of three conformance-corpus images
+identical to a reference read by the 0.6.3 binary, a second run that changed nothing, then **a
+full power cycle of the VM** (a clean shutdown and a cold start, not a service restart) and the
+same 28 files again with no step by hand, then `--uninstall` twice and the images folder
+unchanged. All in VMs, not on the vendor's hardware; each VM started from its clean snapshot
+and was rolled back after.
+
+| System | Route | Install, files, second run | After the power cycle | Uninstall, images folder |
+|---|---|---|---|---|
+| Synology DSM 7.4.1 | `sacdfs-ctl`, Task Scheduler boot task | pass | pass: 28 files identical 101 s after SSH answered | pass |
+| ASUSTOR ADM 5.1.4 | `sacdfs-ctl`, `init.d` | pass | pass: 21 s after SSH | pass |
+| TerraMaster TOS 7.0 | systemd | pass | pass: 10 s after SSH | pass |
+| ReadyNAS OS 6.10.10 | systemd | pass | pass: 61 s after SSH | pass |
+| Debian 12 with UGREEN's kernel (not UGOS Pro) | systemd | pass | pass: at once | pass |
+| ASUSTOR ADM 5.1.4 with Docker CE 25.0.5 and Compose 2.24.7 | **container** (`docker compose`, `nas-compose.yaml` with the 0.6.3 image) | pass; SMB and NFS answer on 10445 and 12049 | pass: the container came back by itself, healthy, once Docker ran | pass (the index cache volume is kept, as it says) |
+
+- **The container route on a NAS** ran only on ASUSTOR. App Central's Docker package doesn't
+  install in the VM (as before), so the package's files were unpacked and Docker started with
+  the package's own `start-stop.sh start`, also after the power cycle; on a NAS App Central
+  starts it. The installer found Docker in the package's folder by itself.
+- **Fixed on this branch:** on ASUSTOR the container route warned "nothing answers on port 10445"
+  and "12049" although both answered: BusyBox `nc` there has no `-z`. The check now falls back to
+  the listening sockets, and the run above says "SMB answers on port 10445".
+- **Not possible in these VMs:** QNAP Container Station (its package refuses to install without a
+  QuTScloud licence, which a storage volume needs) and Synology Container Manager (DSM 7.4.1:
+  "failed to get any volume for installation", error 297; the VM can't make a DSM volume).
+  TerraMaster's Docker is in an older snapshot made before the VM's storage disks, so it wasn't
+  used. A QNAP power cycle wasn't run: the VM holds every shutdown for about 22 minutes after
+  boot while it waits for a licence.
+- **TrueNAS SCALE 25.10.8, in a VM:** the 0.6.3 release's pointer, as `truenas_admin` with
+  `--dry-run` and as root without it, exits 0 and changes nothing. Its last line named the
+  catalog app's folder as the YAML to paste; on this branch it names the guide's step 3 (checked
+  with `--platform truenas` on a Linux host, not on TrueNAS). The guide's YAML and the catalog app
+  were installed there and survived a TrueNAS restart (`truenas-scale.md`, `store-apps.md`).
+
+Not run: Unraid (it needs a licence, trial included, tied to a USB stick and an account), real
+NAS hardware, QTS and UGOS Pro themselves, OpenMediaVault restarts, aarch64 hardware.
+
 ## Soak memory steps (#247)
 
 Steps of 3 to 9 MiB in a soak's resident size, in both directions, appeared on 0.4.0, 0.4.1-rc.2

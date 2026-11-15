@@ -259,7 +259,10 @@ folder unchanged. Details: [the installer on 0.6.2](../test-plan.md#results-inst
 The VMs ran each vendor's OS, not on the vendor's hardware. On 0.6.2-rc.1 the same cycle also
 passed on Fedora 45 (systemd and Docker Compose) and in a UBI 7 container
 ([results](../test-plan.md#results-062-rc1-gate)), and CI runs it on every change to `deploy/`
-in BusyBox, Fedora and UBI 7 containers and on its runner with systemd and Docker Compose. On ASUSTOR and
-Synology a development version of the script was also followed by a restart: sacdfs was mounted
-again by the boot hook it set up, with the same files. Not checked: Unraid, the container route
-on a NAS, restarts on the other systems, aarch64 hardware, and QTS or UGOS Pro themselves.
+in BusyBox, Fedora and UBI 7 containers and on its runner with systemd and Docker Compose. With the 0.6.3 release files, a full power cycle after the install was run on Synology DSM,
+ASUSTOR ADM, TerraMaster TOS, ReadyNAS OS and Debian 12 with UGREEN's kernel, and the container
+route with Docker on ASUSTOR ADM, in VMs: each time sacdfs came back by itself with the same files
+([results](../test-plan.md#results-installer-restarts-and-the-container-route-on-nas-vms-main-063-release-files)).
+Not checked: Unraid, the container route on other NAS systems (QNAP Container Station and
+Synology Container Manager don't install in the VMs), a QNAP restart, aarch64 hardware, real NAS
+hardware, and QTS or UGOS Pro themselves.

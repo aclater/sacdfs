@@ -96,6 +96,10 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **The installer's container route no longer warns that nothing answers on its ports on
+  ASUSTOR (#340).** BusyBox `nc` there has no `-z`, so the check failed although SMB and NFS
+  answered; it now falls back to the listening sockets. On TrueNAS, its pointer names the
+  guide's step 3 for the YAML to paste, not the catalog app's folder.
 - **`sacdfs tags import` writes only what the mount uses, and lists what it leaves out (#406).**
   Before, it wrote any picture and value an extract's tag held, up to 16 MiB, and reported
   success, but the mount embeds no picture over 960 KiB and builds no tag over 1 MiB: a 12 MiB
@@ -164,6 +168,11 @@ All notable changes to sacdfs are recorded here. The format follows
   the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
 
 ### Documentation
+- **Installer restarts and the container route, checked on NAS VMs (part of #340, #283).** With
+  the 0.6.3 release files, a power cycle after the install brought sacdfs back by itself, with
+  identical files, on Synology DSM, ASUSTOR ADM, TerraMaster TOS, ReadyNAS OS and Debian 12 with
+  UGREEN's kernel, and with the container route (`nas-compose.yaml`) under Docker on ASUSTOR ADM,
+  in VMs (docs/test-plan.md).
 - **The install start page reads top to bottom (part of #310).** `docs/install/README.md` opens
   with the installer in the guide shape (what you need, three steps with a dry run first, check
   it worked, the three common problems), then the guide chooser. The installer's background
