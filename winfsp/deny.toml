@@ -1,0 +1,35 @@
+# cargo-deny for the Windows front end, which has its own lock file: the core's rules
+# (../deny.toml) plus the two crates only this one uses. Checked by the `windows` workflow.
+# Locally, in winfsp/: cargo deny --all-features check advisories bans licenses sources
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # paste is unmaintained (archived), not vulnerable: a macro winfsp uses at build time for its
+    # volume parameter setters. Revisit when a winfsp release drops it.
+    { id = "RUSTSEC-2024-0436", reason = "build-time macro of winfsp; unmaintained, no vulnerability" },
+]
+
+[licenses]
+version = 2
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "BSD-2-Clause", "BSD-3-Clause", "GPL-3.0-or-later", "LGPL-2.1-or-later", "GPL-2.0-or-later", "ISC", "CDLA-Permissive-2.0"]
+confidence-threshold = 0.9
+# WinFsp's Rust bindings are GPL-3.0-only ("GPL-3.0", the deprecated identifier), which
+# GPL-3.0-or-later code may link; the Windows binary is then under GPL-3.0 (winfsp/README.md).
+exceptions = [
+    { name = "winfsp", allow = ["GPL-3.0"] },
+    { name = "winfsp-sys", allow = ["GPL-3.0"] },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
