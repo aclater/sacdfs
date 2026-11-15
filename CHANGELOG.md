@@ -100,6 +100,12 @@ All notable changes to sacdfs are recorded here. The format follows
   ASUSTOR (#340).** BusyBox `nc` there has no `-z`, so the check failed although SMB and NFS
   answered; it now falls back to the listening sockets. On TrueNAS, its pointer names the
   guide's step 3 for the YAML to paste, not the catalog app's folder.
+- **The unlogged EIO of the soak is explained (#339), and the soak expects it.** A tags file
+  edit gives the changed track files a new generation under the same number. Once the kernel
+  sees the new generation, through any lookup or listing, it marks the old inode bad and fails a
+  descriptor still open on the old version with `EIO`, without asking sacdfs, so nothing is
+  logged. `scripts/soak.py` now counts EIO on a track file whose image's tags file it edited less
+  than 60 s before as `tags`, not unexpected. The design and the user guide describe it.
 - **`sacdfs tags import` writes only what the mount uses, and lists what it leaves out (#406).**
   Before, it wrote any picture and value an extract's tag held, up to 16 MiB, and reported
   success, but the mount embeds no picture over 960 KiB and builds no tag over 1 MiB: a 12 MiB
