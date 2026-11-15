@@ -1,0 +1,81 @@
+# macOS (#420, spike): the core's tests on macOS, and the NFS front end mounted by macOS's own
+# NFS client as the runner's user, with every corpus file compared with a Linux FUSE mount.
+# Nothing is installed on the runner: no FUSE-T, no macFUSE.
+name: macos
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+
+jobs:
+  linux-reference:
+    name: corpus hashes (Linux FUSE)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - run: cargo build --locked --release
+      - name: Hash every file of a FUSE mount of the corpus
+        run: |
+          mkdir -p "$RUNNER_TEMP/mnt"
+          target/release/sacdfs tests/corpus/images "$RUNNER_TEMP/mnt"
+          (cd "$RUNNER_TEMP/mnt" && find . -type f -print0 | xargs -0 sha256sum) | LC_ALL=C sort > linux.sha256
+          fusermount3 -u "$RUNNER_TEMP/mnt"
+          wc -l < linux.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: linux-sha256
+          path: linux.sha256
+
+  macos:
+    name: macos (${{ matrix.runner }})
+    needs: linux-reference
+    strategy:
+      fail-fast: false
+      matrix:
+        # Apple Silicon and Intel.
+        runner: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sw_vers && uname -m
+      - name: Build
+        run: cargo build --locked --release --features nfs --bins
+      - name: The core's tests
+        run: cargo test --locked --features nfs --no-fail-fast
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: linux-sha256
+      - name: NFS mount as the user, every file compared with Linux
+        run: |
+          tests/macos-nfs.sh target/release/sacdfs-nfs macos.sha256
+          cmp linux.sha256 macos.sha256

@@ -232,9 +232,17 @@ fn kind(st: &FileStat) -> SFlag {
     SFlag::from_bits_truncate(st.st_mode & SFlag::S_IFMT.bits())
 }
 
+/// How a directory is opened to walk from: `O_PATH` on Linux, which needs no read permission and
+/// can't read; plain read-only elsewhere (macOS has no `O_PATH`), which needs read permission on
+/// each directory walked (#420).
+#[cfg(target_os = "linux")]
+const DIR_WALK: OFlag = OFlag::O_PATH;
+#[cfg(not(target_os = "linux"))]
+const DIR_WALK: OFlag = OFlag::O_RDONLY;
+
 /// Opens SOURCE's directory (followed if it is a link: it was given by the user).
 pub fn open_root(root: &Path) -> io::Result<OwnedFd> {
-    let fd = nix::fcntl::open(root, OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC, Mode::empty())?;
+    let fd = nix::fcntl::open(root, DIR_WALK | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC, Mode::empty())?;
     Ok(fd)
 }
 
@@ -250,7 +258,7 @@ fn names(rel: &Path) -> io::Result<Vec<&OsStr>> {
 
 /// Opens directory `rel` of `root`, one name at a time, following no symbolic link.
 pub fn open_dir(root: &OwnedFd, rel: &Path) -> io::Result<OwnedFd> {
-    let flags = OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+    let flags = DIR_WALK | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
     let mut fd = openat(root, ".", flags, Mode::empty())?;
     for name in names(rel)? {
         fd = openat(&fd, name, flags, Mode::empty())?;

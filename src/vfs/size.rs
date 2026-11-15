@@ -47,5 +47,8 @@ impl ShareSize {
 fn statvfs(path: &std::path::Path) -> io::Result<(u64, u32)> {
     let st = nix::sys::statvfs::statvfs(path).map_err(io::Error::from)?;
     let frsize = if st.fragment_size() > 0 { st.fragment_size() } else { st.block_size() };
-    Ok((st.blocks(), u32::try_from(frsize).unwrap_or(1 << 16).max(1)))
+    // `fsblkcnt_t` is 64 bits on Linux and 32 on macOS (#420).
+    #[allow(clippy::useless_conversion)]
+    let blocks = u64::from(st.blocks());
+    Ok((blocks, u32::try_from(frsize).unwrap_or(1 << 16).max(1)))
 }

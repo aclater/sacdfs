@@ -453,10 +453,12 @@ mod tests {
     #[test]
     fn the_open_files_limit_is_raised_to_the_hard_limit() {
         use nix::sys::resource::{Resource, getrlimit, setrlimit};
-        let name = "startup::tests::the_open_files_limit_is_raised_to_the_hard_limit";
+        // The tests path in the binary, without the crates name (the module moved, #420).
+        let module = module_path!().split_once("::").map_or(module_path!(), |(_, m)| m);
+        let name = format!("{module}::the_open_files_limit_is_raised_to_the_hard_limit");
         if std::env::var_os(RAISE_CHILD).is_none() {
             let out = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([name, "--exact", "--test-threads=1", "--nocapture"])
+                .args([name.as_str(), "--exact", "--test-threads=1", "--nocapture"])
                 .env(RAISE_CHILD, "1")
                 .output()
                 .unwrap();

@@ -6,6 +6,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Spike: a macOS front end over local NFS (#420).** `sacdfs-nfs SOURCE [PORT]` (feature
+  `nfs`, not in the release builds) serves the core over NFSv3 on 127.0.0.1, and macOS's own
+  NFS client mounts it as the user, with no FUSE-T, macFUSE or kernel extension. The library,
+  `sacdfs` and the tests build for `aarch64-apple-darwin` and `x86_64-apple-darwin`; on macOS
+  `sacdfs` itself only says that mounting needs Linux. A `macos` workflow runs the core's tests
+  on macOS runners and compares every corpus file read through the NFS mount with a Linux FUSE
+  mount.
+
 ### Changed
 - **The cache of frames is 32 MiB under a memory limit of 256 MiB or more; 16 MiB stays only
   below 256 MiB (#271).** It was 16 MiB up to a 512 MiB limit. Through the Linux kernel SMB client

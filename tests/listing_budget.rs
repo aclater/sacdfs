@@ -7,6 +7,8 @@
 //! Needs `/dev/fuse` and `fusermount3`, like `tests/mount.rs`. (The same comparison without a
 //! mount, with `--flatten` and with readers racing, is in `src/tree.rs`.)
 
+// Linux FUSE or Linux-only calls; the macOS front end runs the core's tests (#420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;

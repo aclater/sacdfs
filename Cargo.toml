@@ -26,8 +26,6 @@ include = [
 scarletbook = "=0.5.9"
 # The DSD-to-PCM converter behind the WAV files (#84), from the same release as the engine.
 scarletbook-pcm = "=0.5.9"
-# Pure-Rust FUSE: no libfuse needed, mounts through fusermount3.
-fuser = { version = "0.18", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 libc = "0.2"
@@ -35,7 +33,7 @@ log = "0.4"
 lru = "0.19"
 # statvfs of SOURCE for statfs (#62), without `unsafe` in sacdfs. Already in the graph
 # through fuser, with the same feature.
-nix = { version = "0.31", default-features = false, features = ["fs", "resource"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "resource", "user"] }
 rayon = "1.10"
 signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 # Names and checksums of the persistent seek index's files.
@@ -47,6 +45,15 @@ toml = { version = "1.1", default-features = false, features = ["parse", "displa
 # roots, so that the release's binary depends on no system TLS library or CA store.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 serde_json = "1"
+# The NFS front end (#420, spike, feature `nfs`): NFSv3 for the local client, macOS's above all.
+nfsserve = { version = "0.11", optional = true }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "signal", "sync", "macros"] }
+async-trait = { version = "0.1", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Pure-Rust FUSE: no libfuse needed, mounts through fusermount3. Linux only: on macOS fuser
+# needs libfuse at build time and supports neither FUSE-T nor FSKit (#420).
+fuser = { version = "0.18", default-features = false }
 
 [dev-dependencies]
 # The converter benchmark (benches/pcm.rs); no plots, no rayon.
@@ -55,6 +62,19 @@ dhat = "0.3"
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 tempfile = "3"
+
+[features]
+# `sacdfs-nfs`, the NFS front end (#420, spike).
+nfs = ["dep:nfsserve", "dep:tokio", "dep:async-trait"]
+
+[[bin]]
+name = "sacdfs"
+path = "src/main.rs"
+
+[[bin]]
+name = "sacdfs-nfs"
+path = "src/bin/sacdfs_nfs.rs"
+required-features = ["nfs"]
 
 [[bench]]
 name = "pcm"

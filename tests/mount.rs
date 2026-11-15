@@ -6,6 +6,8 @@
 //! prints each one), unless `SACDFS_FUSE_TESTS=1` is set (as CI does), which makes a missing
 //! FUSE a failure.
 
+// Linux FUSE or Linux-only calls; the macOS front end runs the core's tests (#420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;

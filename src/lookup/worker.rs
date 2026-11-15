@@ -276,6 +276,7 @@ impl Worker {
 
 /// Nice 19 and the idle I/O class for this thread, where the system allows: the worker's TOC
 /// reads and its CPU come after everything a client asks for. Best effort.
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 fn lower_priority() {
     // SAFETY: plain system calls on the calling thread, with no pointers.
@@ -293,6 +294,23 @@ fn lower_priority() {
         }
     }
 }
+
+/// The background priority for this thread on macOS: lower CPU priority and throttled I/O, the
+/// counterpart of nice 19 and the idle I/O class (#420). Best effort.
+#[cfg(target_vendor = "apple")]
+#[allow(unsafe_code)]
+fn lower_priority() {
+    // SAFETY: a plain system call on the calling thread (`who` 0), with no pointers.
+    unsafe {
+        if libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, libc::PRIO_DARWIN_BG) != 0 {
+            log::debug!("musicbrainz: background priority: {}", std::io::Error::last_os_error());
+        }
+    }
+}
+
+/// Elsewhere the worker runs at normal priority.
+#[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+fn lower_priority() {}
 
 fn run<T: Transport>(config: &Config, mut client: Client<T>, images: impl Fn() -> Vec<PathBuf>, stop: &Stop) {
     let mut state = State::load(config.state.clone());
