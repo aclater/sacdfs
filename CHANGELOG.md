@@ -7,6 +7,10 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **The TrueNAS catalog app runs 0.6.4 (#284).** `deploy/truenas/sacdfs` named the 0.6.3 image,
+  which has the three advisories fixed in 0.6.4; the app's version is now 1.0.2. Rendered with
+  the catalog's tooling and installed on TrueNAS SCALE 25.10.8 in a VM
+  ([store-apps.md](docs/install/store-apps.md#truenas-the-catalog-app)).
 - **The core builds for Windows and macOS (#419, #420).** The calls that differ between
   systems are now in one module, `sacdfs::platform`, and the Linux behaviour is unchanged.
   `fuser` is Linux-only and `nix` and `signal-hook` are Unix-only. The Linux mount moved to
