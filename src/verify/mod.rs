@@ -759,12 +759,15 @@ fn check_caught(item: &Item, ctx: &Ctx<'_>, check: &(dyn Fn(&Item, &Ctx<'_>) -> 
 /// [`run`] with `check` as the check of a DSF or DFF file.
 fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io::Result<Summary> {
     let with = |e: io::Error, p: &Path| io::Error::new(e.kind(), format!("{}: {e}", p.display()));
-    let source = args.source.canonicalize().map_err(|e| with(e, &args.source))?;
+    let source = crate::platform::canonicalize(&args.source).map_err(|e| with(e, &args.source))?;
     let mounts = crate::platform::sacdfs_mounts();
     let roots: Vec<PathBuf> = if args.extracts.is_empty() {
         vec![source.clone()]
     } else {
-        args.extracts.iter().map(|p| p.canonicalize().map_err(|e| with(e, p))).collect::<io::Result<_>>()?
+        args.extracts
+            .iter()
+            .map(|p| crate::platform::canonicalize(p).map_err(|e| with(e, p)))
+            .collect::<io::Result<_>>()?
     };
     for r in &roots {
         if let Some(m) = mounts.iter().find(|m| r.starts_with(m)) {
@@ -782,8 +785,8 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
     for pair in args.map.chunks(2) {
         let [from, to] = pair else { continue };
         // FROM may be given as it is written in the extract paths, canonical or not.
-        let from = from.canonicalize().unwrap_or_else(|_| from.clone());
-        let to = to.canonicalize().map_err(|e| with(e, to))?;
+        let from = crate::platform::canonicalize(from).unwrap_or_else(|_| from.clone());
+        let to = crate::platform::canonicalize(to).map_err(|e| with(e, to))?;
         if !to.starts_with(&source) && !source.starts_with(&to) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

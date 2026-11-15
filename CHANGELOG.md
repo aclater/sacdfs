@@ -7,6 +7,10 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **On Windows, paths in logs and in `verify` reports are written as people write them (#419).**
+  `C:\music\a.iso` instead of `\\?\C:\music\a.iso`, and `\\nas\music` instead of
+  `\\?\UNC\nas\music`, wherever the shorter form names the same file
+  (`sacdfs::platform::canonicalize`). Nothing changes on Linux or macOS.
 - **The core builds for Windows and macOS (#419, #420).** The calls that differ between
   systems are now in one module, `sacdfs::platform`, and the Linux behaviour is unchanged.
   `fuser` is Linux-only and `nix` and `signal-hook` are Unix-only. The Linux mount moved to

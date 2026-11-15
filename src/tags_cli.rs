@@ -274,7 +274,7 @@ pub(crate) fn fit(fields: &Fields, key: &str, value: &str, disc: usize) -> Resul
 /// Runs verify with `args`, then writes the tags of its matched extracts into `dir`.
 pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
     fs::create_dir_all(dir)?;
-    let dir = dir.canonicalize()?;
+    let dir = crate::platform::canonicalize(dir)?;
     if args.output.is_none() {
         // verify's report, kept next to the tags files as a record of what was imported
         // (hidden, so it is never taken for a tags file).
