@@ -62,9 +62,19 @@ pub fn cache_home() -> Option<PathBuf> {
 }
 
 /// Whether `e` is a passing condition of the process or the system (out of file descriptors
-/// or memory, an I/O error, interrupted) rather than about the file itself.
+/// or memory, an I/O error, interrupted; on Windows also a file another program holds open
+/// without sharing, as a copy in progress does) rather than about the file itself.
 pub fn is_transient(e: &io::Error) -> bool {
     imp::is_transient(e)
+}
+
+/// The OS error code of an I/O error of the device (`EIO`; `ERROR_IO_DEVICE` on Windows).
+pub const IO_ERROR: i32 = imp::IO_ERROR;
+
+/// Refuses `file`, opened with [`OpenFlags::NO_FOLLOW`], if it is a link: on Unix the open
+/// already failed for one; on Windows, where the link itself was opened, its attributes tell.
+pub fn refuse_link(file: &File) -> io::Result<()> {
+    imp::refuse_link(file)
 }
 
 /// The OS error code for "too many open files" (`EMFILE`; `ERROR_TOO_MANY_OPEN_FILES` on

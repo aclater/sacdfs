@@ -325,13 +325,15 @@ fn open_stream(path: &Path) -> io::Result<Box<dyn Write + Send>> {
         Some(1) => Box::new(io::stdout()),
         Some(2) => Box::new(io::stderr()),
         Some(_) => Box::new(OpenOptions::new().append(true).open(path)?),
-        None => Box::new(
-            crate::platform::set_open_flags(
+        None => {
+            let f = crate::platform::set_open_flags(
                 OpenOptions::new().append(true),
                 crate::platform::OpenFlags::NO_FOLLOW,
             )
-            .open(path)?,
-        ),
+            .open(path)?;
+            crate::platform::refuse_link(&f)?;
+            Box::new(f)
+        }
     })
 }
 

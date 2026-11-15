@@ -53,6 +53,12 @@ pub fn is_transient(e: &io::Error) -> bool {
 
 pub const TOO_MANY_OPEN_FILES: i32 = libc::EMFILE;
 
+pub const IO_ERROR: i32 = libc::EIO;
+
+pub fn refuse_link(_file: &File) -> io::Result<()> {
+    Ok(())
+}
+
 pub fn stale() -> io::Error {
     io::Error::from_raw_os_error(libc::ESTALE)
 }

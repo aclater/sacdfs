@@ -1299,7 +1299,7 @@ impl Tree {
     /// Opens a sidecar file for reading. `ESTALE` if its source file changed (size or mtime)
     /// since it was listed: its attributes, already shown, would no longer match its bytes.
     pub fn open_sidecar(&self, f: &SidecarFile) -> io::Result<fs::File> {
-        let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(libc::EIO))?;
+        let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(crate::platform::IO_ERROR))?;
         let (file, now) = match sidecar::open_file(root, &f.target) {
             Ok(opened) => opened,
             Err(e) => {
@@ -1796,7 +1796,8 @@ impl Tree {
         if !crate::disc::transient(e) {
             return false;
         }
-        let eio = matches!(e, scarletbook::Error::Io(io) if io.raw_os_error() == Some(libc::EIO));
+        let eio =
+            matches!(e, scarletbook::Error::Io(io) if io.raw_os_error() == Some(crate::platform::IO_ERROR));
         let tries = if eio {
             let mtime = mtime_of(path);
             let mut m = self.eio_failures.lock().unwrap_or_else(|p| p.into_inner());

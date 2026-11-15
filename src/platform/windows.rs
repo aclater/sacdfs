@@ -75,16 +75,42 @@ pub fn cache_home() -> Option<PathBuf> {
 
 pub fn is_transient(e: &io::Error) -> bool {
     use windows_sys::Win32::Foundation::{
-        ERROR_IO_DEVICE, ERROR_NOT_ENOUGH_MEMORY, ERROR_OUTOFMEMORY, ERROR_TOO_MANY_OPEN_FILES,
+        ERROR_IO_DEVICE, ERROR_LOCK_VIOLATION, ERROR_NOT_ENOUGH_MEMORY, ERROR_OUTOFMEMORY,
+        ERROR_SHARING_VIOLATION, ERROR_TOO_MANY_OPEN_FILES,
     };
     let code = e.raw_os_error().and_then(|c| u32::try_from(c).ok());
+    // A file another program holds open without sharing (a copy in progress) is readable
+    // again once it lets go: its folder is listed again later.
     matches!(
         code,
-        Some(ERROR_TOO_MANY_OPEN_FILES | ERROR_NOT_ENOUGH_MEMORY | ERROR_OUTOFMEMORY | ERROR_IO_DEVICE)
+        Some(
+            ERROR_TOO_MANY_OPEN_FILES
+                | ERROR_NOT_ENOUGH_MEMORY
+                | ERROR_OUTOFMEMORY
+                | ERROR_IO_DEVICE
+                | ERROR_SHARING_VIOLATION
+                | ERROR_LOCK_VIOLATION
+        )
     ) || matches!(e.kind(), io::ErrorKind::Interrupted | io::ErrorKind::OutOfMemory)
 }
 
 pub const TOO_MANY_OPEN_FILES: i32 = windows_sys::Win32::Foundation::ERROR_TOO_MANY_OPEN_FILES as i32;
+
+pub const IO_ERROR: i32 = windows_sys::Win32::Foundation::ERROR_IO_DEVICE as i32;
+
+/// Whether `m` is a reparse point of any kind: a link or junction, but also a cloud
+/// placeholder, a deduplicated file or a WSL or app-execution link. None is followed or served.
+fn is_reparse_point(m: &Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    m.file_attributes() & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+pub fn refuse_link(file: &File) -> io::Result<()> {
+    if is_reparse_point(&file.metadata()?) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "a link (reparse point): not used"));
+    }
+    Ok(())
+}
 
 /// The marker of [`stale`]: Windows has no such error code.
 #[derive(Debug)]
@@ -208,7 +234,7 @@ pub struct Dir(PathBuf);
 fn stat(m: &Metadata) -> Stat {
     let t = |r: io::Result<SystemTime>| r.unwrap_or(SystemTime::UNIX_EPOCH);
     Stat {
-        regular: m.is_file() && !m.file_type().is_symlink(),
+        regular: m.is_file() && !m.file_type().is_symlink() && !is_reparse_point(m),
         size: m.len(),
         blocks: m.len().div_ceil(512),
         atime: t(m.accessed()),
@@ -234,7 +260,7 @@ pub fn open_dir_at(dir: &Dir, names: &[&OsStr]) -> io::Result<Dir> {
     for name in names {
         at.push(name);
         let m = std::fs::symlink_metadata(&at)?;
-        if m.file_type().is_symlink() || !m.is_dir() {
+        if m.file_type().is_symlink() || is_reparse_point(&m) || !m.is_dir() {
             return Err(not_a_folder());
         }
     }
