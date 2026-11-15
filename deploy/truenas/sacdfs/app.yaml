@@ -1,16 +1,16 @@
 annotations:
   min_scale_version: 24.10.2.2
-app_version: 0.5.0
+app_version: 0.6.3
 capabilities:
-- description: sacdfs is able to bypass file read, write, and execute permission checks
+- description: sacdfs is able to bypass file permission checks
   name: DAC_OVERRIDE
 - description: sacdfs is able to bypass read/execute permission checks
   name: DAC_READ_SEARCH
-- description: sacdfs is able to bind to privileged ports (under 1024)
+- description: sacdfs is able to bind to privileged ports (< 1024)
   name: NET_BIND_SERVICE
 - description: sacdfs is able to change group ID of processes
   name: SETGID
-- description: sacdfs is able to modify process capabilities
+- description: sacdfs is able to transfer capabilities between processes
   name: SETPCAP
 - description: sacdfs is able to change user ID of processes
   name: SETUID
@@ -50,4 +50,4 @@ sources:
 - https://github.com/aclater/sacdfs
 title: sacdfs
 train: community
-version: 1.0.0
+version: 1.0.1

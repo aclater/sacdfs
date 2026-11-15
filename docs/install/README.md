@@ -1,149 +1,82 @@
 # Install sacdfs
 
+sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that players read.
+It runs next to the images, normally on the NAS that holds them. There are two ways to install it:
+
+- **The installer:** one line typed on the NAS or Linux computer. Start here.
+- **A guide for your system:** the same steps by hand. Use one if the installer doesn't fit
+  ([pick a guide](#pick-a-guide)).
+
 ## The installer: one line
 
-Since 0.6.2, an installer finds out what it runs on and sets sacdfs up the way
-the guide for that system does. It runs on Linux only, so not on a Mac or Windows PC: those
-play the discs over the network. Log in to the NAS or Linux computer over SSH, and type (change
-the path to the folder that holds your SACD images, the `.iso` files):
+The installer finds out what it runs on and sets sacdfs up the way the guide for that system
+does. About 5 minutes.
 
-```sh
-curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
-  | sudo sh -s -- --iso-dir /volume1/music
-```
+### What you need
 
-Leave out `sudo` if you are already root (`id -u` prints `0`; on QNAP the `admin` login is). Add
-`--dry-run` first to see every change it would make, and make none.
+- A NAS or computer running Linux. A Mac or Windows PC can't run it: those play the discs over
+  the network from a NAS.
+- A login over SSH (a way to type commands on the NAS from another computer) as an administrator.
+- The folder that holds your SACD images. This page uses `/volume1/music`; change it to yours.
 
-**Without `curl`,** download it with `wget` first and then run it. Don't pipe `wget` into `sh`:
-if the download fails, `sh` gets an empty script and ends without an error, having done nothing.
+### Steps
 
-```sh
-wget -O install.sh https://github.com/aclater/sacdfs/releases/latest/download/install.sh && sudo sh install.sh --iso-dir /volume1/music
-```
+1. **Log in over SSH.** On your computer (Windows: PowerShell; macOS: Terminal) type
+   `ssh youradmin@your-nas-address`.
+2. **See what it would do.** Type this, with your folder. It changes nothing:
 
-A failed download then stops with `wget`'s error before anything runs. BusyBox's own `wget`, on
-systems that have no other, failed against GitHub with a TLS error in our BusyBox 1.37 test
-image (and it doesn't check the server's certificate): there this form stops with status 1. Then
-download `install.sh`, the release archive for your CPU and its `.sha256` on another computer,
-copy all three to the NAS, and run `sh install.sh --iso-dir ... --archive sacdfs-<version>-x86_64-linux.tar.gz`
-(checked on 0.6.2-rc.1 in that BusyBox image).
-*(Checked on 0.6.2 as a dry run with the NAS's own `wget`, GNU Wget, on QNAP QuTScloud, Synology
-DSM, TerraMaster TOS, ReadyNAS OS, Debian 12 with UGREEN's kernel and OpenMediaVault 8, in VMs,
-not on the vendor's hardware; and with BusyBox 1.37's `wget` in a test container, where it stops
-with status 1 and runs nothing.)*
+   ```sh
+   curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
+     | sudo sh -s -- --iso-dir /volume1/music --dry-run
+   ```
 
-Since 0.6.3, the installer also stops with an error, and changes nothing, when
-a download piped into `sh` is cut short. *(Checked with BusyBox 1.37 `sh`, dash and bash, in
-the BusyBox and Fedora 44 test containers that CI runs, and from the 0.6.3-rc.1 release on QNAP
-QuTScloud and Synology DSM in VMs, not on the vendor's hardware; 0.6.2's installer doesn't have this
-check.)*
+   *You should see* `sacdfs installer: ... detected (dry run: nothing is changed)`, followed
+   by the changes it would make. Leave out `sudo` if you are already root (`id -u` prints `0`;
+   on QNAP the `admin` login is).
+3. **Install.** The same line without `--dry-run`:
 
-**A system sacdfs can't run on** makes it stop before it downloads anything, since 0.6.4: a
-processor other than 64-bit x86-64 or aarch64 (also for the container route), a 64-bit kernel
-that runs 32-bit programs (Raspberry Pi OS 32-bit on a Pi 4 or 5 reports `aarch64`), a glibc
-older than 2.17 or musl instead of glibc (for the binary; the container brings its own), no
-`/dev/fuse` that `modprobe fuse` can load, or `--method compose` with no Docker or Podman that
-answers. It then prints a short block of system details and a link to the
-[unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml):
-paste the block there to ask for that system. After a download, it still tries the binary
-before installing it, and stops the same way if it doesn't start. A Mac or Windows PC gets the
-"Linux only" message, with no block.
+   ```sh
+   curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
+     | sudo sh -s -- --iso-dir /volume1/music
+   ```
 
-**`--report`** prints the same block on any Linux system and changes nothing. It needs neither
-root nor `--iso-dir`:
+   *You should see* a line starting `Done.` It names either the folder that holds the DSF and
+   WAV files (for example `/volume1/sacd`) or, with Docker or Podman, the SMB and NFS addresses
+   to give a player. sacdfs then starts by itself whenever the NAS starts.
+4. **On TrueNAS or Unraid** it changes nothing and names the guide to follow instead:
+   [truenas-scale.md](truenas-scale.md) or [unraid.md](unraid.md).
 
-```sh
-curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sh -s -- --report
-```
+### Check it worked
 
-The block holds the installer's version, the check that stopped it, the processor (`uname -m`,
-32- or 64-bit programs, model, cores), memory, the OS and NAS firmware version, kernel, C
-library, `/dev/fuse`, systemd and the container engine. It holds no host name, address, serial
-number, user name or folder, and nothing is sent anywhere: it is only printed.
-*(0.6.3 and older don't have `--report`. Checked with BusyBox 1.37 `sh`, dash and bash, in the
-BusyBox and Fedora 44 test containers that CI runs, with a fake `uname`, `getconf` and `ldd`:
-i686, armv7l, aarch64 with 32-bit programs, glibc 2.12 and musl each stop with status 1, the
-block and the link, and a local server the installer was pointed at got no request. The same
-cases, `--report` and the whole install cycle with the 0.6.3 release were also run on QNAP
-QuTScloud 5.2.9 (BusyBox, no systemd; a hand-made ext4 volume) and TerraMaster TOS 7.0
-(systemd), checked in VMs, not on the vendor's hardware. Not run: real i686, 32-bit ARM or musl
-systems, other NAS systems.)*
+- **It named a folder:** list it, for example `ls /volume1/sacd`. *You should see* one folder
+  per disc. Share that folder with the NAS's own file sharing (SMB or NFS), as you share any
+  other folder.
+- **It named SMB and NFS addresses:** mount one from another computer
+  ([Linux](linux-client.md#on-other-ports), [Windows and macOS](../deployment.md#mounting-the-shares-on-clients)).
 
-**To read it before you run it,** download it, check it, and run it:
+Then set up your player: [which player](#3-which-player-or-music-server).
 
-```sh
-curl -fLO https://github.com/aclater/sacdfs/releases/latest/download/install.sh
-curl -fLO https://github.com/aclater/sacdfs/releases/latest/download/install.sh.sha256
-sha256sum -c install.sh.sha256      # install.sh: OK
-less install.sh
-sudo sh install.sh --iso-dir /volume1/music --dry-run
-sudo sh install.sh --iso-dir /volume1/music
-```
+### If something goes wrong
 
-`gh attestation verify install.sh -R aclater/sacdfs` also shows that this repository's release
-workflow built it. *(Checked on 0.6.2 from the `latest` address in both forms above, and the
-attestation passes; see [the installer on 0.6.2](../test-plan.md#results-installer-on-062).)*
+- **You see:** `sacdfs is installed as root, and you aren't`. **Do this:** type the line it
+  prints underneath, which adds `sudo`. Nothing was changed.
+- **You see:** `curl: command not found`. **Do this:** download it with `wget`, then run it
+  (don't pipe `wget` into `sh`):
 
-**What it does:**
+  ```sh
+  wget -O install.sh https://github.com/aclater/sacdfs/releases/latest/download/install.sh && sudo sh install.sh --iso-dir /volume1/music
+  ```
+- **You see:** it stops with a block of system details and a link. **Do this:** sacdfs doesn't
+  run on that system yet, and nothing was changed. Paste the block into the
+  [unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml).
 
-- **Docker or Podman with Compose answers:** runs the container from
-  [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml) with your folder, and shares the discs
-  over SMB on port 10445 and NFS on port 12049 (`--share smb`, `nfs` or `both`, the default).
-- **Synology, QNAP, ASUSTOR without containers:** the release binary and `sacdfs-ctl` in a
-  `sacdfs` folder on the images' volume, started at boot by the NAS's own hook (Task Scheduler,
-  `autorun.sh`, `init.d`), as in each NAS's guide.
-- **TerraMaster, UGREEN, ReadyNAS and other Linux with systemd:** the release binary and the
-  systemd unit, as in [terramaster.md](terramaster.md).
-- **TrueNAS and Unraid:** nothing. Their apps belong in their own screens; it points to
-  [truenas-scale.md](truenas-scale.md) or [unraid.md](unraid.md).
-
-It downloads the release archive it was published with (`--version` picks another), checks it
-against the release's checksum, and tries the binary before installing anything. It never writes
-under `--iso-dir`. A second run changes nothing, `--uninstall` removes what it installed (your
-images stay), and `--help` lists the rest (`--mount`, `--prefix`, `--share-name`, `--method`,
-`--report`).
-On QNAP, the installer switches on "Run user defined processes" if it is off, so that
-`autorun.sh` starts sacdfs at boot. Since 0.6.3, `--uninstall` switches it off
-again only if the installer switched it on and `autorun.sh` runs nothing else; otherwise it leaves
-it on and says why (0.6.2's `--uninstall` always leaves it on). *(Checked on QuTScloud in a VM,
-not on the vendor's hardware.)*
-Not root, it stops before changing anything and prints the exact line to run with `sudo`.
-Afterwards it prints where the files are or the address to give a player. With the binary,
-share that folder with the NAS's own file sharing ([player guides](#3-which-player-or-music-server)).
-
-**Where the installer was checked,** on the 0.6.2 release from GitHub, in both forms above (the
-one-liner, and download, check, run): a dry run that changed nothing, the install, all 28 DSF and
-WAV files of three conformance-corpus images identical to a reference, a second run that changed
-nothing, `--uninstall` back to the start (and again, with nothing to remove), and the images
-folder unchanged. Details: [the installer on 0.6.2](../test-plan.md#results-installer-on-062).
-
-| System | Route it took | Result |
-|---|---|---|
-| Synology DSM 7.4.1, in a VM | `sacdfs-ctl`, Task Scheduler tasks | pass |
-| QNAP QuTScloud 5.2.9, in a VM (a hand-made ext4 volume) | `sacdfs-ctl`, `autorun.sh` | pass |
-| ASUSTOR ADM 5.1.4, in a VM | `sacdfs-ctl`, `init.d` | pass |
-| TerraMaster TOS 7.0, in a VM (a volume made by TOS) | systemd | pass |
-| ReadyNAS OS 6.10.10, in a VM (a volume made by the vendor's tool) | systemd | pass |
-| Debian 12 with UGREEN's kernel, in a VM (not UGOS Pro) | systemd | pass |
-| OpenMediaVault 8.6 on Debian 13, in a VM (a file system made by OpenMediaVault) | systemd | pass |
-| TrueNAS SCALE 25.10, on a NAS running it, as a normal user | points to the Apps screen, changes nothing | pass |
-| Fedora 44 for aarch64, in a container under `qemu-user` | `sacdfs-ctl` (the aarch64 archive) | pass |
-
-The VMs ran each vendor's OS, not on the vendor's hardware. On 0.6.2-rc.1 the same cycle also
-passed on Fedora 45 (systemd and Docker Compose) and in a UBI 7 container
-([results](../test-plan.md#results-062-rc1-gate)), and CI runs it on every change to `deploy/`
-in BusyBox, Fedora and UBI 7 containers and on its runner with systemd and Docker Compose. On ASUSTOR and
-Synology a development version of the script was also followed by a restart: sacdfs was mounted
-again by the boot hook it set up, with the same files. Not checked: Unraid, the container route
-on a NAS, restarts on the other systems, aarch64 hardware, and QTS or UGOS Pro themselves.
-
-If the installer doesn't fit, each guide below does the same by hand.
+To remove sacdfs again, run the install line with `--uninstall` at the end. Your images stay.
+More about the installer, and where it was checked: [Details](#the-installer-in-detail).
 
 ## Pick a guide
 
-Answer the questions in order and stop at the first that fits.
-Each guide is one page: follow it from top to bottom.
+Each guide does by hand what the installer does. Answer the questions in order and stop at the
+first that fits. Each guide is one page: follow it from top to bottom.
 
 ## 1. What will sacdfs run on?
 
@@ -209,5 +142,127 @@ stop step in your guide ([why](nas-binary.md#start-at-boot-and-stop-safely)).
 - **Unraid and TrueNAS app-store entries:** [store-apps.md](store-apps.md).
 - **Have a NAS we have not run on?** Reports from real hardware are welcome on
   [#82](https://github.com/aclater/sacdfs/issues/82); see [beta testing](../beta-testing.md).
-- **The installer says your system isn't supported?** Tell us what it is with the
-  [unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml).
+
+### The installer in detail
+
+The installer has been in every release since 0.6.2.
+
+**What it does:**
+
+- **Docker or Podman with Compose answers:** runs the container from
+  [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml) with your folder, and shares the discs
+  over SMB on port 10445 and NFS on port 12049 (`--share smb`, `nfs` or `both`, the default).
+- **Synology, QNAP, ASUSTOR without containers:** the release binary and `sacdfs-ctl` in a
+  `sacdfs` folder on the images' volume, started at boot by the NAS's own hook (Task Scheduler,
+  `autorun.sh`, `init.d`), as in each NAS's guide.
+- **TerraMaster, UGREEN, ReadyNAS and other Linux with systemd:** the release binary and the
+  systemd unit, as in [terramaster.md](terramaster.md).
+- **TrueNAS and Unraid:** nothing. Their apps belong in their own screens; it points to
+  [truenas-scale.md](truenas-scale.md) or [unraid.md](unraid.md).
+
+It downloads the release archive it was published with (`--version` picks another), checks it
+against the release's checksum, and tries the binary before installing anything. It never writes
+under `--iso-dir`. A second run changes nothing, `--uninstall` removes what it installed (your
+images stay), and `--help` lists the rest (`--mount`, `--prefix`, `--share-name`, `--method`,
+`--report`). Not root, it stops before changing anything and prints the exact line to run with
+`sudo`.
+
+On QNAP, the installer switches on "Run user defined processes" if it is off, so that
+`autorun.sh` starts sacdfs at boot. Since 0.6.3, `--uninstall` switches it off
+again only if the installer switched it on and `autorun.sh` runs nothing else; otherwise it leaves
+it on and says why (0.6.2's `--uninstall` always leaves it on). *(Checked on QuTScloud in a VM,
+not on the vendor's hardware.)*
+
+**To read it before you run it,** download it, check it, and run it:
+
+```sh
+curl -fLO https://github.com/aclater/sacdfs/releases/latest/download/install.sh
+curl -fLO https://github.com/aclater/sacdfs/releases/latest/download/install.sh.sha256
+sha256sum -c install.sh.sha256      # install.sh: OK
+less install.sh
+sudo sh install.sh --iso-dir /volume1/music --dry-run
+sudo sh install.sh --iso-dir /volume1/music
+```
+
+`gh attestation verify install.sh -R aclater/sacdfs` also shows that this repository's release
+workflow built it. *(Checked on 0.6.2 from the `latest` address in both forms above, and the
+attestation passes; see [the installer on 0.6.2](../test-plan.md#results-installer-on-062).)*
+
+**Why not `wget | sh`:** if the download fails, `sh` gets an empty script and ends without an
+error, having done nothing. With `wget -O install.sh ... && sh install.sh`, a failed download
+stops with `wget`'s error before anything runs. BusyBox's own `wget`, on systems that have no
+other, failed against GitHub with a TLS error in our BusyBox 1.37 test image (and it doesn't
+check the server's certificate): there this form stops with status 1. Then download
+`install.sh`, the release archive for your CPU and its `.sha256` on another computer, copy all
+three to the NAS, and run `sh install.sh --iso-dir ... --archive sacdfs-<version>-x86_64-linux.tar.gz`
+(checked on 0.6.2-rc.1 in that BusyBox image).
+*(Checked on 0.6.2 as a dry run with the NAS's own `wget`, GNU Wget, on QNAP QuTScloud, Synology
+DSM, TerraMaster TOS, ReadyNAS OS, Debian 12 with UGREEN's kernel and OpenMediaVault 8, in VMs,
+not on the vendor's hardware; and with BusyBox 1.37's `wget` in a test container, where it stops
+with status 1 and runs nothing.)*
+
+**A download cut short:** since 0.6.3, the installer stops with an error, and changes nothing,
+when a download piped into `sh` is cut short. *(Checked with BusyBox 1.37 `sh`, dash and bash, in
+the BusyBox and Fedora 44 test containers that CI runs, and from the 0.6.3-rc.1 release on QNAP
+QuTScloud and Synology DSM in VMs, not on the vendor's hardware; 0.6.2's installer doesn't have this
+check.)*
+
+**A system sacdfs can't run on** makes it stop before it downloads anything, since 0.6.4: a
+processor other than 64-bit x86-64 or aarch64 (also for the container route), a 64-bit kernel
+that runs 32-bit programs (Raspberry Pi OS 32-bit on a Pi 4 or 5 reports `aarch64`), a glibc
+older than 2.17 or musl instead of glibc (for the binary; the container brings its own), no
+`/dev/fuse` that `modprobe fuse` can load, or `--method compose` with no Docker or Podman that
+answers. It then prints a short block of system details and a link to the
+[unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml):
+paste the block there to ask for that system. After a download, it still tries the binary
+before installing it, and stops the same way if it doesn't start. A Mac or Windows PC gets the
+"Linux only" message, with no block.
+
+**`--report`** prints the same block on any Linux system and changes nothing. It needs neither
+root nor `--iso-dir`:
+
+```sh
+curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sh -s -- --report
+```
+
+The block holds the installer's version, the check that stopped it, the processor (`uname -m`,
+32- or 64-bit programs, model, cores), memory, the OS and NAS firmware version, kernel, C
+library, `/dev/fuse`, systemd and the container engine. It holds no host name, address, serial
+number, user name or folder, and nothing is sent anywhere: it is only printed.
+*(0.6.3 and older don't have `--report`. Checked with BusyBox 1.37 `sh`, dash and bash, in the
+BusyBox and Fedora 44 test containers that CI runs, with a fake `uname`, `getconf` and `ldd`:
+i686, armv7l, aarch64 with 32-bit programs, glibc 2.12 and musl each stop with status 1, the
+block and the link, and a local server the installer was pointed at got no request. The same
+cases, `--report` and the whole install cycle with the 0.6.3 release were also run on QNAP
+QuTScloud 5.2.9 (BusyBox, no systemd; a hand-made ext4 volume) and TerraMaster TOS 7.0
+(systemd), checked in VMs, not on the vendor's hardware. Not run: real i686, 32-bit ARM or musl
+systems, other NAS systems.)*
+
+**Where the installer was checked,** on the 0.6.2 release from GitHub, in both forms (the
+one-liner, and download, check, run): a dry run that changed nothing, the install, all 28 DSF and
+WAV files of three conformance-corpus images identical to a reference, a second run that changed
+nothing, `--uninstall` back to the start (and again, with nothing to remove), and the images
+folder unchanged. Details: [the installer on 0.6.2](../test-plan.md#results-installer-on-062).
+
+| System | Route it took | Result |
+|---|---|---|
+| Synology DSM 7.4.1, in a VM | `sacdfs-ctl`, Task Scheduler tasks | pass |
+| QNAP QuTScloud 5.2.9, in a VM (a hand-made ext4 volume) | `sacdfs-ctl`, `autorun.sh` | pass |
+| ASUSTOR ADM 5.1.4, in a VM | `sacdfs-ctl`, `init.d` | pass |
+| TerraMaster TOS 7.0, in a VM (a volume made by TOS) | systemd | pass |
+| ReadyNAS OS 6.10.10, in a VM (a volume made by the vendor's tool) | systemd | pass |
+| Debian 12 with UGREEN's kernel, in a VM (not UGOS Pro) | systemd | pass |
+| OpenMediaVault 8.6 on Debian 13, in a VM (a file system made by OpenMediaVault) | systemd | pass |
+| TrueNAS SCALE 25.10, on a NAS running it, as a normal user | points to the Apps screen, changes nothing | pass |
+| Fedora 44 for aarch64, in a container under `qemu-user` | `sacdfs-ctl` (the aarch64 archive) | pass |
+
+The VMs ran each vendor's OS, not on the vendor's hardware. On 0.6.2-rc.1 the same cycle also
+passed on Fedora 45 (systemd and Docker Compose) and in a UBI 7 container
+([results](../test-plan.md#results-062-rc1-gate)), and CI runs it on every change to `deploy/`
+in BusyBox, Fedora and UBI 7 containers and on its runner with systemd and Docker Compose. With the 0.6.3 release files, a full power cycle after the install was run on Synology DSM,
+ASUSTOR ADM, TerraMaster TOS, ReadyNAS OS and Debian 12 with UGREEN's kernel, and the container
+route with Docker on ASUSTOR ADM, in VMs: each time sacdfs came back by itself with the same files
+([results](../test-plan.md#results-installer-restarts-and-the-container-route-on-nas-vms-main-063-release-files)).
+Not checked: Unraid, the container route on other NAS systems (QNAP Container Station and
+Synology Container Manager don't install in the VMs), a QNAP restart, aarch64 hardware, real NAS
+hardware, and QTS or UGOS Pro themselves.

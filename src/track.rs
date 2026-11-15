@@ -340,7 +340,7 @@ pub enum Audio {
 }
 
 /// The range of `track`'s track with pause, if it is a valid range longer than the track.
-fn pause_range(area: &scarletbook::Area, track: &Track) -> Option<(u32, u32)> {
+pub(crate) fn pause_range(area: &scarletbook::Area, track: &Track) -> Option<(u32, u32)> {
     let (first, end) = scarletbook::audio::track_range_with_pause(area, u32::from(track.number))?;
     (first <= track.start_frame && end >= track.end_frame() && end > first).then_some((first, end))
 }

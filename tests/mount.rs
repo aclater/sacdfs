@@ -145,15 +145,7 @@ fn corpus_through_the_kernel() {
             assert!(!disc.exists(), "{id}: rejected image is shown");
             continue;
         }
-        let mut want = BTreeMap::new();
-        for area in expected["audio"].as_array().unwrap() {
-            let dir = area_dir(area["area"].as_str().unwrap());
-            for t in area["tracks"].as_array().unwrap() {
-                if t["outcome"] == "ok" {
-                    want.insert((dir.to_owned(), t["number"].as_u64().unwrap() as u32), t.clone());
-                }
-            }
-        }
+        let want = listed_tracks(&case);
         let mut shown = BTreeMap::new();
         let mut shown_wav = BTreeMap::new();
         for area in std::fs::read_dir(&disc).unwrap() {
