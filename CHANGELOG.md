@@ -7,6 +7,12 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A fuzz target for the audio read path (#390).** `fuzz/fuzz_targets/read_path.rs` reads
+  the DSF and WAV files of damaged corpus images (plain DSD and DST, 2048-, 2054- and 2064-byte
+  sectors) at any offset and length, with read-ahead and small caches whose buffers are reused
+  across images, and checks each read against a reader with no cache. It runs in the fuzz job
+  with the other targets, from seeds made by `examples/fuzz_seeds.rs`. Locally it ran for the
+  hours in its pull request, with no finding.
 - **The installer stops on a system it can't support before it downloads anything, and prints
   the details to ask for it (#382).** Before, the container route never checked the processor
   (on i686 or 32-bit ARM it pulled an image that can't run), a 64-bit kernel with 32-bit
@@ -90,6 +96,38 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **`sacdfs tags import` writes only what the mount uses, and lists what it leaves out (#406).**
+  Before, it wrote any picture and value an extract's tag held, up to 16 MiB, and reported
+  success, but the mount embeds no picture over 960 KiB and builds no tag over 1 MiB: a 12 MiB
+  cover or a 3 MiB text field was in the tags directory but never served, and one oversized value
+  could leave a track's whole tags file unused. Deleting the extract then lost them. Now import
+  skips a picture over 960 KiB, and per track a value over 16 KiB, keys past 64 and text past
+  32 KiB, and stops at about 2 MiB of text per disc; a tags file there already is not grown
+  past 3 MiB. Each is listed as `not kept:` with its extract and disc (at most 32 lines, then a
+  count), and the exit status is 2, so those extracts are kept.
+- **`verify` and `tags import` no longer hang on a FIFO in place of a track file (#404).** A
+  `.dsf` or `.dff` swapped for a FIFO after the folder was listed held the open forever, waiting
+  for a writer. Extracts are now opened without blocking and refused unless they are regular
+  files; that file is reported and the run goes on.
+- **A WAV read whose conversion fails is an I/O error, never old audio (#388).** If the DSD to
+  PCM conversion ever refused a run, the engine's buffer (which may be a reused slot of the frame
+  cache that held another frame's audio) was served and cached as if converted. Now the read fails
+  with `EIO`, through the logged I/O error line, and nothing of it is cached. In the library,
+  `pcm::Converter::convert` and `convert_run` fill the output with zeros on failure, and the new
+  `try_convert` and `try_convert_run` return the error. No failure has been seen; the conversion
+  can't fail with the lengths sacdfs gives it.
+- **A panic in a request answered on fuser's own threads fails that request, not the mount
+  (#389).** Lookups, attributes, listings, `statfs` and the start of opens and reads are answered
+  on fuser's threads, which catch no panic: one would have ended the session and taken the mount
+  down for every client. Each FUSE callback now runs under `catch_unwind`: a panic answers that
+  request with `EIO`, logs an error line, and the mount keeps serving, as the request threads
+  already did. No such panic has been seen.
+- **Names in the daemon's log lines can't split or disguise a line (#391).** Image paths, folder
+  names, disc text and error causes were logged as they were, so a name with a newline split a
+  line in two, an escape sequence changed how a terminal showed the rest, and a bidi control made
+  a line display in another order. Now every log line escapes control characters, Unicode format
+  characters and U+2028/U+2029 as `\n`, `\t`, `\r` or `\u{…}`, on the console and with
+  `--log-file`. The names on the mount are unchanged.
 - **A damaged, truncated or padded image no longer lists tracks far larger than its data (#402).**
   A track's size comes from the TOC, and the only check against the image counted the area's
   sectors the file has. An image extended with a hole, or padded with zero bytes, passed it, and

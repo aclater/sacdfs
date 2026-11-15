@@ -582,6 +582,12 @@ struct Dsd {
     fill: Fill,
 }
 
+/// The read error of a failed PCM conversion (#388). The frame's buffer, which may be a reused
+/// slot of the cache's pool, is dropped unserved and uncached, and the read fails with `EIO`.
+fn conversion_failed(e: crate::pcm::ConvertError) -> ReadError {
+    ReadError::Io(io::Error::other(e))
+}
+
 /// The state a reader of PCM frames keeps: its demultiplexer and the last DSD frames.
 #[derive(Debug, Default)]
 pub struct Stream {
@@ -874,7 +880,7 @@ impl Engine {
                 return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
             }
             let (p, n) = (prev.map(|d| &d.data[..]), next.map(|d| &d.data[..]));
-            c.convert_run(p, &frames, n, &mut data, &mut clips);
+            c.try_convert_run(p, &frames, n, &mut data, &mut clips).map_err(conversion_failed)?;
             Ok(())
         })?;
         let bufs = self.cache.buffers(frame_bytes, cur.len());
@@ -904,7 +910,8 @@ impl Engine {
             if c.frame_bytes() != frame_bytes {
                 return Err(ReadError::Io(io::Error::other("converter frame size mismatch")));
             }
-            Ok(c.convert(prev.map(|d| &d.data[..]), &cur.data, next.map(|d| &d.data[..]), &mut data))
+            c.try_convert(prev.map(|d| &d.data[..]), &cur.data, next.map(|d| &d.data[..]), &mut data)
+                .map_err(conversion_failed)
         })?;
         Ok(Frame { data, fill: cur.fill, clips })
     }
@@ -1474,6 +1481,28 @@ mod tests {
         assert_eq!(mine(), 0);
         assert_eq!(e.cache().bytes(), 0);
         assert_eq!(e.cache().mapped(), 0);
+    }
+
+    /// A failed conversion fails the read: the frame, whose buffer may be a pool slot that held
+    /// another frame's audio, is never handed out (#388). Converters that fail are put in the
+    /// engine's pool, so that `convert_one` and `convert_run` take them.
+    #[test]
+    fn a_failed_conversion_is_an_error_not_a_frame() {
+        let e = Engine::new(2, 4 << 20).unwrap();
+        let fb = e.pcm_frame_bytes(2);
+        // A pool slot with old bytes in it, given back: the next buffer of that length reuses it.
+        let mut b = e.cache().buffer(fb);
+        b.fill(0xab);
+        e.cache().insert(key(0), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
+        e.cache().release_if_idle(Duration::ZERO);
+        CONVERTERS.lock().unwrap().extend((0..8).map(|_| (e.id, 2, Converter::failing(2, &e.pcm))));
+        let dsd = || Dsd { data: vec![0x5au8; 2 * FRAME_BYTES_PER_CHANNEL].into(), fill: Fill::Audio };
+        let (prev, cur, next) = (dsd(), Arc::new(dsd()), dsd());
+        let r = e.convert_one(2, fb, Some(&prev), &cur, Some(&next));
+        assert!(matches!(r, Err(ReadError::Io(_))), "one frame: {:?}", r.map(|f| f.data[0]));
+        let r = e.convert_run(2, fb, Some(&prev), &[cur.clone(), cur.clone(), cur], Some(&next));
+        assert!(matches!(r, Err(ReadError::Io(_))), "a run: {:?}", r.map(|f| f.len()));
+        CONVERTERS.lock().unwrap().retain(|(id, _, _)| *id != e.id);
     }
 
     #[test]

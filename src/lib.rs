@@ -24,6 +24,7 @@ pub mod lookup;
 pub mod memory;
 pub mod names;
 pub mod pcm;
+pub mod printable;
 pub mod sidecar;
 pub mod tags;
 pub mod tags_cli;
