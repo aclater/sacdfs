@@ -31,6 +31,17 @@ All notable changes to sacdfs are recorded here. The format follows
   ([macOS guide](docs/install/macos.md)): the release workflow builds and tests macOS archives
   but doesn't publish them until the NFS layer moves to a maintained library.
 
+### Fixed
+- **NFS from the container on hosts with kernels before 6.2 (#439).** On Debian 12 (kernel
+  6.1), and so OpenMediaVault 7 and CasaOS on Debian 12, every listing of the NFS export failed
+  with "Unknown error 524". NFS-Ganesha reads each file's POSIX ACL, and those kernels answered
+  "not supported" for the FUSE mount; Ganesha passed that on. sacdfs now asks the kernel for
+  FUSE's POSIX ACL support, and the kernel answers "no ACL" itself, as newer kernels already
+  did. Nothing else changes: still at most one `GETXATTR` reaches sacdfs per mount. Checked on
+  Debian 12 in a VM with docker.io: all 910 corpus files hash the same over NFS, over SMB and
+  inside the container; SMB is unchanged
+  ([design](docs/design.md#kernel-caching), "Extended attributes").
+
 ### Changed
 - **On Windows, paths in log lines are written as people write them (#419).** `C:\music\a.iso`
   instead of `\\?\C:\music\a.iso`, and `\\nas\music` instead of `\\?\UNC\nas\music`. Display only:

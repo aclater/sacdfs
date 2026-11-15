@@ -37,6 +37,8 @@ In a shell on the NAS, `sudo docker ps` should show the `sacdfs` container `(hea
 
 Validated on OpenMediaVault 8.6 (Debian 13) in a VM, with the omv-extras Compose plugin (`openmediavault-compose` 8.2) and Docker 29, running a sacdfs **0.4.0** build (`main`). The steps were run through the same calls the web interface makes. The container turned healthy, and NFS and SMB clients read every DSF track of two test discs, matching the reference hashes (29 of 29 over each). OMV's own SMB and NFS services were off. The test VM, a plain Debian 13, got OMV and omv-extras together from the install script above. Not run again for 0.5.0 or 0.6.0.
 
+**OMV 7 (Debian 12, kernel 6.1).** Images up to 0.6.4 serve SMB there, but every NFS listing fails with "Unknown error 524" (#439); the next release fixes it. The fix was checked on plain Debian 12 (kernel 6.1) with Docker 20.10 and Docker Compose 1.29 in a VM, not on OMV 7: with `deploy/nas-compose.yaml`, all 910 corpus files hashed the same over NFS, over SMB and inside the container.
+
 **Which file was run where.** That validation used an earlier Compose file (the 0.4.0 image, ports 445 and 2049, OMV's SMB and NFS off). The current file, `deploy/nas-compose.yaml` (ports 10445 and 12049), was not run through OMV's Compose plugin; the same file was run with Docker Compose and Podman elsewhere ([asustor.md](asustor.md#container-route), [docker-podman.md](docker-podman.md)). Not tried: running beside OMV's own SMB or NFS services on those ports.
 
 ### Options and reasons
