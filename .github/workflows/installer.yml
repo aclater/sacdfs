@@ -87,5 +87,17 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends fuse3
+      # The runner image leaves /opt and /usr/local/bin writable by every user, and the
+      # installer refuses to put what root runs there (GHSA-wfjg-pqhm-4mm2): make the folders
+      # of the host routes root's only, as on a real system.
+      - name: The host routes' folders, root's only
+        if: startsWith(matrix.mode, 'host-')
+        run: |
+          for d in / /opt /srv /usr /usr/local /usr/local/bin /etc /etc/default /etc/systemd /etc/systemd/system; do
+            [ -d "$d" ] || continue
+            ls -ld "$d"
+            sudo chown root "$d"
+            sudo chmod go-w "$d"
+          done
       - name: Run (deploy/ci-install-test.sh)
         run: deploy/ci-install-test.sh "$MODE"
