@@ -26,7 +26,7 @@ use crate::vfs::Volume;
 /// SOURCE is an image file or a folder searched recursively for *.iso files. It runs in the
 /// foreground until SIGINT, SIGTERM or SIGHUP, then unmounts and stops. Without MOUNTPOINT it
 /// only serves; on macOS, mount it with
-/// `mount_nfs -o vers=3,tcp,port=PORT,mountport=PORT,rdonly,nfc,locallocks,soft,intr localhost:/ MOUNTPOINT`.
+/// `mount_nfs -o vers=3,tcp,port=PORT,mountport=PORT,rdonly,nfc,locallocks,hard,intr,deadtimeout=60,nosuid,nodev,noexec localhost:/ MOUNTPOINT`.
 #[derive(Debug, Parser)]
 #[command(name = "sacdfs-nfs", version, about)]
 pub struct Args {
