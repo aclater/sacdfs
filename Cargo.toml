@@ -41,6 +41,13 @@ toml = { version = "1.1", default-features = false, features = ["parse", "displa
 # roots, so that the release's binary depends on no system TLS library or CA store.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 serde_json = "1"
+# The NFS front end (#420, feature `nfs`): the protocol layer vendored from nfsserve 0.11.0 in
+# src/nfs/proto (BSD-3-Clause) needs these.
+tokio = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "signal", "macros"] }
+async-trait = { version = "0.1", optional = true }
+byteorder = { version = "1.4", optional = true }
+num-derive = { version = "0.4", optional = true }
+num-traits = { version = "0.2", optional = true }
 
 # Unix: the platform layer's calls (src/platform/unix.rs).
 [target.'cfg(unix)'.dependencies]
@@ -57,7 +64,7 @@ fuser = { version = "0.18", default-features = false }
 
 # Windows: the platform layer's calls (src/platform/windows.rs). Already in the graph.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
 
 [dev-dependencies]
 # The converter benchmark (benches/pcm.rs); no plots, no rayon.
@@ -66,6 +73,19 @@ dhat = "0.3"
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 tempfile = "3"
+
+[features]
+# `sacdfs-nfs` and `sacdfs::nfs`, the NFS front end (#420): macOS's, and NFS clients' without FUSE.
+nfs = ["dep:tokio", "dep:async-trait", "dep:byteorder", "dep:num-derive", "dep:num-traits"]
+
+[[bin]]
+name = "sacdfs"
+path = "src/main.rs"
+
+[[bin]]
+name = "sacdfs-nfs"
+path = "src/bin/sacdfs_nfs.rs"
+required-features = ["nfs"]
 
 [[bench]]
 name = "pcm"
