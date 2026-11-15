@@ -275,7 +275,7 @@ on a 0.4.0 mount (`sacd-migrate --catalogue --mount`) still point at the old nam
 
    ```sh
    beet sacd-migrate --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
-   beet sacd-migrate --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images --apply
+   beet sacd-migrate --apply --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
    ```
 
    `--mount` is where sacdfs is mounted, `--source` is the images folder or image sacdfs was
