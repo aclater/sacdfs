@@ -1,0 +1,139 @@
+# The Windows front end (winfsp/, #419) on GitHub's Windows runner, on every pull request.
+# cargo-deny checks the front end's own lock file (winfsp/deny.toml). A Linux job mounts the corpus with the FUSE front end and hashes every file; the Windows job
+# installs WinFsp from its MSI (checked by SHA-256), runs clippy on the core and the front end
+# and the front end's tests, builds sacdfs-win, mounts the same corpus as a drive letter and
+# runs winfsp/ci/checks.ps1: every file byte-identical to Linux, end of file, case, refused
+# writes, the WinFsp notice and a clean stop on Ctrl+C and Ctrl+Break.
+name: windows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+  # WinFsp 2.1 (2.1.25156).
+  WINFSP_MSI: https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi
+  WINFSP_SHA256: 073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a
+
+jobs:
+  deny:
+    name: cargo-deny (winfsp/)
+    runs-on: ubuntu-latest
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest, as in deny.yml; cargo from UBI, for `cargo metadata`.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+    env:
+      # The release binary, pinned as in deny.yml.
+      DENY_VERSION: 0.20.2
+      DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+    steps:
+      - name: Packages
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core cargo && dnf clean all
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: cargo-deny on the front end's own lock file (winfsp/deny.toml)
+        shell: bash
+        working-directory: winfsp
+        run: |
+          deny="cargo-deny-$DENY_VERSION-x86_64-unknown-linux-musl"
+          curl -sSfL --proto =https --tlsv1.2 -o "$RUNNER_TEMP/$deny.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$deny.tar.gz"
+          echo "$DENY_SHA256  $RUNNER_TEMP/$deny.tar.gz" | sha256sum -c
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/$deny.tar.gz"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/$deny/cargo-deny" --log-level warn --all-features check advisories bans licenses sources
+
+  linux-reference:
+    name: Linux mount hashes (reference)
+    runs-on: ubuntu-latest
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest, as in ci.yml. FUSE: the device and the right to mount.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+      options: --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined
+    defaults:
+      run:
+        shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
+    steps:
+      - name: Packages
+        shell: bash
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 && dnf clean all
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
+        shell: bash
+        run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
+      - run: cargo build --release --locked
+      - name: Mount the corpus and hash every file
+        # As root: fusermount3 refuses the build user's mount here.
+        shell: bash
+        run: |
+          mnt=$(mktemp -d)
+          target/release/sacdfs tests/corpus/images "$mnt" --no-index-cache
+          (cd "$mnt" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > linux.sha256
+          fusermount3 -u "$mnt"
+          wc -l linux.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: linux-sha256
+          path: linux.sha256
+
+  windows:
+    name: Windows (WinFsp) clippy, tests and corpus mount
+    needs: linux-reference
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup toolchain install $env:RUST_STABLE --profile minimal --component clippy
+          rustup default $env:RUST_STABLE
+      - name: WinFsp (MSI, checked against its SHA-256)
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP "winfsp.msi"
+          Invoke-WebRequest $env:WINFSP_MSI -OutFile $msi
+          if ((Get-FileHash $msi -Algorithm SHA256).Hash -ne $env:WINFSP_SHA256) { throw "WinFsp MSI: SHA-256 differs" }
+          $p = Start-Process msiexec.exe -ArgumentList "/i", $msi, "/qn", "/norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec: $($p.ExitCode)" }
+          Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\WinFsp" | Select-Object InstallDir
+      - name: The core's library on Windows (clippy)
+        run: cargo clippy --lib --locked -- -D warnings
+      - name: Front end (clippy, tests, release build)
+        working-directory: winfsp
+        env:
+          # bindgen (winfsp-sys) finds libclang here; LLVM is on the runner image.
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: |
+          $ErrorActionPreference = "Stop"; $PSNativeCommandUseErrorActionPreference = $true
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo build --release --locked
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: linux-sha256
+          path: ${{ runner.temp }}
+      - name: Mount the corpus at X: and check it (winfsp/ci/checks.ps1)
+        # Windows PowerShell: the script compiles its Ctrl+C helper with Add-Type, which
+        # PowerShell 7 can't make into a program.
+        shell: powershell
+        run: |
+          winfsp\ci\checks.ps1 -Exe winfsp\target\release\sacdfs-win.exe -Source tests\corpus\images `
+            -Mount X: -Reference (Join-Path $env:RUNNER_TEMP "linux.sha256") -Work $env:RUNNER_TEMP
