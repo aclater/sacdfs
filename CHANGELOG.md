@@ -6,98 +6,7 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-### Security
-- **The installer and `sacdfs-ctl` no longer run files that other users can change
-  ([GHSA-wfjg-pqhm-4mm2](https://github.com/aclater/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2), High).**
-  Up to 0.6.3, on QNAP the installer and the QNAP guide put sacdfs, `sacdfs-ctl` and its
-  settings inside the images' shared folder, where the start-at-boot script runs them as root;
-  folder names with some characters were not handled safely; and downloads were checked only
-  against a checksum from the same server. Now:
-  - sacdfs's files go to a folder only root can change: on QNAP `/share/CACHEDEV1_DATA/.sacdfs`
-    (the DSF and WAV files appear in `/share/CACHEDEV1_DATA/sacd`); elsewhere unchanged. The
-    installer refuses a `--prefix` or `--mount` in a folder that other users can change.
-  - `sacdfs-ctl` reads its settings as data, never as shell code (older settings files still
-    work), and as root refuses a settings file, program or folder that other users can change.
-  - Folder names may hold letters, digits, spaces and `. _ - + , @ = & ( ) [ ]`; `R&B`,
-    `Rock & Roll` and `Live (1972)` now work. Other characters are refused before anything is
-    written.
-  - Each release's `install.sh` carries the checksums of that release's archives and is attested;
-    `curl` runs HTTPS-only, and BusyBox `wget` is used only with those built-in checksums.
-
-  **QNAP users, and anyone whose sacdfs folder is inside a shared folder: run the installer for
-  0.6.4 again** as you first did; it moves the files out of the shared folder, updates the
-  start-at-boot hook and removes the old copy (`--uninstall` finds both places). If you set
-  sacdfs up by hand, follow the updated guide ([QNAP](docs/install/qnap.md#moving-an-earlier-install-out-of-the-shared-folder)),
-  then share the new `sacd` folder and point your players at it.
-
-### Added
-- **A fuzz target for the audio read path (#390).** `fuzz/fuzz_targets/read_path.rs` reads
-  the DSF and WAV files of damaged corpus images (plain DSD and DST, 2048-, 2054- and 2064-byte
-  sectors) at any offset and length, with read-ahead and small caches whose buffers are reused
-  across images, and checks each read against a reader with no cache. It runs in the fuzz job
-  with the other targets, from seeds made by `examples/fuzz_seeds.rs`. Locally it ran for the
-  hours in its pull request, with no finding.
-- **The installer stops on a system it can't support before it downloads anything, and prints
-  the details to ask for it (#382).** Before, the container route never checked the processor
-  (on i686 or 32-bit ARM it pulled an image that can't run), a 64-bit kernel with 32-bit
-  programs (Raspberry Pi OS 32-bit on a Pi 4 or 5) got the aarch64 build, and an old glibc or
-  musl was only found when the downloaded binary failed to start. Now the processor and the
-  programs' word size are checked for every route, and glibc 2.17 or later (not musl) for the
-  binary routes, before the root check and any download; FUSE is checked before the download
-  too. On those stops, a missing FUSE, `--method compose` with no engine, and a binary that
-  doesn't start after all, it prints a short block (installer version, the check, processor,
-  memory, OS and NAS version, kernel, C library, FUSE, systemd, container engine; no host name,
-  address, serial number, user name or folder) and a link to the unsupported system form. A Mac
-  or Windows PC still gets the "Linux only" message, with no block. `install.sh --report` prints
-  the block on any Linux system, as a normal user, and changes nothing, for beta test reports.
-
 ### Changed
-- **The systemd unit limits what sacdfs may do, and the mount stays visible (#387).** The unit in
-  the release archive now keeps sacdfs to the rights to mount and to read the images
-  (`CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE`). It also sets:
-  - no new privileges;
-  - no device but `/dev/fuse`;
-  - sockets for the journal and MusicBrainz only;
-  - a system call deny list;
-  - native calls only;
-  - no namespaces, realtime scheduling, setuid files, writable-and-executable memory, clock
-    or hostname changes.
-
-  Options that give the service its own mount namespace (`ProtectSystem=`, `PrivateTmp=` and the
-  like) stay out, because the mount would then be seen by no other program; the unit's comments
-  and [docs/deployment.md](docs/deployment.md#systemd-unit) say why each was kept or left out.
-  `systemd-analyze security` goes from 9.6 to 4.1. A systemd too old for an option logs
-  `Unknown lvalue` and runs the unit without it. Checked on Fedora 44, RHEL 10.1, TerraMaster
-  TOS 7.0, Debian 12 with UGREEN's kernel and ReadyNAS OS 6.10 (systemd 230), each in a VM, not on
-  the vendor's hardware.
-- **The image upgrades Fedora's own packages when it is built, and a weekly scan checks the
-  published image (#399).** The runtime stage starts from the digest-pinned Fedora 44 base as
-  before, then runs `dnf upgrade` before it installs Samba and the rest, so the base's packages
-  get Fedora 44's updates too. A scan of the 0.6.3 image with grype found 39 known
-  vulnerabilities, all fixed in Fedora 44 updates: 16 High in pcre2 and 23 Medium in dnf5,
-  libgcc, libstdc++, libgomp, libmodulemd and tpm2-tss. None were in Samba, NFS-Ganesha or fuse3.
-  An image built with the upgrade has none. The image is about 35 MB larger uncompressed (the
-  upgraded files sit on top of the pinned base layer). A new workflow, `image-scan.yml`, scans the
-  latest published image every week, and on demand, and fails on High or Critical findings that
-  have a fix.
-- **The container gives each program only the capabilities it needs (#386).** The Compose files,
-  the TrueNAS app and the Unraid template now drop the runtime's whole default set
-  (`cap_drop: ALL`) and add back seven: `SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`,
-  `SETGID`, `NET_BIND_SERVICE` and `SETPCAP`, with `no-new-privileges`. Inside, the entry point
-  starts each program with `setpriv` and a reduced bounding set: sacdfs keeps `SYS_ADMIN` and
-  `DAC_OVERRIDE`, smbd `SETUID`, `SETGID` and `NET_BIND_SERVICE`, and NFS-Ganesha
-  `DAC_READ_SEARCH` alone; neither server can mount, and only NFS-Ganesha can open files by
-  handle. At its start the entry point also drops whatever none of them need, so a container
-  started with an older Compose file holds no more either, and with `NFS=0` no process keeps
-  `DAC_READ_SEARCH`. Every capability in the list was checked to be needed by leaving it out.
-  Checked with the CI share test (Docker and rootful Podman, AppArmor) and on Fedora 44 in a VM
-  with SELinux enforcing (Docker, rootful and rootless Podman, both Compose tools); copying the
-  corpus over SMB and NFS took as long as before. **To upgrade:** take the new `cap_drop`,
-  `cap_add` and `security_opt` lines from [deploy/nas-compose.yaml](deploy/nas-compose.yaml), or
-  the `docker run` options in [docs/deployment.md](docs/deployment.md#privileges). An older file
-  keeps working, with the per-program limits applied. Under SELinux, the container mounts with
-  its normal label: [docs/deployment.md](docs/deployment.md#privileges) lists the labels it can
-  read the images under.
 - **The security policy says more about disclosure and about how a report is handled.**
   [SECURITY.md](SECURITY.md) now has the terms of coordinated disclosure (private until a fixed
   release or 90 days, a CVE when warranted), what to do when GitHub's private reporting can't
@@ -135,38 +44,6 @@ All notable changes to sacdfs are recorded here. The format follows
   `gh attestation verify` failed on the image a pull on amd64 resolves to (0.6.2 to 0.6.3). The
   release now attests each architecture's image by its own digest, and the tag too when it is an
   index, and checks every one with `gh attestation verify` before it ends.
-- **`sacdfs tags import` writes only what the mount uses, and lists what it leaves out (#406).**
-  Before, it wrote any picture and value an extract's tag held, up to 16 MiB, and reported
-  success, but the mount embeds no picture over 960 KiB and builds no tag over 1 MiB: a 12 MiB
-  cover or a 3 MiB text field was in the tags directory but never served, and one oversized value
-  could leave a track's whole tags file unused. Deleting the extract then lost them. Now import
-  skips a picture over 960 KiB, and per track a value over 16 KiB, keys past 64 and text past
-  32 KiB, and stops at about 2 MiB of text per disc; a tags file there already is not grown
-  past 3 MiB. Each is listed as `not kept:` with its extract and disc (at most 32 lines, then a
-  count), and the exit status is 2, so those extracts are kept.
-- **`verify` and `tags import` no longer hang on a FIFO in place of a track file (#404).** A
-  `.dsf` or `.dff` swapped for a FIFO after the folder was listed held the open forever, waiting
-  for a writer. Extracts are now opened without blocking and refused unless they are regular
-  files; that file is reported and the run goes on.
-- **A WAV read whose conversion fails is an I/O error, never old audio (#388).** If the DSD to
-  PCM conversion ever refused a run, the engine's buffer (which may be a reused slot of the frame
-  cache that held another frame's audio) was served and cached as if converted. Now the read fails
-  with `EIO`, through the logged I/O error line, and nothing of it is cached. In the library,
-  `pcm::Converter::convert` and `convert_run` fill the output with zeros on failure, and the new
-  `try_convert` and `try_convert_run` return the error. No failure has been seen; the conversion
-  can't fail with the lengths sacdfs gives it.
-- **A panic in a request answered on fuser's own threads fails that request, not the mount
-  (#389).** Lookups, attributes, listings, `statfs` and the start of opens and reads are answered
-  on fuser's threads, which catch no panic: one would have ended the session and taken the mount
-  down for every client. Each FUSE callback now runs under `catch_unwind`: a panic answers that
-  request with `EIO`, logs an error line, and the mount keeps serving, as the request threads
-  already did. No such panic has been seen.
-- **Names in the daemon's log lines can't split or disguise a line (#391).** Image paths, folder
-  names, disc text and error causes were logged as they were, so a name with a newline split a
-  line in two, an escape sequence changed how a terminal showed the rest, and a bidi control made
-  a line display in another order. Now every log line escapes control characters, Unicode format
-  characters and U+2028/U+2029 as `\n`, `\t`, `\r` or `\u{…}`, on the console and with
-  `--log-file`. The names on the mount are unchanged.
 - **A damaged, truncated or padded image no longer lists tracks far larger than its data (#402).**
   A track's size comes from the TOC, and the only check against the image counted the area's
   sectors the file has. An image extended with a hole, or padded with zero bytes, passed it, and
@@ -235,15 +112,170 @@ All notable changes to sacdfs are recorded here. The format follows
   that shares the mount with copies. Checked on macOS 27.2 in a VM on Apple hardware; macOS 15
   and a physical Mac not run.
 
+## [0.6.4] - 2026-11-14
+
+A security release: 0.6.3 plus fixes for three advisories, and the hardening of the installer,
+the container and the systemd unit. Audio bytes are unchanged from 0.6.3. The pacing changes on
+`main` since 0.6.3 (#363, #362) are not in it; they come in 0.6.5. The gate results are in
+docs/test-plan.md ("Results: 0.6.4 gate").
+
 ### Security
-- **Files in the tags directory, the cache and a report's folder are written and read safely
-  ([GHSA-825f-7xrc-fqf7](https://github.com/aclater/sacdfs/security/advisories/GHSA-825f-7xrc-fqf7)).**
-  `sacdfs tags import`, `sacdfs tags fetch`, the `--musicbrainz` worker, the tag watch and
-  `sacdfs verify`'s report now write through a new temporary file with an unpredictable name,
-  created exclusively and without following a symbolic link, then renamed into place; tags
-  files, covers and the state files are read without following a link. Paths and messages
-  shown on the terminal or in the log have control characters escaped, as do the fields of
-  `sacdfs verify`'s report. Medium severity: upgrade to 0.6.4.
+- **Open files: a client of the mount could make images disappear from their folders
+  ([GHSA-phfg-58h9-f2pp](https://github.com/aclater/sacdfs/security/advisories/GHSA-phfg-58h9-f2pp), High).**
+  Upgrade to 0.6.4.
+- **Installer and `sacdfs-ctl`: files that other users could change were run as root
+  ([GHSA-wfjg-pqhm-4mm2](https://github.com/aclater/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2), High).**
+  Upgrade to 0.6.4, and on QNAP, or wherever sacdfs's folder is inside a shared folder, run the
+  installer again (see "Upgrading" below).
+- **Tags, cache and report files were written and read unsafely
+  ([GHSA-825f-7xrc-fqf7](https://github.com/aclater/sacdfs/security/advisories/GHSA-825f-7xrc-fqf7), Medium).**
+  Upgrade to 0.6.4.
+
+### Upgrading
+- **Installs made with the installer:** run it again as you first did. On QNAP, and wherever
+  sacdfs's folder was inside a shared folder, it moves sacdfs's files to a folder only root can
+  change (on QNAP `/share/CACHEDEV1_DATA/.sacdfs`, with the DSF and WAV files in
+  `/share/CACHEDEV1_DATA/sacd`) and removes the old copy; then share the new `sacd` folder and
+  point your players at it. By hand: [where the files go](docs/install/README.md#where-the-files-go)
+  and the [QNAP guide](docs/install/qnap.md#moving-an-earlier-install-out-of-the-shared-folder).
+- **Docker, Podman, TrueNAS, Unraid:** take the image `ghcr.io/aclater/sacdfs:0.6.4`, and for least
+  privilege the new `cap_drop`, `cap_add` and `security_opt` lines from
+  [deploy/nas-compose.yaml](deploy/nas-compose.yaml) (or the `docker run` options in
+  [docs/deployment.md](docs/deployment.md#privileges)). An older Compose file keeps working, with
+  the per-program limits applied inside the container.
+- **systemd:** copy the new `sacdfs.service` from the release archive; a systemd too old for an
+  option logs `Unknown lvalue` and runs the unit without it.
+- **`sacdfs tags import` exits with status 2** when it left out a picture or value the mount
+  would not use (listed as `not kept:`); scripts that delete extracts after an import should
+  keep those extracts.
+
+### Added
+- **The installer stops on a system it can't support before it downloads anything, and prints
+  the details to ask for it (#382).** Before, the container route never checked the processor
+  (on i686 or 32-bit ARM it pulled an image that can't run), a 64-bit kernel with 32-bit
+  programs (Raspberry Pi OS 32-bit on a Pi 4 or 5) got the aarch64 build, and an old glibc or
+  musl was only found when the downloaded binary failed to start. Now the processor and the
+  programs' word size are checked for every route, and glibc 2.17 or later (not musl) for the
+  binary routes, before the root check and any download; FUSE is checked before the download
+  too. On those stops, a missing FUSE, `--method compose` with no engine, and a binary that
+  doesn't start after all, it prints a short block (installer version, the check, processor,
+  memory, OS and NAS version, kernel, C library, FUSE, systemd, container engine; no host name,
+  address, serial number, user name or folder) and a link to the unsupported system form. A Mac
+  or Windows PC still gets the "Linux only" message, with no block. `install.sh --report` prints
+  the block on any Linux system, as a normal user, and changes nothing, for beta test reports.
+- **sacdfs raises its open files limit to the hard limit at start** and logs a warning when that
+  limit is below 4096; `--max-open-images` is kept under half of it.
+- **A fuzz target for the audio read path (#390).** `fuzz/fuzz_targets/read_path.rs` reads
+  the DSF and WAV files of damaged corpus images (plain DSD and DST, 2048-, 2054- and 2064-byte
+  sectors) at any offset and length, with read-ahead and small caches whose buffers are reused
+  across images, and checks each read against a reader with no cache. It runs in the fuzz job
+  with the other targets, from seeds made by `examples/fuzz_seeds.rs`. Locally it ran for the
+  hours in its pull request, with no finding.
+
+### Changed
+- **The systemd unit limits what sacdfs may do, and the mount stays visible (#387).** The unit in
+  the release archive now keeps sacdfs to the rights to mount and to read the images
+  (`CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE`). It also sets:
+  - no new privileges;
+  - no device but `/dev/fuse`;
+  - sockets for the journal and MusicBrainz only;
+  - a system call deny list;
+  - native calls only;
+  - no namespaces, realtime scheduling, setuid files, writable-and-executable memory, clock
+    or hostname changes.
+
+  Options that give the service its own mount namespace (`ProtectSystem=`, `PrivateTmp=` and the
+  like) stay out, because the mount would then be seen by no other program; the unit's comments
+  and [docs/deployment.md](docs/deployment.md#systemd-unit) say why each was kept or left out.
+  `systemd-analyze security` goes from 9.6 to 4.1. A systemd too old for an option logs
+  `Unknown lvalue` and runs the unit without it. Checked on Fedora 44, RHEL 10.1, TerraMaster
+  TOS 7.0, Debian 12 with UGREEN's kernel and ReadyNAS OS 6.10 (systemd 230), each in a VM, not on
+  the vendor's hardware.
+- **The image upgrades Fedora's own packages when it is built, and a weekly scan checks the
+  published image (#399).** The runtime stage starts from the digest-pinned Fedora 44 base as
+  before, then runs `dnf upgrade` before it installs Samba and the rest, so the base's packages
+  get Fedora 44's updates too. A scan of the 0.6.3 image with grype found 39 known
+  vulnerabilities, all fixed in Fedora 44 updates: 16 High in pcre2 and 23 Medium in dnf5,
+  libgcc, libstdc++, libgomp, libmodulemd and tpm2-tss. None were in Samba, NFS-Ganesha or fuse3.
+  An image built with the upgrade has none. The image is about 35 MB larger uncompressed (the
+  upgraded files sit on top of the pinned base layer). A new workflow, `image-scan.yml`, scans the
+  latest published image every week, and on demand, and fails on High or Critical findings that
+  have a fix.
+- **The container gives each program only the capabilities it needs (#386).** The Compose files,
+  the TrueNAS app and the Unraid template now drop the runtime's whole default set
+  (`cap_drop: ALL`) and add back seven: `SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`,
+  `SETGID`, `NET_BIND_SERVICE` and `SETPCAP`, with `no-new-privileges`. Inside, the entry point
+  starts each program with `setpriv` and a reduced bounding set: sacdfs keeps `SYS_ADMIN` and
+  `DAC_OVERRIDE`, smbd `SETUID`, `SETGID` and `NET_BIND_SERVICE`, and NFS-Ganesha
+  `DAC_READ_SEARCH` alone; neither server can mount, and only NFS-Ganesha can open files by
+  handle. At its start the entry point also drops whatever none of them need, so a container
+  started with an older Compose file holds no more either, and with `NFS=0` no process keeps
+  `DAC_READ_SEARCH`. Every capability in the list was checked to be needed by leaving it out.
+  Checked with the CI share test (Docker and rootful Podman, AppArmor) and on Fedora 44 in a VM
+  with SELinux enforcing (Docker, rootful and rootless Podman, both Compose tools); copying the
+  corpus over SMB and NFS took as long as before. **To upgrade:** take the new `cap_drop`,
+  `cap_add` and `security_opt` lines from [deploy/nas-compose.yaml](deploy/nas-compose.yaml), or
+  the `docker run` options in [docs/deployment.md](docs/deployment.md#privileges). An older file
+  keeps working, with the per-program limits applied. Under SELinux, the container mounts with
+  its normal label: [docs/deployment.md](docs/deployment.md#privileges) lists the labels it can
+  read the images under.
+- **Open files are bounded.** The sidecar files open at once are capped below the open files
+  limit (8 to 4096); an open past the cap fails with `EMFILE` for that client alone, logged at most
+  once a minute. A folder listing that left out an image for a passing reason (no descriptors or
+  memory left, `EIO`) is made again after a wait (1 s, doubling to 60 s) and isn't kept by the
+  kernel meanwhile; an image whose opens fail with `EIO` three times in a row is left out until
+  its file changes. Images are opened only if they are regular files.
+- **Where the installer puts sacdfs, and how it is checked.** On QNAP sacdfs's files now live in
+  `/share/CACHEDEV1_DATA/.sacdfs`, outside every shared folder; the installer refuses a
+  `--prefix` or `--mount` that other users can change, and folder names with characters other
+  than letters, digits, spaces and `. _ - + , @ = & ( ) [ ]`. `sacdfs-ctl` reads its settings
+  file as data, not shell code (older files still work), and as root refuses a settings file,
+  program or folder that other users can change. Each release's `install.sh` carries the
+  checksums of its archives; `curl` is used HTTPS-only. On Synology the Task Scheduler tasks are
+  found by name.
+- **Tags, state and report files** are written through a new temporary file created exclusively,
+  then renamed into place; they are read without following a symbolic link and with a size
+  bound, keep the umask's mode, and a parse error says where in the file it is. Paths and messages on the
+  terminal, in the log and in `sacdfs verify`'s report have control characters escaped, the
+  frame keys in the summaries of `verify` and `tags import` each on their own, and a report row
+  lists at most 32 other frame keys of at most 128 characters each, then "+N more".
+- **Names in the daemon's log lines can't split or disguise a line (#391).** Image paths, folder
+  names, disc text and error causes were logged as they were, so a name with a newline split a
+  line in two, an escape sequence changed how a terminal showed the rest, and a bidi control made
+  a line display in another order. Now every log line escapes control characters, Unicode format
+  characters and U+2028/U+2029 as `\n`, `\t`, `\r` or `\u{…}`, on the console and with
+  `--log-file`. The names on the mount are unchanged.
+- **`sacdfs tags import` writes only what the mount uses, and lists what it leaves out (#406).**
+  Before, it wrote any picture and value an extract's tag held, up to 16 MiB, and reported
+  success, but the mount embeds no picture over 960 KiB and builds no tag over 1 MiB: a 12 MiB
+  cover or a 3 MiB text field was in the tags directory but never served, and one oversized value
+  could leave a track's whole tags file unused. Deleting the extract then lost them. Now import
+  skips a picture over 960 KiB, and per track a value over 16 KiB, keys past 64 and text past
+  32 KiB, and stops at about 2 MiB of text per disc; a tags file there already is not grown
+  past 3 MiB. Each is listed as `not kept:` with its extract and disc (at most 32 lines, then a
+  count), and the exit status is 2, so those extracts are kept.
+- **A release is published only from a tag on `main` or on a `release/X.Y.Z` branch.** The release
+  workflow fetches those branches and stops before building anything when the tagged commit is on
+  none of them.
+
+### Fixed
+- **A WAV read whose conversion fails is an I/O error, never old audio (#388).** If the DSD to
+  PCM conversion ever refused a run, the engine's buffer (which may be a reused slot of the frame
+  cache that held another frame's audio) was served and cached as if converted. Now the read fails
+  with `EIO`, and nothing of it is cached. In the library,
+  `pcm::Converter::convert` and `convert_run` fill the output with zeros on failure, and the new
+  `try_convert` and `try_convert_run` return the error. No failure has been seen; the conversion
+  can't fail with the lengths sacdfs gives it.
+- **A panic in a request answered on fuser's own threads fails that request, not the mount
+  (#389).** Lookups, attributes, listings, `statfs` and the start of opens and reads are answered
+  on fuser's threads, which catch no panic: one would have ended the session and taken the mount
+  down for every client. Each FUSE callback now runs under `catch_unwind`: a panic answers that
+  request with `EIO`, logs an error line, and the mount keeps serving, as the request threads
+  already did. No such panic has been seen.
+- **`verify` and `tags import` no longer hang on a FIFO in place of a track file (#404).** A
+  `.dsf` or `.dff` swapped for a FIFO after the folder was listed held the open forever, waiting
+  for a writer. Extracts are now opened without blocking and refused unless they are regular
+  files; that file is reported and the run goes on.
 
 ## [0.6.3] - 2026-11-13
 
@@ -1588,7 +1620,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/aclater/sacdfs/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3
 [0.6.3-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3-rc.1
 [0.6.2]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2
