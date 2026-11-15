@@ -8,10 +8,14 @@
 mod common;
 
 use std::path::Path;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::Weak;
 use std::time::Duration;
 
-use sacdfs::disc::{Disc, Tuning};
+#[cfg(unix)]
+use sacdfs::disc::Disc;
+use sacdfs::disc::Tuning;
 use sacdfs::engine::Engine;
 use sacdfs::sidecar::Sidecars;
 use sacdfs::track::Reader;
@@ -46,6 +50,7 @@ fn change(tree: &Tree, what: &str, f: impl FnOnce(), shown: impl Fn(&Tree) -> bo
 
 /// Lists everything, as a scanner does (opens the images and makes their files), and
 /// returns the discs listed.
+#[cfg(unix)]
 fn scan(tree: &Tree) -> Vec<Weak<Disc>> {
     let mut discs: Vec<Weak<Disc>> = Vec::new();
     for (_, f) in tree.all_files() {
@@ -57,10 +62,13 @@ fn scan(tree: &Tree) -> Vec<Weak<Disc>> {
     discs
 }
 
+#[cfg(unix)]
 fn alive(discs: &[Weak<Disc>]) -> usize {
     discs.iter().filter(|d| d.strong_count() > 0).count()
 }
 
+// Windows refuses to rename a folder while an image in it is open.
+#[cfg(unix)]
 #[test]
 fn removed_and_renamed_images_are_freed() {
     let dir = tempfile::tempdir().unwrap();

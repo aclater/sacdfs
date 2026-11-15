@@ -297,7 +297,7 @@ pub fn previous_path(path: &Path) -> PathBuf {
 /// `/dev/fd/N`, `/proc/self/fd/N`, or a link to one), whatever it is open on: the links are
 /// followed one at a time, as following them all ends at a redirected-to file.
 fn descriptor(path: &Path) -> Option<u32> {
-    let fds = Path::new("/proc").join(std::process::id().to_string()).join("fd");
+    let fds = crate::platform::fd_dir()?;
     let mut p = path.to_owned();
     for _ in 0..8 {
         let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_owned();
