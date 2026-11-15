@@ -66,8 +66,11 @@ const REFUSED: [&str; 4] = ["rw", "suid", "dev", "exec"];
 ///   NFC names sacdfs gives;
 /// - `locallocks`: locks are kept by the client, so software that locks a file it reads
 ///   still can (`nolocks` fails those locks);
-/// - `soft,intr` with `timeo` and `retrans`: a stopped server fails a read with an error
-///   instead of hanging it for good, and a short restart is not seen at all;
+/// - `hard,intr,deadtimeout=60`: a read waits while the server restarts, so a restart is not
+///   seen; a server gone for good fails reads after about a minute, and macOS then unmounts
+///   the folder itself. (`soft` failed every read after 6 to 8 s on macOS 27.2, whatever
+///   `timeo` and `retrans` said, so a restart broke open files.) `intr` lets Control-C stop a
+///   waiting program;
 /// - `rsize=1048576`: reads as large as sacdfs answers ([`crate::vfs::MAX_READ`]);
 /// - `rdirplus`: listings with attributes (READDIRPLUS), one call per page instead of one
 ///   per entry.
@@ -86,10 +89,9 @@ pub fn mount_options(port: u16, extra: &[String]) -> io::Result<Vec<String>> {
             format!("mountport={port}"),
             "nfc".into(),
             "locallocks".into(),
-            "soft".into(),
+            "hard".into(),
             "intr".into(),
-            "timeo=10".into(),
-            "retrans=30".into(),
+            "deadtimeout=60".into(),
             "rsize=1048576".into(),
             "rdirplus".into(),
         ]

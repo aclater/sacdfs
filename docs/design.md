@@ -1985,9 +1985,11 @@ approval.
   closed after 60 s without one.
 - **Mount options on macOS:** `vers=3,tcp,port=P,mountport=P` (no port mapper or lock manager),
   `rdonly`, `nfc` (lookups in NFD find the NFC names), `locallocks` (locks are the client's, so
-  software that locks what it reads still can), `soft,intr,timeo=10,retrans=30` (a stopped
-  server fails a read after about 30 s instead of hanging it; a restart within that time is not
-  seen), `rsize=1048576` and `rdirplus`. `nobrowse` is not set by default, so the mount shows
+  software that locks what it reads still can), `hard,intr,deadtimeout=60` (a read waits
+  while the server restarts; a server gone for good fails reads after about a minute and macOS
+  unmounts the folder itself, which also ends a mount left behind; `soft` failed every read
+  after 6 to 8 s on macOS 27.2, whatever `timeo` and `retrans` said), `rsize=1048576` and
+  `rdirplus`. On Linux: `soft,timeo=10,retrans=30`. `nobrowse` is not set by default, so the mount shows
   in the Finder; `-o nobrowse` hides it.
 
 ## Concurrency
