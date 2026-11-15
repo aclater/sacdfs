@@ -32,9 +32,16 @@ fn mount() -> ExitCode {
     linux_main::main()
 }
 
+/// On macOS with the `nfs` feature (the release builds): the mount is the NFS front end,
+/// mounted by the Mac's own NFS client (#420), as `sacdfs-nfs` does.
+#[cfg(all(target_vendor = "apple", feature = "nfs"))]
+fn mount() -> ExitCode {
+    sacdfs::nfs::cli::main(std::env::args_os())
+}
+
 /// Elsewhere this binary only runs the subcommands, and says its version: the mount is the
 /// platform's own front end.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", all(target_vendor = "apple", feature = "nfs"))))]
 fn mount() -> ExitCode {
     // As clap's `--version` prints it on Linux.
     if std::env::args_os().nth(1).is_some_and(|a| a == "--version" || a == "-V") {
