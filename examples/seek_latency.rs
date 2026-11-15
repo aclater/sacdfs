@@ -17,7 +17,7 @@
 //!   straight through.
 //!
 //! `--evict` drops each image from the page cache before every seek
-//! (`posix_fadvise(POSIX_FADV_DONTNEED)`).
+//! (`posix_fadvise(POSIX_FADV_DONTNEED)`; Linux only).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -97,6 +97,7 @@ fn opts() -> Opts {
     o
 }
 
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 fn evict(path: &Path) {
     use std::os::fd::AsRawFd;
@@ -104,6 +105,10 @@ fn evict(path: &Path) {
     // SAFETY: a valid open descriptor; the advice only drops cached pages.
     unsafe { libc::posix_fadvise(f.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
 }
+
+/// No `posix_fadvise` on macOS (#420): `--evict` does nothing there.
+#[cfg(not(target_os = "linux"))]
+fn evict(_path: &Path) {}
 
 /// The files of a fresh tree of one image, grouped by area, in track order.
 fn areas(image: &Path) -> Vec<Vec<Arc<TrackFile>>> {
