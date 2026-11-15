@@ -107,6 +107,9 @@ All notable changes to sacdfs are recorded here. The format follows
   decoded ahead changes.
 
 ### Documentation
+- **Upgrading from 0.4.0 with beets-pysacd.** Albums that beets-pysacd 0.2.0 or 0.2.1 catalogued
+  on a 0.4.0 mount point at the old names of untitled tracks; the user guide gives the steps with
+  beets-pysacd 0.2.2 before any `beet update` (docs/user-guide.md, under "Tagging behaviour").
 - **Installer restarts and the container route, checked on NAS VMs (part of #340, #283).** With
   the 0.6.3 release files, a power cycle after the install brought sacdfs back by itself, with
   identical files, on Synology DSM, ASUSTOR ADM, TerraMaster TOS, ReadyNAS OS and Debian 12 with

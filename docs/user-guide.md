@@ -261,6 +261,32 @@ with no network and nothing stored:
   space](#times-sizes-and-free-space)). Moving the image to another folder can change what it's
   called; to keep a name for good, put it in a tags file. The audio is unaffected.
 
+**Upgrading from 0.4.0 with beets-pysacd.** sacdfs 0.4.1 names a track without a title
+`NN - Track NN.dsf`; 0.4.0 named it `NN.dsf`. Albums that beets-pysacd 0.2.0 or 0.2.1 catalogued
+on a 0.4.0 mount (`sacd-migrate --catalogue --mount`) still point at the old names, and running
+`beet update` after the upgrade removes their items, along with any fields you set on them.
+
+1. Before upgrading, back up your beets `library.db`.
+2. Upgrade sacdfs and mount it again. Do not run `beet update` yet.
+3. Install [beets-pysacd 0.2.2](https://pypi.org/project/beets-pysacd/0.2.2/) or later.
+4. See which items would move, then move them. With the mount from the
+   [quick start](#quick-start), where `~/sacd` is the mount and `~/music/sacd-images` the
+   images folder you gave sacdfs:
+
+   ```sh
+   beet sacd-migrate --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
+   beet sacd-migrate --apply --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
+   ```
+
+   `--mount` is where sacdfs is mounted, `--source` is the images folder or image sacdfs was
+   given, and the last argument is the images to check (one or more images or folders). Add
+   `--flatten` to both lines if your mount uses it.
+
+Items keep their ids, added dates and other fields; nothing on the mount is changed. If
+`beet update` has already removed them, restore the backup and then run step 4; cataloguing
+again restores the albums but not fields set by hand. *(Tested on a simulated mount, not on a
+real one.)*
+
 Plex shows the suffix only with "Prefer local metadata" on in the library's settings; by
 default it uses the matched release's title for both copies (see the deployment guide,
 "Multichannel copies and music servers").
