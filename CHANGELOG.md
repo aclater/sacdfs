@@ -25,6 +25,11 @@ All notable changes to sacdfs are recorded here. The format follows
   a MOUNTPOINT it mounts and, when stopped, unmounts. The protocol layer is vendored from
   nfsserve 0.11.0 (BSD-3-Clause), with bounded decoding and a fuzz target
   ([design](docs/design.md#the-nfs-front-end-420)). Part of #420.
+- **macOS: mount sacdfs on a Mac (#420).** `sacdfs-nfs SOURCE MOUNTPOINT` mounts with the Mac's
+  own NFS client, as the user, with nothing else installed, and takes the same options as the
+  Linux mount. `--launch-agent` writes a launchd agent that mounts at each login. Built from source for now
+  ([macOS guide](docs/install/macos.md)): the release workflow builds and tests macOS archives
+  but doesn't publish them until the NFS layer moves to a maintained library.
 
 ### Changed
 - **On Windows, paths in log lines are written as people write them (#419).** `C:\music\a.iso`
