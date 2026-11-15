@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Extracts that differ from a served track by pauses (#93): the track with pause audio
-//! before or after it (`sacd_extract -p`, `pysacd-extract -b`), or a track cut short.
+//! before or after it (`sacd_extract -b`, `pysacd-extract -b`), or a track cut short.
 //!
 //! The shorter of the two streams (extract and served track) is looked for inside the longer
 //! one: a needle of non-idle audio from the short one is searched for in the first bytes of the
