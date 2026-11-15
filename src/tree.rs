@@ -1299,7 +1299,7 @@ impl Tree {
     /// Opens a sidecar file for reading. `ESTALE` if its source file changed (size or mtime)
     /// since it was listed: its attributes, already shown, would no longer match its bytes.
     pub fn open_sidecar(&self, f: &SidecarFile) -> io::Result<fs::File> {
-        let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(libc::EIO))?;
+        let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(crate::platform::IO_ERROR))?;
         let (file, now) = match sidecar::open_file(root, &f.target) {
             Ok(opened) => opened,
             Err(e) => {
@@ -1796,7 +1796,8 @@ impl Tree {
         if !crate::disc::transient(e) {
             return false;
         }
-        let eio = matches!(e, scarletbook::Error::Io(io) if io.raw_os_error() == Some(libc::EIO));
+        let eio =
+            matches!(e, scarletbook::Error::Io(io) if io.raw_os_error() == Some(crate::platform::IO_ERROR));
         let tries = if eio {
             let mtime = mtime_of(path);
             let mut m = self.eio_failures.lock().unwrap_or_else(|p| p.into_inner());
@@ -3287,13 +3288,12 @@ mod tests {
         // A change elsewhere in the folder makes the folder be read again.
         let artist = dir.path().join("Artist");
         fs::write(artist.join("Other/cover.jpg"), b"art").unwrap();
-        fs::File::open(artist.join("Other"))
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() + Duration::from_secs(20))
-            .unwrap();
-        fs::File::open(&artist)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() + Duration::from_secs(30))
+        crate::platform::set_modified(
+            &artist.join("Other"),
+            std::time::SystemTime::now() + Duration::from_secs(20),
+        )
+        .unwrap();
+        crate::platform::set_modified(&artist, std::time::SystemTime::now() + Duration::from_secs(30))
             .unwrap();
         assert_eq!(names(&t, "Artist"), ["Other"]);
         assert_eq!(names(&t, "Artist/Other"), ["y", "cover.jpg"]);
@@ -3620,7 +3620,7 @@ mod tests {
         fs::write(album.join("Scans/s1.png"), b"s1").unwrap();
         // The directory's modification time may not have moved on a coarse clock.
         let now = std::time::SystemTime::now() + Duration::from_secs(5);
-        fs::File::open(&album).unwrap().set_modified(now).unwrap();
+        crate::platform::set_modified(&album, now).unwrap();
         assert_eq!(names(&t, "Artist/Album"), ["x", "Artwork", "Scans", "back.jpg", "folder.jpg"]);
         assert_eq!(read_sidecar(&t, "Artist/Album/back.jpg"), b"back");
         assert_eq!(read_sidecar(&t, "Artist/Album/Scans/s1.png"), b"s1");
@@ -3628,7 +3628,10 @@ mod tests {
         // open file still reads.
         assert_eq!(ino_of(&t, "Artist/Album/folder.jpg"), folder);
         for (p, ino) in &before {
-            if p != "Artist/Album/cover.PNG" && !p.starts_with("Artist/Album/x/") {
+            // As paths: Windows lists them with `\`.
+            if Path::new(p) != Path::new("Artist/Album/cover.PNG")
+                && !Path::new(p).starts_with("Artist/Album/x")
+            {
                 assert_eq!(t.resolve(Path::new(p)), Some(*ino), "{p}");
             }
         }
@@ -3644,12 +3647,12 @@ mod tests {
         );
         // A sidecar folder is re-read too.
         fs::write(album.join("Artwork/extra.jpg"), b"extra").unwrap();
-        fs::File::open(album.join("Artwork")).unwrap().set_modified(now).unwrap();
+        crate::platform::set_modified(&album.join("Artwork"), now).unwrap();
         assert_eq!(names(&t, "Artist/Album/Artwork"), ["Booklet", "extra.jpg", "front.jpg", "info.pdf"]);
         // A replaced file gets new attributes under the same number.
         let ino = ino_of(&t, "Artist/Album/folder.jpg");
         fs::write(album.join("folder.jpg"), b"a longer picture").unwrap();
-        fs::File::open(&album).unwrap().set_modified(now + Duration::from_secs(5)).unwrap();
+        crate::platform::set_modified(&album, now + Duration::from_secs(5)).unwrap();
         names(&t, "Artist/Album");
         assert_eq!(ino_of(&t, "Artist/Album/folder.jpg"), ino);
         assert_eq!(read_sidecar(&t, "Artist/Album/folder.jpg"), b"a longer picture");
@@ -3669,7 +3672,7 @@ mod tests {
         link_image(corpus_image(), dir.path().join("Artist/Empty/sub/w.iso")).unwrap();
         let now = std::time::SystemTime::now() + Duration::from_secs(5);
         for d in ["Artist", "Artist/A", "Artist/Empty"] {
-            fs::File::open(dir.path().join(d)).unwrap().set_modified(now).unwrap();
+            crate::platform::set_modified(&dir.path().join(d), now).unwrap();
         }
         assert_eq!(names(&t, "Artist"), ["A", "B", "Empty"]);
         assert_eq!(names(&t, "Artist/A"), ["x", "z"]);
@@ -3678,10 +3681,7 @@ mod tests {
         assert_eq!(names(&t, "Artist/Empty/sub"), ["w"]);
         // Removed: not found any more, though the number still resolves.
         fs::remove_file(dir.path().join("Artist/A/z.iso")).unwrap();
-        fs::File::open(dir.path().join("Artist/A"))
-            .unwrap()
-            .set_modified(now + Duration::from_secs(5))
-            .unwrap();
+        crate::platform::set_modified(&dir.path().join("Artist/A"), now + Duration::from_secs(5)).unwrap();
         assert_eq!(names(&t, "Artist/A"), ["x"]);
         assert!(t.get(a).is_some());
     }
@@ -3692,10 +3692,11 @@ mod tests {
         let t = tree_sc(dir.path(), false);
         let first = names(&t, "Artist/Album");
         fs::write(dir.path().join("Artist/Album/new.jpg"), b"n").unwrap();
-        fs::File::open(dir.path().join("Artist/Album"))
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() + Duration::from_secs(9))
-            .unwrap();
+        crate::platform::set_modified(
+            &dir.path().join("Artist/Album"),
+            std::time::SystemTime::now() + Duration::from_secs(9),
+        )
+        .unwrap();
         assert_eq!(names(&t, "Artist/Album"), first);
         assert!(!t.is_live(ino_of(&t, "Artist/Album")));
     }
@@ -3709,7 +3710,7 @@ mod tests {
         fs::write(dir.path().join("Artist/Album/Rip/back.png"), b"b").unwrap();
         let now = std::time::SystemTime::now() + Duration::from_secs(5);
         for d in ["Artist/Album", "Artist/Album/Rip"] {
-            fs::File::open(dir.path().join(d)).unwrap().set_modified(now).unwrap();
+            crate::platform::set_modified(&dir.path().join(d), now).unwrap();
         }
         assert_eq!(
             names(&t, "Artist/Album"),
@@ -3724,7 +3725,7 @@ mod tests {
 
     /// Sets the modification time of `path` (a file or directory).
     fn set_mtime(path: &Path, t: SystemTime) {
-        fs::File::open(path).unwrap().set_modified(t).unwrap();
+        crate::platform::set_modified(path, t).unwrap();
     }
 
     /// A source tree `Artist/Album/disc.iso` (a copy of a corpus image) with every
@@ -3787,7 +3788,7 @@ mod tests {
         let dir = old_tree(old);
         let newer = old + Duration::from_secs(10_000_000);
         let album = dir.path().join("Artist/Album");
-        fs::File::open(&album).unwrap().set_modified(newer).unwrap();
+        crate::platform::set_modified(&album, newer).unwrap();
         let t = watching(dir.path(), "default", false);
         for p in ["", "Artist", "Artist/Album"] {
             let shown = t.mtime(&t.get(t.resolve(Path::new(p)).unwrap()).unwrap());

@@ -62,6 +62,10 @@ signal-hook = { version = "0.4", default-features = false, features = ["iterator
 # Pure-Rust FUSE: no libfuse needed, mounts through fusermount3.
 fuser = { version = "0.18", default-features = false }
 
+# Windows: the platform layer's calls (src/platform/windows.rs). Already in the graph.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
+
 [dev-dependencies]
 # The converter benchmark (benches/pcm.rs); no plots, no rayon.
 # The no-growth test (tests/no_growth.rs, #151): counts the heap live after each mount.
