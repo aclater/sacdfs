@@ -1890,6 +1890,8 @@ Where a system has no equivalent yet, the function documents its fallback and ne
 | `cache_home` (seek index default) | `$XDG_CACHE_HOME`, else `~/.cache` | same | `%LOCALAPPDATA%` |
 | `is_transient`, `TOO_MANY_OPEN_FILES` | `EMFILE`, `ENFILE`, `ENOMEM`, `EIO`, `EAGAIN`, `EINTR`; `EMFILE` | same | the Win32 equivalents; `ERROR_TOO_MANY_OPEN_FILES` |
 | `writable` (`--musicbrainz`'s tags folder) | `access(W_OK)` | same | the folder isn't read-only |
+| `sacdfs_mounts` (`verify` refuses extracts on a mount) | FUSE mounts named `sacdfs` in `/proc/self/mountinfo` | none found yet | none found yet |
+| `fd_dir` (`verify --report /dev/stdout`) | `/proc/PID/fd` | `/dev/fd` | none: a report path is always a file |
 | `process_name` (network-server pacing, #362) | `/proc/PID/status` and `comm` | none: the read order alone tells | none: the read order alone tells |
 
 - **What stays a fallback on Windows:** confined sidecar opens go by path. `NtCreateFile`

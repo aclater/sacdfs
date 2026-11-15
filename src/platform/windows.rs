@@ -293,6 +293,24 @@ pub fn writable(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+pub fn set_modified(path: &Path, t: SystemTime) -> io::Result<()> {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_WRITE_ATTRIBUTES};
+    // Backup semantics: a folder opens too.
+    OpenOptions::new()
+        .access_mode(FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?
+        .set_modified(t)
+}
+
+pub fn sacdfs_mounts() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+pub fn fd_dir() -> Option<PathBuf> {
+    None
+}
+
 #[allow(unsafe_code)]
 pub fn fs_size(path: &Path) -> io::Result<(u64, u32)> {
     use std::os::windows::ffi::OsStrExt;

@@ -480,6 +480,8 @@ fn a_file_that_panicked_is_not_a_clean_run() {
 
 /// #196: a report to a pipe is a stream: every row comes through, and only the exit status says
 /// how it went. Standard output too.
+// A pipe through /dev/stdout: Unix.
+#[cfg(unix)]
 #[test]
 fn report_to_a_pipe() {
     let dir = tempfile::tempdir().unwrap();
@@ -539,12 +541,12 @@ fn report_to_a_descriptor_redirected_to_a_file() {
     // Standard output, also through a link of the user's, and with --resume.
     let link = dir.path().join("link");
     std::os::unix::fs::symlink("/dev/stdout", &link).unwrap();
-    for (o, resume) in [
-        ("/dev/stdout", false),
-        ("/dev/stdout", true),
-        ("/proc/self/fd/1", false),
-        (link.to_str().unwrap(), false),
-    ] {
+    let mut cases = vec![("/dev/stdout", false), ("/dev/stdout", true), (link.to_str().unwrap(), false)];
+    // /proc: Linux only.
+    if cfg!(target_os = "linux") {
+        cases.push(("/proc/self/fd/1", false));
+    }
+    for (o, resume) in cases {
         let mut c = verify(o);
         if resume {
             c.arg("--resume");
@@ -658,14 +660,17 @@ fn image_in_a_subfolder_is_found() {
     let files = served(&lib);
     let (_, _, bytes) = files
         .iter()
-        .find(|(p, _, _)| p.starts_with("near") && p.to_string_lossy().contains("/Stereo/"))
+        .find(|(p, _, _)| p.starts_with("near") && common::slash(p).contains("/Stereo/"))
         .unwrap();
     for folder in ["near", "deep", "toodeep"] {
         fs::write(lib.join(folder).join("01 - track.dsf"), bytes).unwrap();
     }
     let s = run(&args(&lib, vec![lib.clone()], Vec::new(), None)).unwrap();
-    let by =
-        |folder: &str| s.rows.iter().find(|r| r.path == lib.join(folder).join("01 - track.dsf")).unwrap();
+    // The report's paths are canonical (macOS's /var is /private/var; Windows's are \\?\).
+    let canonical = lib.canonicalize().unwrap();
+    let by = |folder: &str| {
+        s.rows.iter().find(|r| r.path == canonical.join(folder).join("01 - track.dsf")).unwrap()
+    };
     assert_eq!(by("near").status, Status::Identical, "{}", by("near").reason);
     assert_eq!(by("deep").status, Status::Identical, "{}", by("deep").reason);
     assert_eq!(by("toodeep").status, Status::NoMatch);

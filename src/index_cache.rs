@@ -19,7 +19,7 @@
 //!   discs whose saved form changed) and atomically (a temporary file, then a rename). The
 //!   directory is bounded in size; the least recently used files are removed first.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -362,9 +362,7 @@ impl IndexCache {
                 d.touched = true;
             } else if !d.touched {
                 // Used in this mount: keep it from being evicted first.
-                if let Ok(f) = File::open(&path) {
-                    let _ = f.set_modified(SystemTime::now());
-                }
+                let _ = crate::platform::set_modified(&path, SystemTime::now());
                 d.touched = true;
             }
             // A dropped disc saved (or with nothing to save) is let go of.
@@ -632,9 +630,11 @@ mod tests {
         for i in 0..10u8 {
             let k = ImageKey::from_parts(&[b'x', i], 1, 2, 3);
             cache.store(&k, &shapes(), &areas()).unwrap();
-            let f = File::open(cache.dir().join(k.file_name())).unwrap();
-            f.set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u64::from(i) + 10))
-                .unwrap();
+            crate::platform::set_modified(
+                &cache.dir().join(k.file_name()),
+                SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u64::from(i) + 10),
+            )
+            .unwrap();
         }
         cache.trim().unwrap();
         let total: u64 =
@@ -655,7 +655,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, dir.path().join(key().file_name())).unwrap();
         assert_eq!(cache.load(&key(), &shapes()), None);
         fs::remove_file(dir.path().join(key().file_name())).unwrap();
-        let f = File::create(dir.path().join(key().file_name())).unwrap();
+        let f = fs::File::create(dir.path().join(key().file_name())).unwrap();
         f.set_len(MAX_FILE + 1).unwrap();
         assert_eq!(cache.load(&key(), &shapes()), None);
     }

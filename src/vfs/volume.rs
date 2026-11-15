@@ -887,6 +887,8 @@ mod network_tests {
     /// By name only: a local program named like a file server counts as one. Its reader is then
     /// treated as behind a network client: it lets an earlier player go first until it pauses
     /// or reads far ahead, and its audio is the same.
+    // Process names come from /proc: Linux only (platform::process_name).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_local_process_named_smbd_counts_as_a_file_server() {
         let dir = tempfile::tempdir().unwrap();

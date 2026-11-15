@@ -216,6 +216,65 @@ pub fn writable(dir: &Path) -> io::Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn sacdfs_mounts() -> Vec<PathBuf> {
+    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    info.lines()
+        .filter_map(|l| {
+            let mp = l.split(' ').nth(4)?;
+            let mut tail = l.split(" - ").nth(1)?.split(' ');
+            let (fstype, source) = (tail.next()?, tail.next()?);
+            let ours = fstype == "fuse.sacdfs" || (fstype.starts_with("fuse") && source == "sacdfs");
+            ours.then(|| PathBuf::from(unescape_octal(mp)))
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn sacdfs_mounts() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// Undoes mountinfo's octal escapes (`\040` for a space).
+#[cfg(any(target_os = "linux", test))]
+fn unescape_octal(s: &str) -> OsString {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 3 < b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
+            let v = b[i + 1..i + 4].iter().fold(0u32, |a, &c| a * 8 + u32::from(c - b'0'));
+            out.push((v & 0xFF) as u8);
+            i += 4;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    os_from_bytes(out)
+}
+
+#[cfg(test)]
+#[test]
+fn mountinfo_escapes() {
+    assert_eq!(unescape_octal(r"/a\040b"), OsString::from("/a b"));
+    assert_eq!(unescape_octal(r"/a\04"), OsString::from(r"/a\04"));
+}
+
+#[cfg(target_os = "linux")]
+pub fn fd_dir() -> Option<PathBuf> {
+    Some(Path::new("/proc").join(std::process::id().to_string()).join("fd"))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn fd_dir() -> Option<PathBuf> {
+    Some(PathBuf::from("/dev/fd"))
+}
+
+pub fn set_modified(path: &Path, t: SystemTime) -> io::Result<()> {
+    File::open(path)?.set_modified(t)
+}
+
 pub fn fs_size(path: &Path) -> io::Result<(u64, u32)> {
     let st = nix::sys::statvfs::statvfs(path).map_err(io::Error::from)?;
     let frsize = if st.fragment_size() > 0 { st.fragment_size() } else { st.block_size() };
