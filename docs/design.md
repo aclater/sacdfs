@@ -1954,8 +1954,11 @@ approval.
   crate with one). The vendored copy is changed where marked `sacdfs:` (the list is in
   `src/nfs/proto/mod.rs`): handles and FSSTAT from the file system, a credential check, bounded
   records, decoding that never allocates from a declared length, bounded calls in flight and
-  connections, and READDIR from its cookie. The FSSTAT hook is to be offered upstream, so that
-  the copy can go. The decoder is fuzzed (`fuzz/fuzz_targets/nfs_rpc.rs`).
+  connections, and READDIR from its cookie. The copy is temporary: sacdfs is not to maintain an
+  NFS server of its own, and moves to a maintained crate once these changes are upstream there.
+  Only two files face the server crate: `src/nfs/mod.rs` (the file system it calls) and
+  `src/nfs/serve.rs` (its listener); handles, the command line and the mount don't. The
+  decoder is fuzzed (`fuzz/fuzz_targets/nfs_rpc.rs`).
 - **File handles** are 25 bytes: a version, a volume ID (a hash of SOURCE's canonical path),
   the inode number and its generation ([File identity](#file-identity-and-nfs-export)). The
   same SOURCE gives the same handles on every run, so a mount survives a server restart, open
