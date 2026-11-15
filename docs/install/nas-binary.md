@@ -23,7 +23,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    ```
 
    *You should see* a line starting with `crw`. If you see `No such file or directory`, type `modprobe fuse` and check again.
-2. **Make the folders and go into the first.** Keep sacdfs on the data volume, not in `/root` or `/usr/local/bin` (on some NAS systems those are small or read-only). `/volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs.
+2. **Make the folders and go into the first.** Keep sacdfs on the data volume, not in `/root` or `/usr/local/bin` (on some NAS systems those are small or read-only). `/volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs. Keep both folders at the top of the data volume, `/volume1`, not inside a shared folder: sacdfs runs as root, and a user who can write to the top of a shared folder could swap the folders for their own (`ls -ld /volume1` should show `drwxr-xr-x` and the owner `root`; [why](README.md#where-the-files-go)).
 
    ```sh
    mkdir -p /volume1/sacdfs/cache /volume1/sacd
@@ -57,10 +57,10 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
    ```sh
    cat > /volume1/sacdfs/sacdfs.conf <<'EOF'
-   SACDFS_IMAGES=/volume1/music
-   SACDFS_MOUNT=/volume1/sacd
-   SACDFS_BIN=/volume1/sacdfs/sacdfs
-   SACDFS_OPTIONS="--index-cache /volume1/sacdfs/cache"
+   SACDFS_IMAGES='/volume1/music'
+   SACDFS_MOUNT='/volume1/sacd'
+   SACDFS_BIN='/volume1/sacdfs/sacdfs'
+   SACDFS_OPTIONS='--index-cache /volume1/sacdfs/cache'
    EOF
    ```
 7. **Start sacdfs.**
@@ -113,6 +113,8 @@ Earlier, with 0.5.0 on the first five, the checksum was `OK`, `--version` printe
 - **`--index-cache`:** a boot script has no `HOME`, so without it sacdfs logs "no seek index cache" and works without one. The cache folder keeps seeks fast after a remount.
 - **Settings file next to the program:** `/etc/default` isn't kept across restarts on all NAS systems (QNAP's is a RAM disk), so `SACDFS_CONF` names this file. The systemd unit reads `/etc/default/sacdfs` instead.
 - **`SACDFS_OPTIONS`** takes any other [options](../options.md), separated by spaces. Keep the file to plain `NAME=value` lines: systemd reads it too.
+- **The settings file is data, not a script.** Since 0.6.4, `sacdfs-ctl` reads it as `NAME=value` lines and never runs it as shell code: a value may be in single quotes (`'/volume1/R&B'`; for `sacdfs-ctl` a `'` inside is written `'\''`, which systemd reads differently, so keep `'` and `\` out of paths, as the installer does), in double quotes without `$` or `` ` ``, or bare, as older guides and installers wrote it. It knows `SACDFS_IMAGES`, `SACDFS_MOUNT`, `SACDFS_OPTIONS`, `SACDFS_INDEX_CACHE` (the `--index-cache` folder, as one value even with spaces), `SACDFS_BIN`, `SACDFS_PIDFILE`, `SACDFS_LOG` and `SACDFS_STOP_WAIT`; it ignores other names with a warning, and stops on `$(...)`, `` `...` `` or a line it can't read.
+- **Only root may be able to change what root runs.** Since 0.6.4, `sacdfs-ctl` run as root refuses to start, stop or report if the settings file, the program, `sacdfs-ctl` itself, or any folder above them is owned by another user or writable by its group or by others (a folder with the sticky bit, such as `/tmp`, is allowed). The message names the folder and the fix. The check of `sacdfs-ctl`'s own file is a tripwire, not a protection: a changed `sacdfs-ctl` has already started by then; it catches an install left in such a folder, which the installer refuses to make. That is why sacdfs's folder sits at the top of the data volume and not inside a shared folder ([GHSA-wfjg-pqhm-4mm2](https://github.com/aclater/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2)). *(Checked in the BusyBox and Fedora test containers that CI runs.)*
 - **After a restart,** a mount that sacdfs left behind is cleared by the next start. A client on macOS must mount its share again after any sacdfs restart ([deployment guide](../deployment.md#smb-and-restarts)).
 - **Containers instead:** [docker-podman.md](docker-podman.md) and the NAS guides' container sections.
 
@@ -120,7 +122,7 @@ Earlier, with 0.5.0 on the first five, the checksum was `OK`, `--version` printe
 
 **Never stop sacdfs with `kill -9` or `killall -9`.** That signal gives sacdfs no chance to unmount: the mount stays behind with nobody serving it, and every program that touches the folder (a file manager, a share, a player) fails with `Transport endpoint is not connected` until someone runs `umount -l` on it. A plain `kill` (or `killall sacdfs`) is safe: sacdfs unmounts and exits. If a file on the mount is still open, sacdfs detaches the mount at once and exits when the last file closes, which can take forever (a stuck share, a paused player). So the unit and the script wait up to 30 seconds, then kill sacdfs and clear the mount. (In the version after 0.6.0 sacdfs itself exits `--stop-grace` seconds, 10 by default, after SIGTERM even with a file open; if you raise it, raise `TimeoutStopSec` and `SACDFS_STOP_WAIT` too. That change isn't in 0.6.0.) A new sacdfs also clears a dead mount when it starts.
 
-Both routes read one settings file (`SACDFS_IMAGES`, `SACDFS_MOUNT`, `SACDFS_OPTIONS`; the example is `sacdfs.conf.example` in the archive and in [`deploy`](../../deploy)).
+Both routes read one settings file (`SACDFS_IMAGES`, `SACDFS_MOUNT`, `SACDFS_OPTIONS`, and for `sacdfs-ctl` also `SACDFS_INDEX_CACHE`; the example is `sacdfs.conf.example` in the archive and in [`deploy`](../../deploy)).
 
 **With systemd** (`systemctl --version` works: TerraMaster, UGREEN, ReadyNAS OS 6, Debian-based systems). The archive holds `sacdfs.service`; it expects the program at `/usr/local/bin/sacdfs` and the settings at `/etc/default/sacdfs`:
 
@@ -161,6 +163,7 @@ The messages are as they appeared in the checks. From 0.6.0 sacdfs checks these 
 
 | You see | Why | What to do |
 |---|---|---|
+| `sacdfs-ctl: not run as root: /volume1/... can be written by its group or by other users ...` (0.6.4 and later) | Another user could change a file root runs, or the folder it is in | Do what the message says (`chmod go-w` or `chown 0` on that folder), or move sacdfs's folder to the top of the data volume |
 | `./sacdfs: No such file or directory` or `not found` | `./` means "in this folder", and sacdfs is in another | Use the full path: `/volume1/sacdfs/sacdfs` |
 | `sacdfs: a user other than root needs FUSE's mount helper, fusermount3, and it isn't installed ...` | You aren't root, and the NAS has no mount helper for other users | `sudo -i`, then step 7 again |
 | `Permission denied` when a share, an app or another user opens the folder | sacdfs 0.5.0 or earlier was started without `--allow-other` (or 0.6.0 with `--no-allow-other`) | `umount /volume1/sacd`, then start it again as in step 7 |

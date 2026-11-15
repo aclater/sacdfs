@@ -30,7 +30,7 @@ oneliner() {
 }
 state() {
     ls -d /opt/sacdfs /opt/sacdfs/compose.yaml /srv/sacd /etc/default/sacdfs /etc/systemd/system/sacdfs.service \
-        /usr/local/bin/sacdfs /usr/local/etc/init.d/S99sacdfs "$vol/sacdfs" "$vol/sacd" 2>/dev/null
+        /usr/local/bin/sacdfs /usr/local/etc/init.d/S99sacdfs "$vol/sacdfs" "$vol/.sacdfs" "$vol/sacd" 2>/dev/null
     grep -cE ' fuse(\.[^ ]+)? ' /proc/mounts   # not fusectl, which the first FUSE use mounts
 }
 # same A B: equal files (cmp isn't in every image).
@@ -77,7 +77,9 @@ else
         # The container route: the mount is inside the container, at /srv/sacd.
         docker exec sacdfs sh -c "$hashes" sh /srv/sacd >/tmp/got.sha 2>/dev/null
     else
-        mnt=$(sed -n 's/^SACDFS_MOUNT=//p' /etc/default/sacdfs /opt/sacdfs/sacdfs.conf "$vol/sacdfs/sacdfs.conf" 2>/dev/null | head -n 1)
+        # The value as install.sh writes it, in single quotes (bare before 0.6.4).
+        mnt=$(sed -n "s/^SACDFS_MOUNT=//p" /etc/default/sacdfs /opt/sacdfs/sacdfs.conf "$vol/sacdfs/sacdfs.conf" "$vol/.sacdfs/sacdfs.conf" 2>/dev/null |
+            head -n 1 | sed "s/^'\(.*\)'\$/\1/")
         sh -c "$hashes" sh "$mnt" >/tmp/got.sha 2>/dev/null
     fi
     if [ -s /tmp/got.sha ] && same /tmp/got.sha "$ref"; then
