@@ -55,6 +55,18 @@ pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
     imp::file_id_at(path)
 }
 
+/// `text` (a log message) with the Windows verbatim paths in it written as people write them:
+/// `\\?\C:\music` as `C:\music`, `\\?\UNC\nas\music` as `\\nas\music` (#419, item 12). For
+/// display only: the paths sacdfs opens keep their verbatim form, under which Windows takes
+/// every name literally (a trailing dot, a device name, more than 260 characters). Unchanged on
+/// other systems, where no path has that prefix.
+pub fn plain_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if !cfg!(windows) || !text.contains(r"\\?\") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(text.replace(r"\\?\UNC\", r"\\").replace(r"\\?\", ""))
+}
+
 /// The base folder for a per-user cache: `$XDG_CACHE_HOME`, else `~/.cache` on Unix;
 /// `%LOCALAPPDATA%` on Windows. Only an absolute path counts.
 pub fn cache_home() -> Option<PathBuf> {
@@ -324,6 +336,17 @@ mod tests {
         assert!(!is_stale(&io::Error::other("x")));
         assert!(is_cross_device(&cross_device()));
         assert!(!is_cross_device(&stale()));
+    }
+
+    #[test]
+    fn log_text_without_verbatim_prefixes() {
+        let t = r"\\?\C:\music\a.iso track 1: x; \\?\UNC\nas\m\b.iso";
+        if cfg!(windows) {
+            assert_eq!(plain_text(t), r"C:\music\a.iso track 1: x; \\nas\m\b.iso");
+        } else {
+            assert_eq!(plain_text(t), t);
+        }
+        assert_eq!(plain_text("plain"), "plain");
     }
 
     #[test]

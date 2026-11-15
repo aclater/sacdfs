@@ -110,15 +110,24 @@ impl<L: log::Log> log::Log for EscapingLogger<L> {
         if !self.0.enabled(record.metadata()) {
             return;
         }
-        self.0.log(
-            &log::Record::builder()
-                .metadata(record.metadata().clone())
-                .args(format_args!("{}", Escaped(record.args())))
-                .module_path(record.module_path())
-                .file(record.file())
-                .line(record.line())
-                .build(),
-        );
+        let log = |args: fmt::Arguments<'_>| {
+            self.0.log(
+                &log::Record::builder()
+                    .metadata(record.metadata().clone())
+                    .args(args)
+                    .module_path(record.module_path())
+                    .file(record.file())
+                    .line(record.line())
+                    .build(),
+            );
+        };
+        if cfg!(windows) {
+            // Verbatim path prefixes dropped, for reading (display only).
+            let text = record.args().to_string();
+            log(format_args!("{}", Escaped(crate::platform::plain_text(&text))));
+        } else {
+            log(format_args!("{}", Escaped(record.args())));
+        }
     }
 
     fn flush(&self) {
