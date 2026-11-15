@@ -3628,7 +3628,10 @@ mod tests {
         // open file still reads.
         assert_eq!(ino_of(&t, "Artist/Album/folder.jpg"), folder);
         for (p, ino) in &before {
-            if p != "Artist/Album/cover.PNG" && !p.starts_with("Artist/Album/x/") {
+            // As paths: Windows lists them with `\`.
+            if Path::new(p) != Path::new("Artist/Album/cover.PNG")
+                && !Path::new(p).starts_with("Artist/Album/x")
+            {
                 assert_eq!(t.resolve(Path::new(p)), Some(*ino), "{p}");
             }
         }
