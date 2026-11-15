@@ -14,6 +14,12 @@
 #   deploy/ci-install-test.sh host-systemd  # this host, as root through sudo (systemd unit)
 #   deploy/ci-install-test.sh host-compose  # this host, as root through sudo (Compose)
 #   deploy/ci-install-test.sh unsupported   # unsupported systems and --report (#382)
+#   deploy/ci-install-test.sh security      # who can change what root runs, folder names,
+#                                           # built-in checksums, upgrades from the shared folder
+#
+# The served install.sh has the archive's checksum built in, as a release packs it
+# (.github/scripts/stamp-installer.sh). SECURITY_TREE=DIR takes install.sh and sacdfs-ctl
+# from DIR instead of this tree (to show what the security tests catch in an older release).
 #
 # Run from the repository root. RUNTIME: docker (default) or podman. LABEL_DISABLE=1 on an
 # SELinux host. Needs curl, python3 and the corpus in tests/corpus/images.
@@ -22,7 +28,10 @@ set -euo pipefail
 mode=${1:-containers}
 rt=${RUNTIME:-docker}
 here=$(cd "$(dirname "$0")" && pwd)
+tree=${SECURITY_TREE:-$here}
 version=$(sed -n 's/^DEFAULT_VERSION=\([^ ]*\).*/\1/p' "$here/install.sh")
+# The release an upgrade starts from: the layout of 0.6.3 and earlier.
+old_version=0.6.3
 arch=$(uname -m)
 pkg=sacdfs-$version-$arch-linux
 port=${PORT:-18765}
@@ -94,17 +103,28 @@ curl -fsSL -o "$work/pub/$pkg.tar.gz" "$gh_url"
 curl -fsSL -o "$work/pub/$pkg.tar.gz.sha256" "$gh_url.sha256"
 (cd "$work/pub" && sha256sum -c "$pkg.tar.gz.sha256")
 tar -C "$work/pub" -xzf "$work/pub/$pkg.tar.gz"
-install -m 0755 "$work/pub/$pkg/sacdfs" "$here/sacdfs-ctl" "$here/install.sh" "$work/pkg/$pkg/"
+install -m 0755 "$work/pub/$pkg/sacdfs" "$tree/sacdfs-ctl" "$tree/install.sh" "$work/pkg/$pkg/"
 install -m 0644 "$here/systemd/sacdfs.service" "$here/sacdfs.conf.example" "$here/nas-compose.yaml" "$work/pkg/$pkg/"
 tar -C "$work/pkg" -czf "$rel/download/v$version/$pkg.tar.gz" "$pkg"
 (cd "$rel/download/v$version" && sha256sum "$pkg.tar.gz" >"$pkg.tar.gz.sha256")
-install -m 0644 "$here/install.sh" "$rel/download/v$version/install.sh"
-install -m 0644 "$here/install.sh" "$rel/latest/download/install.sh"
+# The installer as a release publishes it: the archive's checksum built in.
+mkdir -p "$work/t/bad" "$work/t/plain"
+if [ -n "${SECURITY_TREE:-}" ]; then
+    cp "$tree/install.sh" "$work/t/install.sh"
+else
+    sh "$here/../.github/scripts/stamp-installer.sh" "$version" "$rel/download/v$version" "$here/install.sh" "$work/t/install.sh"
+fi
+# For the security tests: a wrong checksum built in, and none.
+sed "s/^[0-9a-f]\{64\}  $pkg/$(printf '%064d' 0)  $pkg/" "$work/t/install.sh" >"$work/t/bad/install.sh"
+cp "$tree/install.sh" "$work/t/plain/install.sh"
+cp "$tree/sacdfs-ctl" "$work/t/sacdfs-ctl"
+install -m 0644 "$work/t/install.sh" "$rel/download/v$version/install.sh"
+install -m 0644 "$work/t/install.sh" "$rel/latest/download/install.sh"
 # Downloads cut short, for deploy/ci-install-fetch-steps.sh (#352): all but the last line, and
 # the first half.
 mkdir -p "$rel/cut" "$rel/half"
-sed '$d' "$here/install.sh" >"$rel/cut/install.sh"
-head -c "$(($(wc -c <"$here/install.sh") / 2))" "$here/install.sh" >"$rel/half/install.sh"
+sed '$d' "$work/t/install.sh" >"$rel/cut/install.sh"
+head -c "$(($(wc -c <"$work/t/install.sh") / 2))" "$work/t/install.sh" >"$rel/half/install.sh"
 python3 -I -m http.server --bind 127.0.0.1 --directory "$work/srv" "$port" >"$work/http.log" 2>&1 &
 server=$!
 for _ in $(seq 50); do curl -fsS -o /dev/null "$url/latest/download/install.sh" && break; sleep 0.2; done
@@ -165,6 +185,31 @@ case $mode in
         # UBI 7: glibc 2.17, the oldest the binary supports; bash's sh.
         target ubi7 "$UBI7" install
         ;;
+    security)
+        # An earlier release's installer, sacdfs-ctl and binary, for the upgrade tests.
+        opkg=sacdfs-$old_version-$arch-linux
+        ogh=https://github.com/aclater/sacdfs/releases/download/v$old_version/$opkg.tar.gz
+        curl -fsSL -o "$work/$opkg.tar.gz" "$ogh"
+        curl -fsSL -o "$work/$opkg.tar.gz.sha256" "$ogh.sha256"
+        (cd "$work" && sha256sum -c "$opkg.tar.gz.sha256")
+        tar -C "$work" -xzf "$work/$opkg.tar.gz"
+        mkdir -p "$work/old"
+        cp "$work/$opkg/install.sh" "$work/$opkg/sacdfs-ctl" "$work/$opkg/sacdfs" "$work/old/"
+        chmod -R a+rX "$work"
+        sed "s|@BUILDER@|$HUMMINGBIRD_BUILDER|" "$here/ci-busybox.Containerfile" >"$work/Containerfile.busybox"
+        "$rt" build -q --target busybox -t sacdfs-ci-busybox -f "$work/Containerfile.busybox" "$work" >/dev/null
+        for image in sacdfs-ci-busybox "$FEDORA"; do
+            echo "::group::$image (security)"
+            if "$rt" run --rm "${opts[@]}" --tmpfs /tmp/config -v "$work/t:/t:ro" -v "$work/old:/old:ro" \
+                -v "$work/music:/music:ro" -v "$work/ref.sha:/ref.sha:ro" \
+                -v "$here/ci-install-security-steps.sh:/steps.sh:ro" "$image" sh /steps.sh "$url" /t /old /music /ref.sha; then
+                echo "$image security: pass"
+            else
+                failed+=("$image-security")
+            fi
+            echo "::endgroup::"
+        done
+        ;;
     nas-sim)
         # Simulated NAS layouts: identity files, userland and storage paths only, no vendor
         # software; results are "simulated" and never replace runs on the real systems.
@@ -187,7 +232,7 @@ case $mode in
             failed+=("$mode")
         ;;
     *)
-        echo "usage: $0 containers|nas-sim|host-systemd|host-compose|unsupported" >&2
+        echo "usage: $0 containers|nas-sim|host-systemd|host-compose|unsupported|security" >&2
         exit 2
         ;;
 esac

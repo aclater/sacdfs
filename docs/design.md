@@ -213,7 +213,7 @@ the 2,000 that earlier versions documented as working there. The rest of the lim
 taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
 is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
 
-**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB. *Decision:* the coordinator
+**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB (below 256 MiB since #271, below). *Decision:* the coordinator
 set the rule after #230's fix: with the fix, 8 no longer buys a player's safety, so the default is 16 if
 16 holds the player (real time, under 1 s behind) and a scan alone stays within 5 % of 32, otherwise 32
 everywhere. Measured on P-cores of a mobile Core i9, a fresh container per run, 3 runs each, a 6-channel
@@ -232,6 +232,16 @@ it needed then: without the fix, a player held real time at 8 and fell to 0.34 t
 *Trade-off:* beside a player, four scanners on 4 cores read 12 % less between them at 16 than at 32
 (71.5 against 81.3 MB/s). Limits above 512 MiB keep 32; they weren't measured. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
 defaults don't change.
+
+**Revised: 16 only below 256 MiB** (#271). The scans above were local. Through Samba and the Linux
+kernel SMB client, whose concurrent reads arrive out of order, the same rule fails at both limits:
+a whole-file WAV copy alone was 15 % slower at 16 than at 32, and four copies beside a player 18 %;
+on 2 slow cores at 256 MiB beside four copies, the player's worst read was 3.4 s at 16 against
+1.0 s at 32, with 23 % more CPU, because frames were evicted before they were read (3 runs each,
+the player harness of #357). So, by the rule, 32 from 256 MiB up. *Trade-off:* about 16 MiB more
+resident (45 against 62 MiB peak in the 256 MiB runs), which the memory watch gives back above
+85 % of the limit. *Not measured:* limits below 256 MiB, which keep 16, and large libraries at
+256 MiB with the larger cache.
 
 **What real clients and tags files added.** Three costs lay outside the budget, and running under real
 NFS clients and `--tags` found them.
@@ -1411,13 +1421,31 @@ decoding them twice.
   its first reads waited behind about 600 frames of the copies' work (0.4 to 0.9 s on 4 cores,
   on every release). *Trade-off:* a reader's first half second beside a player decodes on
   demand, in pieces.
+- **A reader is judged a player on evidence (#362).** A reader that reads no faster than a
+  player counts as one only once it has read 4 MiB, or has read for as long as 4 MiB takes at
+  1.5 times the file's byte rate (0.9 s for a 6-channel WAV file, 2.6 s for a stereo one, 4 s
+  for a stereo DSF file); until then it is not yet judged, as in its first 0.5 s. The time
+  counts from its first read of audio, so a player that seeks is judged again at once. *Why:*
+  with the small window of the previous point, copies starting beside a player on a busy server
+  read about as fast as the player in their first half second (1.1 to 2.1 times playing time,
+  the player 1.3 with its client's read-ahead; NFS, four 6-channel copies on 2 slow cores). Each
+  then counted as a player with a 2 s window until it reached 4 MiB, a fraction of a second
+  later, and the player beside four of them waited up to 0.4 s, 0.6 to 0.8 s after they
+  started, in every run. *Alternatives:* judging them players with the small window until they
+  have shown their pace (measured the same within the spread); no small window for readers not
+  yet judged (the stall stayed). *Trade-off:* a player that starts while another plays reads
+  ahead 16 frames for up to 4 s instead of 0.5 s, unless its client reads 4 MiB sooner (the
+  kernel SMB client fetches its first 4 to 8 MiB at once), and it lets no copy wait for it until
+  then.
 - **The pace behind a network client (#271).** A jump, for the pace, is a read more than
   64 MiB from the furthest byte read so far, and the pace counts the bytes read since, but no
   further than the reader got. A reader one of whose reads has landed more than 2 MiB behind
   the furthest byte read is behind a network client, and so is one whose file a network file
   server's process opened (#362: Samba's `smbd`, `ganesha.nfsd`, the kernel's `nfsd` or `ksmbd`,
   told by the name of the request's thread group; NFS-Ganesha's reads can arrive in order, and a
-  local program with one of those names counts too). Such a reader reads for throughput once
+  local program with one of those names counts too). The name is looked up once the reader has
+  read 4 MiB, the first time it matters: looked up at every open, its two reads of `/proc` cost about 25
+  microseconds per open and made a scan of short files 10 % slower (#403). Such a reader reads for throughput once
   it is also 32 MiB ahead of playing time. Until then it is *unsure*: it plays if no player has
   been reading since before it, and otherwise reads for throughput, letting that player go
   first. *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a
@@ -1467,7 +1495,8 @@ decoding them twice.
   counts as a player until it jumps; and a copy that starts within 5 s of a player pausing
   without closing its file lets that player go first if it comes back. Copies served by an NFS
   server whose reads reach sacdfs in order were not seen as behind a network client until #362,
-  which tells them by the server's process; one in another PID namespace still isn't.
+  which tells them by the server's process. A server in a PID namespace that sacdfs can't see
+  still isn't: see [the file server's process](#the-file-servers-process-362).
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
@@ -1533,6 +1562,30 @@ bytes, or ruled out:
   the image's. It also needs root. Sidecar files could use it, but they aren't what's slow.
 - *Splice:* fuser 0.18 replies by `writev` and has no way to reply from a pipe, and the kernel would
   copy into the page cache anyway. Not measured.
+
+### The file server's process (#362)
+
+A file opened by a network file server's process is behind a network client from its first read
+(above). FUSE gives the process of each request as a number in the PID namespace of the process
+that mounted it, and 0 for a process outside that namespace. So:
+
+- **sacdfs on the host, the server in a container** (Samba in a container sharing the host's
+  mount): the server's processes are visible from the host, the number resolves, and its reader
+  counts as behind a network client. Checked with Samba 4.24 in a Fedora 44 container and the
+  Linux 7.2 kernel SMB client.
+- **sacdfs in a container, the server outside it** (another container, or the host): the number is
+  0 for the server and for any other reader outside sacdfs's container alike, such as a player on
+  the NAS reading through the shared `/srv` mount. Checked with sacdfs in one container and Samba
+  in another, and a reader on the host.
+- **The container image**, sacdfs with its own Samba and NFS-Ganesha: one namespace, so the
+  number resolves.
+
+**Decision:** a reader whose process is 0 is judged by the order of its reads, as before #362.
+*Why not count it as behind a network client:* a local player outside the container would be too,
+and then it would read for throughput beside an earlier player until its reads paused, and a
+local scanner would need to get 32 MiB ahead of playing time first. *Trade-off:* copies served by
+an NFS server outside sacdfs's container, whose reads arrive in order, count as players by their
+pace, as on 0.6.3.
 
 ## Kernel caching
 
@@ -2404,7 +2457,9 @@ MusicBrainz IDs on 26.
   suffix (#97 hook): the user named it.
 - **Reading:** a tags file is read when a track file is made, that is when its area is first
   listed, and kept while its mtime and size are unchanged. A file that does not parse (unknown
-  key or section) is ignored with a warning, so a typo never changes the served files.
+  key or section) is ignored with a warning, so a typo never changes the served files. The
+  warning gives the line and column, not the text there. Files over 4 MiB, links and anything
+  but a regular file are not read.
 - **Live reload (owner requirement: pruning scanners such as Roon must see tag edits).** On a
   directory SOURCE (a watching tree, #101), adding, editing or removing a tags file changes the
   affected files' tags, size, mtime and generation and moves the mtime of the image's folder,

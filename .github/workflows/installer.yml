@@ -8,18 +8,27 @@
 #   - unsupported systems (#382), with a fake uname, getconf and ldd: i686, armv7l, aarch64 with
 #     32-bit programs, glibc 2.12, musl, the container route on such a processor, no Compose
 #     engine, no FUSE: each must stop with the report and download nothing; and --report.
-# See deploy/ci-install-test.sh.
+#   - security, in the BusyBox and Fedora containers (deploy/ci-install-security-steps.sh):
+#     a prefix or mount folder that other users can change is refused; folder names with &,
+#     spaces and brackets install and run; a name that is a command is refused and never runs;
+#     sacdfs-ctl reads older settings files as data and, as root, refuses files other users can
+#     change; a wrong or missing built-in checksum stops the download; an install of 0.6.3 in a
+#     QNAP shared folder (and an ASUSTOR one with --prefix there) is moved, and --uninstall finds it.
+# The installer served is stamped with the archive's checksum as a release is
+# (.github/scripts/stamp-installer.sh). See deploy/ci-install-test.sh.
 name: installer
 
 on:
   pull_request:
     paths:
       - ".github/workflows/installer.yml"
+      - ".github/scripts/stamp-installer.sh"
       - "deploy/**"
   push:
     branches: [main]
     paths:
       - ".github/workflows/installer.yml"
+      - ".github/scripts/stamp-installer.sh"
       - "deploy/**"
   workflow_dispatch:
 
@@ -42,8 +51,11 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends devscripts busybox-static dash
-          shellcheck -s sh deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/ci-install-unsupported-steps.sh deploy/sacdfs-ctl
-          checkbashisms -p deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/ci-install-unsupported-steps.sh deploy/sacdfs-ctl
+          sh_files="deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/ci-install-unsupported-steps.sh deploy/ci-install-security-steps.sh deploy/sacdfs-ctl .github/scripts/stamp-installer.sh"
+          # shellcheck disable=SC2086 # a list of files
+          shellcheck -s sh $sh_files
+          # shellcheck disable=SC2086
+          checkbashisms -p $sh_files
           dash -n deploy/install.sh
           busybox sh -n deploy/install.sh
           # No terminal, no --iso-dir: an error that shows the usage, never a prompt.
@@ -64,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [containers, host-systemd, host-compose, unsupported]
+        mode: [containers, host-systemd, host-compose, unsupported, security]
     env:
       MODE: ${{ matrix.mode }}
     steps:
@@ -75,5 +87,20 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends fuse3
+      # The runner image leaves /opt (also through an access control list) and /usr/local/bin
+      # writable by every user, and the installer refuses to put what root runs there
+      # (GHSA-wfjg-pqhm-4mm2): make the folders of the host routes root's only, as on a real
+      # system.
+      - name: The host routes' folders, root's only
+        if: startsWith(matrix.mode, 'host-')
+        run: |
+          for d in / /opt /srv /usr /usr/local /usr/local/bin /etc /etc/default /etc/systemd /etc/systemd/system; do
+            [ -d "$d" ] || continue
+            ls -ld "$d"
+            sudo chown root "$d"
+            sudo setfacl -b "$d"
+            sudo chmod go-w "$d"
+            ls -ld "$d"
+          done
       - name: Run (deploy/ci-install-test.sh)
         run: deploy/ci-install-test.sh "$MODE"

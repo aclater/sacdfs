@@ -8,6 +8,7 @@
 //! codes. The Linux FUSE front end is [`crate::fuse`].
 
 mod image_reads;
+pub mod sidecar_slots;
 mod size;
 mod volume;
 mod workers;

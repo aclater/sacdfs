@@ -40,9 +40,11 @@ const FAST_FACTOR: f64 = 4.0;
 /// with others often gets little more than this.
 const PLAYER_FACTOR: f64 = 1.5;
 
-/// A reader counts as a player only after this long. *Why:* a scanner opening its next file, a
-/// tagger or an import's few reads look like a player for their first 4 MiB; had they counted,
-/// scanners alone made each other wait, up to 16 % slower on 32 threads.
+/// A reader counts as a player only after this long, and once it has read [`FAST_AFTER`] or
+/// read for as long as that takes at [`PLAYER_FACTOR`] times the file's byte rate
+/// ([`Reader::judged`]). *Why:* a scanner opening its next file, a tagger or an import's few
+/// reads look like a player for their first 4 MiB; had they counted, scanners alone made each
+/// other wait, up to 16 % slower on 32 threads.
 const PLAYER_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Frames this close behind a reader are not given up ([`Traffic`]). *Why:* the kernel sends a
@@ -807,6 +809,9 @@ pub struct ReadAhead {
     pub end: u32,
 }
 
+/// Whether a process is a network file server's ([`Reader::opened_by`]).
+pub type IsServer = fn(u32) -> bool;
+
 #[derive(Debug, Default)]
 struct Seq {
     /// The furthest byte read so far.
@@ -823,8 +828,11 @@ struct Seq {
     /// The furthest byte read since then.
     pace_end: u64,
     /// Whether a read has landed far behind the others: a network client reads ahead
-    /// ([`NETWORK_REORDER`]).
+    /// ([`NETWORK_REORDER`]), or a network file server's process opened the file.
     networked: bool,
+    /// The process that opened the file, and how to tell whether it is a network file
+    /// server's, until that is asked ([`Reader::opened_by`]).
+    opener: Option<(u32, IsServer)>,
     /// When the first read of audio came, and where it started.
     started: Option<(std::time::Instant, u64)>,
     /// Frames below this one (file index) are given up already ([`Engine::give_up`]).
@@ -894,16 +902,20 @@ impl Drop for Reader {
 impl Reader {
     /// A reader of `file`.
     pub fn new(file: Arc<TrackFile>) -> Self {
-        Self::opened_by(file, false)
+        Self::opened_by(file, 0, |_| false)
     }
 
-    /// A reader of `file`, opened by a network file server's process if `network`: behind a
-    /// network client from its first read, whatever the order of its reads (#362).
-    pub fn opened_by(file: Arc<TrackFile>, network: bool) -> Self {
+    /// A reader of `file`, opened by process `pid`: behind a network client, whatever the order
+    /// of its reads, if `is_server(pid)` says it is a network file server's (#362). That is
+    /// asked once, and only when it matters: when the reader has read `FAST_AFTER` (4 MiB), since
+    /// below that its pace is a player's either way. *Why not at the open (#403):* the answer
+    /// costs two reads of `/proc`, about 25 microseconds, and a scan of short files opened
+    /// through the mount was 10 % slower for it.
+    pub fn opened_by(file: Arc<TrackFile>, pid: u32, is_server: IsServer) -> Self {
         Reader {
             file,
             stream: Mutex::new(Stream::default()),
-            seq: Mutex::new(Seq { networked: network, ..Seq::default() }),
+            seq: Mutex::new(Seq { opener: Some((pid, is_server)), ..Seq::default() }),
             reads: Arc::default(),
             flight: Mutex::new(Flight::default()),
             id: NEXT_READER.fetch_add(1, Ordering::Relaxed),
@@ -1046,6 +1058,24 @@ impl Reader {
         }
     }
 
+    /// Whether the reader has read long enough to be judged a player: [`PLAYER_AFTER`] since its
+    /// first read of audio, and either [`FAST_AFTER`] since it last jumped or, reading slower,
+    /// as long as [`FAST_AFTER`] takes at [`PLAYER_FACTOR`] times the file's byte rate (0.9 s
+    /// for a 6-channel WAV file, 4 s for a stereo DSF file). *Why not 0.5 s alone (#362):* a
+    /// reader not yet judged reads ahead little beside a player ([`UNJUDGED_WINDOW`]), so on a
+    /// busy server copies starting beside a player had read only 1.7 to 3.4 MiB after 0.5 s,
+    /// 1.1 to 2.1 times playing time, as the player had (1.3 times with its client's
+    /// read-ahead). Each then counted as a player with a 2 s window until it reached 4 MiB, and
+    /// the player beside four of them waited up to 0.5 s. *Why the time since the first read:* a
+    /// player that seeks is judged again by its pace, but it has been playing.
+    fn judged(&self, s: &Seq, now: std::time::Instant) -> bool {
+        let Some((t, _)) = s.started else { return false };
+        let secs = now.saturating_duration_since(t);
+        secs >= PLAYER_AFTER
+            && (s.paced >= FAST_AFTER
+                || secs.as_secs_f64() * PLAYER_FACTOR * self.file.byte_rate() >= FAST_AFTER as f64)
+    }
+
     fn plan_read_ahead(&self, engine: &Engine, offset: u64, end: u64, k0: u32, k1: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
         // The first read of audio never starts read-ahead: a tagger walking a WAV file's
@@ -1087,6 +1117,13 @@ impl Reader {
         if self.paused() {
             s.paused = true;
         }
+        // Whether a file server opened it matters only from FAST_AFTER on ([`Reader::pace`]
+        // and the slow rule below), so it is asked then, once (#403).
+        if s.paced >= FAST_AFTER {
+            if let Some((pid, is_server)) = s.opener.take() {
+                s.networked = s.networked || is_server(pid);
+            }
+        }
         let now = std::time::Instant::now();
         let traffic = engine.traffic();
         // An unsure reader behind a network client may be a copy starting or a player whose
@@ -1101,8 +1138,7 @@ impl Reader {
         };
         self.counted.get_or_init(|| traffic.clone());
         self.throughput.store(throughput, Ordering::Relaxed);
-        let player =
-            !throughput && s.started.is_some_and(|(t, _)| now.saturating_duration_since(t) >= PLAYER_AFTER);
+        let player = !throughput && self.judged(&s, now);
         self.player.store(player, Ordering::Relaxed);
         if !throughput {
             traffic.fast.forget(self.id);
@@ -1429,7 +1465,7 @@ mod tests {
         let starting = Arc::new(Reader::new(f.clone()));
         {
             let mut s = starting.seq.lock().unwrap();
-            s.started = Some((std::time::Instant::now() - PLAYER_AFTER, 0));
+            s.started = Some((std::time::Instant::now() - judged_after(&f), 0));
         }
         for off in [2u64 << 20, 0] {
             let _arrival = starting.arrived();
@@ -1439,20 +1475,39 @@ mod tests {
         assert!(starting.player.load(Ordering::Relaxed), "too early to tell: a player");
     }
 
-    /// A reader opened by a network file server's process is behind a network client from its
-    /// first read, even if its reads arrive in order (#362).
+    /// A reader opened by a network file server's process is behind a network client whatever
+    /// the order of its reads (#362). Whose process it is, is asked once, and only once the
+    /// reader has read enough for it to matter (#403).
     #[test]
-    fn a_reader_opened_by_a_network_server_is_networked_at_once() {
+    fn a_reader_opened_by_a_network_server_is_networked_once_it_matters() {
+        static ASKED: AtomicU32 = AtomicU32::new(0);
+        fn server(pid: u32) -> bool {
+            ASKED.fetch_add(1, Ordering::Relaxed);
+            pid == 7
+        }
         let tree = corpus();
         let f = longest_dsf(&tree);
         let engine = Engine::new(4, 32 << 20).unwrap();
-        let local = Reader::new(f.clone());
-        let served = Reader::opened_by(f.clone(), true);
+        let local = Reader::opened_by(f.clone(), 8, server);
+        let served = Reader::opened_by(f.clone(), 7, server);
+        let read = |r: &Reader, i: u64| {
+            r.plan_read_ahead(&engine, i * (128 << 10), (i + 1) * (128 << 10), 0, 1);
+        };
+        // A scanner's short read: nobody asks.
         for r in [&local, &served] {
             for i in 0..8 {
-                r.plan_read_ahead(&engine, i * (128 << 10), (i + 1) * (128 << 10), 0, 1);
+                read(r, i);
             }
         }
+        assert_eq!(ASKED.load(Ordering::Relaxed), 0, "not asked below FAST_AFTER");
+        assert!(!served.seq.lock().unwrap().networked);
+        // In order, past FAST_AFTER: asked once per reader.
+        for r in [&local, &served] {
+            for i in 8..48 {
+                read(r, i);
+            }
+        }
+        assert_eq!(ASKED.load(Ordering::Relaxed), 2, "asked once each");
         assert!(!local.seq.lock().unwrap().networked, "in order, opened locally");
         assert!(served.seq.lock().unwrap().networked, "in order, opened by a file server");
     }
@@ -1482,11 +1537,48 @@ mod tests {
         assert!(!fresh.player.load(Ordering::Relaxed));
 
         // Once it is a player, it gets a player's window back.
-        fresh.seq.lock().unwrap().started = Some((now - PLAYER_AFTER, 0));
+        fresh.seq.lock().unwrap().started = Some((now - judged_after(&f), 0));
         fresh.seq.lock().unwrap().ahead_until = 0;
         let ahead = fresh.plan_read_ahead(&engine, past + (128 << 10), past + (256 << 10), 0, 1).unwrap();
         assert!(fresh.player.load(Ordering::Relaxed));
         assert_eq!(ahead.end - ahead.first, READ_AHEAD_FRAMES.min(f.layout.frames - 1));
+    }
+
+    /// How long a reader of `f` that reads no faster than a player takes to be judged one.
+    fn judged_after(f: &TrackFile) -> std::time::Duration {
+        let secs = FAST_AFTER as f64 / (PLAYER_FACTOR * f.byte_rate());
+        PLAYER_AFTER.max(std::time::Duration::from_secs_f64(secs)) + std::time::Duration::from_millis(10)
+    }
+
+    /// A reader slower than a player is judged one only once it has read 4 MiB, or for as long
+    /// as that takes at 1.5 times the file's rate; a player that seeks is judged at once (#362).
+    #[test]
+    fn a_reader_is_judged_a_player_on_evidence() {
+        let tree = corpus();
+        let f = longest_dsf(&tree);
+        let rate = f.byte_rate();
+        let reader = Reader::new(f.clone());
+        let now = std::time::Instant::now();
+        let seq = |ago: std::time::Duration, read: u64| Seq {
+            started: Some((now - ago, 0)),
+            pace_from: Some((now - ago, 0)),
+            paced: read,
+            pace_end: read,
+            ..Seq::default()
+        };
+        let after = judged_after(&f);
+        assert!(after > PLAYER_AFTER, "4 MiB at 1.5 times the rate of this file takes longer");
+        // A copy limited to a few frames ahead reads about as fast as a player in its first
+        // half second: not judged yet.
+        let half = (rate * 0.75) as u64;
+        assert_eq!(reader.pace(&seq(PLAYER_AFTER, half), now), Pace::Slow);
+        assert!(!reader.judged(&seq(PLAYER_AFTER, half), now), "too early");
+        assert!(!reader.judged(&seq(PLAYER_AFTER / 2, FAST_AFTER), now), "before 0.5 s");
+        assert!(reader.judged(&seq(after, (rate * after.as_secs_f64()) as u64), now), "long enough");
+        // After a seek its pace is measured again, but it has been reading for long.
+        let mut seeked = seq(std::time::Duration::from_secs(60), 128 << 10);
+        seeked.pace_from = Some((now, 100 << 20));
+        assert!(reader.judged(&seeked, now), "a player that seeks");
     }
 
     /// A reader on the list counts while it is heard from lately or waits for a read (#357).

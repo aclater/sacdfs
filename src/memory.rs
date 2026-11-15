@@ -20,15 +20,20 @@ const MIB: u64 = 1 << 20;
 /// Cache size without a limit, or with a roomy one, in MiB.
 pub const CACHE_MB: usize = 32;
 
-/// Cache size under a limit up to [`SMALL_LIMIT`], in MiB. *Why 16:* since #230's fix a 6-channel WAV
-/// player holds real time beside whole-file scanners at 8, 16 and 32, on 2 and 4 cores; at 16 a scan
-/// alone runs as fast as at 32 (44.5 against 44.7 MB/s on 2 cores, 81.4 against 81.2 on 4), in about
-/// 16 MiB less. *Why not 8 any more:* it held the player only by keeping every reader's read-ahead
-/// small, and scans ran 18 to 28 % slower than at 32 (2.4 to 2.6 times slower before the fix).
+/// Cache size under a limit below [`SMALL_LIMIT`], in MiB. *Why 16 there:* since #230's fix a
+/// 6-channel WAV player holds real time beside whole-file scanners at 8, 16 and 32, on 2 and 4
+/// cores, and a local scan alone runs as fast at 16 as at 32 (44.5 against 44.7 MB/s on 2 cores,
+/// 81.4 against 81.2 on 4). *Why not 8 any more:* it held the player only by keeping every reader's
+/// read-ahead small, and scans ran 18 to 28 % slower than at 32.
 pub const CACHE_MB_SMALL: usize = 16;
 
-/// Limits up to this are small, for the cache's default.
-pub const SMALL_LIMIT: u64 = 512 * MIB;
+/// Limits below this are small, for the cache's default. *Why 256 MiB, not 512 as before (#271):*
+/// over SMB, at limits of 256 and 512 MiB, 16 MiB made whole-file WAV copies 12 to 31 % slower
+/// than 32 (one copy on 4 cores 17.65 s against 15.37 s, four 110.8 s against 93.6 s), and on 2
+/// slow cores beside four copies a player's worst read was 3.4 s against 1.0 s, with 23 % more
+/// CPU: frames were evicted before they were read. 32 MiB took about 16 MiB more resident memory there, and the
+/// memory watch gives the cache up above 85 % of the limit. Below 256 MiB that was not measured.
+pub const SMALL_LIMIT: u64 = 256 * MIB;
 
 /// Limit per decoder thread: each costs about 3.7 MiB with its frames in flight, and on a host
 /// with many CPUs and a small limit they add up. One thread alone gives about 5 times real time
@@ -217,7 +222,7 @@ fn parse_limit(text: &str) -> Option<u64> {
 /// The default size of the cache of frames under `limit`, in MiB.
 pub fn default_cache_mb(limit: Option<u64>) -> usize {
     match limit {
-        Some(l) if l <= SMALL_LIMIT => CACHE_MB_SMALL,
+        Some(l) if l < SMALL_LIMIT => CACHE_MB_SMALL,
         _ => CACHE_MB,
     }
 }
@@ -387,9 +392,10 @@ mod tests {
 
     #[test]
     fn defaults_follow_the_limit() {
-        assert_eq!(default_cache_mb(Some(256 * MIB)), 16);
-        assert_eq!(default_cache_mb(Some(512 * MIB)), 16);
-        assert_eq!(default_cache_mb(Some(513 * MIB)), 32);
+        assert_eq!(default_cache_mb(Some(128 * MIB)), 16);
+        assert_eq!(default_cache_mb(Some(256 * MIB - 1)), 16);
+        assert_eq!(default_cache_mb(Some(256 * MIB)), 32);
+        assert_eq!(default_cache_mb(Some(512 * MIB)), 32);
         assert_eq!(default_threads(24, Some(256 * MIB)), 4);
         assert_eq!(default_threads(2, Some(256 * MIB)), 2);
         assert_eq!(default_threads(24, Some(64 * MIB)), 2);
