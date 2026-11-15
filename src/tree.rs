@@ -516,7 +516,7 @@ fn may_be_sacd(path: &Path) -> bool {
     }
     #[cfg(test)]
     PROBES.with(|c| c.set(c.get() + 1));
-    let Ok(file) = fs::File::open(path) else { return true };
+    let Ok(file) = crate::disc::open_image(path) else { return true };
     let mut sig = [0u8; 8];
     let mut answer = false;
     for format in SectorFormat::DETECTION_ORDER {
@@ -688,7 +688,36 @@ struct Listing {
     /// Whether an open of the directory has told the kernel it may cache this listing (#205):
     /// from the next open on, it may keep what it cached.
     kept: bool,
+    /// An image of it failed to open for a passing reason ([`Tree::passing`]): when the
+    /// listing is made again. Until then it is served as it is, never kept by the kernel.
+    /// *Why it is kept at all:* what it read of the source and which entries it made are what
+    /// the next listing compares with, as for any listing replaced.
+    retry: Option<Retry>,
 }
+
+/// When a listing that left out an image for a passing reason is made again, and how many
+/// such listings came in a row.
+#[derive(Debug, Clone, Copy)]
+struct Retry {
+    at: Instant,
+    n: u32,
+}
+
+/// The wait before a listing that left out an image for a passing reason is made again, after
+/// `n` such listings in a row: 1 s, doubling up to [`RETRY_MAX`]. *Why a wait:* an image on a
+/// failing disk or share can take seconds to fail, and its folder would otherwise be listed
+/// again at every listing and lookup.
+fn retry_after(n: u32) -> Duration {
+    Duration::from_secs(1u64 << n.saturating_sub(1).min(16)).min(RETRY_MAX)
+}
+
+/// The longest wait of [`retry_after`].
+const RETRY_MAX: Duration = Duration::from_secs(60);
+
+/// Opens of an image failing with `EIO` in a row at which `EIO` is no longer taken as
+/// passing for it: it is left out like an image refused for its content, until its file
+/// changes or the mount restarts.
+pub const EIO_TRIES: u32 = 3;
 
 #[derive(Debug)]
 enum Snapshot {
@@ -731,6 +760,8 @@ struct Cx {
     tags: Option<(String, crate::tags::FileState)>,
     /// A closed image could not be opened again: the listing is not kept (#237).
     unreadable: bool,
+    /// An image was left out for a passing reason: the listing is made again later.
+    retry: bool,
 }
 
 /// The folder art of the directory (or chain of directories) of an image: the image files
@@ -899,6 +930,9 @@ pub struct Tree {
     refusing: AtomicBool,
     /// The images held, with no bound: nothing.
     held: Mutex<Held>,
+    /// Images whose opens failed with `EIO`, by path: how many times in a row, and the image
+    /// file's mtime then ([`Tree::passing`]).
+    eio_failures: Mutex<HashMap<PathBuf, (u32, Option<SystemTime>)>>,
     /// Images let go of since the persistent seek index last let go of its own.
     released: AtomicUsize,
     /// Moves on when a folder's art file is found changed or gone behind a listing's back
@@ -1004,6 +1038,7 @@ impl Tree {
             budget_now: AtomicUsize::new(usize::MAX),
             refusing: AtomicBool::new(false),
             held: Mutex::new(Held::default()),
+            eio_failures: Mutex::new(HashMap::new()),
             released: AtomicUsize::new(0),
             art_epoch: AtomicU64::new(0),
             art_told: Mutex::new(HashMap::new()),
@@ -1501,8 +1536,11 @@ impl Tree {
         let Some(node) = node else { return Some(false) };
         let Node::Dir(dir) = &*node else { return Some(false) };
         if !wait {
-            let listed = dir.children.lock().unwrap_or_else(|p| p.into_inner()).is_some();
-            if !listed || (self.watching && live(dir)) {
+            let (listed, retry) = match dir.children.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+                Some(l) => (true, l.retry.is_some()),
+                None => (false, false),
+            };
+            if !listed || retry || (self.watching && live(dir)) {
                 return None;
             }
         } else if self.children(ino).is_none() {
@@ -1512,7 +1550,16 @@ impl Tree {
             return Some(false);
         }
         let mut guard = dir.children.lock().unwrap_or_else(|p| p.into_inner());
-        Some(guard.as_mut().is_some_and(|l| std::mem::replace(&mut l.kept, true)))
+        // A listing that left out an image for a passing reason is never kept by the kernel.
+        Some(guard.as_mut().is_some_and(|l| std::mem::replace(&mut l.kept, true) && l.retry.is_none()))
+    }
+
+    /// Whether directory `ino`'s listing left out an image for a passing reason, and is made
+    /// again later: a name missing from it is not known to be missing.
+    pub fn retrying(&self, ino: u64) -> bool {
+        let Some(node) = self.loaded(ino) else { return false };
+        let Node::Dir(dir) = &*node else { return false };
+        dir.children.lock().unwrap_or_else(|p| p.into_inner()).as_ref().is_some_and(|l| l.retry.is_some())
     }
 
     /// Makes the next open of directory `ino` drop what the kernel cached of its listing: a
@@ -1543,7 +1590,8 @@ impl Tree {
         }
         let mut prev = guard.take();
         if let Some(l) = prev.as_mut() {
-            if !self.stale(dir, l) {
+            let retry_due = l.retry.is_some_and(|r| Instant::now() >= r.at);
+            if !retry_due && !self.stale(dir, l) {
                 let entries = l.entries.clone();
                 *guard = prev;
                 return Some(entries);
@@ -1556,6 +1604,7 @@ impl Tree {
             return old;
         }
         let mut cx = Cx::default();
+        let retries = prev.as_ref().and_then(|l| l.retry).map_or(0, |r| r.n);
         let entries = Arc::new(self.load(dir, ino, prev.as_deref(), &mut cx));
         if dir.gone.load(Ordering::Acquire) {
             // Removed while it was being listed: what the listing made is freed here, as
@@ -1590,6 +1639,11 @@ impl Tree {
             served: self.dir_mtime(dir),
             tags: cx.tags,
             kept: false,
+            // A listing that leaves out nothing for a passing reason starts the waits again.
+            retry: cx.retry.then(|| {
+                let n = retries + 1;
+                Retry { at: Instant::now() + retry_after(n), n }
+            }),
         }));
         drop(guard);
         self.keep_to_budget();
@@ -1734,6 +1788,47 @@ impl Tree {
         l.checked = Instant::now();
         l.served = served;
         l.watch.iter().any(|(p, m)| mtime_of(p) != *m)
+    }
+
+    /// Whether image `path`'s open failing with `e` is a passing condition: its folder is then
+    /// listed again later ([`retry_after`]). Running out of descriptors or memory always is;
+    /// `EIO` is until it has happened [`EIO_TRIES`] times in a row, and then no longer until
+    /// the image file changes, so that an image on a failing disk is left out like a damaged one.
+    fn passing(&self, path: &Path, e: &scarletbook::Error) -> bool {
+        if !crate::disc::transient(e) {
+            return false;
+        }
+        let eio = matches!(e, scarletbook::Error::Io(io) if io.raw_os_error() == Some(libc::EIO));
+        let tries = if eio {
+            let mtime = mtime_of(path);
+            let mut m = self.eio_failures.lock().unwrap_or_else(|p| p.into_inner());
+            let f = m.entry(path.to_owned()).or_insert((0, mtime));
+            if f.1 != mtime {
+                *f = (0, mtime);
+            }
+            f.0 += 1;
+            f.0
+        } else {
+            0
+        };
+        let p = path.display();
+        if tries >= EIO_TRIES {
+            log::info!("{p}: not shown: {e} ({tries} opens in a row): not tried again until it changes");
+            return false;
+        }
+        crate::errlog::failed(
+            &format!("image {p}"),
+            format_args!("{p}: not shown for now: {e}: tried again at a later listing"),
+        );
+        true
+    }
+
+    /// Notes that image `path` opened: its `EIO` failures in a row, if any, are forgotten.
+    fn opened_ok(&self, path: &Path) {
+        let mut m = self.eio_failures.lock().unwrap_or_else(|p| p.into_inner());
+        if !m.is_empty() {
+            m.remove(path);
+        }
     }
 
     /// Whether node `ino` exists already.
@@ -2091,15 +2186,22 @@ impl Tree {
                 let new: Vec<&PathBuf> =
                     src.images.iter().filter(|p| !self.exists(self.ids.image(p))).collect();
                 // Under a bound, a few at a time: one directory can hold more images than the
-                // bound allows open (#237).
-                let batch = if self.bounded() { OPEN_BATCH } else { new.len().max(1) };
+                // bound allows open (#237). Never more at a time than image files may be kept
+                // open, so that a first listing of a large folder stays within the descriptors
+                // set aside for images.
+                let files = crate::handles::global().max_open();
+                let batch = if self.bounded() { OPEN_BATCH } else { new.len().max(1) }.min(files);
                 for images in new.chunks(batch) {
-                    let opened: Vec<(&PathBuf, Disc)> = images
+                    let opened: Vec<Result<(&PathBuf, Disc), ()>> = images
                         .par_iter()
                         .filter_map(|&p| {
                             let id = self.disc_id();
                             match Disc::open(p, id, self.tuning) {
-                                Ok(d) => Some((p, d)),
+                                Ok(d) => {
+                                    self.opened_ok(p);
+                                    Some(Ok((p, d)))
+                                }
+                                Err(e) if self.passing(p, &e) => Some(Err(())),
                                 Err(e) => {
                                     log::info!("{}: not shown: {e}", p.display());
                                     None
@@ -2107,7 +2209,8 @@ impl Tree {
                             }
                         })
                         .collect();
-                    for (path, disc) in opened {
+                    cx.retry |= opened.iter().any(Result::is_err);
+                    for (path, disc) in opened.into_iter().flatten() {
                         let ino = self.ids.image(path);
                         self.opened(&disc);
                         let mtime = disc.mtime;
@@ -2248,6 +2351,7 @@ impl Tree {
                             // Listed exactly as the image's own directory would be, then the
                             // sidecars of the chain.
                             Ok(disc) => {
+                                self.opened_ok(image);
                                 self.opened(&disc);
                                 let mtime = dir.mtime;
                                 let art = self.art_of(chain.chain_dirs(), &sidecars);
@@ -2263,6 +2367,7 @@ impl Tree {
                                 }
                                 cx.head = out.len();
                             }
+                            Err(e) if self.passing(image, &e) => cx.retry = true,
                             Err(e) => log::info!("{}: not shown: {e}", image.display()),
                         }
                     }

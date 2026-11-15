@@ -78,6 +78,18 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   listed and between reads, so that a seek does not have to open it again (a round trip or two
   on a network share). The least recently used image is closed when the limit is reached, and
   any image unused for 5 minutes is closed.
+- Open files in all: at start sacdfs raises its own limit on open files to the most the system
+  allows it (the hard limit, `ulimit -Hn`), and warns in the log if that is below 4096; `-v`
+  logs the limit and how it is shared out. Image files kept open (`--max-open-images`) are
+  held to half of the limit less 128, with a warning. Open sidecar files (cover art, a
+  booklet) are bounded by what is left: the limit, less the image files and 128, between 8
+  and 4096. An open past that bound fails with "too many open files" for the program that
+  asked, and a rate-limited warning in the log, so open sidecars never take the files the
+  images need. An image that fails to open for a passing reason (too many open files, short
+  of memory, an I/O error) is left out of its folder only for a while: the folder is listed
+  again a second after, then after waits that double up to a minute while it keeps failing.
+  An image that fails with an I/O error three times in a row (a failing disk, say) is left
+  out like a damaged one, until its file changes or sacdfs restarts.
 - `--request-timeout SECS` (default 30, `0` for none): a request (a read, a lookup, a
   listing) that has waited this long for the source, because a share or disk stopped
   answering, fails with an I/O error and a warning in the log, instead of hanging the program

@@ -243,6 +243,70 @@ pub fn explain_mount_error(error: &str, euid: u32, conf: Confinement) -> Option<
     None
 }
 
+/// A hard limit on open files below this is warned about: images, sidecars, the FUSE device
+/// and a network server's own files share it.
+pub const LOW_NOFILE: u64 = 4096;
+
+/// Raises the soft limit on open files (`RLIMIT_NOFILE`) to the hard limit, and returns the
+/// limit now in force. *Why:* the soft limit is often 1024, set for programs that use
+/// `select`, which sacdfs does not; a busy mount with many clients would run out long before
+/// the system does, and an image that then fails to open is left out of its folder. A low
+/// hard limit is warned about, since only whoever starts sacdfs can raise it.
+pub fn raise_nofile() -> Option<u64> {
+    use nix::sys::resource::{Resource, getrlimit, setrlimit};
+    let (soft, hard) = match getrlimit(Resource::RLIMIT_NOFILE) {
+        Ok(l) => l,
+        Err(e) => {
+            log::debug!("open files limit: cannot read it: {e}");
+            return None;
+        }
+    };
+    let now = if soft < hard {
+        match setrlimit(Resource::RLIMIT_NOFILE, hard, hard) {
+            Ok(()) => {
+                log::debug!("open files limit raised from {soft} to {hard}");
+                hard
+            }
+            Err(e) => {
+                log::debug!("open files limit: cannot raise it from {soft} to {hard}: {e}");
+                soft
+            }
+        }
+    } else {
+        log::debug!("open files limit: {soft}");
+        soft
+    };
+    if hard < LOW_NOFILE {
+        log::warn!(
+            "the open files limit is {hard}, low for a mount that many clients use: raise it to \
+             {LOW_NOFILE} or more (ulimit -n, or LimitNOFILE= in a systemd unit)"
+        );
+    }
+    Some(now)
+}
+
+/// The image files to keep open and the bound on open sidecar files, for the open files
+/// limit `nofile` (`None` if unknown) and `--max-open-images`. Image files are held to half of
+/// what the margin leaves (with a warning), so that they never take the whole limit; sidecar
+/// files get what images and the margin leave ([`sacdfs::vfs::sidecar_slots::cap_for`]).
+pub fn open_files_budget(nofile: Option<u64>, max_open_images: usize) -> (usize, usize) {
+    use sacdfs::vfs::sidecar_slots::{DEFAULT_CAP, MARGIN, cap_for};
+    let Some(limit) = nofile else { return (max_open_images, DEFAULT_CAP) };
+    let most = usize::try_from(limit.saturating_sub(MARGIN) / 2).unwrap_or(usize::MAX).max(1);
+    let images = if max_open_images > most {
+        log::warn!(
+            "--max-open-images {max_open_images} is too close to the open files limit ({limit}): \
+             keeping at most {most} image files open"
+        );
+        most
+    } else {
+        max_open_images
+    };
+    let sidecars = cap_for(limit, images);
+    log::info!("open files limit {limit}: up to {images} image files and {sidecars} sidecar files open");
+    (images, sidecars)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -371,5 +435,39 @@ mod tests {
         assert!(e.contains("label=disable") && e.contains("apparmor=unconfined"), "{e}");
         assert_eq!(explain_mount_error("something else", 0, Confinement::AppArmor), None);
         assert!(explain_mount_error("\n", 1000, Confinement::None).unwrap().contains("without saying why"));
+    }
+
+    #[test]
+    fn open_files_are_shared_out_under_the_limit() {
+        assert_eq!(open_files_budget(Some(524_288), 64), (64, 4096));
+        assert_eq!(open_files_budget(Some(1024), 64), (64, 832));
+        assert_eq!(open_files_budget(Some(256), 64), (64, 64));
+        assert_eq!(open_files_budget(Some(256), 1000), (64, 64));
+        assert_eq!(open_files_budget(None, 100), (100, 1024));
+    }
+
+    /// The environment variable that makes the test below run its body: in a process of its
+    /// own, so that no other test sees the limit it changes.
+    const RAISE_CHILD: &str = "SACDFS_TEST_RAISE_NOFILE_CHILD";
+
+    #[test]
+    fn the_open_files_limit_is_raised_to_the_hard_limit() {
+        use nix::sys::resource::{Resource, getrlimit, setrlimit};
+        let name = "startup::tests::the_open_files_limit_is_raised_to_the_hard_limit";
+        if std::env::var_os(RAISE_CHILD).is_none() {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([name, "--exact", "--test-threads=1", "--nocapture"])
+                .env(RAISE_CHILD, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+            assert!(stdout.contains("1 passed"), "the test did not run in the child: {stdout}");
+            return;
+        }
+        let (_, hard) = getrlimit(Resource::RLIMIT_NOFILE).unwrap();
+        setrlimit(Resource::RLIMIT_NOFILE, (hard / 2).max(64).min(hard), hard).unwrap();
+        assert_eq!(raise_nofile(), Some(hard));
+        assert_eq!(getrlimit(Resource::RLIMIT_NOFILE).unwrap(), (hard, hard));
     }
 }

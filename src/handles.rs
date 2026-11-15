@@ -112,6 +112,11 @@ impl Handles {
         self.trim(&mut g);
     }
 
+    /// The most handles kept open.
+    pub fn max_open(&self) -> usize {
+        self.max.load(Ordering::Relaxed)
+    }
+
     /// Changes how often a handle is checked against its path (tests use zero).
     pub fn set_revalidate_every(&self, every: Duration) {
         self.revalidate_ms.store(every.as_millis() as u64, Ordering::Relaxed);
