@@ -1438,6 +1438,8 @@ mod tests {
 
     /// Frames of the pool: the mapping stays within the cap, slots are reused once their
     /// frames are evicted and dropped, and an empty slab makes room for another length.
+    // Slabs are mapped and unmapped on Unix only.
+    #[cfg(unix)]
     #[test]
     fn an_idle_cache_gives_its_memory_back() {
         let c = FrameCache::new(4 << 20);
@@ -1505,6 +1507,8 @@ mod tests {
         CONVERTERS.lock().unwrap().retain(|(id, _, _)| *id != e.id);
     }
 
+    // Slabs are mapped and unmapped on Unix only.
+    #[cfg(unix)]
     #[test]
     fn pooled_frames_stay_within_the_cap() {
         let cap = 4 << 20;

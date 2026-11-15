@@ -231,7 +231,7 @@ fn directory_layout() {
     std::fs::write(root.join("a/not-sacd.iso"), vec![0u8; 4 << 20]).unwrap();
     std::fs::write(root.join("a/readme.txt"), b"hello").unwrap();
     let tree = Tree::new(SourceDir::scan(root).unwrap());
-    let paths: Vec<String> = tree.all_files().iter().map(|(p, _)| p.display().to_string()).collect();
+    let paths: Vec<String> = tree.all_files().iter().map(|(p, _)| common::slash(p)).collect();
     let names = |ino| -> Vec<String> {
         tree.children(ino).unwrap().iter().map(|e| e.name.to_string_lossy().into_owned()).collect()
     };
@@ -292,7 +292,7 @@ fn golden_dsf_corpus() {
             let meta = u64::from_le_bytes(whole[20..28].try_into().unwrap()) as usize;
             let body = if meta != 0 { &whole[..meta] } else { &whole[..] };
             all.update(case["id"].as_str().unwrap().as_bytes());
-            all.update(path.to_string_lossy().as_bytes());
+            all.update(common::slash(&path).as_bytes());
             all.update(sha256(body).as_bytes());
             n += 1;
         }

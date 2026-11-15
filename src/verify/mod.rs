@@ -238,38 +238,6 @@ fn mtime_text(m: &fs::Metadata) -> String {
     }
 }
 
-/// The mount points of sacdfs mounts.
-fn sacdfs_mounts() -> Vec<PathBuf> {
-    let info = fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
-    info.lines()
-        .filter_map(|l| {
-            let mp = l.split(' ').nth(4)?;
-            let mut tail = l.split(" - ").nth(1)?.split(' ');
-            let (fstype, source) = (tail.next()?, tail.next()?);
-            let ours = fstype == "fuse.sacdfs" || (fstype.starts_with("fuse") && source == "sacdfs");
-            ours.then(|| PathBuf::from(unescape_octal(mp)))
-        })
-        .collect()
-}
-
-/// Undoes mountinfo's octal escapes (`\040` for a space).
-fn unescape_octal(s: &str) -> OsString {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'\\' && i + 3 < b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
-            let v = b[i + 1..i + 4].iter().fold(0u32, |a, &c| a * 8 + u32::from(c - b'0'));
-            out.push((v & 0xFF) as u8);
-            i += 4;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    crate::platform::os_from_bytes(out)
-}
-
 /// Every extract under `root`, sorted by path.
 /// Files that are not audio (folder art, playlists, sidecars of every kind) are counted in
 /// `ignored`, not listed.
@@ -792,7 +760,7 @@ fn check_caught(item: &Item, ctx: &Ctx<'_>, check: &(dyn Fn(&Item, &Ctx<'_>) -> 
 fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io::Result<Summary> {
     let with = |e: io::Error, p: &Path| io::Error::new(e.kind(), format!("{}: {e}", p.display()));
     let source = args.source.canonicalize().map_err(|e| with(e, &args.source))?;
-    let mounts = sacdfs_mounts();
+    let mounts = crate::platform::sacdfs_mounts();
     let roots: Vec<PathBuf> = if args.extracts.is_empty() {
         vec![source.clone()]
     } else {
@@ -1037,7 +1005,8 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let (lib, files) = library(dir.path());
             let report_path = dir.path().join("r.tsv");
-            let bad = files[0].clone();
+            // Canonical, as the run's paths are (macOS's /var is /private/var).
+            let bad = files[0].canonicalize().unwrap();
             let a = args(&lib, &report_path, threads);
             let sum = run_with(&a, &|item, ctx| {
                 assert!(item.path != bad, "the injected bug");
@@ -1147,12 +1116,6 @@ mod tests {
         // Mapped extracts look below the mapped folder.
         let maps = vec![(PathBuf::from("/ext"), PathBuf::from("/lib"))];
         assert_eq!(folder_of(Path::new("/ext/Album/01.dsf"), &maps, root, &folders).len(), 1);
-    }
-
-    #[test]
-    fn mountinfo_escapes() {
-        assert_eq!(unescape_octal(r"/a\040b"), OsString::from("/a b"));
-        assert_eq!(unescape_octal(r"/a\04"), OsString::from(r"/a\04"));
     }
 
     #[test]

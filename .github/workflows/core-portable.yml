@@ -1,0 +1,43 @@
+# The core's tests on Windows and macOS (#419, #420): the library's unit tests, the Volume API
+# every front end relies on (tests/vfs.rs), the corpus (tests/corpus.rs), and the `tags` and
+# `verify` subcommands, which run without FUSE. The FUSE mount tests stay in ci.yml (Linux).
+# The front ends' own jobs are in their workflows.
+name: core-portable
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+
+jobs:
+  test:
+    name: core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - name: Tests
+        run: cargo test --locked --no-fail-fast --lib --test vfs --test corpus --test tags --test verify
+      - name: The binary's version
+        run: test "$(cargo run --locked -q --bin sacdfs -- --version)" = "sacdfs $(cargo pkgid | sed 's/.*[@#]//')"

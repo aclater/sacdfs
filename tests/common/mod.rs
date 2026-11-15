@@ -418,6 +418,11 @@ pub fn parse_wav(file: &[u8]) -> Wav {
     w
 }
 
+/// `path` with `/` between its parts on every system, as the tests compare it.
+pub fn slash(path: &Path) -> String {
+    path.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+}
+
 /// Writes all of `buf` at `offset` of `file`, on every system.
 pub fn write_all_at(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<()> {
     #[cfg(unix)]
