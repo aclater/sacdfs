@@ -18,8 +18,11 @@ All notable changes to sacdfs are recorded here. The format follows
   ([winfsp/README.md](winfsp/README.md)).
 
 ### Changed
-- **On Windows, paths in logs and in `verify` reports are written as people write them (#419).**
-  placeholder
+- **On Windows, paths in log lines are written as people write them (#419).** `C:\music\a.iso`
+  instead of `\\?\C:\music\a.iso`, and `\\nas\music` instead of `\\?\UNC\nas\music`. Display only:
+  the paths sacdfs opens keep the verbatim form, under which Windows takes every name literally
+  (a trailing dot, a device name, more than 260 characters); `verify` reports keep it too, since
+  a resumed run matches rows by exact path.
 - **The TrueNAS catalog app runs 0.6.4 (#284).** `deploy/truenas/sacdfs` named the 0.6.3 image,
   which has the three advisories fixed in 0.6.4; the app's version is now 1.0.2. Rendered with
   the catalog's tooling and installed on TrueNAS SCALE 25.10.8 in a VM

@@ -37,10 +37,6 @@ pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
     Ok((m, id))
 }
 
-pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
-    std::fs::canonicalize(path)
-}
-
 pub fn cache_home() -> Option<PathBuf> {
     let abs = |v: OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
     std::env::var_os("XDG_CACHE_HOME")

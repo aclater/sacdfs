@@ -185,7 +185,7 @@ pub fn canonical_prefix(path: &Path) -> PathBuf {
     let mut rest = Vec::new();
     let mut at = path;
     loop {
-        if let Ok(c) = crate::platform::canonicalize(at) {
+        if let Ok(c) = at.canonicalize() {
             return rest.iter().rev().fold(c, |p, name| p.join(name));
         }
         match (at.parent(), at.file_name()) {
@@ -226,7 +226,7 @@ impl Options {
         let rate = self.rate();
         crate::dsf::set_mc_album_suffix(!self.no_multichannel_album_suffix);
         if let Some(dir) = &self.tags {
-            let dir = crate::platform::canonicalize(dir).map_err(|e| with_path(e, dir))?;
+            let dir = dir.canonicalize().map_err(|e| with_path(e, dir))?;
             if !dir.is_dir() {
                 return Err(io::Error::new(
                     io::ErrorKind::NotADirectory,
@@ -465,7 +465,7 @@ pub fn start_background(
     let lookups = match options.tags.as_deref().filter(|_| options.musicbrainz) {
         Some(dir) => {
             let config = crate::lookup::worker::Config {
-                tags: crate::platform::canonicalize(dir).map_err(|e| with_path(e, dir))?,
+                tags: dir.canonicalize().map_err(|e| with_path(e, dir))?,
                 state: cache_dir.map(|d| d.join("musicbrainz")),
                 options: crate::lookup::Options {
                     by_name: options.lookup_name,

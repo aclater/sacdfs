@@ -55,58 +55,16 @@ pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
     imp::file_id_at(path)
 }
 
-/// `path` made absolute with every link resolved, as `std::fs::canonicalize` does, in the form
-/// people write paths. On Windows that drops the `\\?\` prefix (`\\?\C:\music` is `C:\music`,
-/// `\\?\UNC\nas\music` is `\\nas\music`) when the shorter form names the same file: see
-/// [`plain_windows_path`]. These paths show in logs and reports (#419, item 12).
-pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
-    imp::canonicalize(path)
-}
-
-/// The usual form of a Windows verbatim path (`\\?\` prefix), or `None` when it has none or
-/// would name something else without it: longer than 259 characters, a component that Windows
-/// would change or read as a device (`.` or `..`, a trailing dot or space, `CON`, `NUL.txt`), or
-/// a character a usual path can't hold. Plain string work, so it's tested on every system.
-pub fn plain_windows_path(verbatim: &str) -> Option<String> {
-    let rest = verbatim.strip_prefix(r"\\?\")?;
-    let (plain, components) = if let Some(unc) = rest.strip_prefix(r"UNC\") {
-        (format!(r"\\{unc}"), unc)
-    } else {
-        let b = rest.as_bytes();
-        if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' {
-            return None;
-        }
-        (rest.to_owned(), &rest[3..])
-    };
-    if plain.chars().count() > 259 {
-        return None;
+/// `text` (a log message) with the Windows verbatim paths in it written as people write them:
+/// `\\?\C:\music` as `C:\music`, `\\?\UNC\nas\music` as `\\nas\music` (#419, item 12). For
+/// display only: the paths sacdfs opens keep their verbatim form, under which Windows takes
+/// every name literally (a trailing dot, a device name, more than 260 characters). Unchanged on
+/// other systems, where no path has that prefix.
+pub fn plain_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if !cfg!(windows) || !text.contains(r"\\?\") {
+        return std::borrow::Cow::Borrowed(text);
     }
-    const DEVICES: [&str; 24] = [
-        "CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-    ];
-    // COM¹, LPT³ and the like are devices too.
-    let superscript_port = |stem: &str| {
-        let mut ch = stem.chars();
-        let port: String = ch.by_ref().take(3).collect();
-        (port.eq_ignore_ascii_case("COM") || port.eq_ignore_ascii_case("LPT"))
-            && matches!((ch.next(), ch.next()), (Some('\u{b9}' | '\u{b2}' | '\u{b3}'), None))
-    };
-    for c in components.split('\\').filter(|c| !c.is_empty()) {
-        let stem = c.split('.').next().unwrap_or(c).trim_end();
-        if c == "."
-            || c == ".."
-            || c.ends_with(['.', ' '])
-            || c.chars().any(|ch| ch < ' ' || "<>:\"/|?*".contains(ch))
-            || DEVICES.iter().any(|d| d.eq_ignore_ascii_case(stem))
-            || superscript_port(stem)
-            || stem.eq_ignore_ascii_case("CONIN$")
-            || stem.eq_ignore_ascii_case("CONOUT$")
-        {
-            return None;
-        }
-    }
-    Some(plain)
+    std::borrow::Cow::Owned(text.replace(r"\\?\UNC\", r"\\").replace(r"\\?\", ""))
 }
 
 /// The base folder for a per-user cache: `$XDG_CACHE_HOME`, else `~/.cache` on Unix;
@@ -381,37 +339,14 @@ mod tests {
     }
 
     #[test]
-    fn verbatim_paths_made_plain_only_when_the_same() {
-        let plain = |s: &str| plain_windows_path(s);
-        assert_eq!(plain(r"\\?\C:\music\SACD"), Some(r"C:\music\SACD".to_owned()));
-        assert_eq!(plain(r"\\?\D:\"), Some(r"D:\".to_owned()));
-        assert_eq!(plain(r"\\?\UNC\nas\music\a.iso"), Some(r"\\nas\music\a.iso".to_owned()));
-        assert_eq!(plain(r"C:\music"), None, "not verbatim");
-        assert_eq!(plain(r"\\?\Volume{0}\music"), None, "a volume GUID path");
-        assert_eq!(plain(r"\\?\C:\music\CON"), None);
-        assert_eq!(plain(r"\\?\C:\music\nul.txt"), None);
-        assert_eq!(plain(r"\\?\C:\music\com1 .iso"), None);
-        assert_eq!(plain(r"\\?\C:\music\Vol. 1."), None, "a trailing dot");
-        assert_eq!(plain(r"\\?\C:\music\Live "), None, "a trailing space");
-        assert_eq!(plain(r"\\?\C:\music\a\..\b"), None);
-        assert_eq!(plain(r"\\?\C:\music\a:b"), None);
-        assert_eq!(plain(&format!(r"\\?\C:\{}", "a".repeat(257))), None, "longer than 259");
-        assert_eq!(plain(&format!(r"\\?\C:\{}", "a".repeat(256))).map(|p| p.len()), Some(259));
-        assert_eq!(plain(r"\\?\C:\CONCERT\Console.iso"), Some(r"C:\CONCERT\Console.iso".to_owned()));
-        assert_eq!(plain("\\\\?\\C:\\LPT\u{b9}.txt"), None);
-        assert_eq!(plain(r"\\?\C:\conout$"), None);
-    }
-
-    #[test]
-    fn canonical_paths() {
-        let d = tempfile::tempdir().unwrap();
-        assert_eq!(
-            canonicalize(d.path()).unwrap(),
-            std::fs::canonicalize(d.path())
-                .map(|p| { plain_windows_path(&p.to_string_lossy()).map_or(p, PathBuf::from) })
-                .unwrap()
-        );
-        assert!(!canonicalize(d.path()).unwrap().to_string_lossy().starts_with(r"\\?\"));
+    fn log_text_without_verbatim_prefixes() {
+        let t = r"\\?\C:\music\a.iso track 1: x; \\?\UNC\nas\m\b.iso";
+        if cfg!(windows) {
+            assert_eq!(plain_text(t), r"C:\music\a.iso track 1: x; \\nas\m\b.iso");
+        } else {
+            assert_eq!(plain_text(t), t);
+        }
+        assert_eq!(plain_text("plain"), "plain");
     }
 
     #[test]

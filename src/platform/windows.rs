@@ -69,11 +69,6 @@ pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
     Ok((m, id))
 }
 
-pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
-    let p = std::fs::canonicalize(path)?;
-    Ok(p.to_str().and_then(super::plain_windows_path).map_or(p, PathBuf::from))
-}
-
 pub fn cache_home() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(PathBuf::from).filter(|p| p.is_absolute())
 }
@@ -253,7 +248,7 @@ fn not_a_folder() -> io::Error {
 }
 
 pub fn open_root(path: &Path) -> io::Result<Dir> {
-    let path = canonicalize(path)?;
+    let path = path.canonicalize()?;
     if !std::fs::metadata(&path)?.is_dir() {
         return Err(not_a_folder());
     }
