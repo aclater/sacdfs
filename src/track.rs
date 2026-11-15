@@ -40,9 +40,11 @@ const FAST_FACTOR: f64 = 4.0;
 /// with others often gets little more than this.
 const PLAYER_FACTOR: f64 = 1.5;
 
-/// A reader counts as a player only after this long. *Why:* a scanner opening its next file, a
-/// tagger or an import's few reads look like a player for their first 4 MiB; had they counted,
-/// scanners alone made each other wait, up to 16 % slower on 32 threads.
+/// A reader counts as a player only after this long, and once it has read [`FAST_AFTER`] or
+/// read for as long as that takes at [`PLAYER_FACTOR`] times the file's byte rate
+/// ([`Reader::judged`]). *Why:* a scanner opening its next file, a tagger or an import's few
+/// reads look like a player for their first 4 MiB; had they counted, scanners alone made each
+/// other wait, up to 16 % slower on 32 threads.
 const PLAYER_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Frames this close behind a reader are not given up ([`Traffic`]). *Why:* the kernel sends a
@@ -1056,6 +1058,24 @@ impl Reader {
         }
     }
 
+    /// Whether the reader has read long enough to be judged a player: [`PLAYER_AFTER`] since its
+    /// first read of audio, and either [`FAST_AFTER`] since it last jumped or, reading slower,
+    /// as long as [`FAST_AFTER`] takes at [`PLAYER_FACTOR`] times the file's byte rate (0.9 s
+    /// for a 6-channel WAV file, 4 s for a stereo DSF file). *Why not 0.5 s alone (#362):* a
+    /// reader not yet judged reads ahead little beside a player ([`UNJUDGED_WINDOW`]), so on a
+    /// busy server copies starting beside a player had read only 1.7 to 3.4 MiB after 0.5 s,
+    /// 1.1 to 2.1 times playing time, as the player had (1.3 times with its client's
+    /// read-ahead). Each then counted as a player with a 2 s window until it reached 4 MiB, and
+    /// the player beside four of them waited up to 0.5 s. *Why the time since the first read:* a
+    /// player that seeks is judged again by its pace, but it has been playing.
+    fn judged(&self, s: &Seq, now: std::time::Instant) -> bool {
+        let Some((t, _)) = s.started else { return false };
+        let secs = now.saturating_duration_since(t);
+        secs >= PLAYER_AFTER
+            && (s.paced >= FAST_AFTER
+                || secs.as_secs_f64() * PLAYER_FACTOR * self.file.byte_rate() >= FAST_AFTER as f64)
+    }
+
     fn plan_read_ahead(&self, engine: &Engine, offset: u64, end: u64, k0: u32, k1: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
         // The first read of audio never starts read-ahead: a tagger walking a WAV file's
@@ -1118,8 +1138,7 @@ impl Reader {
         };
         self.counted.get_or_init(|| traffic.clone());
         self.throughput.store(throughput, Ordering::Relaxed);
-        let player =
-            !throughput && s.started.is_some_and(|(t, _)| now.saturating_duration_since(t) >= PLAYER_AFTER);
+        let player = !throughput && self.judged(&s, now);
         self.player.store(player, Ordering::Relaxed);
         if !throughput {
             traffic.fast.forget(self.id);
@@ -1446,7 +1465,7 @@ mod tests {
         let starting = Arc::new(Reader::new(f.clone()));
         {
             let mut s = starting.seq.lock().unwrap();
-            s.started = Some((std::time::Instant::now() - PLAYER_AFTER, 0));
+            s.started = Some((std::time::Instant::now() - judged_after(&f), 0));
         }
         for off in [2u64 << 20, 0] {
             let _arrival = starting.arrived();
@@ -1518,11 +1537,48 @@ mod tests {
         assert!(!fresh.player.load(Ordering::Relaxed));
 
         // Once it is a player, it gets a player's window back.
-        fresh.seq.lock().unwrap().started = Some((now - PLAYER_AFTER, 0));
+        fresh.seq.lock().unwrap().started = Some((now - judged_after(&f), 0));
         fresh.seq.lock().unwrap().ahead_until = 0;
         let ahead = fresh.plan_read_ahead(&engine, past + (128 << 10), past + (256 << 10), 0, 1).unwrap();
         assert!(fresh.player.load(Ordering::Relaxed));
         assert_eq!(ahead.end - ahead.first, READ_AHEAD_FRAMES.min(f.layout.frames - 1));
+    }
+
+    /// How long a reader of `f` that reads no faster than a player takes to be judged one.
+    fn judged_after(f: &TrackFile) -> std::time::Duration {
+        let secs = FAST_AFTER as f64 / (PLAYER_FACTOR * f.byte_rate());
+        PLAYER_AFTER.max(std::time::Duration::from_secs_f64(secs)) + std::time::Duration::from_millis(10)
+    }
+
+    /// A reader slower than a player is judged one only once it has read 4 MiB, or for as long
+    /// as that takes at 1.5 times the file's rate; a player that seeks is judged at once (#362).
+    #[test]
+    fn a_reader_is_judged_a_player_on_evidence() {
+        let tree = corpus();
+        let f = longest_dsf(&tree);
+        let rate = f.byte_rate();
+        let reader = Reader::new(f.clone());
+        let now = std::time::Instant::now();
+        let seq = |ago: std::time::Duration, read: u64| Seq {
+            started: Some((now - ago, 0)),
+            pace_from: Some((now - ago, 0)),
+            paced: read,
+            pace_end: read,
+            ..Seq::default()
+        };
+        let after = judged_after(&f);
+        assert!(after > PLAYER_AFTER, "4 MiB at 1.5 times the rate of this file takes longer");
+        // A copy limited to a few frames ahead reads about as fast as a player in its first
+        // half second: not judged yet.
+        let half = (rate * 0.75) as u64;
+        assert_eq!(reader.pace(&seq(PLAYER_AFTER, half), now), Pace::Slow);
+        assert!(!reader.judged(&seq(PLAYER_AFTER, half), now), "too early");
+        assert!(!reader.judged(&seq(PLAYER_AFTER / 2, FAST_AFTER), now), "before 0.5 s");
+        assert!(reader.judged(&seq(after, (rate * after.as_secs_f64()) as u64), now), "long enough");
+        // After a seek its pace is measured again, but it has been reading for long.
+        let mut seeked = seq(std::time::Duration::from_secs(60), 128 << 10);
+        seeked.pace_from = Some((now, 100 << 20));
+        assert!(reader.judged(&seeked, now), "a player that seeks");
     }
 
     /// A reader on the list counts while it is heard from lately or waits for a read (#357).
