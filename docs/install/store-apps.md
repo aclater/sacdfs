@@ -121,7 +121,8 @@ Unraid.
   `no-new-privileges`. Run on Fedora 44 in a VM with Docker. The app itself was not installed on
   TrueNAS.
 - **Re-run for 0.6.4 (catalog `main` cloned 2026-11-15, library 2.3.18):** with the image tag set
-  to 0.6.4, the catalog's `generate_metadata.py` set `app_version` to 0.6.4 and raised `version` to
+  to 0.6.4, pinned by digest as the catalog's other apps do (`0.6.4@sha256:2039b43f…`, the
+  release's multi-arch index, which the TrueNAS install below pulled), the catalog's `generate_metadata.py` set `app_version` to 0.6.4 and raised `version` to
   1.0.2; the committed `app.yaml` is that output, and a second run changes nothing. `ci.py
   --render-only` renders both test value sets with no warning, its `docker compose config` step
   included (Docker Compose 2.32.4 behind rootless Podman); `check_metadata.py`,
