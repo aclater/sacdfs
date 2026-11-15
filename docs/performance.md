@@ -905,6 +905,31 @@ container's own SMB and NFS servers.
   of a 6-channel DST file waited about 6 hours while sacdfs used no CPU. It was not reproduced
   in 6 more reads of the same area or in the player rounds.
 
+### SMB listing cost per entry, by client and release (#205, 0.6.3, main)
+
+The report behind #205 was about 16 FUSE requests per entry for one SMB listing, from the macOS 15
+client; macOS 27 sent about 9 times fewer
+([issue](https://github.com/aclater/sacdfs/issues/205)). Re-counted on 0.6.3 and main (2026-11-15) with
+sacdfs's request log (`RUST_LOG=fuser::request=debug`): the published 0.6.3 image and an image built from
+main, in a rootless Podman container, 40 images with their art (1,784 entries: 144 folders and 1,640 files,
+1,488 of them DSF and WAV), a fresh container per version. Linux:
+the kernel SMB 3.1.1 client of Fedora 44 (kernel 7.2.15) on the same host. Windows: Windows 11 Pro 25H2 in
+a VM on the same host (not on the vendor's hardware), `Get-ChildItem -Recurse` on the mapped drive, right
+after mapping it. One run each; the two releases differ by at most 6 requests.
+
+| Requests to sacdfs | 0.6.3 | main | Per entry (main) |
+|---|---|---|---|
+| Linux, `ls -lR`, first | 1,179 | 1,173 | 0.66 |
+| Linux, `ls -lR` again after 30 s | 923 | 923 | 0.52 |
+| Linux, `find` | 701 | 701 | 0.39 |
+| Linux, `stat` of every file (a rescan) | 699 | 699 | 0.39 |
+| Windows 11, listing | 957 | 956 | 0.54 |
+
+What is left is per folder or on purpose: one `OPENDIR` and `RELEASEDIR` per folder (Samba opens each
+folder it lists), a `LOOKUP` of each folder that is re-read when its source changes (its entry is kept 2 s,
+so a new image shows), and a `LOOKUP` and `GETATTR` per art file (#235). No client measured here comes near
+one request per entry, so the 16 of the report are the macOS 15 client's own.
+
 ## 0.4.1-rc.1 against 0.4.0 (release test, 2026-11-05)
 
 The release binaries (generic build), each read through a fresh mount with `--no-index-cache` and
@@ -1556,6 +1581,67 @@ container CPU from its cgroup; a fresh container per run; 2 or 3 runs):
   copies 1 to 8 % slower than main's (113, 118 / 105, 108 MB/s) and player reads no worse (worst 61,
   44 ms). Measured only; not
   part of any release.
+
+### Client read-ahead by client and release (0.6.3, main)
+
+The open questions from the run above, re-measured on 0.6.3 and main (#266, 2026-11-15): a
+Windows client, whether the share setting costs Windows anything, and the 4 MiB head limit again.
+
+**How measured:** the published 0.6.3 image and an image built from main, in a rootless Podman
+container pinned to 2 cores of a Core i9-13900H, with a 2 GiB memory limit; a fresh container per
+run. 40 images (5 discs, each in 8 folders) give 1,488 DSF and WAV files in 145 folders. Linux:
+the kernel SMB 3.1.1 client of Fedora 44 (kernel 7.2.15) on the same host, over loopback;
+`scripts/tag-scan.py` over all 1,488 files; bytes from the client's `Bytes read`, CPU from the
+sacdfs process (user and system); copies are `dd` of one stereo WAV file of a DST disc (176 MB)
+and one stereo DSF file of a plain DSD disc (64 MB) after dropping the page cache. Windows:
+Windows 11 Pro 25H2 in a VM on the same host (not on the vendor's hardware), the shell's
+property reading (`Shell.Application`, title and length) of every file, bytes from sacdfs's
+request log, and `robocopy` of the same two files. Two runs of each, timed under a benchmark lock.
+
+| Linux mount (share default unless noted) | Version | Reached sacdfs per file | sacdfs CPU per file | Scan of 1,488 files | WAV / DSF copy |
+|---|---|---|---|---|---|
+| Default | 0.6.3 | 1,824 KB | 69.1, 69.0 ms | 56.5, 56.5 s | 72, 72 / 698, 649 MB/s |
+| Default | main | 1,824 KB | 69.4, 72.1 ms | 57.0, 60.1 s | 67, 72 / 818, 828 MB/s |
+| Default | test build, 4 MiB head | 1,824 KB | **51.2, 51.3 ms** | **41.3, 41.4 s** | 70, 71 / 690, 643 MB/s |
+| `rsize=262144` | 0.6.3 | 262 KB | 8.2, 8.2 ms | 7.8, 7.7 s | 78, 78 / 771, 730 MB/s |
+| `rsize=262144` | main | 262 KB | 8.2, 8.2 ms | 8.0, 8.2 s | 74, 75 / 912, 1,000 MB/s |
+| `rsize=262144` | test build | 262 KB | 8.2, 8.2 ms | 7.8, 7.9 s | 73, 74 / 888, 748 MB/s |
+| Share: `smb2 max read = 262144` | 0.6.3 | 262 KB | 8.2, 8.2 ms | 7.8, 7.8 s | 78, 78 / 750, 898 MB/s |
+| Share: `smb2 max read = 262144` | main | 262 KB | 8.2, 8.2 ms | 8.0, 8.3 s | 74, 69 / 831, 761 MB/s |
+
+| Windows 11 (share setting) | Version | Files the shell opened | Reached sacdfs per file opened | sacdfs CPU per file | WAV / DSF copy |
+|---|---|---|---|---|---|
+| Default | 0.6.3 | 744 of 1,488 (the WAV files) | 261 KB (3 reads) | 4.5 ms | |
+| Default | main | 744 of 1,488 | 261 KB (3 reads) | 4.2 ms | 72, 69 / 587, 550 MB/s |
+| `smb2 max read = 262144` | main | 744 of 1,488 | 261 KB (3 reads) | 4.8 ms | 68, 67 / 451, 512 MB/s |
+
+- **No regression:** main matches 0.6.3 in every row. The 2 to 10 % default-mount regression of
+  #360 seen above (main against 0.6.2) is in 0.6.3 too; the two releases are equal here.
+- **Windows reads only what the shell asks for:** about 261 KB for each WAV file it reads tags
+  from, in three reads; it opens no DSF file. The share's `smb2 max read = 262144` changes
+  nothing for that, and its copies were 1 to 6 % slower for WAV and 7 to 18 % for DSF (a DSF copy
+  takes about 0.1 s, so the DSF figures are rough). So the share setting stays off by default:
+  it helps Linux clients only, and those get the same from `rsize=262144` on their own mount.
+- **The 4 MiB head limit** cut the default Linux scan by a quarter (51 against 69 ms of CPU per
+  file, 41 against 57 s), with copies within 2 % on this rig (1 to 8 % slower on the rig above).
+  `rsize=262144` cuts the same scan to 8.2 ms on every build, six times less than the test
+  build's default. The limit isn't changed: a read past 1 MiB is where sacdfs starts its own
+  read-ahead for every reader, players and copies included, so raising it delays that for
+  everyone, to save CPU for one client's default mount on a full scan.
+- **A real tag importer:** beets 2.14 (`beet import` with autotagging, copying and tag writing off),
+  over the same Linux mount, reads each file through mediafile and mutagen: 1 MiB buffered reads of the
+  head and the tags at the end, several times per file. It brought 4,197 KB per file to sacdfs on the
+  default mount on both releases (2.1 MB for the WAV file traced, 6.3 MB for the DSF file), and 1,837 KB
+  with `rsize=262144`. sacdfs CPU per file: 194 and 210 ms on 0.6.3 and 156 and 156 ms on main by default,
+  103 ms on both with `rsize=262144` (all 1,488 files are read; beets kept 186 items because the 8 copies of
+  each disc carry the same tags). The import took 158 to 337 s by default and 205 to 207 s with
+  `rsize=262144`; the host was shared with other work then, so those times are rough. Unlike the scan
+  script, this importer asks for 1 MiB at a time itself, which no client or server setting can cut, so
+  `rsize=262144` halves its cost rather than cutting it seven times.
+- The main rows are from main on 2026-11-15, run while other work shared the host. Its second default run
+  took 4 % more CPU and 6 % more time than 0.6.3; an earlier main build, run on an idle host just before,
+  gave 69.2 and 69.1 ms and 56.6 s twice, equal to 0.6.3. So that is taken as noise, not a regression.
+- macOS was not measured here.
 
 ## History
 

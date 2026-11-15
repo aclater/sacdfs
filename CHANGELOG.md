@@ -113,6 +113,13 @@ All notable changes to sacdfs are recorded here. The format follows
   decoded ahead changes.
 
 ### Documentation
+- **SMB clients on 0.6.3 and main: leases, listing cost and read-ahead (#325, #205, #266).**
+  Re-measured with the Linux kernel client and Windows 11 (in a VM): with directory leases on,
+  neither client shows a new image in a folder it keeps using, for an ordinary folder as much as
+  for sacdfs, so the container keeps them off; that now costs Windows about 13 % more requests
+  (docs/deployment.md). A listing costs 0.4 to 0.7 requests per entry on both clients and both
+  releases (docs/performance.md). A real tag importer (beets) and Windows' shell are added to the
+  read-ahead figures: `rsize=262144` stays the advice for Linux mounts, Windows needs no setting.
 - **Upgrading from 0.4.0 with beets-pysacd.** Albums that beets-pysacd 0.2.0 or 0.2.1 catalogued
   on a 0.4.0 mount point at the old names of untitled tracks; the user guide gives the steps with
   beets-pysacd 0.2.2 before any `beet update` (docs/user-guide.md, under "Tagging behaviour").
