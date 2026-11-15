@@ -6,12 +6,27 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **A Windows front end, `sacdfs-win` (#419).** It mounts SOURCE read-only as a drive letter or
+  a folder through [WinFsp](https://github.com/winfsp/winfsp), over the same core as the Linux
+  mount, with the same options and defaults. Names Windows refuses are shown with the SMB
+  share's look-alike characters, lookups ignore case, and Ctrl+C or a service stop unmounts
+  cleanly. Every file of the test corpus is byte-identical to the Linux mount, checked on every
+  pull request by a new `windows` workflow. Small reads are read ahead, and Windows caches file
+  contents until sacdfs-win reports a change: reading the corpus 4 KiB at a time takes half the
+  spike's time, and a second pass a twentieth
+  ([winfsp/README.md](winfsp/README.md)).
+
 ### Changed
 - **On Windows, sidecar files are opened relative to their folder's handle, and the seek index
   folder is private (#419).** A folder of SOURCE renamed or replaced by a link while sacdfs walks
   it can no longer send a cover's open elsewhere (`NtCreateFile` relative to the folder opened,
   never following a link: the Windows counterpart of `openat`), and a seek index folder made by
   sacdfs gets an access list for its owner and SYSTEM only, also outside the user's profile.
+- **The TrueNAS catalog app runs 0.6.4 (#284).** `deploy/truenas/sacdfs` named the 0.6.3 image,
+  which has the three advisories fixed in 0.6.4; the app's version is now 1.0.2. Rendered with
+  the catalog's tooling and installed on TrueNAS SCALE 25.10.8 in a VM
+  ([store-apps.md](docs/install/store-apps.md#truenas-the-catalog-app)).
 - **The core builds for Windows and macOS (#419, #420).** The calls that differ between
   systems are now in one module, `sacdfs::platform`, and the Linux behaviour is unchanged.
   `fuser` is Linux-only and `nix` and `signal-hook` are Unix-only. The Linux mount moved to
