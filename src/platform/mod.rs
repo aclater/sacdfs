@@ -161,8 +161,9 @@ pub fn set_create_mode(o: &mut OpenOptions, mode: u32) -> &mut OpenOptions {
     imp::set_create_mode(o, mode)
 }
 
-/// Makes folder `dir` private to its owner (mode 0700 on Unix); nothing on Windows, where a
-/// folder under the user's profile is private already.
+/// Makes folder `dir` private to its owner: mode 0700 on Unix; on Windows a protected access
+/// list for its owner and SYSTEM only, so that an `--index-cache` outside the user's profile is
+/// as private as one inside it.
 pub fn make_private_dir(dir: &Path) -> io::Result<()> {
     imp::make_private_dir(dir)
 }
@@ -336,6 +337,69 @@ mod tests {
         assert!(!is_stale(&io::Error::other("x")));
         assert!(is_cross_device(&cross_device()));
         assert!(!is_cross_device(&stale()));
+    }
+
+    /// Opens under a folder are relative to its handle: a renamed folder is still the one
+    /// opened, a link is never followed, and a name is one name.
+    #[test]
+    fn confined_opens_stay_in_the_folder_opened() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("sub")).unwrap();
+        std::fs::write(d.path().join("sub").join("cover.jpg"), b"old").unwrap();
+        let root = open_root(d.path()).unwrap();
+        let sub = open_dir_at(&root, &[OsStr::new("sub")]).unwrap();
+        // The folder is replaced after it was opened.
+        std::fs::rename(d.path().join("sub"), d.path().join("moved")).unwrap();
+        std::fs::create_dir(d.path().join("sub")).unwrap();
+        std::fs::write(d.path().join("sub").join("cover.jpg"), b"new!").unwrap();
+        let (mut f, st) = open_file_at(&sub, OsStr::new("cover.jpg")).unwrap();
+        let mut got = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut got).unwrap();
+        assert_eq!(got, b"old", "the folder opened, not the one now at its path");
+        assert!(st.regular);
+        assert_eq!(stat_at(&sub, OsStr::new("cover.jpg")).unwrap().size, 3);
+        assert!(!stat_at(&root, OsStr::new("sub")).unwrap().regular);
+        assert!(open_dir_at(&root, &[OsStr::new("moved"), OsStr::new("cover.jpg")]).is_err());
+        // Windows takes one plain name only (callers pass plain names on every system).
+        #[cfg(windows)]
+        {
+            for bad in ["..", ".", "", "moved\\cover.jpg", "moved/cover.jpg"] {
+                assert!(open_file_at(&root, OsStr::new(bad)).is_err(), "{bad:?}");
+            }
+            assert!(open_file_at(&root, OsStr::new("sub")).is_err(), "a folder is not a file");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn confined_opens_follow_no_link() {
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+        let d = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.jpg"), b"x").unwrap();
+        // Links need the right to make them (an administrator, or developer mode).
+        if symlink_dir(outside.path(), d.path().join("dirlink")).is_err() {
+            eprintln!("no right to make links here: not checked");
+            return;
+        }
+        symlink_file(outside.path().join("secret.jpg"), d.path().join("filelink.jpg")).unwrap();
+        let root = open_root(d.path()).unwrap();
+        assert!(open_dir_at(&root, &[OsStr::new("dirlink")]).is_err());
+        match open_file_at(&root, OsStr::new("filelink.jpg")) {
+            Ok((_, st)) => assert!(!st.regular, "a link is not a regular file"),
+            Err(_) => {}
+        }
+        assert!(!stat_at(&root, OsStr::new("filelink.jpg")).unwrap().regular);
+    }
+
+    #[test]
+    fn private_folders_stay_usable() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("cache");
+        std::fs::create_dir(&p).unwrap();
+        make_private_dir(&p).unwrap();
+        std::fs::write(p.join("entry"), b"x").unwrap();
+        assert_eq!(std::fs::read(p.join("entry")).unwrap(), b"x");
     }
 
     #[test]

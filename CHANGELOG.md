@@ -37,6 +37,11 @@ All notable changes to sacdfs are recorded here. The format follows
   the paths sacdfs opens keep the verbatim form, under which Windows takes every name literally
   (a trailing dot, a device name, more than 260 characters); `verify` reports keep it too, since
   a resumed run matches rows by exact path.
+- **On Windows, sidecar files are opened relative to their folder's handle, and the seek index
+  folder is private (#419).** A folder of SOURCE renamed or replaced by a link while sacdfs walks
+  it can no longer send a cover's open elsewhere (`NtCreateFile` relative to the folder opened,
+  never following a link: the Windows counterpart of `openat`), and a seek index folder made by
+  sacdfs gets an access list for its owner and SYSTEM only, also outside the user's profile.
 - **The TrueNAS catalog app runs 0.6.4 (#284).** `deploy/truenas/sacdfs` named the 0.6.3 image,
   which has the three advisories fixed in 0.6.4; the app's version is now 1.0.2. Rendered with
   the catalog's tooling and installed on TrueNAS SCALE 25.10.8 in a VM

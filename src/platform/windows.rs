@@ -156,7 +156,46 @@ pub fn set_create_mode(o: &mut OpenOptions, _mode: u32) -> &mut OpenOptions {
     o
 }
 
-pub fn make_private_dir(_dir: &Path) -> io::Result<()> {
+/// Gives `dir` a protected access list: full control for its owner (the user who made it,
+/// through the OWNER RIGHTS entry) and SYSTEM, inherited by what is made inside, and nothing
+/// for anyone else; the entries it inherited from its parent are dropped.
+#[allow(unsafe_code)]
+pub fn make_private_dir(dir: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+        SetFileSecurityW,
+    };
+    let sddl: Vec<u16> = "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)".encode_utf16().chain(Some(0)).collect();
+    let path: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    // SAFETY: both strings are NUL-terminated and live across the calls; `sd` is allocated by
+    // the conversion and freed with LocalFree once applied.
+    unsafe {
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut sd,
+            std::ptr::null_mut(),
+        ) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let ok = SetFileSecurityW(
+            path.as_ptr(),
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            sd,
+        );
+        let err = io::Error::last_os_error();
+        LocalFree(sd as HLOCAL);
+        if ok == 0 {
+            return Err(err);
+        }
+    }
     Ok(())
 }
 
@@ -228,8 +267,15 @@ pub fn next_data(file: &File, at: u64) -> io::Result<Option<u64>> {
     Ok(allocated_after(file, at)?.map(|(start, _)| start.max(at)))
 }
 
+/// An open folder: a handle that later opens are made relative to (`NtCreateFile` with a root
+/// directory), so that a folder renamed or replaced by a link after it was opened can't send a
+/// sidecar open elsewhere: the Windows counterpart of `openat`. The path is kept for
+/// `read_link_at` and for messages.
 #[derive(Debug)]
-pub struct Dir(PathBuf);
+pub struct Dir {
+    handle: File,
+    path: PathBuf,
+}
 
 fn stat(m: &Metadata) -> Stat {
     let t = |r: io::Result<SystemTime>| r.unwrap_or(SystemTime::UNIX_EPOCH);
@@ -247,43 +293,125 @@ fn not_a_folder() -> io::Error {
     io::Error::new(io::ErrorKind::NotADirectory, "not a folder")
 }
 
+/// Opens `name`, one plain name, relative to folder `dir`, never following a reparse point
+/// (`FILE_OPEN_REPARSE_POINT`: a link or junction is opened itself, and refused by the caller).
+/// `options` adds `FILE_DIRECTORY_FILE` or `FILE_NON_DIRECTORY_FILE`.
+#[allow(unsafe_code)]
+fn open_relative(dir: &File, name: &OsStr, access: u32, options: u32) -> io::Result<File> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, NtCreateFile,
+    };
+    use windows_sys::Win32::Foundation::{
+        HANDLE, OBJ_CASE_INSENSITIVE, RtlNtStatusToDosError, UNICODE_STRING,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
+    };
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+    let wide: Vec<u16> = name.encode_wide().collect();
+    // One plain name: a separator, `.` or `..` would leave the folder.
+    let plain = !wide.is_empty()
+        && name != "."
+        && name != ".."
+        && !wide.iter().any(|&c| c == u16::from(b'\\') || c == u16::from(b'/') || c == 0);
+    let bytes = u16::try_from(wide.len() * 2).ok().filter(|_| plain);
+    let Some(bytes) = bytes else {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a plain name"));
+    };
+    let us = UNICODE_STRING { Length: bytes, MaximumLength: bytes, Buffer: wide.as_ptr().cast_mut() };
+    let oa = OBJECT_ATTRIBUTES {
+        Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: dir.as_raw_handle() as HANDLE,
+        ObjectName: &us,
+        Attributes: OBJ_CASE_INSENSITIVE,
+        SecurityDescriptor: std::ptr::null(),
+        SecurityQualityOfService: std::ptr::null(),
+    };
+    let mut handle: HANDLE = std::ptr::null_mut();
+    // SAFETY: every pointer is to a live local (`wide` outlives the call through `us`); the
+    // out handle is written only on success, and then owned by the `File` made from it.
+    let status = unsafe {
+        let mut iosb: IO_STATUS_BLOCK = std::mem::zeroed();
+        NtCreateFile(
+            &mut handle,
+            access | SYNCHRONIZE,
+            &oa,
+            &mut iosb,
+            std::ptr::null(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_OPEN,
+            options | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if status < 0 {
+        // SAFETY: a plain conversion of a status code.
+        let code = unsafe { RtlNtStatusToDosError(status) };
+        return Err(io::Error::from_raw_os_error(code as i32));
+    }
+    // SAFETY: NtCreateFile succeeded, so `handle` is an open handle nothing else owns.
+    Ok(unsafe { File::from_raw_handle(handle as _) })
+}
+
 pub fn open_root(path: &Path) -> io::Result<Dir> {
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
     let path = path.canonicalize()?;
-    if !std::fs::metadata(&path)?.is_dir() {
+    // Followed if a link: the user gave this path.
+    let handle = OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS).open(&path)?;
+    if !handle.metadata()?.is_dir() {
         return Err(not_a_folder());
     }
-    Ok(Dir(path))
+    Ok(Dir { handle, path })
 }
 
 pub fn open_dir_at(dir: &Dir, names: &[&OsStr]) -> io::Result<Dir> {
-    let mut at = dir.0.clone();
+    use windows_sys::Wdk::Storage::FileSystem::FILE_DIRECTORY_FILE;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_TRAVERSE};
+    let mut at = Dir { handle: dir.handle.try_clone()?, path: dir.path.clone() };
     for name in names {
-        at.push(name);
-        let m = std::fs::symlink_metadata(&at)?;
-        if m.file_type().is_symlink() || is_reparse_point(&m) || !m.is_dir() {
+        let handle = open_relative(
+            &at.handle,
+            name,
+            FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+            FILE_DIRECTORY_FILE,
+        )
+        .map_err(|e| if e.raw_os_error() == Some(267) { not_a_folder() } else { e })?;
+        let m = handle.metadata()?;
+        if is_reparse_point(&m) || !m.is_dir() {
             return Err(not_a_folder());
         }
+        at = Dir { handle, path: at.path.join(name) };
     }
-    Ok(Dir(at))
+    Ok(at)
 }
 
 pub fn stat_dir(dir: &Dir) -> io::Result<Stat> {
-    Ok(stat(&std::fs::symlink_metadata(&dir.0)?))
+    Ok(stat(&dir.handle.metadata()?))
 }
 
 pub fn stat_at(dir: &Dir, name: &OsStr) -> io::Result<Stat> {
-    Ok(stat(&std::fs::symlink_metadata(dir.0.join(name))?))
+    use windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES;
+    Ok(stat(&open_relative(&dir.handle, name, FILE_READ_ATTRIBUTES, 0)?.metadata()?))
 }
 
 pub fn open_file_at(dir: &Dir, name: &OsStr) -> io::Result<(File, Stat)> {
-    let file =
-        OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(dir.0.join(name))?;
+    use windows_sys::Wdk::Storage::FileSystem::FILE_NON_DIRECTORY_FILE;
+    use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
+    let file = open_relative(&dir.handle, name, FILE_GENERIC_READ, FILE_NON_DIRECTORY_FILE)?;
     let st = stat(&file.metadata()?);
     Ok((file, st))
 }
 
+/// The target of link `name` in `dir`, read by path: only a name to look up, which is then
+/// resolved inside SOURCE one name at a time like any other.
 pub fn read_link_at(dir: &Dir, name: &OsStr) -> io::Result<PathBuf> {
-    std::fs::read_link(dir.0.join(name))
+    std::fs::read_link(dir.path.join(name))
 }
 
 pub fn writable(dir: &Path) -> io::Result<()> {
