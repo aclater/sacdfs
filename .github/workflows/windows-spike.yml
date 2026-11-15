@@ -95,6 +95,7 @@ jobs:
         env:
           LIBCLANG_PATH: C:\Program Files\LLVM\bin
         run: |
+          $ErrorActionPreference = "Stop"; $PSNativeCommandUseErrorActionPreference = $true
           cargo clippy --locked -- -D warnings
           cargo test --locked
           cargo build --release --locked
