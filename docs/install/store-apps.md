@@ -6,7 +6,7 @@ review by each store's maintainers). This page says what is in the repository, h
 the Unraid template today, and what was checked where.
 
 Both entries run the same published image as [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml):
-`ghcr.io/aclater/sacdfs:0.6.3`, with the FUSE device, all capabilities dropped but the seven
+`ghcr.io/aclater/sacdfs:0.6.4`, with the FUSE device, all capabilities dropped but the seven
 the programs need (`SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`, `SETGID`,
 `NET_BIND_SERVICE`, `SETPCAP`; [why each one](../deployment.md#privileges)), no new privileges,
 AppArmor unconfined, SMB on port 10445 and NFS on 12049 (the NAS's own
@@ -32,6 +32,21 @@ formats, and storage for the index cache.
 **You can't install it from this directory.** TrueNAS installs catalog apps only from its
 catalog, so until sacdfs is accepted there, use the [TrueNAS SCALE guide](truenas-scale.md)
 ("Install via YAML"), which has the same settings and was run on TrueNAS.
+
+**What was checked on TrueNAS (0.6.4).** On TrueNAS SCALE 25.10.8 in a VM, not on TrueNAS
+hardware, the app at 0.6.4 (version 1.0.2) was rendered by the catalog's own tooling for both test
+value sets, and each rendered Compose file installed as a custom app, as for 0.6.3 below:
+
+| Check | Guest access (`basic-values.yaml`) | User and password, NFS clients, one folder per disc (`auth-values.yaml`) |
+|---|---|---|
+| App running, image `ghcr.io/aclater/sacdfs:0.6.4` | 15.4 s after the create call, with the image pull | 6.3 s, image already pulled |
+| Container settings | `cap_drop: ALL`, the seven capabilities above, `no-new-privileges`, not privileged | the same |
+| Permissions helper | ran on the cache dataset, exit 0 | the same |
+| SMB on 10445: 28 DSF and WAV files of three corpus images identical to a reference | pass, as a guest | pass, as the user; a wrong password lists nothing |
+| NFS on 12049: the same 28 files | pass | pass |
+| Stop, start | 1.7 s, 2.7 s; the share answered at once after the start | not run |
+
+Not run on 0.6.4: a TrueNAS restart, the web form, a real client mounting the shares, updates.
 
 **What was checked on TrueNAS (0.6.3).** On TrueNAS SCALE 25.10.8 in a VM, with the app
 rendered by the catalog's own tooling for both test value sets and each rendered Compose file
@@ -105,6 +120,13 @@ Unraid.
   both test value sets with `cap_drop: [ALL]`, the seven capabilities in `cap_add`, and
   `no-new-privileges`. Run on Fedora 44 in a VM with Docker. The app itself was not installed on
   TrueNAS.
+- **Re-run for 0.6.4 (catalog `main` cloned 2026-11-15, library 2.3.18):** with the image tag set
+  to 0.6.4, the catalog's `generate_metadata.py` set `app_version` to 0.6.4 and raised `version` to
+  1.0.2; the committed `app.yaml` is that output, and a second run changes nothing. `ci.py
+  --render-only` renders both test value sets with no warning, its `docker compose config` step
+  included (Docker Compose 2.32.4 behind rootless Podman); `check_metadata.py`,
+  `port_validation.py` and `apps_dev_charts_validate validate` pass. The rendered files were
+  installed on TrueNAS (above).
 - **Re-run for 0.6.3 (catalog `main` cloned 2026-11-14):** with the image tag and `app_version`
   set to 0.6.3, the catalog's `generate_metadata.py` raised `version` to 1.0.1 and reworded three
   capability descriptions; the committed `app.yaml` is that output. `ci.py --render-only` renders
