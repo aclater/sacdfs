@@ -32,9 +32,15 @@ fn mount() -> ExitCode {
     linux_main::main()
 }
 
-/// Elsewhere this binary only runs the subcommands: the mount is the platform's own front end.
+/// Elsewhere this binary only runs the subcommands, and says its version: the mount is the
+/// platform's own front end.
 #[cfg(not(target_os = "linux"))]
 fn mount() -> ExitCode {
+    // As clap's `--version` prints it on Linux.
+    if std::env::args_os().nth(1).is_some_and(|a| a == "--version" || a == "-V") {
+        println!("sacdfs {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     eprintln!(
         "sacdfs: this build mounts only on Linux; `sacdfs verify` and `sacdfs tags` work here \
          (see `sacdfs verify --help`, `sacdfs tags --help`)"
