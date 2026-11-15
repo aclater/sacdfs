@@ -535,7 +535,10 @@ files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network
   with faster copies and unchanged player reads; `cache=none` to 99 KB, with each player read one
   round trip. `rasize` can't go below `rsize` (the kernel refuses the mount). Figures:
   [performance](performance.md#client-settings-on-a-nas-062); advice:
-  [deployment](deployment.md#linux).
+  [deployment](deployment.md#linux). Re-run on 0.6.3 and main with kernel 7.2: the same figures,
+  and no difference between the two. Windows 11 (in a VM, not on the vendor's hardware) reads
+  about 261 KB of each WAV file for its tags and no DSF file, with or without the share's
+  `smb2 max read = 262144` ([performance](performance.md#client-read-ahead-by-client-and-release-063-main)).
 - **Extended attributes** ([#174](https://github.com/aclater/sacdfs/issues/174)), counted from
   sacdfs's FUSE request log (the published 0.4.0 and 0.4.1-rc.1 images under rootful Podman,
   alternating, two runs each, Fedora 44 client): `ls -lR` over NFS, which exited 0 with no
