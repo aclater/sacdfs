@@ -1643,6 +1643,57 @@ request log, and `robocopy` of the same two files. Two runs of each, timed under
   gave 69.2 and 69.1 ms and 56.6 s twice, equal to 0.6.3. So that is taken as noise, not a regression.
 - macOS was not measured here.
 
+## The Windows front end (#419)
+
+`sacdfs-win` on Windows 11 in a VM (4 vCPUs, 8 GiB, WinFsp 2.1) on the Core i9-13900H host,
+under the host's benchmark lock, 2026-11-15. Other work was running on the host, so the
+figures are rough; ranges are 2 or 3 rounds. The 910 files of the test corpus (188 MB). Each
+measurement starts on a fresh mount; the second pass is on the same mount. The measuring
+program (a small .NET program, unbuffered `FileStream` reads) was excluded from Microsoft
+Defender's scanning, see below. Linux: the FUSE mount on the same host with sacdfs pinned to
+4 CPUs, the same operations from Python.
+
+| Reads of all 910 files | Linux FUSE | spike (#425) | spike, `--kernel-cache` | #419 PR, `--no-kernel-cache` | #419 PR (default) |
+|---|---|---|---|---|---|
+| 4 KiB reads, first pass | 0.64 s | 3.37–3.43 s | 3.52–3.66 s | 1.50–1.90 s | 1.62–1.87 s |
+| 4 KiB reads, second pass | 0.06–0.11 s | 3.39–3.46 s | 0.16–0.17 s | 1.46–1.78 s | 0.14–0.16 s |
+| 1 MiB reads, first pass | 0.59–0.61 s | 0.88–0.89 s | 0.84–0.85 s | 0.78–0.86 s | 0.76–0.83 s |
+| 1 MiB reads, second pass | 0.04–0.07 s | 0.80–0.82 s | 0.08 s | 0.71–0.81 s | 0.08 s |
+| 910 opens and closes | 0.01 s | 0.05–0.06 s | 0.05–0.06 s | 0.07 s | 0.06–0.08 s |
+
+| Robocopy of the corpus (188 MB) | spike (#425) | #419 PR, `--no-kernel-cache` | #419 PR (default) |
+|---|---|---|---|
+| `/J` (unbuffered), Defender on | 3.10–3.61 s | 4.08–4.26 s | 3.86–5.97 s |
+| `/J`, Robocopy excluded from Defender | 2.96–3.16 s | 2.95–3.53 s | 3.07–3.41 s |
+| buffered (`/MT:1`), Defender on | 2.11–2.33 s | 2.38–2.42 s | 2.24–2.53 s |
+| buffered, excluded | 1.85–1.93 s | 2.02–2.04 s | 2.02–2.11 s |
+
+Whole-file copies are bound by decoding; this PR is 0–10 % slower than the spike here, within
+the spread of a busy host on all but the buffered, excluded row (2 rounds each). Not
+investigated further: the spike skipped the cleanup round trip and change notification that
+this PR adds.
+
+**Why small files and small reads were slow in the spike:**
+- **Defender scans each file the first time a program opens it on a mount,** reading it:
+  4.5 to 7 ms per file here, 4 to 6.5 s for the corpus, with Defender's own process using 6 s of
+  CPU. Later opens on the same mount don't scan again; a new mount scans again. This was most of
+  the spike's small-file cost, and it hid the kernel cache: the spike's second pass paid the scan
+  too. With the measuring program excluded, 910 opens take 0.05 s. sacdfs-win can't avoid the
+  scan (the Windows install guide says what it costs).
+- **Windows passes small reads through as they are.** A program's 4 KiB reads reach the file
+  system as 4 KiB reads, also with the cache manager on (49,091 reads for the corpus), where
+  Linux's page cache reads ahead in 128 KiB. Each costs a WinFsp round trip and a core request,
+  about 70 µs in this VM. From the third small read in sequence, sacdfs-win now reads a window
+  of the file from the core (128 KiB, doubling to 1 MiB; 64 MiB for all open files together) and
+  answers the next reads from it: 3,238 core reads for the corpus instead of 49,091.
+- **`--kernel-cache` did work;** a second pass was 20 times faster. It is now the default, with
+  change notification, so that what Windows keeps never outlives a change in SOURCE. The
+  read-ahead window is let go of at the program's last close (Windows keeps a cached file open
+  long after that).
+
+**What's left:** a first pass of 4 KiB reads takes about 2.6 times as long as on Linux (one
+WinFsp round trip per read), 1 MiB reads 1.3 times.
+
 ## History
 
 What each improvement changed, one line each, with the pull request that measured it (each
@@ -1650,6 +1701,7 @@ against its own "before", on the code of its day).
 
 | PR | Change | Before → after |
 |---|---|---|
+| #434 | Windows front end (#419): small sequential reads read ahead in windows; Windows's cache on by default, with change notification | Windows 11 VM, the corpus read 4 KiB at a time, against the spike (#425): first pass 3.4 → 1.6 s, second pass 3.4 → 0.15 s; 1 MiB reads 0.9 → 0.8 s and 0.8 → 0.08 s ([above](#the-windows-front-end-419)) |
 | #4 | Frame search aimed with the TOC's track starts, slightly past each estimate | calls per cold seek on real discs 7.0–10.7 → 4.6–6.1 |
 | #15 | WAV pipeline: demultiplex and convert in parallel, 8 MiB read-ahead for fast readers | plain DSD WAV straight read 3.42 s → 2.29 s (2.05x → 1.39x the DSF read) |
 | #25 | Persistent seek index; probes and first reads sized to the area's frames | cold seek 5.29 → 4.50 calls, 293 → 139 KiB; NFS cold seek, first touch, 27.8 → 18.6 ms (plain DSD), 36.9 → 26.8 ms (DST); NFS seek after a remount 2.7 ms |

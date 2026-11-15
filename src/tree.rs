@@ -3873,6 +3873,12 @@ mod tests {
             let dir = old_tree(old);
             fs::create_dir(dir.path().join("Artist/Album/Artwork")).unwrap();
             fs::write(dir.path().join("Artist/Album/Artwork/back.png"), b"b").unwrap();
+            // The folders the writes below change are scanned with an old time: the writes then
+            // move it to now whatever the clock's granularity. Left at the creation's own time,
+            // a write in the same clock tick (about 16 ms on Windows) went unseen.
+            for p in ["Artist/Album/Artwork", "Artist/Album"] {
+                set_mtime(&dir.path().join(p), old);
+            }
             let t = watching(dir.path(), "default", flatten);
             assert!(t.resolve(Path::new("Artist/Album")).is_some());
             fs::write(dir.path().join("Artist/Album/new.m3u8"), b"#EXTM3U\n").unwrap();
