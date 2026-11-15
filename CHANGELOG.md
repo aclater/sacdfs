@@ -137,6 +137,20 @@ All notable changes to sacdfs are recorded here. The format follows
   median 171 (0.6.3: 1,210 and 749; 0.6.2: 727 and 695), and with no copies on 2 slow cores 38 ms
   (0.6.3: 218). The other cells are unchanged within the spread of the runs
   ([performance](docs/performance.md#a-second-player-beside-copies-and-copies-behind-nfs-363-362)).
+- **A player beside copies starting on a busy server no longer waits for them to be told apart
+  (#362).** A reader not yet judged reads ahead little beside a player (#363), so on a busy
+  server copies that started beside a player read no faster than it in their first half second,
+  then counted as players with a 2 s window each until they had read 4 MiB. Over NFS, four
+  6-channel copies beside a player on 2 slow cores made it wait 0.2 to 0.4 s in every run. Now a
+  reader slower than a player counts as one only once it has read 4 MiB, or for as long as that
+  takes at 1.5 times the file's rate (0.9 s for a 6-channel WAV file, 4 s for a stereo DSF file).
+  That NFS cell: worst read 161 ms, median 148 (main 369 and 350, 0.6.3 404 and 317, 0.6.2 524
+  and 358). Over SMB, a second player starting with four copies beside a first on 4 cores: 142 ms
+  and 136 (main 2,498 and 753, 0.6.3 1,933 and 1,208). Other cells are level within the spread
+  of the runs
+  ([performance](docs/performance.md#a-player-beside-copies-starting-on-a-busy-server-362)).
+  A file server in a PID namespace sacdfs can't see still counts by the order of its reads
+  ([design](docs/design.md#the-file-servers-process-362)).
 - **Copies served by a network file server count as behind a network client from their first
   read (part of #362).** A file opened by Samba (`smbd`), NFS-Ganesha (`ganesha.nfsd`), the
   kernel's NFS server (`nfsd`) or `ksmbd` is read for a network client, whatever the order of its

@@ -253,7 +253,7 @@ All settings are environment variables.
 | `SACDFS_LOOKUP_NAME` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-name` (also search by album and artist) |
 | `SACDFS_LOOKUP_DURATIONS` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-durations` (also ask by the tracks' start times) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
-| `SACDFS_CACHE_MB` | (32, or 16 under a limit up to 512 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
+| `SACDFS_CACHE_MB` | (32, or 16 under a limit below 256 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
 | `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
 | `SACDFS_THREADS` | (one per CPU, at most one per 64 MiB of a limit) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
@@ -280,7 +280,7 @@ which is all a read-only share needs.
 
 ### Memory
 
-The default cache of 32 MiB (`SACDFS_CACHE_MB`, `--cache-mb`, since #150) suits a NAS, and is 16 MiB under a memory limit up to 512 MiB ([Under a memory limit](#under-a-memory-limit)). The cache holds
+The default cache of 32 MiB (`SACDFS_CACHE_MB`, `--cache-mb`, since #150) suits a NAS, and is 16 MiB under a memory limit below 256 MiB ([Under a memory limit](#under-a-memory-limit)). The cache holds
 decoded frames so that a client re-reading the same part of a file does not decode it again;
 players read ahead, so a small cache costs little. 32 MiB is the smallest size that reads,
 seeks and scans within 5 % of a 256 MiB cache ([performance](performance.md#cache-size-150));
@@ -345,7 +345,7 @@ limit, none of this applies.
 
 | What | With a limit |
 |---|---|
-| Cache of frames (`--cache-mb`) | 16 MiB up to 512 MiB, else 32 |
+| Cache of frames (`--cache-mb`) | 16 MiB below 256 MiB, else 32 |
 | Decoder threads (`--threads`) | one per CPU, at most one per 64 MiB of the limit, and at least 2 |
 | Memory for what listed images hold (`--listing-mb`) | 3/8 of the limit, at least 8 MiB |
 | Memory watch | see below |
@@ -593,8 +593,10 @@ The 0.4.1 container passes `--cache-mb 32` unless `SACDFS_CACHE_MB` is set, so i
 these limits. At 8 MiB the player holds real time too, but scans run 18 to 28 % slower than at 32 (on
 0.4.1-rc.3 they ran at 15.2 and 23.9 MB/s).
 
-**The default under a memory limit up to 512 MiB is 16 MiB.** It holds the player as 32 does, and a
-scan alone runs as fast, in about 16 MiB less. Measured on the same machine's P-cores (2 cores: one
+**From 0.5.0 to 0.6.4 the default under a memory limit up to 512 MiB was 16 MiB**, and since then it
+is 16 MiB only below 256 MiB ([design](design.md#memory-a-budget-for-listings-237);
+over SMB, 16 made copies 12 to 18 % slower and a player beside them stall longer). Locally it held the player as 32 does, and a
+scan alone ran as fast, in about 16 MiB less. Measured on the same machine's P-cores (2 cores: one
 physical core with its SMT sibling; 4 cores: two), client on other cores, same method, 3 runs each:
 
 | Scanners | Cores, memory | Cache 16 MiB | Cache 32 MiB |
@@ -780,7 +782,7 @@ The names of screens and fields may differ between releases.
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
-   - `SACDFS_CACHE_MB` is left out: the default, 32 MiB (16 under a memory limit up to 512 MiB, [Under a memory limit](#under-a-memory-limit)), keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
+   - `SACDFS_CACHE_MB` is left out: the default, 32 MiB (16 under a memory limit below 256 MiB, [Under a memory limit](#under-a-memory-limit)), keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and

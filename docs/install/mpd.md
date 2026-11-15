@@ -74,7 +74,7 @@ Each multichannel area is its own album, "Album (Multichannel)". While a DSF tra
 
 - **`SACDFS_FORMATS=dsf`.** MPD's FFmpeg probes about 5 MB of each WAV file, which sacdfs must convert: the first scan took 10 times as long with `dsf,wav`. If another client needs WAV, give it a second sacdfs container or mount with `dsf,wav`.
 - **`SACDFS_FLATTEN=1`.** Each disc's `Stereo` and `Multichannel` folders then sit under the album.
-- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit up to 512 MiB).
+- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit below 256 MiB).
 - **Art.** MPD looks only for files named `cover.*` in a track's folder. Since 0.4.1 sacdfs also shows a folder's cover as `cover.jpg` or `cover.png` inside each area folder, so no renaming is needed. A cover named `Cover.PNG` (other case) counts as a cover and is not aliased; untested with MPD.
 - **MPD in a container.** Share the folder that holds the mount, not the mount point, with `ro,rslave` (`-v /srv/media:/media:ro,rslave`, and `--security-opt label=disable` on SELinux hosts); then use `/media/sacd` as `music_directory`. Sharing the mount point itself leaves the container on a dead mount after sacdfs restarts.
 - DSF plays as DSD: DoP or native DSD to a capable output, otherwise MPD converts it.
