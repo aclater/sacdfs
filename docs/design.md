@@ -1903,6 +1903,29 @@ Where a system has no equivalent yet, the function documents its fallback and ne
   are Linux-only. Tests that need links, modes, FIFOs or names that aren't UTF-8 are Unix-only.
   Elsewhere, the tests' libraries copy images instead of linking them.
 
+**Options and start-up shared by the front ends (`sacdfs::serve`).** The options that shape the
+files and their limits are two `clap::Args` structs:
+
+- `serve::Options`: formats, pauses, the `--pcm-*` options, tags and lookups, flatten,
+  sidecars, threads and memory;
+- `serve::Limits`: the seek index, open images and the request timeout.
+
+Every front end flattens both into its own command, so the option names, defaults and help text
+are the same everywhere. The Linux `--help` is byte-identical to before.
+
+The steps from options to a `Volume` are library functions, called in this order:
+
+1. `Options::check`;
+2. `Limits::index_cache_dir`;
+3. `Options::scan` and `Options::sizing`;
+4. `open_index_cache`;
+5. `build`, which gives the tree and the engine;
+6. `start_background` and `Background::stop`.
+
+*Why steps and not one call:* a front end puts its own steps between them. The Linux mount checks
+its mount point before the scan, and it becomes a daemon after the scan but before any thread
+exists, so `build`, which starts threads, comes after the fork.
+
 *Why one module:* the spikes put the same `cfg` pairs in a dozen files. With one module, each
 system's differences can be read and reviewed in one place, and the Linux code is visibly the
 code that was there before. *Alternative:* a crate per platform; with this little code, a module
