@@ -477,8 +477,9 @@ host_address() {
 
 # port_open PORT: true when something answers on the port here (if a tool can tell).
 port_open() {
-    if command -v nc >/dev/null 2>&1; then
-        nc -z -w 3 127.0.0.1 "$1" 2>/dev/null
+    # BusyBox nc (ASUSTOR) has no -z: then the listening sockets decide.
+    if command -v nc >/dev/null 2>&1 && nc -z -w 3 127.0.0.1 "$1" 2>/dev/null; then
+        return 0
     elif [ -r /proc/net/tcp ]; then
         hex=$(printf '%04X' "$1")
         cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v p=":$hex" '$2 ~ p"$" && $4 == "0A" { f = 1 } END { exit !f }'
@@ -912,7 +913,7 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
             say "TrueNAS runs sacdfs as a custom app from its own Apps screen; this script doesn't"
             say "install behind it. Apps, Discover Apps, Custom App, Install via YAML, then follow:"
             say "  $DOCS/truenas-scale.md"
-            say "(The app's YAML is deploy/truenas/sacdfs in the repository.)"
+            say "(The YAML to paste is in that guide, step 3.)"
             exit 0
             ;;
         unraid)

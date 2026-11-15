@@ -342,7 +342,7 @@ pub enum Audio {
 }
 
 /// The range of `track`'s track with pause, if it is a valid range longer than the track.
-fn pause_range(area: &scarletbook::Area, track: &Track) -> Option<(u32, u32)> {
+pub(crate) fn pause_range(area: &scarletbook::Area, track: &Track) -> Option<(u32, u32)> {
     let (first, end) = scarletbook::audio::track_range_with_pause(area, u32::from(track.number))?;
     (first <= track.start_frame && end >= track.end_frame() && end > first).then_some((first, end))
 }
@@ -809,6 +809,9 @@ pub struct ReadAhead {
     pub end: u32,
 }
 
+/// Whether a process is a network file server's ([`Reader::opened_by`]).
+pub type IsServer = fn(u32) -> bool;
+
 #[derive(Debug, Default)]
 struct Seq {
     /// The furthest byte read so far.
@@ -825,8 +828,11 @@ struct Seq {
     /// The furthest byte read since then.
     pace_end: u64,
     /// Whether a read has landed far behind the others: a network client reads ahead
-    /// ([`NETWORK_REORDER`]).
+    /// ([`NETWORK_REORDER`]), or a network file server's process opened the file.
     networked: bool,
+    /// The process that opened the file, and how to tell whether it is a network file
+    /// server's, until that is asked ([`Reader::opened_by`]).
+    opener: Option<(u32, IsServer)>,
     /// When the first read of audio came, and where it started.
     started: Option<(std::time::Instant, u64)>,
     /// Frames below this one (file index) are given up already ([`Engine::give_up`]).
@@ -896,16 +902,20 @@ impl Drop for Reader {
 impl Reader {
     /// A reader of `file`.
     pub fn new(file: Arc<TrackFile>) -> Self {
-        Self::opened_by(file, false)
+        Self::opened_by(file, 0, |_| false)
     }
 
-    /// A reader of `file`, opened by a network file server's process if `network`: behind a
-    /// network client from its first read, whatever the order of its reads (#362).
-    pub fn opened_by(file: Arc<TrackFile>, network: bool) -> Self {
+    /// A reader of `file`, opened by process `pid`: behind a network client, whatever the order
+    /// of its reads, if `is_server(pid)` says it is a network file server's (#362). That is
+    /// asked once, and only when it matters: when the reader has read `FAST_AFTER` (4 MiB), since
+    /// below that its pace is a player's either way. *Why not at the open (#403):* the answer
+    /// costs two reads of `/proc`, about 25 microseconds, and a scan of short files opened
+    /// through the mount was 10 % slower for it.
+    pub fn opened_by(file: Arc<TrackFile>, pid: u32, is_server: IsServer) -> Self {
         Reader {
             file,
             stream: Mutex::new(Stream::default()),
-            seq: Mutex::new(Seq { networked: network, ..Seq::default() }),
+            seq: Mutex::new(Seq { opener: Some((pid, is_server)), ..Seq::default() }),
             reads: Arc::default(),
             flight: Mutex::new(Flight::default()),
             id: NEXT_READER.fetch_add(1, Ordering::Relaxed),
@@ -1106,6 +1116,13 @@ impl Reader {
         }
         if self.paused() {
             s.paused = true;
+        }
+        // Whether a file server opened it matters only from FAST_AFTER on ([`Reader::pace`]
+        // and the slow rule below), so it is asked then, once (#403).
+        if s.paced >= FAST_AFTER {
+            if let Some((pid, is_server)) = s.opener.take() {
+                s.networked = s.networked || is_server(pid);
+            }
         }
         let now = std::time::Instant::now();
         let traffic = engine.traffic();
@@ -1458,20 +1475,39 @@ mod tests {
         assert!(starting.player.load(Ordering::Relaxed), "too early to tell: a player");
     }
 
-    /// A reader opened by a network file server's process is behind a network client from its
-    /// first read, even if its reads arrive in order (#362).
+    /// A reader opened by a network file server's process is behind a network client whatever
+    /// the order of its reads (#362). Whose process it is, is asked once, and only once the
+    /// reader has read enough for it to matter (#403).
     #[test]
-    fn a_reader_opened_by_a_network_server_is_networked_at_once() {
+    fn a_reader_opened_by_a_network_server_is_networked_once_it_matters() {
+        static ASKED: AtomicU32 = AtomicU32::new(0);
+        fn server(pid: u32) -> bool {
+            ASKED.fetch_add(1, Ordering::Relaxed);
+            pid == 7
+        }
         let tree = corpus();
         let f = longest_dsf(&tree);
         let engine = Engine::new(4, 32 << 20).unwrap();
-        let local = Reader::new(f.clone());
-        let served = Reader::opened_by(f.clone(), true);
+        let local = Reader::opened_by(f.clone(), 8, server);
+        let served = Reader::opened_by(f.clone(), 7, server);
+        let read = |r: &Reader, i: u64| {
+            r.plan_read_ahead(&engine, i * (128 << 10), (i + 1) * (128 << 10), 0, 1);
+        };
+        // A scanner's short read: nobody asks.
         for r in [&local, &served] {
             for i in 0..8 {
-                r.plan_read_ahead(&engine, i * (128 << 10), (i + 1) * (128 << 10), 0, 1);
+                read(r, i);
             }
         }
+        assert_eq!(ASKED.load(Ordering::Relaxed), 0, "not asked below FAST_AFTER");
+        assert!(!served.seq.lock().unwrap().networked);
+        // In order, past FAST_AFTER: asked once per reader.
+        for r in [&local, &served] {
+            for i in 8..48 {
+                read(r, i);
+            }
+        }
+        assert_eq!(ASKED.load(Ordering::Relaxed), 2, "asked once each");
         assert!(!local.seq.lock().unwrap().networked, "in order, opened locally");
         assert!(served.seq.lock().unwrap().networked, "in order, opened by a file server");
     }

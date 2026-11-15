@@ -1285,6 +1285,29 @@ Player: worst read, ms, max (median); copies: seconds until all end, median (ran
 - **Audio:** every DSF and WAV file of the test corpus and a 6-channel DST disc (970 files,
   20 GB) read through 0.6.3's code and the change's has the same SHA-256.
 
+### Opening files: the file server's process (#403)
+
+The change above first looked up the process of every open of a track file, two reads of
+`/proc`. That cost about 25 microseconds per open (21.6 and 24.9 microseconds per open and
+close on 0.6.3, 45.3 and 55.2 with the lookup; 5 files opened 200 times, 7 repeats), and the CI
+benchmark's plain-DSD workload, which mounts a small image 150 times and reads its short DSF
+files, was about 10 % slower than on 0.6.3. Now the process is looked up once a reader has read
+4 MiB, which is when it first matters ([design](design.md#read-ahead)), so a file read only in
+part, or a short one, never pays for it.
+
+**How measured:** `scripts/bench_compare.py` with `scripts/bench_workload.py` (the CI benchmark's
+workloads), on a Linux test host with an Intel Core i9-13900H, pinned to its P-cores, builds
+alternating, medians (range) of 15 rounds, seconds:
+
+| plain-dsd, base against head | Base | Head | Head / base |
+|---|---|---|---|
+| 0.6.3 against main (lookup at every open) | 0.173 (0.168-0.293) | 0.190 (0.185-0.334) | **1.102** |
+| 0.6.3 against this change | 0.172 (0.168-0.176) | 0.172 (0.168-0.179) | 0.996 |
+| main against this change | 0.179 (0.176-0.187) | 0.166 (0.162-0.169) | 0.924 |
+
+Bisected (9 rounds each, against 0.6.3): the step came with the lookup (1.08 to 1.10); the I/O
+error logging of #371 was level (1.01). The DST workloads showed no gap (dst-stereo 1.02 on main).
+
 ## A player beside copies starting on a busy server (#362)
 
 **What was left after #381.** Over NFS, four copies beside a player on 2 slow cores no longer
