@@ -126,7 +126,11 @@ Unraid.
   1.0.2; the committed `app.yaml` is that output, and a second run changes nothing. `ci.py
   --render-only` renders both test value sets with no warning, its `docker compose config` step
   included (Docker Compose 2.32.4 behind rootless Podman); `check_metadata.py`,
-  `port_validation.py` and `apps_dev_charts_validate validate` pass. The rendered files were
+  `port_validation.py` and `apps_dev_charts_validate validate` pass. The catalog's CI also runs
+  `ci.py` without `--render-only`, which starts the app with Docker Compose and waits for it to
+  turn healthy; that run needed the test value sets to let the images folder be created
+  (`create_host_path: true`), and then passed for both on Fedora 44 in a VM with Docker 29.9 and
+  Compose 5.7 (SELinux permissive, as the catalog's CI hosts have none). The rendered files were
   installed on TrueNAS (above).
 - **Re-run for 0.6.3 (catalog `main` cloned 2026-11-14):** with the image tag and `app_version`
   set to 0.6.3, the catalog's `generate_metadata.py` raised `version` to 1.0.1 and reworded three
