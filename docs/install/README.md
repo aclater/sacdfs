@@ -142,7 +142,7 @@ Upgrading from 0.4.0 with albums catalogued by beets-pysacd: follow
   player was tested with:** [clients](../clients.md).
 - **Without a container, on any Linux host:** a [release binary](binary.md#binaries), or
   `cargo install --locked sacdfs` ([from source](binary.md#from-source)).
-- **Unraid and TrueNAS app-store entries:** [store-apps.md](store-apps.md).
+- **App-store entries** (Unraid, TrueNAS, CasaOS and ZimaOS, Cosmos Cloud, Umbrel): [store-apps.md](store-apps.md).
 - **Have a NAS we have not run on?** Reports from real hardware are welcome on
   [#82](https://github.com/aclater/sacdfs/issues/82); see [beta testing](../beta-testing.md).
 
