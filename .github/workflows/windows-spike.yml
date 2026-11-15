@@ -51,7 +51,9 @@ jobs:
         run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
       - run: cargo build --release --locked
       - name: Mount the corpus and hash every file
-        # The mount point under /tmp, as the tests' (fusermount3 refuses the runner's temp folder).
+        # As root: fusermount3 refused the build user's mount here (the tests mount through
+        # fuser's own session).
+        shell: bash
         run: |
           mnt=$(mktemp -d)
           target/release/sacdfs tests/corpus/images "$mnt" --no-index-cache
