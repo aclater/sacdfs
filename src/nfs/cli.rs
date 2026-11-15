@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 
 use super::serve::{self, DEFAULT_LISTEN, Mount};
 use super::{Callers, NfsFront, handle};
@@ -72,7 +72,15 @@ pub struct Args {
 /// Runs `sacdfs-nfs` with `args` (the program name first).
 pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     let argv: Vec<OsString> = args.into_iter().collect();
-    let args = Args::parse_from(&argv);
+    // Named as it was started: `sacdfs` on macOS runs this too.
+    let started_as_sacdfs =
+        argv.first().and_then(|a| std::path::Path::new(a).file_stem()).is_some_and(|n| n == "sacdfs");
+    let name = if started_as_sacdfs { "sacdfs" } else { "sacdfs-nfs" };
+    let matches = Args::command().name(name).get_matches_from(&argv);
+    let args = match Args::from_arg_matches(&matches) {
+        Ok(a) => a,
+        Err(e) => e.exit(),
+    };
     if args.launch_agent {
         return match super::agent::write(&argv) {
             Ok(()) => ExitCode::SUCCESS,
