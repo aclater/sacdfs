@@ -1723,6 +1723,28 @@ Two kinds of probe are answered so that the kernel stops asking (#61):
     it advertising or forwarding xattrs for an FSAL_VFS export (its export options cover ACLs
     and security labels only), and dropping NFSv4.2 would break the documented `vers=4.2`
     mount.
+  - *POSIX ACLs (#439):* sacdfs asks for `FUSE_POSIX_ACL` at `init`, so the kernel answers
+    `system.posix_acl_access` and `system.posix_acl_default` with `ENODATA` ("no ACL"), on
+    6.1 as on current kernels. NFS-Ganesha's FSAL_VFS, built with POSIX ACL support as in the
+    image, reads the access ACL, and a directory's default ACL, of every object whose
+    attributes it fetches, through libacl, which turns `ENODATA` into an ACL made from the mode but fails on
+    `EOPNOTSUPP`. Ganesha then fails the request with `NFS4ERR_NOTSUPP`: "Unknown error 524"
+    on the first listing. Without `FUSE_POSIX_ACL`, kernels before 6.2 send these names to
+    the daemon like any other, so once `ENOSYS` is remembered they get `EOPNOTSUPP`; from
+    6.2 on, the kernel answers them itself with `ENODATA` when the mount is in the host's
+    user namespace (rootful containers), which is why Fedora and TrueNAS SCALE hosts worked
+    and Debian 12 (6.1) did not. With `FUSE_POSIX_ACL` the kernel answers `ENODATA` itself
+    on both, after the one `GETXATTR` whose `ENOSYS` it remembers. It also makes the kernel
+    check permissions from the modes (`default_permissions`, which the mount already sets)
+    and consult the ACL it has cached, which is "none".
+    - *Why not `ENODATA` for the ACL names only:* the kernel would have to keep asking, so
+      `getxattr` could never answer `ENOSYS`; every name Samba asks for on each open would
+      reach sacdfs again, as on 0.4.0-rc.4 above.
+    - *Kernels before 4.9* have no `FUSE_POSIX_ACL` (sacdfs logs that it isn't offered) and
+      still answer `EOPNOTSUPP`, so the container's NFS export would still fail there
+      (untested: the NAS systems on such kernels in the test VMs run no container runtime).
+    - *Why not a Ganesha setting:* FSAL_VFS reads the ACL whatever the request asks for, and
+      `Disable_ACL` is not read on that path in 9.16's source.
   - *Known limit:* a named lookup over NFS (`getfattr -n user.x`) still gets
     `NFS4ERR_NOTSUPP` and prints "Unknown error 524"; locally it says "Operation not
     supported". `ls -l`, `getfattr -d` and file reads over NFS print no error.
