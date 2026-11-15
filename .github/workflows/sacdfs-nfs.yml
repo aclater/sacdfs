@@ -1,7 +1,9 @@
 # The NFS front end, `sacdfs-nfs` (#420): macOS's way to mount, and NFS clients' without FUSE.
 # On Linux: clippy and the tests with the `nfs` feature, then the corpus served by sacdfs-nfs
 # and mounted by the kernel's NFS client, compared file by file with a FUSE mount of the same
-# commit, across a server restart with a file open (tests/macos-nfs.sh).
+# commit, across a server restart with a file open (tests/macos-nfs.sh). On macOS (Apple
+# Silicon and Intel): the tests, and the same checks with the Mac's own NFS client, mounted
+# as the runner's user by `sacdfs-nfs SOURCE MOUNTPOINT`; nothing is installed on the runner.
 name: sacdfs-nfs
 
 on:
@@ -55,3 +57,39 @@ jobs:
           tests/macos-nfs.sh target/release/sacdfs-nfs nfs.sha256
           cmp fuse.sha256 nfs.sha256
           echo "$(wc -l < nfs.sha256) files: identical"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: fuse-sha256
+          path: fuse.sha256
+
+  macos:
+    name: sacdfs-nfs (${{ matrix.runner }})
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        # Apple Silicon and Intel.
+        runner: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal --component clippy && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sw_vers && uname -m
+      - run: cargo clippy --locked --features nfs --all-targets -- -D warnings
+      - name: The tests
+        run: cargo test --locked --features nfs --no-fail-fast
+      - run: cargo build --locked --release --features nfs --bins
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: fuse-sha256
+      - name: NFS mount as the user, compared with Linux FUSE
+        run: |
+          tests/macos-nfs.sh target/release/sacdfs-nfs nfs.sha256
+          cmp fuse.sha256 nfs.sha256
+          echo "$(wc -l < nfs.sha256) files: identical to Linux"

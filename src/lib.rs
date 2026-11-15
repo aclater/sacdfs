@@ -25,7 +25,8 @@ pub mod index_cache;
 pub mod lookup;
 pub mod memory;
 pub mod names;
-#[cfg(feature = "nfs")]
+// The NFS front end (#420): Unix only (macOS and Linux).
+#[cfg(all(feature = "nfs", unix))]
 pub mod nfs;
 pub mod pcm;
 pub mod platform;
