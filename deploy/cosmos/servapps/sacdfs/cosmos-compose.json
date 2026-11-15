@@ -1,0 +1,92 @@
+{
+  "cosmos-installer": {
+    "form": [
+      {
+        "name": "imagesPath",
+        "label": "Folder that holds your SACD images (ISO files). It is mounted read-only.",
+        "initialValue": "{DefaultDataPath}/music",
+        "type": "path"
+      },
+      {
+        "name": "formats",
+        "label": "Files to show: DSF and WAV, or DSF only (for Roon or MPD)",
+        "initialValue": "dsf,wav",
+        "type": "select",
+        "options": [["dsf,wav", "DSF and WAV"], ["dsf", "DSF only"], ["wav", "WAV only"]]
+      },
+      {
+        "name": "smbUser",
+        "label": "SMB user name (leave empty for guest access, read-only, open to your whole network)",
+        "initialValue": "",
+        "type": "text"
+      },
+      {
+        "name": "smbPassword",
+        "label": "SMB password (used only with a user name)",
+        "initialValue": "{Passwords.0}",
+        "type": "password"
+      },
+      {
+        "name": "nfsClients",
+        "label": "Who may mount over NFS, for example 192.168.1.0/24 (leave empty for everyone)",
+        "initialValue": "",
+        "type": "text"
+      }
+    ],
+    "post-install": [
+      {
+        "type": "info",
+        "name": "shares",
+        "label": "The share is named sacd: SMB on port 10445 and NFS on port 12049 of this server. Clients name these ports when they mount; see https://github.com/aclater/sacdfs/blob/main/docs/install/linux-client.md"
+      }
+    ]
+  },
+  "minVersion": "0.17.0",
+  "services": {
+    "{ServiceName}": {
+      "image": "ghcr.io/aclater/sacdfs:0.6.4@sha256:2039b43f413feafed41504f6c91170538bb18c3f40f01971b21a2d01e4609192",
+      "container_name": "{ServiceName}",
+      "restart": "unless-stopped",
+      "labels": {
+        "cosmos-icon": "https://azukaar.github.io/cosmos-servapps-official/servapps/sacdfs/icon.png"
+      },
+      "devices": ["/dev/fuse:/dev/fuse"],
+      "cap_drop": ["ALL"],
+      "cap_add": ["SYS_ADMIN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "SETUID", "SETGID", "NET_BIND_SERVICE", "SETPCAP"],
+      "security_opt": ["no-new-privileges:true", "apparmor=unconfined"],
+      "ports": ["10445:445/tcp", "12049:2049/tcp"],
+      "environment": [
+        "SACDFS_FORMATS={Context.formats}",
+        "SACDFS_FLATTEN=0"
+        {if Context.smbUser}
+        , "SMB_USER={Context.smbUser}"
+        , "SMB_PASSWORD={Context.smbPassword}"
+        {/if}
+        {if Context.nfsClients}
+        , "NFS_CLIENTS={Context.nfsClients}"
+        {/if}
+      ],
+      "volumes": [
+        {
+          "source": "{Context.imagesPath}",
+          "target": "/images",
+          "type": "bind",
+          "readOnly": true
+        },
+        {
+          "source": "{ServiceName}-cache",
+          "target": "/cache",
+          "type": "volume"
+        }
+      ],
+      "healthcheck": {
+        "test": ["CMD", "/usr/local/bin/healthcheck.sh"],
+        "interval": 30,
+        "timeout": 10,
+        "start_period": 300,
+        "retries": 3
+      },
+      "stop_grace_period": 30
+    }
+  }
+}
