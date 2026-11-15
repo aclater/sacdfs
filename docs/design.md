@@ -213,7 +213,7 @@ the 2,000 that earlier versions documented as working there. The rest of the lim
 taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
 is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
 
-**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB. *Decision:* the coordinator
+**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB (below 256 MiB since #271, below). *Decision:* the coordinator
 set the rule after #230's fix: with the fix, 8 no longer buys a player's safety, so the default is 16 if
 16 holds the player (real time, under 1 s behind) and a scan alone stays within 5 % of 32, otherwise 32
 everywhere. Measured on P-cores of a mobile Core i9, a fresh container per run, 3 runs each, a 6-channel
@@ -232,6 +232,16 @@ it needed then: without the fix, a player held real time at 8 and fell to 0.34 t
 *Trade-off:* beside a player, four scanners on 4 cores read 12 % less between them at 16 than at 32
 (71.5 against 81.3 MB/s). Limits above 512 MiB keep 32; they weren't measured. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
 defaults don't change.
+
+**Revised: 16 only below 256 MiB** (#271). The scans above were local. Through Samba and the Linux
+kernel SMB client, whose concurrent reads arrive out of order, the same rule fails at both limits:
+a whole-file WAV copy alone was 15 % slower at 16 than at 32, and four copies beside a player 18 %;
+on 2 slow cores at 256 MiB beside four copies, the player's worst read was 3.4 s at 16 against
+1.0 s at 32, with 23 % more CPU, because frames were evicted before they were read (3 runs each,
+the player harness of #357). So, by the rule, 32 from 256 MiB up. *Trade-off:* about 16 MiB more
+resident (45 against 62 MiB peak in the 256 MiB runs), which the memory watch gives back above
+85 % of the limit. *Not measured:* limits below 256 MiB, which keep 16, and large libraries at
+256 MiB with the larger cache.
 
 **What real clients and tags files added.** Three costs lay outside the budget, and running under real
 NFS clients and `--tags` found them.
