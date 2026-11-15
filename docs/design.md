@@ -1989,7 +1989,22 @@ approval.
   while the server restarts; a server gone for good fails reads after about a minute and macOS
   unmounts the folder itself, which also ends a mount left behind; `soft` failed every read
   after 6 to 8 s on macOS 27.2, whatever `timeo` and `retrans` said), `rsize=1048576` and
-  `rdirplus`. On Linux: `soft,timeo=10,retrans=30`. `nobrowse` is not set by default, so the mount shows
+  `rdirplus`. On Linux: `soft,timeo=10,retrans=30`.
+- **Signing and notarisation: the owner's decision, nothing bought.** The release archives hold
+  binaries signed ad hoc by the linker (which Apple Silicon needs to run them) and nothing more.
+  The options:
+  - *As now:* free. Files fetched with `curl` aren't marked by macOS and run; a browser
+    download needs `xattr -d com.apple.quarantine` first (the guide says so).
+  - *Developer ID signing and notarisation:* an Apple Developer Program membership (99 USD a
+    year; the account's name is what macOS shows users). The release job would import the
+    certificate into a temporary keychain, sign with the hardened runtime and a timestamp, and
+    send each archive to `notarytool` with an App Store Connect API key, all three kept as
+    repository secrets. A bare binary can't carry the notarisation ticket (only an app, a
+    disk image or an installer package can), so Gatekeeper checks it online on first run;
+    a `.pkg` installer would carry it.
+  - *Homebrew:* a formula in a tap of this project's, building from source or fetching the
+    archive. Homebrew's downloads aren't marked, so nothing needs signing; whether
+    homebrew-core or homebrew-cask would take it is their reviewers' call. `nobrowse` is not set by default, so the mount shows
   in the Finder; `-o nobrowse` hides it.
 
 ## Concurrency
