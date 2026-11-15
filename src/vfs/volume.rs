@@ -755,7 +755,7 @@ impl Shared {
                             s.target.display()
                         ),
                     );
-                    return Err(Error::Os(libc::EMFILE));
+                    return Err(Error::Os(crate::platform::TOO_MANY_OPEN_FILES));
                 };
                 match self.tree.open_sidecar(s) {
                     Ok(file) => Open::Sidecar(Arc::new(SidecarOpen { file, _slot: slot }), s.clone()),

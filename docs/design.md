@@ -1878,20 +1878,23 @@ Where a system has no equivalent yet, the function documents its fallback and ne
 | Function | Linux (unchanged) | macOS | Windows |
 |---|---|---|---|
 | `read_at`, `read_exact_at` | `pread` (`FileExt`) | same | `seek_read`: every read names its offset |
-| `mtime`, `file_id` | `stat`'s times, `st_dev` and `st_ino` | same | `modified()`; identity (0, 0) for now, so size and time alone tell a replaced image |
+| `mtime`, `file_id`, `file_id_at` | `stat`'s times, `st_dev` and `st_ino` | same | `modified()`; the volume serial number and file index (`GetFileInformationByHandle`) |
 | `stale`, `cross_device` and their tests | `ESTALE`, `EXDEV` | same | a marked `io::Error`, `CrossesDevices` |
 | `os_from_bytes` (path bytes from `as_encoded_bytes`) | the bytes | same | UTF-8 |
 | `set_open_flags` (`NO_FOLLOW`, `NON_BLOCK`, `NO_CTTY`), `set_create_mode`, `make_private_dir` | `O_NOFOLLOW`, `O_NONBLOCK`, `O_NOCTTY`, modes | same | `FILE_FLAG_OPEN_REPARSE_POINT`; no modes (the profile's access list) |
 | `open_regular` (images, `verify`) | `O_NONBLOCK` open, `fstat`, then blocking again | same | open, then the regular-file check |
 | `Dir`, `open_root`, `open_dir_at`, `stat_at`, `open_file_at`, `read_link_at` (sidecars) | `openat` from an `O_PATH` descriptor | a read-only descriptor (no `O_PATH`) | by path, checking each folder for a reparse point; not race-free like `openat` |
-| `next_hole`, `next_data` (sparse areas) | `SEEK_HOLE`, `SEEK_DATA` | same | none found: the zero-run sampling alone tells |
-| `fs_size` (`statfs` without images) | `statvfs` | same, with a 32-bit `fsblkcnt_t` | unsupported for now: 0 blocks |
-| `lower_thread_priority` (lookup worker) | nice 19, idle I/O class | `PRIO_DARWIN_BG` | none for now |
+| `next_hole`, `next_data` (sparse areas) | `SEEK_HOLE`, `SEEK_DATA` | same | `FSCTL_QUERY_ALLOCATED_RANGES` |
+| `fs_size` (`statfs` without images) | `statvfs` | same, with a 32-bit `fsblkcnt_t` | `GetDiskFreeSpaceExW`'s total, in 4096-byte blocks |
+| `lower_thread_priority` (lookup worker) | nice 19, idle I/O class | `PRIO_DARWIN_BG` | `THREAD_MODE_BACKGROUND_BEGIN` |
+| `cache_home` (seek index default) | `$XDG_CACHE_HOME`, else `~/.cache` | same | `%LOCALAPPDATA%` |
+| `is_transient`, `TOO_MANY_OPEN_FILES` | `EMFILE`, `ENFILE`, `ENOMEM`, `EIO`, `EAGAIN`, `EINTR`; `EMFILE` | same | the Win32 equivalents; `ERROR_TOO_MANY_OPEN_FILES` |
+| `writable` (`--musicbrainz`'s tags folder) | `access(W_OK)` | same | the folder isn't read-only |
 | `process_name` (network-server pacing, #362) | `/proc/PID/status` and `comm` | none: the read order alone tells | none: the read order alone tells |
 
-- **The Windows fallbacks** marked "for now" are listed in #419 with their replacements. Those
-  are the volume serial number and file index, `GetDiskFreeSpaceExW`, `THREAD_MODE_BACKGROUND_BEGIN`,
-  `FSCTL_QUERY_ALLOCATED_RANGES`, and `NtCreateFile` relative to a folder handle.
+- **What stays a fallback on Windows:** confined sidecar opens go by path. `NtCreateFile`
+  relative to a folder handle, with `FILE_FLAG_OPEN_REPARSE_POINT`, would make them race-free
+  like `openat` (#419).
 - **Dependencies:**
   - `nix` and `signal-hook` are Unix-only.
   - `fuser` is Linux-only. On macOS it needs libfuse at build time, and it supports neither

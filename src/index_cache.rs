@@ -260,13 +260,10 @@ pub fn global() -> Option<&'static Arc<IndexCache>> {
     GLOBAL.get()
 }
 
-/// The default cache directory: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`.
+/// The default cache directory: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`
+/// (`%LOCALAPPDATA%\sacdfs` on Windows).
 pub fn default_dir() -> Option<PathBuf> {
-    let abs = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
-    std::env::var_os("XDG_CACHE_HOME")
-        .and_then(abs)
-        .or_else(|| std::env::var_os("HOME").and_then(abs).map(|h| h.join(".cache")))
-        .map(|d| d.join("sacdfs"))
+    crate::platform::cache_home().map(|d| d.join("sacdfs"))
 }
 
 impl IndexCache {

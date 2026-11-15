@@ -61,9 +61,18 @@ pub struct Stamp {
 }
 
 impl Stamp {
-    /// The stamp of a file's metadata.
-    pub fn of(m: &Metadata) -> Stamp {
-        let (dev, ino) = crate::platform::file_id(m);
+    /// The stamp of open `file`, whose metadata is `m`.
+    pub fn of(file: &File, m: &Metadata) -> Stamp {
+        Stamp::with_id(m, crate::platform::file_id(file, m))
+    }
+
+    /// The stamp of the file at `path` now.
+    pub fn at(path: &Path) -> io::Result<Stamp> {
+        let (m, id) = crate::platform::file_id_at(path)?;
+        Ok(Stamp::with_id(&m, id))
+    }
+
+    fn with_id(m: &Metadata, (dev, ino): (u64, u64)) -> Stamp {
         Stamp { dev, ino, len: m.len(), mtime: crate::platform::mtime(m) }
     }
 }
@@ -161,8 +170,8 @@ impl Handles {
             if !check {
                 return Ok(file);
             }
-            let same = match std::fs::metadata(path) {
-                Ok(m) => Stamp::of(&m) == stamp,
+            let same = match Stamp::at(path) {
+                Ok(s) => s == stamp,
                 // Removed from SOURCE (or its link): the open handle still reads the file it
                 // was, so the files still open on it keep reading until released (#153).
                 Err(e) => e.kind() == io::ErrorKind::NotFound,
@@ -273,14 +282,14 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(&vec![0u8; len]).unwrap();
         f.flush().unwrap();
-        let s = Stamp::of(&f.as_file().metadata().unwrap());
+        let s = Stamp::of(f.as_file(), &f.as_file().metadata().unwrap());
         (f, s)
     }
 
     fn opener(path: &Path) -> impl FnOnce() -> io::Result<(File, Stamp)> + '_ {
         move || {
             let f = File::open(path)?;
-            let s = Stamp::of(&f.metadata()?);
+            let s = Stamp::of(&f, &f.metadata()?);
             Ok((f, s))
         }
     }

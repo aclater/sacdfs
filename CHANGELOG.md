@@ -16,6 +16,9 @@ All notable changes to sacdfs are recorded here. The format follows
 - **The mount options and start-up steps that every front end shares are in the library
   (`sacdfs::serve`).** The Windows and macOS front ends take the same options, defaults and help
   text as the Linux mount. The Linux `--help` is unchanged.
+- **Windows: image identity, volume size, sparse areas, background priority and the seek
+  index's default folder use Windows's own calls (#419).** These replace the first port's
+  stand-ins. The default folder is `%LOCALAPPDATA%\sacdfs`. Linux is unchanged.
 - **The cache of frames is 32 MiB under a memory limit of 256 MiB or more; 16 MiB stays only
   below 256 MiB (#271).** It was 16 MiB up to a 512 MiB limit. Through the Linux kernel SMB client
   that made whole-file WAV copies 12 to 31 % slower than at 32 MiB, and on 2 slow cores at 256 MiB

@@ -27,9 +27,31 @@ pub fn mtime(m: &Metadata) -> (i64, i64) {
     (m.mtime(), m.mtime_nsec())
 }
 
-pub fn file_id(m: &Metadata) -> (u64, u64) {
+pub fn file_id(_file: &File, m: &Metadata) -> (u64, u64) {
     (m.dev(), m.ino())
 }
+
+pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
+    let m = std::fs::metadata(path)?;
+    let id = (m.dev(), m.ino());
+    Ok((m, id))
+}
+
+pub fn cache_home() -> Option<PathBuf> {
+    let abs = |v: OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
+    std::env::var_os("XDG_CACHE_HOME")
+        .and_then(abs)
+        .or_else(|| std::env::var_os("HOME").and_then(abs).map(|h| h.join(".cache")))
+}
+
+pub fn is_transient(e: &io::Error) -> bool {
+    matches!(
+        e.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOMEM | libc::EIO | libc::EAGAIN | libc::EINTR)
+    )
+}
+
+pub const TOO_MANY_OPEN_FILES: i32 = libc::EMFILE;
 
 pub fn stale() -> io::Error {
     io::Error::from_raw_os_error(libc::ESTALE)

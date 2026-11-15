@@ -57,10 +57,7 @@ pub fn transient(e: &scarletbook::Error) -> bool {
 
 /// [`transient`] for an I/O error.
 pub fn transient_io(e: &io::Error) -> bool {
-    matches!(
-        e.raw_os_error(),
-        Some(libc::EMFILE | libc::ENFILE | libc::ENOMEM | libc::EIO | libc::EAGAIN | libc::EINTR)
-    )
+    crate::platform::is_transient(e)
 }
 
 /// Bytes of DSF audio a seek is assumed to need first (a common read size of players and
@@ -200,7 +197,8 @@ impl Source {
         if meta.len() != self.inner.len {
             return Err(io::Error::other("image file changed size since it was mounted"));
         }
-        Ok((file, Stamp::of(&meta)))
+        let stamp = Stamp::of(&file, &meta);
+        Ok((file, stamp))
     }
 }
 
@@ -295,7 +293,8 @@ impl Disc {
         // the first audio read does not open the image again (a round trip or two on a
         // network share, #26).
         let handle = crate::handles::next_key();
-        crate::handles::global().insert(handle, file, Stamp::of(&meta));
+        let stamp = Stamp::of(&file, &meta);
+        crate::handles::global().insert(handle, file, stamp);
         let source = Source::new(handle, path, meta.len());
         let mut lib = match scarletbook::Disc::open(ReadAtReader::new(source.clone())) {
             Ok(d) => d,
