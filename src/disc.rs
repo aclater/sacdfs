@@ -439,6 +439,14 @@ impl Disc {
     pub fn readings(&self) -> (u64, u64) {
         (self.readings[0].load(Ordering::Relaxed), self.readings[1].load(Ordering::Relaxed))
     }
+
+    /// The image file, from the cache of open files (opened again if it was closed), for
+    /// a look at where its data is ([`crate::area_data`]). Its file position is shared:
+    /// only positioned reads and `lseek` for holes and data are used on it.
+    pub(crate) fn file(&self) -> io::Result<crate::handles::SharedFile> {
+        let s = &self.source;
+        crate::handles::global().get(s.inner.key, &s.inner.path, || s.open())
+    }
 }
 
 impl Drop for Disc {

@@ -339,7 +339,9 @@ MOUNT/
   as before; its folder shows up with its sidecars only.
 - An image directory whose name collides with a source subdirectory gets ` (2)`. A track
   that fails scarletbook's `check_track` (empty, too many channels, or past the area's
-  capacity) is left out. Names are cut to fit 255 bytes.
+  capacity, counting only sectors that hold data) is left out, and tracks whose frames
+  overlap are shortened or left out ([Track sizes](#track-sizes)). Names are cut to fit 255
+  bytes.
 - `Stereo` and `Multichannel` appear only for areas the disc has.
 - File names come from the track text (title), with `/`, NUL and control characters
   replaced; a track without a title is `NN - Track NN.dsf` ([#185](#discs-without-text-185)).
@@ -360,6 +362,77 @@ MOUNT/
 layer of a hybrid disc is not in SACD images at all, because SACD rippers read only the
 high-density layer; CD rips are ordinary files outside sacdfs. The disc's hybrid flag is not
 shown either: no consumer needs it, and it would add a tag no player uses.
+
+### Track sizes
+
+A track's file size (#402) comes from its frames in the area TOC (start and duration, which the
+library clamps to the area's play time), so a listing reads no audio. On a damaged,
+truncated or padded image those can claim far more than the image holds, or several tracks
+can cover the same frames. Before an area's files are made (`sacdfs::track_ranges`, with
+`sacdfs::area_data` for the sector count), in this order:
+
+1. **The track check.** Each track goes through scarletbook's `check_track`, which refuses
+   a track whose end frame is past what the area's audio sectors in the image can hold, 7
+   frames a sector (specification 4, 4.8). The sector count it is given leaves out the
+   area's sectors that hold no data (below), so they count as missing, as a truncated
+   image's do. A refused track is left out, logged at info as "…: not shown: …".
+2. **Overlaps.** Of the tracks left, taken by start frame, one that runs into the next
+   track to start ends where that one starts ("shown to frame N: runs into track M"), and
+   one that starts where a lower-numbered track starts is left out ("not shown: starts
+   where track M starts"). *Why by start:* the starts are what a player seeks to; a
+   duration that runs past the next start is the part of the TOC that is wrong. *Why after
+   the check:* this step only shortens or leaves out tracks the check passed, so it never
+   shows a file the check alone would not, and a refused track does not cut another short.
+3. **Pauses (`--pauses kept`).** A track is served with its pause only where that range
+   passes the same check and overlaps no other listed track (in track order); otherwise
+   without it ("shown without its pause"). On a normal disc the ranges with pause only
+   touch, so every track keeps its pause, as before.
+
+The listed tracks of an area then share no frame and all end within its play time and
+capacity, so their total stays within one area's worth; a debug assertion and
+`tests/listing_bounds.rs` hold that on the whole corpus. A normal disc's tracks fit and do
+not overlap, and list exactly as before: the corpus lists the same files, with the same
+hashes, but for two images with overlapping tracks (`track-starts-overlap`,
+`track-duration-max`, recorded in `tests/common/mod.rs`) and, with pauses kept, two whose ranges
+with pause overlapped another track or ran past the image's data (`track-starts-reversed`;
+`area-playtime-max`, whose last track was a 16 GB WAV file and no DSF file, and is now
+served without its pause in both). pysacd-extract 0.5.0 writes those overlapping tracks in
+full, as sacdfs 0.6.3 listed them.
+
+**Sectors that hold no data.** An image can be long enough for its TOC while holding no
+audio over much of an area: a hole (a sparse region of the file) or a long run of zero
+bytes. Its tracks would pass the check at their TOC sizes, gigabytes each from a few
+megabytes of data. Reads of such a file stay cheap (missing frames are filled), but the
+sizes are far beyond the data. Only gaps of at least 1 MiB count, so a few zero sectors on
+a damaged disc change nothing.
+
+- *Holes* are found with `lseek` `SEEK_HOLE`/`SEEK_DATA` over the area's audio sectors
+  (whole stored sectors of 2048, 2054 or 2064 bytes), on every listing: no reads, one call
+  on a file without holes, at most 4096 boundaries followed per area. A file system that
+  does not report holes (NFS and SMB shares often do not) reports the whole file as data:
+  nothing is found and nothing is hidden. That is a safe fallback, not detection; the zero
+  sampling below still applies there, since a hole reads as zeros.
+- *Zero runs* are sampled, which costs reads, and only in an area whose play time claims
+  more than 1 frame per audio sector holding data. A real disc's area uses about 0.07
+  (plain DSD, 6 channels) to 0.22 (plain DSD stereo) to 0.5 (DST): 1 is twice the densest
+  real use, so a real disc is never sampled. The sectors are cut into at most 32 equal
+  segments of at least 1 MiB, and a segment whose first and last stored sectors are both
+  all zero bytes counts as a zero run: at most 64 reads of one sector per area. *Why zero
+  bytes:* plain DSD silence is the byte 0x69 and every DST frame has a header, so a long
+  all-zero run is not audio.
+- *Why this cannot hide a real disc's track:* at 7 frames a sector the capacity is about 14
+  to 30 times what a real disc's tracks use, so a real disc would have to lose nearly all
+  of an area to a gap before one of its tracks was refused, and then its frames are not in
+  the image anyway.
+- *What is left:* an image padded with written zeros (not a hole) to more sectors than its
+  play time's frames is not sampled, so its tracks list at their TOC sizes: DSF files at
+  most about 4.6 times the image's size for stereo (a 9408-byte frame per 2048-byte
+  sector), 13.8 times for 6 channels, and WAV files at 176.4 kHz about 1.5 times that. A
+  hole of any size is found where the file system reports it.
+- *Cost (harrison, `performance` profile, warm cache, 30 runs):* the whole corpus lists in
+  5.7 ms before and after. A 4 GiB image on btrfs with zstd compression (128 KiB extents)
+  takes 0.8 ms to list against 0.1 ms, nearly all of it the one `SEEK_HOLE` call walking
+  the extents; a 400 MB image with written zeros, which is sampled, 0.2 ms against 0.1 ms.
 
 ### Flattening (`--flatten`)
 
@@ -2345,7 +2418,16 @@ MusicBrainz IDs on 26.
   folders, which now key their mtime on that path, move with their ancestors. An area listed
   again re-makes its track files; one whose tag changed replaces its node under the same
   number (`Tree::renew`), and a file whose tag is the same keeps its node, so open files and
-  caches stay as they are (an open handle keeps the file it opened). The mtime of a bump is
+  caches stay as they are. A file open while its tag changes fails its next read, and its
+  close, with `EIO` once the kernel sees the new generation, through any lookup or listing of it
+  by any client (#339). The kernel takes a known number with a new generation for a new file and
+  marks the old inode bad (`fuse_iget` in `fs/fuse/inode.c`, "nodeid was reused"). It fails the
+  old descriptor itself, with no request to sacdfs, so sacdfs logs nothing. Reopening reads the
+  new file. *Alternatives, not taken:* keeping the generation would leave NFS handles and the
+  open file's page cache mixing old and new bytes; keeping the old node while a handle is open
+  and renewing it at release would show the edit later and need a second bump; a FUSE node ID
+  apart from the inode number is not possible through fuser, which uses one for both. The
+  mtime of a bump is
   the tags file's when it moved forward (a remount shows the same), else the time now (a
   removal, or an older time put back), so that the folders always move.
   *Why the image's path, not the disc key:* scanners walk folders, and the image's path is

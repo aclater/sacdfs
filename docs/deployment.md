@@ -1210,6 +1210,30 @@ see [Players on the same host](#players-on-the-same-host-no-smb-hop).
   other macOS versions). Walking 13,547 entries took the same time (17 s); a second walk is no
   longer served from the cache (5 s with it). Not run: Finder, NFS, other macOS releases
   (#308).
+- **A player beside copies over SMB can wait for seconds; mount over NFS for that (#378).** The
+  macOS SMB client reads ahead in growing windows (8, 16, 32 MiB and more) and keeps about 32
+  reads of 1 MiB in flight on the one connection. When copies run beside a player, it sends the
+  copies' reads first and the read the player waits for last, and sometimes asks again for data
+  it had already read ahead. The server answers each read in the order it arrives, so the player
+  waits behind everything already asked for. The wait grows as the server's or network's
+  throughput falls. No Samba setting tried helped: fewer SMB credits made it worse. Measured on
+  macOS 27.2 in a VM on Apple hardware, against the Samba and NFS-Ganesha of the 0.6.3 image
+  sharing plain 1.3 GB WAV files without sacdfs (sacdfs's test discs are too short for this), with
+  a reader at the 6-channel 176.4 kHz rate (64 KiB reads) beside four `cat` copies of other
+  files, 3 to 5 runs per cell:
+
+  | Server and client | Copies, wall | Reads over 100 ms per run | Worst read |
+  |---|---|---|---|
+  | SMB, full speed (about 230 MB/s) | 23 s | 3 to 9 | 0.67 to 0.88 s |
+  | SMB, limited to 600 Mbit/s | 79 s | 7 to 12 | 2.3 to 2.9 s |
+  | NFS 4.0, full speed | 23 s | 0 | 9 to 10 ms |
+  | NFS 4.0, limited to 600 Mbit/s | 78 s | 0 | 31 to 55 ms |
+  | Linux 7.2 SMB client on the server's host, limited to 600 Mbit/s | 78 s | 1 | 0.61 to 0.62 s |
+
+  Use the NFS mount above for a player on a Mac that also copies from the share; copies take
+  the same time over both. Over NFS and over SMB, all 914 WAV and DSF files of the test corpus
+  read from sacdfs byte for byte as the server reads them. Not run: macOS 15, a physical Mac,
+  Finder copies, player apps.
 - **After a restart of the container** an SMB mount on macOS drops and has to be mounted again: see
   [SMB and restarts](#smb-and-restarts).
 
