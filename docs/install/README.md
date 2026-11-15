@@ -131,6 +131,9 @@ Linux and Windows clients carry on by themselves. **A macOS client loses the SMB
 must mount it again** after every upgrade or restart. Never stop sacdfs with `kill -9`: use the
 stop step in your guide ([why](nas-binary.md#start-at-boot-and-stop-safely)).
 
+Upgrading from 0.4.0 with albums catalogued by beets-pysacd: follow
+[these steps](../user-guide.md#discs-without-text) before any `beet update`.
+
 ## Details
 
 - **Where each guide was checked** is at the end of that guide, under Details. Guides say
