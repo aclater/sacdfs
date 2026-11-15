@@ -103,11 +103,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).try_init();
     match run(&args) {
         Ok(summary) => {
-            eprint!("{}", summary.render());
+            eprint!("{}", crate::safe_file::printable(&summary.render()));
             if summary.all_identical() { ExitCode::SUCCESS } else { ExitCode::from(2) }
         }
         Err(e) => {
-            eprintln!("sacdfs verify: {e}");
+            eprintln!("sacdfs verify: {}", crate::safe_file::printable(&e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -293,7 +293,7 @@ fn walk(
         let entries = match fs::read_dir(&dir) {
             Ok(e) => e,
             Err(e) => {
-                log::warn!("{}: {e}", dir.display());
+                log::warn!("{}: {e}", crate::safe_file::shown(&dir));
                 continue;
             }
         };
@@ -729,7 +729,12 @@ impl Summary {
             let mut keys: Vec<(&str, usize)> = keys.into_iter().collect();
             keys.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
             if !keys.is_empty() {
-                let top: Vec<String> = keys.iter().take(8).map(|(k, n)| format!("{k} ({n})")).collect();
+                // Each key on its own line's terms: a key (a TXXX description) can hold any character.
+                let top: Vec<String> = keys
+                    .iter()
+                    .take(8)
+                    .map(|(k, n)| format!("{} ({n})", crate::safe_file::one_line(k)))
+                    .collect();
                 s.push_str(&format!("  other tags, most common: {}\n", top.join(", ")));
             }
         }
@@ -1152,5 +1157,20 @@ mod tests {
     fn numbers_from_names() {
         assert_eq!(leading_number(Path::new("/x/07 - a.dsf")), Some(7));
         assert_eq!(leading_number(Path::new("/x/a.dsf")), None);
+    }
+
+    /// Frame keys in the summary (a TXXX description) are escaped one by one: no control
+    /// character reaches the terminal, and no key makes a line of its own.
+    #[test]
+    fn summary_keys_are_escaped() {
+        let keys = ["TXXX:\x1b]0;title\x07\x1b[2J", "TXXX:a\nUNSUPPORTED (1): forged"];
+        let mut row = Row::new("/a.dsf".into(), 1, "1.5".into()).with(Status::Identical, String::new());
+        for k in keys {
+            row.loses.add(k);
+        }
+        let out = Summary { rows: vec![row], ignored: 0 }.render();
+        assert!(!out.chars().any(|c| c.is_control() && c != '\n'), "{out:?}");
+        assert!(!out.lines().any(|l| l.starts_with("UNSUPPORTED")), "{out}");
+        assert!(out.contains("\\x1b]0;title\\x07\\x1b[2J") && out.contains("a\\x0aUNSUPPORTED"), "{out}");
     }
 }

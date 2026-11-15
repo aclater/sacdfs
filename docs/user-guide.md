@@ -78,6 +78,18 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   listed and between reads, so that a seek does not have to open it again (a round trip or two
   on a network share). The least recently used image is closed when the limit is reached, and
   any image unused for 5 minutes is closed.
+- Open files in all: at start sacdfs raises its own limit on open files to the most the system
+  allows it (the hard limit, `ulimit -Hn`), and warns in the log if that is below 4096; `-v`
+  logs the limit and how it is shared out. Image files kept open (`--max-open-images`) are
+  held to half of the limit less 128, with a warning. Open sidecar files (cover art, a
+  booklet) are bounded by what is left: the limit, less the image files and 128, between 8
+  and 4096. An open past that bound fails with "too many open files" for the program that
+  asked, and a rate-limited warning in the log, so open sidecars never take the files the
+  images need. An image that fails to open for a passing reason (too many open files, short
+  of memory, an I/O error) is left out of its folder only for a while: the folder is listed
+  again a second after, then after waits that double up to a minute while it keeps failing.
+  An image that fails with an I/O error three times in a row (a failing disk, say) is left
+  out like a damaged one, until its file changes or sacdfs restarts.
 - `--request-timeout SECS` (default 30, `0` for none): a request (a read, a lookup, a
   listing) that has waited this long for the source, because a share or disk stopped
   answering, fails with an I/O error and a warning in the log, instead of hanging the program
@@ -712,7 +724,7 @@ silence. The summary counts these files in the reclaimable space.
 **What a deletion would lose.** The `loses` column lists what the extract's tags hold that
 sacdfs's own tag for the track doesn't: `musicbrainz` (MusicBrainz IDs), `art` (embedded
 pictures), `replaygain`, and `other=` with the frame names (a changed title shows up as
-`TIT2`, a genre as `TCON`). sacdfs's tags come from the disc's text only, so anything a
+`TIT2`, a genre as `TCON`; at most 32 names of up to 128 characters, then `+N more`). sacdfs's tags come from the disc's text only, so anything a
 tagger added is listed here. The same information written another way doesn't count: an
 ID3v2.3 date (`TYER` and `TDAT`, day and month in either order) that sacdfs's `TDRC` holds, a disc number of `1/1` (sacdfs
 leaves it out for a single disc), a track number with the total (`3/12`) where sacdfs has `3` and 12 is the area's track count, a `PERFORMER` that is sacdfs's artist, empty frames. The
@@ -721,9 +733,9 @@ summary counts the IDENTICAL files that lose each kind.
 **The report** is tab-separated, one row per file, with a header row: `status`, `path`,
 `bytes`, `mtime`, `image`, `area`, `track`, `channels`, `samples`, `sha256` (of the
 compared audio), `loses` and `reason`. Tabs, newlines and backslashes in fields are
-escaped (`\t`, `\n`, `\\`), as are bytes of a path that aren't UTF-8 (`\xNN`). The summary
-goes to standard error: counts and bytes by status, the reclaimable bytes (the IDENTICAL
-files), and the tags they carry.
+escaped (`\t`, `\n`, `\\`), as are other control characters and bytes of a path that
+aren't UTF-8 (`\xNN`). The summary goes to standard error: counts and bytes by status, the
+reclaimable bytes (the IDENTICAL files), and the tags they carry.
 
 **Exit status:** 0 when every DSF and DFF file is IDENTICAL, 2 when any is not, 1 when the
 check couldn't run or didn't finish.
@@ -749,7 +761,8 @@ A run that fails before it starts writing (a bad path, for example) leaves `FILE
 run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming a descriptor
 (`/dev/stdout`, `/dev/stderr`, `/dev/fd/N`, even if it is redirected to a regular file) or a named
 pipe, the rows are written as they are made, after whatever is there, and only the exit status
-says whether the run finished; `--resume` has nothing to read there.
+says whether the run finished; `--resume` has nothing to read there. A symbolic link to a pipe or
+a device counts as a file: it is replaced by the report.
 
 Examples:
 

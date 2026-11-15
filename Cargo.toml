@@ -1,6 +1,6 @@
 [package]
 name = "sacdfs"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2024"
 rust-version = "1.85"
 description = "Read-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand"
@@ -35,7 +35,7 @@ log = "0.4"
 lru = "0.19"
 # statvfs of SOURCE for statfs (#62), without `unsafe` in sacdfs. Already in the graph
 # through fuser, with the same feature.
-nix = { version = "0.31", default-features = false, features = ["fs"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "resource"] }
 rayon = "1.10"
 signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 # Names and checksums of the persistent seek index's files.

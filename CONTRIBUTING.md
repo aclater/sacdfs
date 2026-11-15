@@ -95,7 +95,10 @@ never moved.
    heading links to its changes. Merge it once its checks pass.
 5. **Tag** the merge commit on `main`: `git tag -a vX.Y.Z -m "sacdfs X.Y.Z" && git push origin vX.Y.Z`.
    The workflow stops before building anything if the tag isn't `v` plus Cargo.toml's
-   version, or CHANGELOG.md has no section for it.
+   version, if CHANGELOG.md has no section for it, or if the tagged commit is on neither `main`
+   nor a `release/*` branch (`.github/scripts/check-tag-reachable.sh`). A patch release cut
+   from an earlier tag instead of `main` is pushed as a branch `release/X.Y.Z` first and tagged
+   there.
 6. **After:** the release has both archives with `.sha256`, `.intoto.jsonl` and
    `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
    `gh attestation verify`; the workflow's last image step has verified the image index, each
