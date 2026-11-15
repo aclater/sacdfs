@@ -39,3 +39,5 @@ jobs:
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
       - name: Tests
         run: cargo test --locked --lib --test vfs --test corpus --test tags --test verify
+      - name: The binary's version
+        run: test "$(cargo run --locked -q --bin sacdfs -- --version)" = "sacdfs $(cargo pkgid | sed 's/.*[@#]//')"
