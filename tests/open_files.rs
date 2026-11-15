@@ -7,6 +7,8 @@
 //!
 //! The mount tests need `/dev/fuse` and `fusermount3`, like `tests/mount.rs`.
 
+// The Linux FUSE mount, or calls only Linux has; other systems run the core's tests (#419, #420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;

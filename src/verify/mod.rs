@@ -254,7 +254,6 @@ fn sacdfs_mounts() -> Vec<PathBuf> {
 
 /// Undoes mountinfo's octal escapes (`\040` for a space).
 fn unescape_octal(s: &str) -> OsString {
-    use std::os::unix::ffi::OsStringExt;
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -268,7 +267,7 @@ fn unescape_octal(s: &str) -> OsString {
             i += 1;
         }
     }
-    OsString::from_vec(out)
+    crate::platform::os_from_bytes(out)
 }
 
 /// Every extract under `root`, sorted by path.
@@ -994,7 +993,10 @@ mod tests {
         let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/images");
         let lib = dir.join("lib");
         std::fs::create_dir_all(&lib).unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(corpus.join("dsd-stereo-mch-2048.iso"), lib.join("x.iso")).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(corpus.join("dsd-stereo-mch-2048.iso"), lib.join("x.iso")).unwrap();
         let tree = Tree::with_options(
             SourceDir::scan(&lib).unwrap(),
             Tuning::default(),

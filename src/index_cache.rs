@@ -21,7 +21,6 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -75,8 +74,8 @@ impl ImageKey {
         Ok(ImageKey::from_parts(
             canonical.as_os_str().as_encoded_bytes(),
             meta.len(),
-            meta.mtime(),
-            meta.mtime_nsec(),
+            crate::platform::mtime(meta).0,
+            crate::platform::mtime(meta).1,
         ))
     }
 
@@ -427,7 +426,7 @@ impl IndexCache {
         let bytes = encode(key, shapes, areas);
         if !self.dir.is_dir() {
             fs::create_dir_all(&self.dir)?;
-            fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))?;
+            crate::platform::make_private_dir(&self.dir)?;
         }
         let name = key.file_name();
         static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -437,12 +436,7 @@ impl IndexCache {
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         let result = (|| {
-            let mut f = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(&tmp)?;
+            let mut f = crate::safe_file::create_new(&tmp, 0o600)?;
             f.write_all(&bytes)?;
             drop(f);
             fs::rename(&tmp, self.dir.join(&name))
@@ -500,7 +494,12 @@ impl IndexCache {
 /// The contents of a regular file of at most [`MAX_FILE`] bytes, not following a
 /// symbolic link.
 fn read_bounded(path: &Path) -> io::Result<Vec<u8>> {
-    let f = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)?;
+    use crate::platform::OpenFlags;
+    let f = crate::platform::set_open_flags(
+        OpenOptions::new().read(true),
+        OpenFlags::NO_FOLLOW | OpenFlags::NON_BLOCK,
+    )
+    .open(path)?;
     let meta = f.metadata()?;
     if !meta.is_file() || meta.len() > MAX_FILE {
         return Err(io::Error::other("not an index file"));
@@ -616,8 +615,10 @@ mod tests {
         assert!(!cache.dir().exists(), "made only when written to");
         assert_eq!(cache.load(&key(), &shapes()), None);
         cache.store(&key(), &shapes(), &areas()).unwrap();
+        #[cfg(unix)]
         assert_eq!(
-            fs::metadata(cache.dir()).unwrap().permissions().mode() & 0o777,
+            std::os::unix::fs::PermissionsExt::mode(&fs::metadata(cache.dir()).unwrap().permissions())
+                & 0o777,
             0o700,
             "private directory"
         );
@@ -647,6 +648,7 @@ mod tests {
         assert_eq!(cache.load(&ImageKey::from_parts(&[b'x', 0], 1, 2, 3), &shapes()), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlinks_and_oversized_files_are_not_read() {
         let dir = tempfile::tempdir().unwrap();

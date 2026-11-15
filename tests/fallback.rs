@@ -39,7 +39,7 @@ fn library(items: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     for (image, path) in items {
         let at = lib.join(path);
         fs::create_dir_all(at.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(common::corpus().join("images").join(image), at).unwrap();
+        common::link(common::corpus().join("images").join(image), at).unwrap();
     }
     (dir, lib)
 }

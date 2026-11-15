@@ -6,6 +6,8 @@
 //! Like `mount.rs`, this needs `/dev/fuse` and `fusermount3`, and skips without them
 //! unless `SACDFS_FUSE_TESTS=1` is set.
 
+// The Linux FUSE mount, or calls only Linux has; other systems run the core's tests (#419, #420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;

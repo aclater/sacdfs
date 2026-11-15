@@ -1185,7 +1185,7 @@ pub fn plan(
 
 #[cfg(test)]
 mod tests {
-    use super::{Options, advice_for, format_rank, read_tags};
+    use super::{Options, advice_for, format_rank};
 
     /// A refusal on ISRCs says what's next, and doesn't suggest what was already tried.
     #[test]
@@ -1222,11 +1222,13 @@ mod tests {
     }
 
     /// A tags file that is a symbolic link is not read.
+    #[cfg(unix)]
     #[test]
     fn a_linked_tags_file_is_not_read() {
         let dir = tempfile::tempdir().unwrap();
         let victim = dir.path().join("victim.toml");
         std::fs::write(&victim, "[album]\ngenre = \"Jazz\"\n").unwrap();
+        use super::read_tags;
         assert!(matches!(read_tags(&victim), Ok(Some(_))));
         let path = dir.path().join("0123.toml");
         std::os::unix::fs::symlink(&victim, &path).unwrap();

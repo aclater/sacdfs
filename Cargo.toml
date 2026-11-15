@@ -26,18 +26,12 @@ include = [
 scarletbook = "=0.5.9"
 # The DSD-to-PCM converter behind the WAV files (#84), from the same release as the engine.
 scarletbook-pcm = "=0.5.9"
-# Pure-Rust FUSE: no libfuse needed, mounts through fusermount3.
-fuser = { version = "0.18", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 libc = "0.2"
 log = "0.4"
 lru = "0.19"
-# statvfs of SOURCE for statfs (#62), without `unsafe` in sacdfs. Already in the graph
-# through fuser, with the same feature.
-nix = { version = "0.31", default-features = false, features = ["fs", "resource"] }
 rayon = "1.10"
-signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 # Names and checksums of the persistent seek index's files.
 sha2 = "0.11"
 # The tags files (#81): TOML, read and written through serde.
@@ -47,6 +41,19 @@ toml = { version = "1.1", default-features = false, features = ["parse", "displa
 # roots, so that the release's binary depends on no system TLS library or CA store.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 serde_json = "1"
+
+# Unix: the platform layer's calls (src/platform/unix.rs).
+[target.'cfg(unix)'.dependencies]
+# statvfs of SOURCE for statfs (#62), `openat` for sidecars, without `unsafe` in sacdfs.
+# Already in the graph through fuser, with the same feature.
+nix = { version = "0.31", default-features = false, features = ["fs", "resource"] }
+signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
+
+# Linux: the FUSE front end (src/fuse.rs, src/linux_main.rs). fuser on macOS needs libfuse at
+# build time and supports neither FUSE-T nor FSKit (#420); Windows has WinFsp (#419).
+[target.'cfg(target_os = "linux")'.dependencies]
+# Pure-Rust FUSE: no libfuse needed, mounts through fusermount3.
+fuser = { version = "0.18", default-features = false }
 
 [dev-dependencies]
 # The converter benchmark (benches/pcm.rs); no plots, no rayon.

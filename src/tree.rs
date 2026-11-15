@@ -31,7 +31,6 @@ use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, TryLockError, Weak};
@@ -501,7 +500,6 @@ thread_local! {
 /// that cannot be read now counts as a candidate: opening it later reports why. An answer is kept
 /// while the image's size and time stay the same ([`LOOKED_AT`]).
 fn may_be_sacd(path: &Path) -> bool {
-    use std::os::unix::fs::FileExt;
     let Ok(meta) = fs::metadata(path) else { return true };
     let (len, mtime) = (meta.len(), meta.modified().ok());
     let with_map = |f: &mut dyn FnMut(&mut Looks)| {
@@ -524,7 +522,7 @@ fn may_be_sacd(path: &Path) -> bool {
         if at + 8 > len {
             continue;
         }
-        match file.read_exact_at(&mut sig, at) {
+        match crate::platform::read_exact_at(&file, &mut sig, at) {
             Ok(()) if &sig == b"SACDMTOC" => {
                 answer = true;
                 break;
@@ -906,7 +904,7 @@ pub struct Tree {
     /// Seconds added to the WAV files' mtime for the PCM options (issue #64).
     wav_mtime_offset: u64,
     /// SOURCE, opened when a sidecar is first looked at.
-    root_fd: OnceLock<Option<OwnedFd>>,
+    root_fd: OnceLock<Option<sidecar::Root>>,
     /// MOUNTPOINT relative to SOURCE, when it is inside it: no sidecar is served from there.
     exclude: Option<PathBuf>,
     /// Whether directories are re-read when their source changes (#101).
@@ -1286,7 +1284,7 @@ impl Tree {
     }
 
     /// SOURCE's directory, opened on first use.
-    fn root_fd(&self) -> Option<&OwnedFd> {
+    fn root_fd(&self) -> Option<&sidecar::Root> {
         self.root_fd
             .get_or_init(|| match sidecar::open_root(self.source()) {
                 Ok(fd) => Some(fd),
@@ -1313,7 +1311,7 @@ impl Tree {
         };
         if now.size != f.meta.size || now.mtime != f.meta.mtime {
             self.art_changed();
-            return Err(io::Error::from_raw_os_error(libc::ESTALE));
+            return Err(crate::platform::stale());
         }
         Ok(file)
     }
@@ -2484,7 +2482,7 @@ impl Tree {
                 };
                 match node {
                     Ok(n) => Some(n),
-                    Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                    Err(e) if crate::platform::is_cross_device(&e) => {
                         log::warn!(
                             "{}: link not followed: it points outside SOURCE or into the mount",
                             sc.path.display()
@@ -2583,13 +2581,26 @@ mod tests {
     /// Builds a source tree in a temporary directory: each path ending in `.iso` is a link
     /// to a corpus image, one with another extension an ordinary file holding its path,
     /// anything else a directory.
+    /// Puts an image at `dst`: a link on Unix, a copy elsewhere (a link on Windows needs a
+    /// privilege).
+    fn link_image(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(src, dst)
+        }
+        #[cfg(not(unix))]
+        {
+            fs::copy(src, dst).map(drop)
+        }
+    }
+
     fn source(paths: &[&str]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for p in paths {
             let path = dir.path().join(p);
             if p.ends_with(".iso") {
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::os::unix::fs::symlink(corpus_image(), &path).unwrap();
+                link_image(corpus_image(), &path).unwrap();
             } else if Path::new(p).extension().is_some() {
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
                 fs::write(&path, p.as_bytes()).unwrap();
@@ -2821,6 +2832,7 @@ mod tests {
         assert!(tree.held_images() <= MIN_HELD + 1, "{}", tree.held_images());
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_image_gone_while_closed_is_gone() {
         let dir = library(24);
@@ -2842,7 +2854,7 @@ mod tests {
         // Its folder not yet read again: the image can't be opened, and that is not kept.
         assert!(tree.children(ino).is_none());
         // Written back: the same directory, listed.
-        std::os::unix::fs::symlink(&target, &iso).unwrap();
+        link_image(&target, &iso).unwrap();
         assert!(!tree.children(ino).unwrap().is_empty());
         // Removed for good: its folder, read again, no longer shows it.
         fs::remove_file(&iso).unwrap();
@@ -3436,7 +3448,7 @@ mod tests {
         let ino = t.resolve(Path::new("Artist/folder.jpg")).unwrap();
         fs::write(dir.path().join("Artist/folder.jpg"), b"a new and longer cover").unwrap();
         let err = t.open_sidecar(&before).unwrap_err();
-        assert_eq!(err.raw_os_error(), Some(libc::ESTALE));
+        assert!(crate::platform::is_stale(&err), "{err}");
         // The next mount shows the new file under the same number, in a new generation.
         let t2 = tree_sc(dir.path(), false);
         assert_eq!(t2.resolve(Path::new("Artist/folder.jpg")), Some(ino));
@@ -3445,6 +3457,7 @@ mod tests {
         assert_eq!(read_sidecar(&t2, "Artist/folder.jpg"), b"a new and longer cover");
     }
 
+    #[cfg(unix)]
     #[test]
     fn links_are_followed_only_inside_source() {
         use std::os::unix::fs::symlink;
@@ -3651,9 +3664,9 @@ mod tests {
         // A new album, a second image in a known one, and an image in a folder that was
         // there (empty) at the first listing.
         fs::create_dir_all(dir.path().join("Artist/B")).unwrap();
-        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/B/y.iso")).unwrap();
-        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/A/z.iso")).unwrap();
-        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/Empty/sub/w.iso")).unwrap();
+        link_image(corpus_image(), dir.path().join("Artist/B/y.iso")).unwrap();
+        link_image(corpus_image(), dir.path().join("Artist/A/z.iso")).unwrap();
+        link_image(corpus_image(), dir.path().join("Artist/Empty/sub/w.iso")).unwrap();
         let now = std::time::SystemTime::now() + Duration::from_secs(5);
         for d in ["Artist", "Artist/A", "Artist/Empty"] {
             fs::File::open(dir.path().join(d)).unwrap().set_modified(now).unwrap();

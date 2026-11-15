@@ -6,7 +6,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 
 use sacdfs::names::{Deduper, NAME_MAX};
 use sacdfs::tags_cli::front_cover;
@@ -34,7 +33,7 @@ fn deduped_name_with_a_long_extension_stays_within_name_max() {
         name.extend(std::iter::repeat_n(b'b', ext_len));
         assert!(name.len() <= NAME_MAX);
         let mut d = Deduper::default();
-        let name = OsStr::from_bytes(&name);
+        let name = OsStr::new(std::str::from_utf8(&name).unwrap());
         assert_eq!(d.unique(name, true), name);
         for _ in 0..3 {
             let unique = d.unique(name, true);
@@ -45,12 +44,14 @@ fn deduped_name_with_a_long_extension_stays_within_name_max() {
 }
 
 /// The same with bytes that aren't UTF-8, each of which takes three bytes once made text.
+/// Unix only: other systems' names are Unicode.
+#[cfg(unix)]
 #[test]
 fn deduped_name_of_invalid_utf8_stays_within_name_max() {
     let mut name = b"a.".to_vec();
     name.extend_from_slice(&[0xFF; 253]);
     let mut d = Deduper::default();
-    let name = OsStr::from_bytes(&name);
+    let name = <OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&name);
     d.unique(name, true);
     assert!(d.unique(name, true).len() <= NAME_MAX);
 }

@@ -125,8 +125,7 @@ struct State {
 }
 
 fn path_hash(p: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_bytes())[..16])
+    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_encoded_bytes())[..16])
 }
 
 fn now_secs() -> u64 {
@@ -276,21 +275,9 @@ impl Worker {
 
 /// Nice 19 and the idle I/O class for this thread, where the system allows: the worker's TOC
 /// reads and its CPU come after everything a client asks for. Best effort.
-#[allow(unsafe_code)]
 fn lower_priority() {
-    // SAFETY: plain system calls on the calling thread, with no pointers.
-    unsafe {
-        // The raw call: glibc before 2.30 (the release's oldest baseline) has no gettid().
-        let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
-        if libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, 19) != 0 {
-            log::debug!("musicbrainz: nice: {}", std::io::Error::last_os_error());
-        }
-        // ioprio_set(IOPRIO_WHO_PROCESS, tid, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0)).
-        const IOPRIO_WHO_PROCESS: libc::c_int = 1;
-        const IOPRIO_CLASS_IDLE: libc::c_int = 3;
-        if libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid, IOPRIO_CLASS_IDLE << 13) != 0 {
-            log::debug!("musicbrainz: ioprio: {}", std::io::Error::last_os_error());
-        }
+    for (what, e) in crate::platform::lower_thread_priority() {
+        log::debug!("musicbrainz: {what}: {e}");
     }
 }
 

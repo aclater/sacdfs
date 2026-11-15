@@ -39,20 +39,10 @@ use crate::index_cache::{AreaShape, ImageKey, IndexCache};
 /// it is) can be replaced between the scan and this open, and an open of a FIFO for reading
 /// blocks until a writer comes, holding a worker for good. So it opens with `O_NONBLOCK`,
 /// refuses anything but a regular file (`fstat`), and then clears `O_NONBLOCK` again (it means
-/// nothing to a regular file on a local filesystem, but goes to the server of a FUSE source).
+/// nothing to a regular file on a local filesystem, but goes to the server of a FUSE source):
+/// [`crate::platform::open_regular`].
 pub fn open_image(path: &Path) -> io::Result<File> {
-    use nix::fcntl::{FcntlArg, OFlag, fcntl};
-    use std::os::unix::fs::OpenOptionsExt;
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC)
-        .open(path)?;
-    if !file.metadata()?.file_type().is_file() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
-    }
-    let flags = OFlag::from_bits_truncate(fcntl(&file, FcntlArg::F_GETFL)?);
-    fcntl(&file, FcntlArg::F_SETFL(flags - OFlag::O_NONBLOCK))?;
-    Ok(file)
+    crate::platform::open_regular(path)
 }
 
 /// Whether `e`, an image's open failing, is a passing condition of the process or the system

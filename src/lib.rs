@@ -6,7 +6,8 @@
 //! The library holds everything but the command line, so that tests can read the files
 //! without mounting: [`tree::Tree`] is the directory tree, [`track::Reader`] reads a byte
 //! range of one file with an [`engine::Engine`], [`vfs::Volume`] answers the requests of any
-//! front end (#22), and [`fuse::SacdFs`] is the Linux FUSE front end on it.
+//! front end (#22), and `fuse::SacdFs` is the Linux FUSE front end on it. [`platform`] holds
+//! what differs between operating systems.
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
@@ -16,6 +17,7 @@ pub mod dsf;
 pub mod engine;
 pub mod errlog;
 pub mod fallback;
+#[cfg(target_os = "linux")]
 pub mod fuse;
 pub mod handles;
 pub mod ident;
@@ -24,6 +26,7 @@ pub mod lookup;
 pub mod memory;
 pub mod names;
 pub mod pcm;
+pub mod platform;
 pub mod printable;
 pub mod safe_file;
 pub mod sidecar;

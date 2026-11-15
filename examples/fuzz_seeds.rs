@@ -214,7 +214,10 @@ fn from_image(out: &mut Out, path: &Path, engine: &Engine) {
 
     // What the mount serves for it, for the readers of `verify`.
     let dir = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(path.canonicalize().unwrap(), dir.path().join("x.iso")).unwrap();
+    #[cfg(not(unix))]
+    std::fs::copy(path, dir.path().join("x.iso")).unwrap();
     let tree = Tree::new(SourceDir::scan(dir.path()).unwrap());
     for (_, file) in tree.all_files().into_iter().take(4) {
         out.seed("verify_id3", file.tag());

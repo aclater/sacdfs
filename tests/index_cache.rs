@@ -288,9 +288,8 @@ fn damaged_and_stale_entries_cost_only_speed() {
         let f = std::fs::File::options().read(true).write(true).open(copy).unwrap();
         let mtime = f.metadata().unwrap().modified().unwrap();
         let sector = |l: u64| {
-            use std::os::unix::fs::FileExt;
             let mut b = vec![0u8; 2048];
-            f.read_exact_at(&mut b, l * 2048).unwrap();
+            sacdfs::platform::read_exact_at(&f, &mut b, l * 2048).unwrap();
             b
         };
         let sh = shapes[0];
@@ -300,10 +299,9 @@ fn damaged_and_stale_entries_cost_only_speed() {
             moved.push(sector(l));
         }
         {
-            use std::os::unix::fs::FileExt;
-            f.write_all_at(&first, sh.start_lsn * 2048).unwrap();
+            common::write_all_at(&f, &first, sh.start_lsn * 2048).unwrap();
             for (i, b) in moved.iter().enumerate() {
-                f.write_all_at(b, (sh.start_lsn + 1 + i as u64) * 2048).unwrap();
+                common::write_all_at(&f, b, (sh.start_lsn + 1 + i as u64) * 2048).unwrap();
             }
         }
         f.set_modified(mtime).unwrap();

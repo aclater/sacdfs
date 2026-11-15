@@ -18,12 +18,10 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io;
-use std::os::fd::OwnedFd;
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
-use nix::fcntl::{AtFlags, OFlag, openat, readlinkat};
-use nix::sys::stat::{FileStat, Mode, SFlag, fstat, fstatat};
+use crate::platform::{self, Dir, Stat};
 
 /// The default allow-list: images, playlists and two folder names.
 pub const DEFAULT: &str = "jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/";
@@ -206,36 +204,18 @@ pub struct Meta {
     pub ctime: SystemTime,
 }
 
-fn time(secs: i64, nanos: i64) -> SystemTime {
-    let nanos = u32::try_from(nanos.clamp(0, 999_999_999)).unwrap_or(0);
-    if secs >= 0 {
-        SystemTime::UNIX_EPOCH + Duration::new(secs.unsigned_abs(), nanos)
-    } else {
-        SystemTime::UNIX_EPOCH - Duration::from_secs(secs.unsigned_abs())
-            + Duration::from_nanos(u64::from(nanos))
-    }
-}
-
 impl Meta {
-    fn of(st: &FileStat) -> Meta {
-        Meta {
-            size: u64::try_from(st.st_size).unwrap_or(0),
-            blocks: u64::try_from(st.st_blocks).unwrap_or(0),
-            atime: time(st.st_atime, st.st_atime_nsec),
-            mtime: time(st.st_mtime, st.st_mtime_nsec),
-            ctime: time(st.st_ctime, st.st_ctime_nsec),
-        }
+    fn of(st: &Stat) -> Meta {
+        Meta { size: st.size, blocks: st.blocks, atime: st.atime, mtime: st.mtime, ctime: st.ctime }
     }
 }
 
-fn kind(st: &FileStat) -> SFlag {
-    SFlag::from_bits_truncate(st.st_mode & SFlag::S_IFMT.bits())
-}
+/// SOURCE's directory, open: sidecars are resolved by name under it ([`crate::platform::Dir`]).
+pub type Root = Dir;
 
 /// Opens SOURCE's directory (followed if it is a link: it was given by the user).
-pub fn open_root(root: &Path) -> io::Result<OwnedFd> {
-    let fd = nix::fcntl::open(root, OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC, Mode::empty())?;
-    Ok(fd)
+pub fn open_root(root: &Path) -> io::Result<Root> {
+    platform::open_root(root)
 }
 
 /// The names of a relative path, or an error if it has anything else (`..`, a root).
@@ -249,37 +229,32 @@ fn names(rel: &Path) -> io::Result<Vec<&OsStr>> {
 }
 
 /// Opens directory `rel` of `root`, one name at a time, following no symbolic link.
-pub fn open_dir(root: &OwnedFd, rel: &Path) -> io::Result<OwnedFd> {
-    let flags = OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
-    let mut fd = openat(root, ".", flags, Mode::empty())?;
-    for name in names(rel)? {
-        fd = openat(&fd, name, flags, Mode::empty())?;
-    }
-    Ok(fd)
+pub fn open_dir(root: &Root, rel: &Path) -> io::Result<Dir> {
+    platform::open_dir_at(root, &names(rel)?)
 }
 
 /// The attributes of directory `rel` of `root` (not followed if a link).
-pub fn stat_dir(root: &OwnedFd, rel: &Path) -> io::Result<Meta> {
-    let fd = open_dir(root, rel)?;
-    Ok(Meta::of(&fstat(&fd)?))
+pub fn stat_dir(root: &Root, rel: &Path) -> io::Result<Meta> {
+    let dir = open_dir(root, rel)?;
+    Ok(Meta::of(&platform::stat_dir(&dir)?))
 }
 
 /// Where a sidecar's bytes live, relative to SOURCE: its own path, or for a link the path
 /// it names, resolved by name inside SOURCE. Refused (`EXDEV`) if that leaves SOURCE or
 /// lies under `exclude` (MOUNTPOINT, relative to SOURCE, when it is inside it).
 pub fn target(
-    root: &OwnedFd,
+    root: &Root,
     root_path: &Path,
     rel: &Path,
     link: bool,
     exclude: Option<&Path>,
 ) -> io::Result<PathBuf> {
-    let escape = || io::Error::from_raw_os_error(libc::EXDEV);
+    let escape = crate::platform::cross_device;
     let out = if link {
         let parent = rel.parent().unwrap_or(Path::new(""));
         let name = rel.file_name().ok_or_else(escape)?;
         let dir = open_dir(root, parent)?;
-        let to = PathBuf::from(readlinkat(&dir, name)?);
+        let to = platform::read_link_at(&dir, name)?;
         if to.is_absolute() {
             parent_free(to.strip_prefix(root_path).map_err(|_| escape())?)?
         } else {
@@ -302,7 +277,7 @@ fn parent_free(rel: &Path) -> io::Result<PathBuf> {
             Component::Normal(n) => out.push(n),
             Component::CurDir => {}
             Component::ParentDir if out.pop() => {}
-            _ => return Err(io::Error::from_raw_os_error(libc::EXDEV)),
+            _ => return Err(crate::platform::cross_device()),
         }
     }
     Ok(out)
@@ -318,11 +293,11 @@ fn not_regular() -> io::Error {
 }
 
 /// The attributes of the regular file at `rel` (a [`target`]), following no link.
-pub fn stat_file(root: &OwnedFd, rel: &Path) -> io::Result<Meta> {
+pub fn stat_file(root: &Root, rel: &Path) -> io::Result<Meta> {
     let (dir, name) = split(rel)?;
     let dir = open_dir(root, dir)?;
-    let st = fstatat(&dir, name, AtFlags::AT_SYMLINK_NOFOLLOW)?;
-    if kind(&st) != SFlag::S_IFREG {
+    let st = platform::stat_at(&dir, name)?;
+    if !st.regular {
         return Err(not_regular());
     }
     Ok(Meta::of(&st))
@@ -330,18 +305,14 @@ pub fn stat_file(root: &OwnedFd, rel: &Path) -> io::Result<Meta> {
 
 /// Opens the regular file at `rel` (a [`target`]) for reading, following no link, with its
 /// attributes now.
-pub fn open_file(root: &OwnedFd, rel: &Path) -> io::Result<(File, Meta)> {
+pub fn open_file(root: &Root, rel: &Path) -> io::Result<(File, Meta)> {
     let (dir, name) = split(rel)?;
     let dir = open_dir(root, dir)?;
-    // O_NONBLOCK: a FIFO put there since the listing must not hold the open; it is refused
-    // below. It means nothing for a regular file.
-    let flags = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK | OFlag::O_NOCTTY;
-    let fd = openat(&dir, name, flags, Mode::empty())?;
-    let st = fstat(&fd)?;
-    if kind(&st) != SFlag::S_IFREG {
+    let (file, st) = platform::open_file_at(&dir, name)?;
+    if !st.regular {
         return Err(not_regular());
     }
-    Ok((File::from(fd), Meta::of(&st)))
+    Ok((file, Meta::of(&st)))
 }
 
 #[cfg(test)]
@@ -391,6 +362,7 @@ mod tests {
         assert!(parent_free(Path::new("/etc/passwd")).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn links_stay_inside_source() {
         let dir = tempfile::tempdir().unwrap();
@@ -429,8 +401,10 @@ mod tests {
         assert!(stat_dir(&root, Path::new("A/B")).is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_fifo_is_refused_without_blocking() {
+        use nix::sys::stat::Mode;
         let dir = tempfile::tempdir().unwrap();
         nix::unistd::mkfifo(&dir.path().join("x.jpg"), Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
         let root = open_root(dir.path()).unwrap();

@@ -418,6 +418,34 @@ pub fn parse_wav(file: &[u8]) -> Wav {
     w
 }
 
+/// Writes all of `buf` at `offset` of `file`, on every system.
+pub fn write_all_at(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::FileExt::write_all_at(file, buf, offset)
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::Seek;
+        let mut f = file;
+        f.seek(std::io::SeekFrom::Start(offset))?;
+        f.write_all(buf)
+    }
+}
+
+/// Puts image `src` at `dst` for a test's SOURCE: a symbolic link on Unix, a copy elsewhere
+/// (a link on Windows needs a privilege).
+pub fn link(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(src, dst)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::copy(src, dst).map(drop)
+    }
+}
+
 /// Stops a spawned `sacdfs` with SIGTERM and waits (up to 10 s) for it to exit, killing it
 /// only as a last resort. A SIGKILL while the process is writing its coverage profile at exit
 /// leaves a truncated `.profraw` and fails the coverage job (#127).

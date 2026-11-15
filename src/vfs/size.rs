@@ -45,7 +45,5 @@ impl ShareSize {
 
 /// The total size of the filesystem holding `path`, in blocks of the returned size.
 fn statvfs(path: &std::path::Path) -> io::Result<(u64, u32)> {
-    let st = nix::sys::statvfs::statvfs(path).map_err(io::Error::from)?;
-    let frsize = if st.fragment_size() > 0 { st.fragment_size() } else { st.block_size() };
-    Ok((st.blocks(), u32::try_from(frsize).unwrap_or(1 << 16).max(1)))
+    crate::platform::fs_size(path)
 }

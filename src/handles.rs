@@ -30,7 +30,6 @@
 
 use std::fs::{File, Metadata};
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -64,7 +63,8 @@ pub struct Stamp {
 impl Stamp {
     /// The stamp of a file's metadata.
     pub fn of(m: &Metadata) -> Stamp {
-        Stamp { dev: m.dev(), ino: m.ino(), len: m.len(), mtime: (m.mtime(), m.mtime_nsec()) }
+        let (dev, ino) = crate::platform::file_id(m);
+        Stamp { dev, ino, len: m.len(), mtime: crate::platform::mtime(m) }
     }
 }
 

@@ -20,7 +20,7 @@ const IMAGE: &str = "dsd-stereo-mch-2048";
 fn library(dir: &Path) -> std::path::PathBuf {
     let lib = dir.join("lib");
     fs::create_dir_all(lib.join("a")).unwrap();
-    std::os::unix::fs::symlink(
+    common::link(
         common::corpus().join("images").join(format!("{IMAGE}.iso")),
         lib.join("a").join(format!("{IMAGE}.iso")),
     )

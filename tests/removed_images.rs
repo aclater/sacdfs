@@ -68,7 +68,7 @@ fn removed_and_renamed_images_are_freed() {
     let img = common::corpus().join(IMAGE);
     // One album that stays, so that the tree is not empty.
     std::fs::create_dir(lib.join("kept")).unwrap();
-    std::os::unix::fs::symlink(&img, lib.join("kept/disc.iso")).unwrap();
+    common::link(&img, lib.join("kept/disc.iso")).unwrap();
     let tree = watching(&lib);
     let kept = scan(&tree);
     let _ = tree.children(ROOT);
@@ -85,7 +85,7 @@ fn removed_and_renamed_images_are_freed() {
             "the new album",
             || {
                 std::fs::create_dir(&album).unwrap();
-                std::os::unix::fs::symlink(&img, album.join("disc.iso")).unwrap();
+                common::link(&img, album.join("disc.iso")).unwrap();
             },
             at(format!("{name}/disc/Stereo")),
         );
@@ -137,7 +137,7 @@ fn an_open_file_reads_on_after_its_image_is_removed() {
     let dir = tempfile::tempdir().unwrap();
     let lib = dir.path().canonicalize().unwrap();
     std::fs::create_dir(lib.join("album")).unwrap();
-    std::os::unix::fs::symlink(common::corpus().join(IMAGE), lib.join("album/disc.iso")).unwrap();
+    common::link(common::corpus().join(IMAGE), lib.join("album/disc.iso")).unwrap();
     let tree = watching(&lib);
     let (path, file) = tree.all_files().into_iter().next().unwrap();
     let ino = tree.resolve(&path).unwrap();

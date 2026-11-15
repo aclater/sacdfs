@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
-use std::os::unix::fs::FileExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -207,7 +206,7 @@ fn read_plain(file: &std::fs::File, offset: u64, size: u32) -> io::Result<Vec<u8
     let mut buf = vec![0u8; size as usize];
     let mut got = 0;
     while got < buf.len() {
-        match file.read_at(&mut buf[got..], offset + got as u64) {
+        match crate::platform::read_at(file, &mut buf[got..], offset + got as u64) {
             Ok(0) => break,
             Ok(n) => got += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -761,8 +760,7 @@ impl Shared {
                 match self.tree.open_sidecar(s) {
                     Ok(file) => Open::Sidecar(Arc::new(SidecarOpen { file, _slot: slot }), s.clone()),
                     Err(e) => {
-                        let gone =
-                            e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(libc::ESTALE);
+                        let gone = e.kind() == io::ErrorKind::NotFound || crate::platform::is_stale(&e);
                         if gone {
                             // A cover removed or replaced: the client asks again (#235).
                             log::info!("sidecar {}: open: {e}", s.target.display());
@@ -855,17 +853,13 @@ impl std::fmt::Display for Ino {
 /// (`NETWORK_REORDER` in `track.rs`):* NFS-Ganesha's reads can reach sacdfs in order, so
 /// copies behind it went undetected. *Why the thread group's name:* FUSE gives the calling
 /// thread, and NFS-Ganesha's workers have names of their own. 0, or a process in another PID
-/// namespace, is unknown: the order of the reads still tells.
+/// namespace, is unknown: the order of the reads still tells, as it does wherever
+/// [`crate::platform::process_name`] knows no names.
 fn network_server(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    let tgid = std::fs::read_to_string(format!("/proc/{pid}/status"))
-        .ok()
-        .and_then(|s| s.lines().find_map(|l| l.strip_prefix("Tgid:").map(|v| v.trim().to_owned())));
-    let Some(tgid) = tgid else { return false };
-    let Ok(comm) = std::fs::read_to_string(format!("/proc/{tgid}/comm")) else { return false };
-    is_network_server(comm.trim_end())
+    crate::platform::process_name(pid).is_some_and(|comm| is_network_server(&comm))
 }
 
 /// Whether a process named `comm` is a network file server's ([`network_server`]). Samba 4.18

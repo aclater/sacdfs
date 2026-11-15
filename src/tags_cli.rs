@@ -679,6 +679,7 @@ mod tests {
     /// Tags files and covers are written through a new temporary file: a link at the old
     /// temporary name, or at a name made of the process ID and a counter, is never written
     /// through.
+    #[cfg(unix)]
     #[test]
     fn writes_through_no_link() {
         use std::os::unix::fs::symlink;
