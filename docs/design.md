@@ -1767,7 +1767,7 @@ sacdfs is split in two: a **core** that knows nothing of FUSE, and a **front end
 takes requests from the operating system and hands them to the core. Today the only front end is
 Linux FUSE (fuser). The split is the first step of native macOS and Windows support
 ([#22](https://github.com/aclater/sacdfs/issues/22)): a WinFsp front end (Windows, piece B) and a
-FUSE-T or macFUSE front end (macOS, piece C) call the same core, and the core's tests cover all of
+local NFS front end (macOS, piece C, #420) call the same core, and the core's tests cover all of
 them. *Why split first:* the tree, attributes, reads, caching, PCM, tags and the lookup worker were
 never Linux-specific, but the code that answers requests mixed them with fuser's types, so a second
 front end would have copied it. *No behaviour change:* the Linux mount answers every request as
@@ -1862,25 +1862,51 @@ pitfall in #22.
 - **Owners.** `Attr` carries the uid and gid given at construction; WinFsp maps them to its
   own security descriptor.
 
-### What the core still needs from Linux
+### The platform layer (#419, #420)
 
-The core is built and tested on Linux only so far. These calls are Unix- or Linux-only and stay
-as they are in piece A, because changing them would change behaviour on Linux; pieces B and C put
-each behind a small platform layer, with the Linux branch unchanged:
+What differs between operating systems is in one module, `sacdfs::platform`. The rest of the
+core calls its functions and has no `cfg` of its own for them. Each function means the same on
+every system:
 
-- confined opening of sidecar files under SOURCE: `openat` with `O_PATH`, `readlinkat`
-  (`sidecar`); `O_PATH` is Linux-only, so macOS needs its own branch too;
-- reading a sidecar at an offset, `read_at` (`vfs`), and the image files' device and inode numbers
-  (`handles`);
-- the seek index's file modes and `O_NOFOLLOW` (`index_cache`);
-- path bytes for keys (`OsStrExt` in `ident`, `tags`, `fallback`);
-- the lookup worker's idle CPU and I/O priority (`setpriority`, `ioprio_set`, `lookup::worker`);
-- the memory limit from cgroups (`memory`), absent elsewhere;
-- `mallopt` and `malloc_trim` (`engine`, glibc only, already off elsewhere);
-- `sacdfs verify` (`FileExt`, `OsStrExt`).
+- `platform/mod.rs` declares the API;
+- `platform/unix.rs` is the Linux code the core called before, unchanged, with macOS's few
+  differences inside it;
+- `platform/windows.rs` is Windows's.
 
-The split's pull requests: this note, then the moves, each "Part of #22". They change the
-structure of the read path, so the release that includes them runs the full gate and a soak.
+Where a system has no equivalent yet, the function documents its fallback and never panics.
+
+| Function | Linux (unchanged) | macOS | Windows |
+|---|---|---|---|
+| `read_at`, `read_exact_at` | `pread` (`FileExt`) | same | `seek_read`: every read names its offset |
+| `mtime`, `file_id` | `stat`'s times, `st_dev` and `st_ino` | same | `modified()`; identity (0, 0) for now, so size and time alone tell a replaced image |
+| `stale`, `cross_device` and their tests | `ESTALE`, `EXDEV` | same | a marked `io::Error`, `CrossesDevices` |
+| `os_from_bytes` (path bytes from `as_encoded_bytes`) | the bytes | same | UTF-8 |
+| `set_open_flags` (`NO_FOLLOW`, `NON_BLOCK`, `NO_CTTY`), `set_create_mode`, `make_private_dir` | `O_NOFOLLOW`, `O_NONBLOCK`, `O_NOCTTY`, modes | same | `FILE_FLAG_OPEN_REPARSE_POINT`; no modes (the profile's access list) |
+| `open_regular` (images, `verify`) | `O_NONBLOCK` open, `fstat`, then blocking again | same | open, then the regular-file check |
+| `Dir`, `open_root`, `open_dir_at`, `stat_at`, `open_file_at`, `read_link_at` (sidecars) | `openat` from an `O_PATH` descriptor | a read-only descriptor (no `O_PATH`) | by path, checking each folder for a reparse point; not race-free like `openat` |
+| `next_hole`, `next_data` (sparse areas) | `SEEK_HOLE`, `SEEK_DATA` | same | none found: the zero-run sampling alone tells |
+| `fs_size` (`statfs` without images) | `statvfs` | same, with a 32-bit `fsblkcnt_t` | unsupported for now: 0 blocks |
+| `lower_thread_priority` (lookup worker) | nice 19, idle I/O class | `PRIO_DARWIN_BG` | none for now |
+| `process_name` (network-server pacing, #362) | `/proc/PID/status` and `comm` | none: the read order alone tells | none: the read order alone tells |
+
+- **The Windows fallbacks** marked "for now" are listed in #419 with their replacements. Those
+  are the volume serial number and file index, `GetDiskFreeSpaceExW`, `THREAD_MODE_BACKGROUND_BEGIN`,
+  `FSCTL_QUERY_ALLOCATED_RANGES`, and `NtCreateFile` relative to a folder handle.
+- **Dependencies:**
+  - `nix` and `signal-hook` are Unix-only.
+  - `fuser` is Linux-only. On macOS it needs libfuse at build time, and it supports neither
+    FUSE-T nor FSKit.
+  - `sacdfs::fuse` is built on Linux only.
+- **The binary:** the Linux mount is in `src/linux_main.rs`. `main.rs` runs `sacdfs verify`
+  and `sacdfs tags` on every system, and mounts only on Linux.
+- **Tests:** tests that mount through FUSE, count descriptors in `/proc` or send Unix signals
+  are Linux-only. Tests that need links, modes, FIFOs or names that aren't UTF-8 are Unix-only.
+  Elsewhere, the tests' libraries copy images instead of linking them.
+
+*Why one module:* the spikes put the same `cfg` pairs in a dozen files. With one module, each
+system's differences can be read and reviewed in one place, and the Linux code is visibly the
+code that was there before. *Alternative:* a crate per platform; with this little code, a module
+is enough.
 
 ## Concurrency
 

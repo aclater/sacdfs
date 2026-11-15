@@ -21,8 +21,6 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufWriter, Write};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use super::id3::Losses;
@@ -150,10 +148,10 @@ impl Row {
         let opt = |v: Option<String>| v.unwrap_or_default();
         let fields = [
             self.status.as_str().to_owned(),
-            escape(self.path.as_os_str().as_bytes()),
+            escape(self.path.as_os_str().as_encoded_bytes()),
             self.bytes.to_string(),
             self.mtime.clone(),
-            opt(self.image.as_ref().map(|p| escape(p.as_os_str().as_bytes()))),
+            opt(self.image.as_ref().map(|p| escape(p.as_os_str().as_encoded_bytes()))),
             escape(self.area.as_bytes()),
             opt(self.track.map(|t| t.to_string())),
             opt(self.channels.map(|c| c.to_string())),
@@ -172,7 +170,7 @@ impl Row {
             return None;
         }
         let text = |s: &str| String::from_utf8_lossy(&unescape(s)).into_owned();
-        let path = |s: &str| PathBuf::from(OsString::from_vec(unescape(s)));
+        let path = |s: &str| PathBuf::from(crate::platform::os_from_bytes(unescape(s)));
         Some(Row {
             status: Status::parse(f[0])?,
             path: path(f[1]),
@@ -327,7 +325,13 @@ fn open_stream(path: &Path) -> io::Result<Box<dyn Write + Send>> {
         Some(1) => Box::new(io::stdout()),
         Some(2) => Box::new(io::stderr()),
         Some(_) => Box::new(OpenOptions::new().append(true).open(path)?),
-        None => Box::new(OpenOptions::new().append(true).custom_flags(libc::O_NOFOLLOW).open(path)?),
+        None => Box::new(
+            crate::platform::set_open_flags(
+                OpenOptions::new().append(true),
+                crate::platform::OpenFlags::NO_FOLLOW,
+            )
+            .open(path)?,
+        ),
     })
 }
 
@@ -473,6 +477,7 @@ mod tests {
         assert_eq!(earlier[Path::new("/b")].status, Status::Different);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_report_to_a_stream_is_written_there() {
         let dir = tempfile::tempdir().unwrap();
@@ -497,8 +502,12 @@ mod tests {
 
     #[test]
     fn rows_round_trip() {
-        let mut r =
-            Row::new(PathBuf::from(OsString::from_vec(b"/a\tb\\c\nd\xff.dsf".to_vec())), 12, "1.5".into());
+        // A name that isn't UTF-8 where the system allows one.
+        #[cfg(unix)]
+        let name = <OsString as std::os::unix::ffi::OsStringExt>::from_vec(b"/a\tb\\c\nd\xff.dsf".to_vec());
+        #[cfg(not(unix))]
+        let name = OsString::from("/a\tb\\c\nd.dsf");
+        let mut r = Row::new(PathBuf::from(name), 12, "1.5".into());
         r = r.with(Status::Different, "x\ty".into());
         r.image = Some("/i.iso".into());
         r.track = Some(3);
@@ -512,6 +521,7 @@ mod tests {
 
     /// A report's working files are made anew: a link at their names is replaced, never
     /// written through, and a link to a device is not taken for a stream.
+    #[cfg(unix)]
     #[test]
     fn a_report_writes_through_no_link() {
         use std::os::unix::fs::symlink;

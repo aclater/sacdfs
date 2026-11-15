@@ -27,7 +27,7 @@ fn multichannel_album_suffix_and_verify() {
     let lib = dir.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
     let image = "dsd-stereo-mch-2048.iso";
-    std::os::unix::fs::symlink(common::corpus().join("images").join(image), lib.join(image)).unwrap();
+    common::link(common::corpus().join("images").join(image), lib.join(image)).unwrap();
     let tree = Tree::with_options(SourceDir::scan(&lib).unwrap(), Tuning::default(), Output::dsf_only());
     let engine = Engine::new(2, 16 << 20).unwrap();
     let files: Vec<(std::path::PathBuf, Arc<TrackFile>, Vec<u8>)> = tree

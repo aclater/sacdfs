@@ -653,8 +653,7 @@ pub struct Watch {
 
 /// The name of an image in the file of [`Watch`]: a hash of its path.
 fn path_hash(p: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_bytes())[..16])
+    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_encoded_bytes())[..16])
 }
 
 impl Watch {
@@ -953,6 +952,7 @@ TIT2 = "Three (stereo)"
         assert_eq!(frames[1].value, "120");
     }
 
+    #[cfg(unix)]
     #[test]
     fn pictures() {
         let d = tempfile::tempdir().unwrap();
@@ -1034,6 +1034,7 @@ TIT2 = "Three (stereo)"
 
     /// The watch file is written through a new temporary file, and is not read through a link;
     /// a cover that is a link is not read.
+    #[cfg(unix)]
     #[test]
     fn watch_and_pictures_follow_no_link() {
         use std::os::unix::fs::symlink;

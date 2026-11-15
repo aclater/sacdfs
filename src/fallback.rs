@@ -169,8 +169,6 @@ pub(crate) fn normalized(s: &str) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use std::os::unix::ffi::OsStrExt;
-
     use super::*;
 
     fn names(path: &str) -> (Option<String>, Option<String>) {
@@ -268,6 +266,7 @@ mod tests {
         assert_eq!(y("/l/A - 1899 - B.iso"), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn hostile_names_give_nothing_unsafe() {
         // No name, or nothing usable in it.
@@ -276,7 +275,7 @@ mod tests {
             assert_eq!(names(path).0, None, "{path:?}");
         }
         // Not UTF-8: not read.
-        let bad = OsStr::from_bytes(b"/l/A - 2002 - \xff.iso");
+        let bad = <OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"/l/A - 2002 - \xff.iso");
         assert_eq!(guess(Path::new(bad)), DiscNames::default());
         // Control characters: no pattern, and no such character in the plain name.
         let n = guess(Path::new("/l/A\n - 2002 - B\t.iso"));

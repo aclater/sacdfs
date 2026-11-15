@@ -108,7 +108,7 @@ fn import_leaves_a_full_tags_file_and_bounds_its_list() {
     let lib = dir.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
     let iso = format!("{TAGGED}.iso");
-    std::os::unix::fs::symlink(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    common::link(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
     let ext = dir.path().join("ext");
     let big = "b".repeat(MAX_VALUE_BYTES + 1);
     let many = MAX_LISTED + 8;
@@ -153,7 +153,7 @@ fn import_keeps_only_what_the_mount_serves() {
     let lib = dir.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
     let iso = format!("{TAGGED}.iso");
-    std::os::unix::fs::symlink(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    common::link(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
 
     // Extracts of the stereo DSF tracks, as a tagger would leave them: each with a genre, a
     // value of its own and a 1.2 MiB cover; track 1 with a 3 MiB text field as well, and
@@ -274,7 +274,7 @@ fn not_kept_names_are_escaped() {
     let lib = dir.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
     let iso = format!("{TAGGED}.iso");
-    std::os::unix::fs::symlink(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    common::link(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
     let ext = dir.path().join("ext");
     let big = "b".repeat(MAX_VALUE_BYTES + 1);
     write_extracts(&lib, &ext, |_, i, tag| {

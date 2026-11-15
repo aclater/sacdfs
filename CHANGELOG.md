@@ -7,6 +7,12 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **The core builds for Windows and macOS (#419, #420).** The calls that differ between
+  systems are now in one module, `sacdfs::platform`, and the Linux behaviour is unchanged.
+  `fuser` is Linux-only and `nix` and `signal-hook` are Unix-only. The Linux mount moved to
+  `src/linux_main.rs`. On other systems the `sacdfs` binary runs `verify` and `tags` and
+  doesn't mount
+  ([design](docs/design.md#the-platform-layer-419-420)).
 - **The cache of frames is 32 MiB under a memory limit of 256 MiB or more; 16 MiB stays only
   below 256 MiB (#271).** It was 16 MiB up to a 512 MiB limit. Through the Linux kernel SMB client
   that made whole-file WAV copies 12 to 31 % slower than at 32 MiB, and on 2 slow cores at 256 MiB

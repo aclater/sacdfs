@@ -11,7 +11,6 @@ mod common;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
 use sacdfs::disc::Tuning;
@@ -57,7 +56,7 @@ fn one_minute_stereo(image: &Path) {
     let mut n = 0;
     for at in (0..bytes.len()).step_by(2048) {
         if bytes[at..].starts_with(b"TWOCHTOC") {
-            f.write_all_at(&[1, 0, 0], at as u64 + 64).unwrap();
+            common::write_all_at(&f, &[1, 0, 0], at as u64 + 64).unwrap();
             n += 1;
         }
     }

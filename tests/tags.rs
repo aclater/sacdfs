@@ -57,7 +57,7 @@ fn library() -> (tempfile::TempDir, PathBuf) {
     fs::create_dir_all(&lib).unwrap();
     for image in [TAGGED, OTHER] {
         let image = format!("{image}.iso");
-        std::os::unix::fs::symlink(common::corpus().join("images").join(&image), lib.join(&image)).unwrap();
+        common::link(common::corpus().join("images").join(&image), lib.join(&image)).unwrap();
     }
     (dir, lib)
 }

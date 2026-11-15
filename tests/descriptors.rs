@@ -8,6 +8,8 @@
 //! A test binary of its own, with one test: it lowers the process's open files limit and
 //! uses up every descriptor under it, which would fail any other test running beside it.
 
+// The Linux FUSE mount, or calls only Linux has; other systems run the core's tests (#419, #420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;

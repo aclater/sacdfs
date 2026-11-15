@@ -237,7 +237,6 @@ fn provisional_readings_on_area_audio_past_end() {
 /// fresh reading at a sector found by frame numbers, differed from the exact reading at 2 ranges.
 #[test]
 fn provisional_readings_that_differ_are_refuted() {
-    use std::os::unix::fs::FileExt;
     let case = cases().into_iter().find(|c| c["id"] == "dsd-stereo-mch-2048").expect("corpus case");
     let dir = tempfile::tempdir().unwrap();
     let copy = dir.path().join("late-frames-early.iso");
@@ -250,8 +249,8 @@ fn provisional_readings_that_differ_are_refuted() {
     let run = 32.min((end - start) / 4);
     let f = File::options().read(true).write(true).open(&copy).unwrap();
     let mut late = vec![0u8; run as usize * 2048];
-    f.read_exact_at(&mut late, (end - run) * 2048).unwrap();
-    f.write_all_at(&late, (start + 4) * 2048).unwrap();
+    sacdfs::platform::read_exact_at(&f, &mut late, (end - run) * 2048).unwrap();
+    common::write_all_at(&f, &late, (start + 4) * 2048).unwrap();
     drop(f);
     let (provisional, differ, all_refuted, refuted, _) = provisional_readings(&copy, true);
     eprintln!("provisional {provisional}, differing {differ}, refuted {refuted}");
