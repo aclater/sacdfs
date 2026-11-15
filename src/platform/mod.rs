@@ -236,6 +236,25 @@ pub fn writable(dir: &Path) -> io::Result<()> {
     imp::writable(dir)
 }
 
+/// The mount points of sacdfs's own mounts, which `sacdfs verify` refuses to take extracts
+/// from: on Linux the FUSE mounts named `sacdfs` in `/proc/self/mountinfo`. *Fallback:* none
+/// found elsewhere so far.
+pub fn sacdfs_mounts() -> Vec<PathBuf> {
+    imp::sacdfs_mounts()
+}
+
+/// The folder whose entries name this process's open descriptors by number, if the system
+/// has one: `/proc/PID/fd` on Linux, `/dev/fd` on macOS; `None` on Windows.
+pub fn fd_dir() -> Option<PathBuf> {
+    imp::fd_dir()
+}
+
+/// Sets the modification time of the file or folder at `path`. On Windows the open asks
+/// for the right to write attributes, which a plain open for reading lacks.
+pub fn set_modified(path: &Path, t: SystemTime) -> io::Result<()> {
+    imp::set_modified(path, t)
+}
+
 /// The total size of the filesystem holding `path`: (blocks, block size). Windows:
 /// `GetDiskFreeSpaceExW`'s total, in blocks of 4096 bytes.
 pub fn fs_size(path: &Path) -> io::Result<(u64, u32)> {
@@ -316,7 +335,8 @@ mod tests {
     #[test]
     fn a_folder_is_not_a_regular_file() {
         let d = tempfile::tempdir().unwrap();
-        assert_eq!(open_regular(d.path()).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        // Refused: on Unix as no regular file, on Windows already by the open.
+        assert!(open_regular(d.path()).is_err());
         let f = file_of(3);
         assert_eq!(open_regular(f.path()).unwrap().metadata().unwrap().len(), 3);
     }

@@ -1649,7 +1649,12 @@ mod tests {
             guard.join().unwrap();
             start.elapsed()
         };
+        // Linux only: on shared macOS runners the scheduler's delay alone exceeded the bound
+        // (73 to 88 ms against 50), so the time there tells nothing about the wake-up.
+        #[cfg(target_os = "linux")]
         assert!(waiter < YIELD_MAX, "woken when the player is done: {waiter:?}");
+        #[cfg(not(target_os = "linux"))]
+        let _ = waiter;
     }
 
     /// Only so many buffers are kept, none over the largest read, and an idle engine drops them.
