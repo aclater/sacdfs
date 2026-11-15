@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sacdfs</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1b1b1f; --bg: #f7f7f8; --card: #fff; --muted: #5f6068; --line: #dcdce0; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #ececf0; --bg: #16161a; --card: #202026; --muted: #a0a0aa; --line: #34343c; } }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  main { max-width: 44rem; margin: 0 auto; padding: 2rem 1rem; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.25rem; margin: 1rem 0; }
+  h1 { margin: 0 0 .25rem; font-size: 1.6rem; } h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
+  p { margin: .4rem 0; } .muted { color: var(--muted); }
+  code { font: 14px/1.4 ui-monospace, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .1rem .35rem; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>sacdfs</h1>
+  <p class="muted">Your SACD disc images, as DSF and WAV files, shared read-only.</p>
+  <section>
+    <h2>SMB (Windows, macOS, Linux, players)</h2>
+    <p>Address: <code class="smb">smb://HOST:10445/sacd</code></p>
+    <p>User name and password: the ones Umbrel shows for this app.</p>
+  </section>
+  <section>
+    <h2>NFS (Linux)</h2>
+    <p><code>sudo mount -t nfs4 -o port=12049,ro HOST:/sacd /mnt/sacd</code></p>
+  </section>
+  <section>
+    <h2>Your images</h2>
+    <p>Choose the folder that holds your SACD images (ISO files) in this app's settings, under <em>SACD images</em>. sacdfs only reads it.</p>
+    <p class="muted">Setup and every option: <a href="https://github.com/aclater/sacdfs/blob/main/docs/user-guide.md">user guide</a>.</p>
+  </section>
+</main>
+<script>
+  for (const c of document.querySelectorAll("code")) c.textContent = c.textContent.replace("HOST", location.hostname);
+</script>
+</body>
+</html>

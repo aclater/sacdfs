@@ -1,0 +1,75 @@
+manifestVersion: 1.1
+id: sacdfs
+storage:
+  dataRoot: data
+folderAccess:
+  - id: umbrel-downloads
+    name: SACD images
+    note: The folder that holds your SACD disc images (ISO files). sacdfs reads it only; it never changes your files.
+    mounts:
+      - service: server
+        targetPath: /images
+        readOnly: true
+environment:
+  - name: SACDFS_FORMATS
+    services:
+      - server
+    default: dsf,wav
+    options:
+      - dsf,wav
+      - dsf
+      - wav
+    note: The files each disc shows as. Choose dsf alone for Roon or MPD.
+  - name: SACDFS_FLATTEN
+    services:
+      - server
+    default: "0"
+    options:
+      - "0"
+      - "1"
+    note: 1 shows one folder per disc instead of one per area (stereo, multichannel).
+  - name: NFS_CLIENTS
+    services:
+      - server
+    default: "*"
+    note: Who may mount the NFS share, for example 192.168.1.0/24. The default is every client.
+category: media
+name: sacdfs
+version: "0.6.4"
+tagline: Play your SACD disc images as DSF and WAV files over SMB and NFS
+description: >-
+  sacdfs shows each SACD disc image (ISO file) in a folder as a folder of tracks, as DSF or WAV
+  files, and shares them read-only over SMB and NFS. Players and music libraries that read
+  files from a network share, such as Roon, Plex, Jellyfin, foobar2000 or MPD, can then play
+  the discs without extracting them first.
+
+
+  Nothing is copied or converted on disk: the tracks are made on the fly from the images, and
+  your images are never changed.
+
+
+  After installing, choose the folder that holds your images in the app's settings (SACD
+  images). The app's page shows the addresses of the shares. SMB asks for the user name and
+  password Umbrel shows for the app; NFS is read-only and open to the clients set in the
+  settings.
+
+
+  sacdfs needs extra access to work: the FUSE device (/dev/fuse) and the SYS_ADMIN capability
+  to mount its filesystem inside its container, and a few other capabilities for the SMB and
+  NFS servers. All other capabilities are dropped and no program in the container can gain
+  new privileges.
+releaseNotes: ""
+developer: aclater
+website: https://github.com/aclater/sacdfs
+dependencies: []
+repo: https://github.com/aclater/sacdfs
+support: https://github.com/aclater/sacdfs/issues
+port: 10446
+gallery: []
+path: ""
+defaultUsername: "umbrel"
+deterministicPassword: true
+permissions:
+  - STORAGE_DOWNLOADS
+submitter: aclater
+submission: ""
