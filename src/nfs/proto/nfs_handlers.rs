@@ -16,6 +16,12 @@ use super::nfs;
 use super::rpc::*;
 use super::vfs::VFSCapabilities;
 use super::xdr::*;
+
+/// sacdfs: the largest READDIR or READDIRPLUS reply made, in bytes, and the most entries asked
+/// of the file system for one: a client's counts are hints, and up to 4 GiB.
+const LIST_BYTES: u32 = 1 << 20;
+const LIST_ENTRIES: u32 = 1024;
+
 /*
 program NFS_PROGRAM {
  version NFS_V3 {
@@ -876,11 +882,13 @@ pub async fn nfsproc3_readdirplus(
         return Ok(());
     }*/
     // subtract off the final entryplus* field (which must be false) and the eof
-    let max_bytes_allowed = (args.maxcount as usize).saturating_sub(128); // sacdfs: no underflow
+    // sacdfs: no underflow, and no reply larger than LIST_BYTES whatever the client asks.
+    let max_bytes_allowed = (args.maxcount.min(LIST_BYTES) as usize).saturating_sub(128);
     // args.dircount is bytes of just fileid, name, cookie.
     // This is hard to ballpark, so we just divide it by 16
-    let estimated_max_results = args.dircount / 16;
-    let max_dircount_bytes = args.dircount as usize;
+    // sacdfs: at most LIST_ENTRIES entries asked of the file system per call.
+    let estimated_max_results = (args.dircount / 16).min(LIST_ENTRIES);
+    let max_dircount_bytes = args.dircount.min(LIST_BYTES) as usize;
     let mut ctr = 0;
     match context.vfs.readdir(dirid, args.cookie, estimated_max_results as usize).await {
         Ok(result) => {
@@ -1001,10 +1009,11 @@ pub async fn nfsproc3_readdir(
     debug!(" -- Dir version {:?}", dirversion);
     let has_version = args.cookieverf != nfs::cookieverf3::default();
     // subtract off the final entryplus* field (which must be false) and the eof
-    let max_bytes_allowed = (args.dircount as usize).saturating_sub(128); // sacdfs: no underflow
+    // sacdfs: no underflow, and bounded (see READDIRPLUS).
+    let max_bytes_allowed = (args.dircount.min(LIST_BYTES) as usize).saturating_sub(128);
     // args.dircount is bytes of just fileid, name, cookie.
     // This is hard to ballpark, so we just divide it by 16
-    let estimated_max_results = args.dircount / 16;
+    let estimated_max_results = (args.dircount / 16).min(LIST_ENTRIES);
     let mut ctr = 0;
     match context.vfs.readdir_simple(dirid, args.cookie, estimated_max_results as usize).await {
         // sacdfs: from the cookie (above)
@@ -1489,6 +1498,7 @@ pub async fn nfsproc3_setattr(
                 make_success_reply(xid).serialize(output)?;
                 nfs::nfsstat3::NFS3ERR_NOT_SYNC.serialize(output)?;
                 nfs::wcc_data::default().serialize(output)?;
+                return Ok(()); // sacdfs: one reply, not two
             }
         }
     }

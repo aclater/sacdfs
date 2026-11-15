@@ -1944,7 +1944,20 @@ approval.
 - **Listening:** 127.0.0.1 by default; `--listen` takes another address, with a warning. The
   default port is 20000 plus the user ID modulo 10000: one per user of a Mac, below the
   ephemeral port ranges, and the same on every run, so that a restarted server is found by the
-  old mount.
+  old mount. Root's is 1007.
+- **A mount left behind** (the server killed with SIGKILL, or an unmount that failed) points
+  at a port nothing answers on, and whoever listens there next answers for it. So the mount is
+  always `ro,nosuid,nodev,noexec` after the user's `-o` (which may not say `rw`, `suid`, `dev`
+  or `exec`), and root's port is below 1024, where no other user can listen. Every way out of
+  the server unmounts, and a failed unmount is an error. As root, a mount point under a folder
+  another user can write is refused, and the path is unmounted only while it is still this
+  mount (its device number). `mount` and `umount` run by absolute path with a fixed
+  environment, each with a time limit.
+- **Bounds against one client holding the server:** 16 calls in flight per connection, 128 in
+  all, 2 replies queued; a reply not taken within 30 s closes the connection, as does a first
+  call not sent within 10 s or 5 minutes of silence; 64 connections at once; listings are cut
+  to 1 MiB and 1024 entries a call; 1024 files open for NFS reads, the least recently read
+  closed first.
 - **Opens:** NFS has no open or close. A file is opened in the core on its first read and
   closed after 60 s without one.
 - **Mount options on macOS:** `vers=3,tcp,port=P,mountport=P` (no port mapper or lock manager),

@@ -45,6 +45,10 @@ use proto::vfs::{
 /// How long a file read through NFS stays open in the core after its last read.
 pub const IDLE: Duration = Duration::from_secs(60);
 
+/// Files kept open in the core at once for NFS reads; past it, the least recently read is
+/// closed (and opened again if it is read again).
+pub const MAX_OPEN: usize = 1024;
+
 /// Whose calls are answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Callers {
@@ -209,6 +213,12 @@ impl NfsFront {
         if let Some(o) = open.get(&ino) {
             self.volume.release(fh);
             return Ok(o.fh);
+        }
+        if open.len() >= MAX_OPEN {
+            if let Some((&old, o)) = open.iter().min_by_key(|(_, o)| o.used) {
+                self.volume.release(o.fh);
+                open.remove(&old);
+            }
         }
         open.insert(ino, Open { fh, generation, used: Instant::now() });
         Ok(fh)
