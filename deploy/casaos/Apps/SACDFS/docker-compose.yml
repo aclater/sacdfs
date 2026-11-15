@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: sacdfs
+services:
+  sacdfs:
+    image: ghcr.io/aclater/sacdfs:0.6.4@sha256:2039b43f413feafed41504f6c91170538bb18c3f40f01971b21a2d01e4609192
+    container_name: sacdfs
+    restart: unless-stopped
+    # Least privilege: none of the runtime's default capabilities, only the seven the
+    # programs need (https://github.com/aclater/sacdfs/blob/main/docs/deployment.md#privileges).
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN
+      - DAC_OVERRIDE
+      - DAC_READ_SEARCH
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+      - SETPCAP
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default AppArmor profile forbids mount(2), which FUSE needs.
+      - apparmor=unconfined
+    ports:
+      - target: 445
+        published: "10445"
+        protocol: tcp
+      - target: 2049
+        published: "12049"
+        protocol: tcp
+    volumes:
+      # The folder that holds your SACD images (ISO files), read-only.
+      - type: bind
+        source: /DATA/Media/Music
+        target: /images
+        read_only: true
+      # The index cache: restarts then skip re-reading every image.
+      - type: bind
+        source: /DATA/AppData/$AppID/cache
+        target: /cache
+    environment:
+      SACDFS_FORMATS: dsf,wav
+      SACDFS_FLATTEN: "0"
+      # Leave both empty for guest access (read-only) from the whole network.
+      SMB_USER: ""
+      SMB_PASSWORD: ""
+      NFS_CLIENTS: "*"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      retries: 3
+    stop_grace_period: 30s
+    x-casaos:
+      envs:
+        - container: SACDFS_FORMATS
+          description:
+            en_US: "Formats to serve: dsf,wav, dsf or wav"
+        - container: SACDFS_FLATTEN
+          description:
+            en_US: "1: one folder per disc instead of one per area"
+        - container: SMB_USER
+          description:
+            en_US: "SMB user name (lower case). Empty: guest access"
+        - container: SMB_PASSWORD
+          description:
+            en_US: "SMB password for that user"
+        - container: NFS_CLIENTS
+          description:
+            en_US: "Who may mount over NFS: * or a.b.c.d/n, comma-separated"
+      ports:
+        - container: "445"
+          description:
+            en_US: "SMB (clients name this port when they mount)"
+        - container: "2049"
+          description:
+            en_US: "NFS v4 (clients name this port when they mount)"
+      volumes:
+        - container: /images
+          description:
+            en_US: "Folder with your SACD images (ISO files), mounted read-only"
+        - container: /cache
+          description:
+            en_US: "Index cache"
+x-casaos:
+  id: io.github.aclater.sacdfs
+  main: sacdfs
+  index: /
+  port_map: ""
+  architectures:
+    - amd64
+    - arm64
+  category: Media
+  author: aclater
+  developer: aclater
+  icon: https://cdn.jsdelivr.net/gh/aclater/sacdfs@main/deploy/icon.svg
+  title:
+    en_US: sacdfs
+  tagline:
+    en_US: SACD disc images as DSF and WAV files over SMB and NFS
+  description:
+    en_US: |
+      sacdfs serves the SACD disc images (ISO files) in a folder as DSF and WAV files, read-only,
+      over SMB and NFS v4. Players and file managers see one folder per disc, with one file per
+      track; nothing is extracted or written to disk.
+
+      It has no web UI. Mount the share from a client: SMB on port 10445
+      (smb://<this server>:10445/sacd) and NFS v4 on port 12049 (<this server>:/sacd).
+  tips:
+    before_install:
+      en_US: |
+        Choose the folder that holds your SACD images (ISO files) for /images; it is mounted read-only.
+        Without SMB_USER and SMB_PASSWORD the share is open to the whole network as a read-only guest share.
+        The container needs /dev/fuse and the capabilities listed in the compose file to mount FUSE;
+        it is not privileged.
+  version: "0.6.4"
+  update_at: "2026-11-15"
+  release_notes:
+    en_US: First listing, sacdfs 0.6.4.
+  website: https://github.com/aclater/sacdfs
+  repo: https://github.com/aclater/sacdfs
+  support: https://github.com/aclater/sacdfs/issues
+  docs: https://github.com/aclater/sacdfs/blob/main/docs/install/store-apps.md

@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "store_id": "sacdfs",
+  "name": {
+    "en_US": "sacdfs"
+  },
+  "description": {
+    "en_US": "sacdfs: SACD disc images as DSF and WAV files over SMB and NFS"
+  },
+  "maintainer": "aclater",
+  "url": "https://github.com/aclater/sacdfs"
+}
