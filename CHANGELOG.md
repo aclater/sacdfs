@@ -96,6 +96,10 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **The installer's container route no longer warns that nothing answers on its ports on
+  ASUSTOR (#340).** BusyBox `nc` there has no `-z`, so the check failed although SMB and NFS
+  answered; it now falls back to the listening sockets. On TrueNAS, its pointer names the
+  guide's step 3 for the YAML to paste, not the catalog app's folder.
 - **`sacdfs tags import` writes only what the mount uses, and lists what it leaves out (#406).**
   Before, it wrote any picture and value an extract's tag held, up to 16 MiB, and reported
   success, but the mount embeds no picture over 960 KiB and builds no tag over 1 MiB: a 12 MiB
@@ -128,6 +132,21 @@ All notable changes to sacdfs are recorded here. The format follows
   a line display in another order. Now every log line escapes control characters, Unicode format
   characters and U+2028/U+2029 as `\n`, `\t`, `\r` or `\u{…}`, on the console and with
   `--log-file`. The names on the mount are unchanged.
+- **A damaged, truncated or padded image no longer lists tracks far larger than its data (#402).**
+  A track's size comes from the TOC, and the only check against the image counted the area's
+  sectors the file has. An image extended with a hole, or padded with zero bytes, passed it, and
+  its tracks listed at gigabytes each from a few megabytes of audio. Now sectors in a hole (found
+  with `SEEK_HOLE`, at no read cost, where the file system reports holes)
+  or in a long zero run (sampled, at most 64 one-sector reads, only in an area whose play time
+  claims more than a real disc could fit) count as missing, as a truncated image's do; only gaps
+  of 1 MiB or more count. Tracks whose frames overlap are listed without sharing frames: one that
+  runs into the next track ends where that track starts, and one that starts where an earlier
+  track starts is left out, so an area's files never add up to more than one area. With
+  `--pauses kept`, a track keeps its pause only where that overlaps no other track and fits the
+  image. Each change is logged at info with the reason. Images whose tracks fit and don't
+  overlap list exactly as before (every other corpus case is unchanged); listing the corpus takes
+  the same time, and a 4 GiB image about 0.7 ms more on btrfs with compression
+  ([design](docs/design.md#track-sizes)).
 - **A player that starts beside copies gets its first reads sooner (#363).** A player starting
   while another plays and copies start can't be told from the copies in its first half second, and
   every one of them read ahead 2 s of audio, so its first reads waited behind about 600 frames of
@@ -149,6 +168,17 @@ All notable changes to sacdfs are recorded here. The format follows
   the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
 
 ### Documentation
+- **Installer restarts and the container route, checked on NAS VMs (part of #340, #283).** With
+  the 0.6.3 release files, a power cycle after the install brought sacdfs back by itself, with
+  identical files, on Synology DSM, ASUSTOR ADM, TerraMaster TOS, ReadyNAS OS and Debian 12 with
+  UGREEN's kernel, and with the container route (`nas-compose.yaml`) under Docker on ASUSTOR ADM,
+  in VMs (docs/test-plan.md).
+- **The install start page reads top to bottom (part of #310).** `docs/install/README.md` opens
+  with the installer in the guide shape (what you need, three steps with a dry run first, check
+  it worked, the three common problems), then the guide chooser. The installer's background
+  (what it does per system, the `wget` and BusyBox notes, cut-short downloads, unsupported
+  systems, `--report`, reading it before running it, where it was checked) moved to Details at
+  the end, unchanged.
 - **TrueNAS and Unraid app files name 0.6.3, and were checked on TrueNAS (part of #284).** The
   TrueNAS catalog app (`deploy/truenas/sacdfs`) named the 0.5.0 image; it now names 0.6.3, with
   `app.yaml` as the catalog's metadata generator writes it (`version` 1.0.1, three capability
