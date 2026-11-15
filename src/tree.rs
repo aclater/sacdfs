@@ -38,7 +38,6 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, TryLockError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use rayon::prelude::*;
-use scarletbook::audio::check_track;
 use scarletbook::{MASTER_TOC_LSN, SectorFormat, Slot};
 
 use crate::disc::{Disc, Tuning};
@@ -2278,29 +2277,19 @@ impl Tree {
                 });
                 let mut seen = std::collections::HashSet::new();
                 let mut held = 0;
-                for track in &area.tracks {
-                    if let Err(e) = check_track(area, track, disc.toc().sectors) {
-                        log::info!(
-                            "{}: {} track {}: not shown: {e}",
-                            disc.path.display(),
-                            area.slot,
-                            track.number
-                        );
-                        continue;
-                    }
+                // Each track's frames as listed (pause included when kept), checked against
+                // the area's sectors that hold data (crate::track_ranges, crate::area_data).
+                let sectors = crate::area_data::data_sectors(disc, area);
+                for listed in crate::track_ranges::listed(area, sectors, self.output.pauses_kept) {
+                    listed.log(&disc.path, area.slot);
+                    let Some(track) = &listed.track else { continue };
                     // The files of one track are listed together and get the same name
                     // but for the extension (and the same de-duplication suffix, since
                     // they are made unique in the same order).
                     for format in self.output.formats() {
                         let spf = self.output.samples_per_frame;
-                        let Some(file) = TrackFile::with_pauses(
-                            disc.clone(),
-                            *i,
-                            track,
-                            format,
-                            spf,
-                            self.output.pauses_kept,
-                        ) else {
+                        let Some(file) = TrackFile::with_pauses(disc.clone(), *i, track, format, spf, false)
+                        else {
                             continue;
                         };
                         let name =
