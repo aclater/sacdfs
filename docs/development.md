@@ -152,7 +152,9 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   failure by path and errno: `churn` (a path in a churn album the churner has removed: ENOENT
   or ENOTDIR, or EIO within 30 s of the removal), `stall` (EIO, ETIMEDOUT, ENOENT or EINTR
   under the `stall` folder while a stall is on, and for three request timeouts after), `tags`
-  (ENOENT on a `.dsf` after a tags edit since the file list was taken, or within 60 s of it),
+  (ENOENT on a `.dsf` after a tags edit since the file list was taken, or within 60 s of it;
+  and EIO on a track file of an album whose image's tags file was edited less than 60 s ago,
+  since the kernel fails a descriptor still open on the old version of an edited file, #339),
   `sidecar` (ENOENT on a `cover-*.jpg` the churner has removed, or under `Artwork/` within
   60 s of the churner toggling it; sacdfs lists a removed file until it has re-read the
   folder, which takes seconds on real discs. Also, in the art-churn album only: ESTALE on a

@@ -118,7 +118,9 @@ fuzz_target!(|data: &[u8]| {
             if op[1] & 1 != 0 { file.size.saturating_sub(raw % (1 << 20)) } else { raw % (file.size + 4096) };
         let len = u64::from(u32::from_le_bytes([op[6], op[7], op[8], 0]))
             % if op[1] & 2 != 0 { MAX_LEN } else { SHORT_LEN };
-        let reader = readers.entry(i).or_insert_with(|| Arc::new(Reader::opened_by(file.clone(), network)));
+        let reader = readers.entry(i).or_insert_with(|| {
+            Arc::new(Reader::opened_by(file.clone(), 0, if network { |_| true } else { |_| false }))
+        });
         let arrival = reader.arrived();
         let got = reader.read(&eng, offset, len);
         drop(arrival);

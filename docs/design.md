@@ -349,7 +349,9 @@ MOUNT/
   as before; its folder shows up with its sidecars only.
 - An image directory whose name collides with a source subdirectory gets ` (2)`. A track
   that fails scarletbook's `check_track` (empty, too many channels, or past the area's
-  capacity) is left out. Names are cut to fit 255 bytes.
+  capacity, counting only sectors that hold data) is left out, and tracks whose frames
+  overlap are shortened or left out ([Track sizes](#track-sizes)). Names are cut to fit 255
+  bytes.
 - `Stereo` and `Multichannel` appear only for areas the disc has.
 - File names come from the track text (title), with `/`, NUL and control characters
   replaced; a track without a title is `NN - Track NN.dsf` ([#185](#discs-without-text-185)).
@@ -370,6 +372,77 @@ MOUNT/
 layer of a hybrid disc is not in SACD images at all, because SACD rippers read only the
 high-density layer; CD rips are ordinary files outside sacdfs. The disc's hybrid flag is not
 shown either: no consumer needs it, and it would add a tag no player uses.
+
+### Track sizes
+
+A track's file size (#402) comes from its frames in the area TOC (start and duration, which the
+library clamps to the area's play time), so a listing reads no audio. On a damaged,
+truncated or padded image those can claim far more than the image holds, or several tracks
+can cover the same frames. Before an area's files are made (`sacdfs::track_ranges`, with
+`sacdfs::area_data` for the sector count), in this order:
+
+1. **The track check.** Each track goes through scarletbook's `check_track`, which refuses
+   a track whose end frame is past what the area's audio sectors in the image can hold, 7
+   frames a sector (specification 4, 4.8). The sector count it is given leaves out the
+   area's sectors that hold no data (below), so they count as missing, as a truncated
+   image's do. A refused track is left out, logged at info as "…: not shown: …".
+2. **Overlaps.** Of the tracks left, taken by start frame, one that runs into the next
+   track to start ends where that one starts ("shown to frame N: runs into track M"), and
+   one that starts where a lower-numbered track starts is left out ("not shown: starts
+   where track M starts"). *Why by start:* the starts are what a player seeks to; a
+   duration that runs past the next start is the part of the TOC that is wrong. *Why after
+   the check:* this step only shortens or leaves out tracks the check passed, so it never
+   shows a file the check alone would not, and a refused track does not cut another short.
+3. **Pauses (`--pauses kept`).** A track is served with its pause only where that range
+   passes the same check and overlaps no other listed track (in track order); otherwise
+   without it ("shown without its pause"). On a normal disc the ranges with pause only
+   touch, so every track keeps its pause, as before.
+
+The listed tracks of an area then share no frame and all end within its play time and
+capacity, so their total stays within one area's worth; a debug assertion and
+`tests/listing_bounds.rs` hold that on the whole corpus. A normal disc's tracks fit and do
+not overlap, and list exactly as before: the corpus lists the same files, with the same
+hashes, but for two images with overlapping tracks (`track-starts-overlap`,
+`track-duration-max`, recorded in `tests/common/mod.rs`) and, with pauses kept, two whose ranges
+with pause overlapped another track or ran past the image's data (`track-starts-reversed`;
+`area-playtime-max`, whose last track was a 16 GB WAV file and no DSF file, and is now
+served without its pause in both). pysacd-extract 0.5.0 writes those overlapping tracks in
+full, as sacdfs 0.6.3 listed them.
+
+**Sectors that hold no data.** An image can be long enough for its TOC while holding no
+audio over much of an area: a hole (a sparse region of the file) or a long run of zero
+bytes. Its tracks would pass the check at their TOC sizes, gigabytes each from a few
+megabytes of data. Reads of such a file stay cheap (missing frames are filled), but the
+sizes are far beyond the data. Only gaps of at least 1 MiB count, so a few zero sectors on
+a damaged disc change nothing.
+
+- *Holes* are found with `lseek` `SEEK_HOLE`/`SEEK_DATA` over the area's audio sectors
+  (whole stored sectors of 2048, 2054 or 2064 bytes), on every listing: no reads, one call
+  on a file without holes, at most 4096 boundaries followed per area. A file system that
+  does not report holes (NFS and SMB shares often do not) reports the whole file as data:
+  nothing is found and nothing is hidden. That is a safe fallback, not detection; the zero
+  sampling below still applies there, since a hole reads as zeros.
+- *Zero runs* are sampled, which costs reads, and only in an area whose play time claims
+  more than 1 frame per audio sector holding data. A real disc's area uses about 0.07
+  (plain DSD, 6 channels) to 0.22 (plain DSD stereo) to 0.5 (DST): 1 is twice the densest
+  real use, so a real disc is never sampled. The sectors are cut into at most 32 equal
+  segments of at least 1 MiB, and a segment whose first and last stored sectors are both
+  all zero bytes counts as a zero run: at most 64 reads of one sector per area. *Why zero
+  bytes:* plain DSD silence is the byte 0x69 and every DST frame has a header, so a long
+  all-zero run is not audio.
+- *Why this cannot hide a real disc's track:* at 7 frames a sector the capacity is about 14
+  to 30 times what a real disc's tracks use, so a real disc would have to lose nearly all
+  of an area to a gap before one of its tracks was refused, and then its frames are not in
+  the image anyway.
+- *What is left:* an image padded with written zeros (not a hole) to more sectors than its
+  play time's frames is not sampled, so its tracks list at their TOC sizes: DSF files at
+  most about 4.6 times the image's size for stereo (a 9408-byte frame per 2048-byte
+  sector), 13.8 times for 6 channels, and WAV files at 176.4 kHz about 1.5 times that. A
+  hole of any size is found where the file system reports it.
+- *Cost (harrison, `performance` profile, warm cache, 30 runs):* the whole corpus lists in
+  5.7 ms before and after. A 4 GiB image on btrfs with zstd compression (128 KiB extents)
+  takes 0.8 ms to list against 0.1 ms, nearly all of it the one `SEEK_HOLE` call walking
+  the extents; a 400 MB image with written zeros, which is sampled, 0.2 ms against 0.1 ms.
 
 ### Flattening (`--flatten`)
 
@@ -1348,13 +1421,31 @@ decoding them twice.
   its first reads waited behind about 600 frames of the copies' work (0.4 to 0.9 s on 4 cores,
   on every release). *Trade-off:* a reader's first half second beside a player decodes on
   demand, in pieces.
+- **A reader is judged a player on evidence (#362).** A reader that reads no faster than a
+  player counts as one only once it has read 4 MiB, or has read for as long as 4 MiB takes at
+  1.5 times the file's byte rate (0.9 s for a 6-channel WAV file, 2.6 s for a stereo one, 4 s
+  for a stereo DSF file); until then it is not yet judged, as in its first 0.5 s. The time
+  counts from its first read of audio, so a player that seeks is judged again at once. *Why:*
+  with the small window of the previous point, copies starting beside a player on a busy server
+  read about as fast as the player in their first half second (1.1 to 2.1 times playing time,
+  the player 1.3 with its client's read-ahead; NFS, four 6-channel copies on 2 slow cores). Each
+  then counted as a player with a 2 s window until it reached 4 MiB, a fraction of a second
+  later, and the player beside four of them waited up to 0.4 s, 0.6 to 0.8 s after they
+  started, in every run. *Alternatives:* judging them players with the small window until they
+  have shown their pace (measured the same within the spread); no small window for readers not
+  yet judged (the stall stayed). *Trade-off:* a player that starts while another plays reads
+  ahead 16 frames for up to 4 s instead of 0.5 s, unless its client reads 4 MiB sooner (the
+  kernel SMB client fetches its first 4 to 8 MiB at once), and it lets no copy wait for it until
+  then.
 - **The pace behind a network client (#271).** A jump, for the pace, is a read more than
   64 MiB from the furthest byte read so far, and the pace counts the bytes read since, but no
   further than the reader got. A reader one of whose reads has landed more than 2 MiB behind
   the furthest byte read is behind a network client, and so is one whose file a network file
   server's process opened (#362: Samba's `smbd`, `ganesha.nfsd`, the kernel's `nfsd` or `ksmbd`,
   told by the name of the request's thread group; NFS-Ganesha's reads can arrive in order, and a
-  local program with one of those names counts too). Such a reader reads for throughput once
+  local program with one of those names counts too). The name is looked up once the reader has
+  read 4 MiB, the first time it matters: looked up at every open, its two reads of `/proc` cost about 25
+  microseconds per open and made a scan of short files 10 % slower (#403). Such a reader reads for throughput once
   it is also 32 MiB ahead of playing time. Until then it is *unsure*: it plays if no player has
   been reading since before it, and otherwise reads for throughput, letting that player go
   first. *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a
@@ -1404,7 +1495,8 @@ decoding them twice.
   counts as a player until it jumps; and a copy that starts within 5 s of a player pausing
   without closing its file lets that player go first if it comes back. Copies served by an NFS
   server whose reads reach sacdfs in order were not seen as behind a network client until #362,
-  which tells them by the server's process; one in another PID namespace still isn't.
+  which tells them by the server's process. A server in a PID namespace that sacdfs can't see
+  still isn't: see [the file server's process](#the-file-servers-process-362).
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
@@ -1470,6 +1562,30 @@ bytes, or ruled out:
   the image's. It also needs root. Sidecar files could use it, but they aren't what's slow.
 - *Splice:* fuser 0.18 replies by `writev` and has no way to reply from a pipe, and the kernel would
   copy into the page cache anyway. Not measured.
+
+### The file server's process (#362)
+
+A file opened by a network file server's process is behind a network client from its first read
+(above). FUSE gives the process of each request as a number in the PID namespace of the process
+that mounted it, and 0 for a process outside that namespace. So:
+
+- **sacdfs on the host, the server in a container** (Samba in a container sharing the host's
+  mount): the server's processes are visible from the host, the number resolves, and its reader
+  counts as behind a network client. Checked with Samba 4.24 in a Fedora 44 container and the
+  Linux 7.2 kernel SMB client.
+- **sacdfs in a container, the server outside it** (another container, or the host): the number is
+  0 for the server and for any other reader outside sacdfs's container alike, such as a player on
+  the NAS reading through the shared `/srv` mount. Checked with sacdfs in one container and Samba
+  in another, and a reader on the host.
+- **The container image**, sacdfs with its own Samba and NFS-Ganesha: one namespace, so the
+  number resolves.
+
+**Decision:** a reader whose process is 0 is judged by the order of its reads, as before #362.
+*Why not count it as behind a network client:* a local player outside the container would be too,
+and then it would read for throughput beside an earlier player until its reads paused, and a
+local scanner would need to get 32 MiB ahead of playing time first. *Trade-off:* copies served by
+an NFS server outside sacdfs's container, whose reads arrive in order, count as players by their
+pace, as on 0.6.3.
 
 ## Kernel caching
 
@@ -2353,7 +2469,16 @@ MusicBrainz IDs on 26.
   folders, which now key their mtime on that path, move with their ancestors. An area listed
   again re-makes its track files; one whose tag changed replaces its node under the same
   number (`Tree::renew`), and a file whose tag is the same keeps its node, so open files and
-  caches stay as they are (an open handle keeps the file it opened). The mtime of a bump is
+  caches stay as they are. A file open while its tag changes fails its next read, and its
+  close, with `EIO` once the kernel sees the new generation, through any lookup or listing of it
+  by any client (#339). The kernel takes a known number with a new generation for a new file and
+  marks the old inode bad (`fuse_iget` in `fs/fuse/inode.c`, "nodeid was reused"). It fails the
+  old descriptor itself, with no request to sacdfs, so sacdfs logs nothing. Reopening reads the
+  new file. *Alternatives, not taken:* keeping the generation would leave NFS handles and the
+  open file's page cache mixing old and new bytes; keeping the old node while a handle is open
+  and renewing it at release would show the edit later and need a second bump; a FUSE node ID
+  apart from the inode number is not possible through fuser, which uses one for both. The
+  mtime of a bump is
   the tags file's when it moved forward (a remount shows the same), else the time now (a
   removal, or an older time put back), so that the folders always move.
   *Why the image's path, not the disc key:* scanners walk folders, and the image's path is

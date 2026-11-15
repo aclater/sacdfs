@@ -106,6 +106,21 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **The installer's container route no longer warns that nothing answers on its ports on
+  ASUSTOR (#340).** BusyBox `nc` there has no `-z`, so the check failed although SMB and NFS
+  answered; it now falls back to the listening sockets. On TrueNAS, its pointer names the
+  guide's step 3 for the YAML to paste, not the catalog app's folder.
+- **The unlogged EIO of the soak is explained (#339), and the soak expects it.** A tags file
+  edit gives the changed track files a new generation under the same number. Once the kernel
+  sees the new generation, through any lookup or listing, it marks the old inode bad and fails a
+  descriptor still open on the old version with `EIO`, without asking sacdfs, so nothing is
+  logged. `scripts/soak.py` now counts EIO on a track file whose image's tags file it edited less
+  than 60 s before as `tags`, not unexpected. The design and the user guide describe it.
+- **The amd64 container image is attested by its own digest (#379).** Its `-amd64` tag is an
+  index of the image and Docker's build record, and only that index was attested, so
+  `gh attestation verify` failed on the image a pull on amd64 resolves to (0.6.2 to 0.6.3). The
+  release now attests each architecture's image by its own digest, and the tag too when it is an
+  index, and checks every one with `gh attestation verify` before it ends.
 - **`sacdfs tags import` writes only what the mount uses, and lists what it leaves out (#406).**
   Before, it wrote any picture and value an extract's tag held, up to 16 MiB, and reported
   success, but the mount embeds no picture over 960 KiB and builds no tag over 1 MiB: a 12 MiB
@@ -138,6 +153,21 @@ All notable changes to sacdfs are recorded here. The format follows
   a line display in another order. Now every log line escapes control characters, Unicode format
   characters and U+2028/U+2029 as `\n`, `\t`, `\r` or `\u{…}`, on the console and with
   `--log-file`. The names on the mount are unchanged.
+- **A damaged, truncated or padded image no longer lists tracks far larger than its data (#402).**
+  A track's size comes from the TOC, and the only check against the image counted the area's
+  sectors the file has. An image extended with a hole, or padded with zero bytes, passed it, and
+  its tracks listed at gigabytes each from a few megabytes of audio. Now sectors in a hole (found
+  with `SEEK_HOLE`, at no read cost, where the file system reports holes)
+  or in a long zero run (sampled, at most 64 one-sector reads, only in an area whose play time
+  claims more than a real disc could fit) count as missing, as a truncated image's do; only gaps
+  of 1 MiB or more count. Tracks whose frames overlap are listed without sharing frames: one that
+  runs into the next track ends where that track starts, and one that starts where an earlier
+  track starts is left out, so an area's files never add up to more than one area. With
+  `--pauses kept`, a track keeps its pause only where that overlaps no other track and fits the
+  image. Each change is logged at info with the reason. Images whose tracks fit and don't
+  overlap list exactly as before (every other corpus case is unchanged); listing the corpus takes
+  the same time, and a 4 GiB image about 0.7 ms more on btrfs with compression
+  ([design](docs/design.md#track-sizes)).
 - **A player that starts beside copies gets its first reads sooner (#363).** A player starting
   while another plays and copies start can't be told from the copies in its first half second, and
   every one of them read ahead 2 s of audio, so its first reads waited behind about 600 frames of
@@ -147,6 +177,20 @@ All notable changes to sacdfs are recorded here. The format follows
   median 171 (0.6.3: 1,210 and 749; 0.6.2: 727 and 695), and with no copies on 2 slow cores 38 ms
   (0.6.3: 218). The other cells are unchanged within the spread of the runs
   ([performance](docs/performance.md#a-second-player-beside-copies-and-copies-behind-nfs-363-362)).
+- **A player beside copies starting on a busy server no longer waits for them to be told apart
+  (#362).** A reader not yet judged reads ahead little beside a player (#363), so on a busy
+  server copies that started beside a player read no faster than it in their first half second,
+  then counted as players with a 2 s window each until they had read 4 MiB. Over NFS, four
+  6-channel copies beside a player on 2 slow cores made it wait 0.2 to 0.4 s in every run. Now a
+  reader slower than a player counts as one only once it has read 4 MiB, or for as long as that
+  takes at 1.5 times the file's rate (0.9 s for a 6-channel WAV file, 4 s for a stereo DSF file).
+  That NFS cell: worst read 161 ms, median 140 (main 369 and 310, 0.6.3 404 and 340, 0.6.2 524
+  and 361), and the copies never counted as players for their whole run (0.6.3: 2 runs of 7).
+  Over SMB, a second player starting with four copies beside a first on 4 cores: 142 ms and 136
+  (main 2,498 and 753, 0.6.3 1,933 and 1,208). Other cells are level within the spread of the
+  runs ([performance](docs/performance.md#a-player-beside-copies-starting-on-a-busy-server-362)).
+  A file server in a PID namespace sacdfs can't see still counts by the order of its reads
+  ([design](docs/design.md#the-file-servers-process-362)).
 - **Copies served by a network file server count as behind a network client from their first
   read (part of #362).** A file opened by Samba (`smbd`), NFS-Ganesha (`ganesha.nfsd`), the
   kernel's NFS server (`nfsd`) or `ksmbd` is read for a network client, whatever the order of its
@@ -156,7 +200,40 @@ All notable changes to sacdfs are recorded here. The format follows
   copies 130 s in every run (0.6.3: 130 to 235 s), 6 % less CPU. The player's worst read is
   higher there, 484 ms against 367 (median 407 against 281). A local program named like one of
   those servers counts as one; its reader then lets an earlier player go first, and its audio is
-  the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
+  the same. The server's process is looked up once a reader has read 4 MiB, when it first matters,
+  not at every open: looked up at the open, it cost about 25 microseconds per open and made a scan
+  of short plain-DSD files 10 % slower (#403). Audio bytes are unchanged: only when frames are
+  decoded ahead changes.
+
+### Documentation
+- **Installer restarts and the container route, checked on NAS VMs (part of #340, #283).** With
+  the 0.6.3 release files, a power cycle after the install brought sacdfs back by itself, with
+  identical files, on Synology DSM, ASUSTOR ADM, TerraMaster TOS, ReadyNAS OS and Debian 12 with
+  UGREEN's kernel, and with the container route (`nas-compose.yaml`) under Docker on ASUSTOR ADM,
+  in VMs (docs/test-plan.md).
+- **The install start page reads top to bottom (part of #310).** `docs/install/README.md` opens
+  with the installer in the guide shape (what you need, three steps with a dry run first, check
+  it worked, the three common problems), then the guide chooser. The installer's background
+  (what it does per system, the `wget` and BusyBox notes, cut-short downloads, unsupported
+  systems, `--report`, reading it before running it, where it was checked) moved to Details at
+  the end, unchanged.
+- **TrueNAS and Unraid app files name 0.6.3, and were checked on TrueNAS (part of #284).** The
+  TrueNAS catalog app (`deploy/truenas/sacdfs`) named the 0.5.0 image; it now names 0.6.3, with
+  `app.yaml` as the catalog's metadata generator writes it (`version` 1.0.1, three capability
+  descriptions reworded). On TrueNAS SCALE 25.10.8 in a VM, the app rendered for both test value
+  sets and installed as custom apps, the custom-app YAML of `truenas-scale.md`, and a TrueNAS
+  restart each served the corpus files identically over SMB and NFS (`store-apps.md`,
+  `truenas-scale.md`). The Unraid template's container settings were run again on 0.6.3 with
+  Podman. CONTRIBUTING's release steps now list the files that name the version.
+- **macOS: a player beside copies over SMB waits for seconds; use NFS (#378).** Docs only. The
+  macOS SMB client sends the copies' read-ahead before the read a player waits for, so the
+  player waits behind up to about 32 MiB per stall on a full-speed server, and seconds on a
+  slower one. Measured against Samba sharing plain files without sacdfs, which stalls the same
+  way as the 0.6.2 and 0.6.3 gates did; fewer SMB credits made it worse. Over NFS 4.0 from the
+  same Mac VM no read took over 100 ms, at full speed or limited to 600 Mbit/s, with copies as
+  fast as over SMB. `docs/deployment.md` (macOS) has the numbers and recommends NFS for a player
+  that shares the mount with copies. Checked on macOS 27.2 in a VM on Apple hardware; macOS 15
+  and a physical Mac not run.
 
 ## [0.6.3] - 2026-11-13
 

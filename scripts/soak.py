@@ -71,6 +71,8 @@ SAMPLES = []
 # or toggled the art folder, and the stall window (monotonic seconds; 0: none yet).
 # What the churner removed, with the time: cover files and churn albums by name.
 REMOVED = {}
+# When the churner last edited the tags file of each image (resolved path; monotonic seconds).
+TAGGED = {}
 TIMES = {"listed": 0.0, "tags_edit": 0.0, "art_edit": 0.0, "stall_from": 0.0, "stall_until": 0.0}
 
 
@@ -86,7 +88,9 @@ def classify(path, err, mnt):
       ENOENT or EINTR (the watchdog fails the request, #141);
     - tags: ENOENT on a .dsf when the churner edited a tags file after the reader's list was
       taken, or less than 60 s ago (a tags edit can rename a track's file, so the listed name
-      is gone);
+      is gone); and EIO on a track file of an album whose image's tags file the churner edited
+      less than 60 s ago (the edited file gets a new generation under the same number, and
+      the kernel then fails reads of a descriptor still open on the old version, #339);
     - sidecar: ENOENT on a cover-*.jpg the churner has removed (by name, at any time: sacdfs
       lists the file until it has re-read the folder, which takes seconds on real discs, and
       the file is gone), or on a file under Artwork/ less than 60 s after the churner toggled
@@ -114,6 +118,8 @@ def classify(path, err, mnt):
     if (e == errno.ENOENT and rel and rel[-1].endswith(".dsf")
             and (TIMES["tags_edit"] > TIMES["listed"] or now - TIMES["tags_edit"] <= 60)):
         return "tags"
+    if e == errno.EIO and rel and rel[-1].endswith((".dsf", ".wav")) and now - tagged_at(rel, mnt) <= 60:
+        return "tags"
     if e == errno.ENOENT and rel and (("file:" + rel[-1]) in removed
                                       or ("Artwork" in rel[:-1] and now - TIMES["art_edit"] <= 60)):
         return "sidecar"
@@ -124,6 +130,18 @@ def classify(path, err, mnt):
                 and rel[-2] in ("Stereo", "Multichannel")):
             return "sidecar"
     return "unexpected"
+
+
+def tagged_at(rel, mnt):
+    """When the churner last edited the tags file of the image behind the mounted path `rel`
+    (its album folder's disc.iso in the library beside the mount); -inf if never."""
+    album = rel[:2] if rel[0] == "churn" else rel[:1]
+    try:
+        image = (Path(mnt).parent / "lib").joinpath(*album, "disc.iso").resolve(strict=True)
+    except (OSError, RuntimeError):
+        return float("-inf")
+    with LOCK:
+        return TAGGED.get(image, float("-inf"))
 
 
 def record_error(path, err, args):
@@ -306,8 +324,11 @@ def churner(args, images, keys):
                         REMOVED["file:" + old.name] = time.monotonic()
                     old.unlink()
             elif act == 2:  # a tags file is edited
+                i = rnd.randrange(len(keys))
                 TIMES["tags_edit"] = time.monotonic()
-                write_tags(args, rnd.choice(keys), n)
+                with LOCK:
+                    TAGGED[images[i]] = TIMES["tags_edit"]
+                write_tags(args, keys[i], n)
             elif act == 3:  # an art folder comes and goes
                 TIMES["art_edit"] = time.monotonic()
                 art = lib / "a1" / "Artwork"
