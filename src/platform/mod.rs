@@ -198,6 +198,12 @@ pub fn read_link_at(dir: &Dir, name: &OsStr) -> io::Result<PathBuf> {
     imp::read_link_at(dir, name)
 }
 
+/// Whether this process may write in folder `dir` (`access(W_OK)` on Unix; on Windows, the
+/// folder isn't read-only).
+pub fn writable(dir: &Path) -> io::Result<()> {
+    imp::writable(dir)
+}
+
 /// The total size of the filesystem holding `path`: (blocks, block size).
 pub fn fs_size(path: &Path) -> io::Result<(u64, u32)> {
     imp::fs_size(path)

@@ -169,6 +169,13 @@ pub fn read_link_at(dir: &Dir, name: &OsStr) -> io::Result<PathBuf> {
     std::fs::read_link(dir.0.join(name))
 }
 
+pub fn writable(dir: &Path) -> io::Result<()> {
+    if std::fs::metadata(dir)?.permissions().readonly() {
+        return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+    }
+    Ok(())
+}
+
 pub fn fs_size(_path: &Path) -> io::Result<(u64, u32)> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }

@@ -18,14 +18,10 @@ use crate::{mount_opts, startup, stop_signals};
 
 use fuser::{Config, MountOption, Session, SessionACL};
 
-use sacdfs::disc::Tuning;
-use sacdfs::engine::{Engine, default_threads};
 use sacdfs::fuse::{MAX_READ, SacdFs};
-use sacdfs::index_cache::{self, IndexCache};
-use sacdfs::memory;
-use sacdfs::pcm::{Cutoff, PcmConfig, PcmRate};
-use sacdfs::sidecar::Sidecars;
-use sacdfs::tree::{Output, SourceDir, Tree};
+use sacdfs::index_cache;
+use sacdfs::serve::{self, with_path};
+use sacdfs::tree::SourceDir;
 
 /// Show the audio of SACD disc images as DSF and WAV files, decoded on demand.
 ///
@@ -50,70 +46,8 @@ struct Args {
     /// Stay in the foreground and log to standard error.
     #[arg(short, long)]
     foreground: bool,
-    /// DST decoder threads (0: one per CPU; under a memory limit, at most one per 64 MiB of it,
-    /// and at least 2).
-    #[arg(long, default_value_t = 0, value_name = "N")]
-    threads: usize,
-    /// Size of the cache of decoded and converted frames, in MiB (default: 32, or 16 under a
-    /// memory limit below 256 MiB).
-    #[arg(long, value_name = "N")]
-    cache_mb: Option<usize>,
-    /// Memory kept for what listed images hold (their TOCs and files), in MiB; past it, those
-    /// not used lately are read again when next used. 0: no bound (default: no bound, or 3/8
-    /// of the memory limit under one).
-    #[arg(long, value_name = "N")]
-    listing_mb: Option<usize>,
-    /// Which files to show: dsf, wav, or both (dsf,wav).
-    #[arg(long, default_value = "dsf,wav", value_name = "LIST", value_parser = parse_formats)]
-    format: Formats,
-    /// Pauses: dropped (the default: each file is the track's own range) or kept (each file
-    /// is the track with its pause, as extractors that keep pauses write it).
-    #[arg(long, default_value = "dropped", value_name = "MODE", value_parser = ["dropped", "kept"])]
-    pauses: String,
-    /// Sample rate of the WAV files, in Hz: 88200, 176400 or 352800.
-    #[arg(long, default_value_t = 176_400, value_name = "HZ", value_parser = parse_rate)]
-    pcm_rate: u32,
-    /// Low-pass cutoff of the PCM conversion: 40 or 30 (kHz), or wide (about 80 kHz; needs a
-    /// --pcm-rate of 176400 or 352800).
-    #[arg(long, default_value = "40", value_name = "KHZ", value_parser = parse_cutoff)]
-    pcm_cutoff: Cutoff,
-    /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
-    #[arg(long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
-    pcm_gain: f32,
-    /// Do not add " (Multichannel)" to the album tag of the files of the multichannel area
-    /// (by default they get it, so players and servers show them as an album of their own).
-    #[arg(long)]
-    no_multichannel_album_suffix: bool,
-    /// Directory of tags files (#81), one per disc, named by its disc key
-    /// (`sacdfs tags key IMAGE`): their tags override and add to the TOC's. Without it, or
-    /// for a disc without a file, the files are as the TOC gives them.
-    #[arg(long, value_name = "DIR")]
-    tags: Option<PathBuf>,
-    /// Look up, on MusicBrainz, discs without a track title, album or artist, in the
-    /// background, and write what matches to the --tags directory (which must be writable),
-    /// as `sacdfs tags fetch` does: by barcode or catalogue number, confirmed by track count,
-    /// durations and ISRCs. Off by default; nothing else in a mount uses the network. At most
-    /// 1 request per second, once per disc; no client request waits for it.
-    #[arg(long, requires = "tags")]
-    musicbrainz: bool,
-    /// With --musicbrainz: if that finds nothing, also search by album and artist, from the
-    /// disc's text or the image's path. Sends those names.
-    #[arg(long, requires = "musicbrainz")]
-    lookup_name: bool,
-    /// With --musicbrainz: if that finds nothing, also ask by the tracks' start times (a disc
-    /// of 4 tracks or more). Sends the times.
-    #[arg(long, requires = "musicbrainz")]
-    lookup_durations: bool,
-    /// Collapse each chain of folders below the top level that holds a single image into
-    /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
-    #[arg(long)]
-    flatten: bool,
-    /// Files passed through from SOURCE, byte for byte, next to the images' folders: a
-    /// comma-separated list of extensions and folder names ending in / (whose whole content
-    /// passes). `default` is jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/; `-item` removes an
-    /// item (default,-webp), `none` passes nothing.
-    #[arg(long, default_value = "default", value_name = "LIST", value_parser = Sidecars::parse)]
-    sidecars: Sidecars,
+    #[command(flatten)]
+    serve: serve::Options,
     /// Let other users read the mount: the default when run as root (the mount is read-only).
     /// A user other than root needs `user_allow_other` in /etc/fuse.conf for it.
     #[arg(long)]
@@ -121,23 +55,8 @@ struct Args {
     /// Only the user who mounted may read the mount, also when run as root.
     #[arg(long, conflicts_with = "allow_other")]
     no_allow_other: bool,
-    /// Directory of the persistent seek index, which lets seeks after a remount skip most
-    /// of their search (default: $XDG_CACHE_HOME/sacdfs, else ~/.cache/sacdfs).
-    #[arg(long, value_name = "DIR")]
-    index_cache: Option<PathBuf>,
-    /// Keep no persistent seek index: every mount starts with an empty one.
-    #[arg(long, conflicts_with = "index_cache")]
-    no_index_cache: bool,
-    /// Most image files kept open at once (1 to 1024); the least recently used is closed
-    /// first, and any closes after 5 minutes unused.
-    #[arg(long, default_value_t = sacdfs::handles::DEFAULT_MAX_OPEN, value_name = "N",
-          value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=1024))]
-    max_open_images: usize,
-    /// Seconds a request (a read, a lookup, a listing) may wait for the source before it
-    /// fails with an I/O error and a log line, so that a stalled share never hangs a client;
-    /// 0 waits for good.
-    #[arg(long, default_value_t = sacdfs::watchdog::DEFAULT_TIMEOUT.as_secs(), value_name = "SECS")]
-    request_timeout: u64,
+    #[command(flatten)]
+    limits: serve::Limits,
     /// Seconds after SIGINT, SIGTERM or SIGHUP that sacdfs keeps serving files clients still hold
     /// open before it exits anyway (the mount is detached at once, so nothing new opens); those
     /// clients then get I/O errors. 0 waits for the last file to close, however long.
@@ -150,57 +69,6 @@ struct Args {
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
-}
-
-/// The formats shown.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Formats {
-    dsf: bool,
-    wav: bool,
-}
-
-fn parse_formats(s: &str) -> Result<Formats, String> {
-    let mut f = Formats { dsf: false, wav: false };
-    for part in s.split(',') {
-        match part.trim().to_ascii_lowercase().as_str() {
-            "dsf" => f.dsf = true,
-            "wav" => f.wav = true,
-            other => return Err(format!("unknown format {other:?}: use dsf, wav or dsf,wav")),
-        }
-    }
-    Ok(f)
-}
-
-fn pcm_rate(hz: u32) -> Option<PcmRate> {
-    match hz {
-        88_200 => Some(PcmRate::R88200),
-        176_400 => Some(PcmRate::R176400),
-        352_800 => Some(PcmRate::R352800),
-        _ => None,
-    }
-}
-
-fn parse_rate(s: &str) -> Result<u32, String> {
-    s.parse()
-        .ok()
-        .filter(|&hz| pcm_rate(hz).is_some())
-        .ok_or_else(|| "use 88200, 176400 or 352800".to_owned())
-}
-
-fn parse_cutoff(s: &str) -> Result<Cutoff, String> {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "40" => Ok(Cutoff::Khz40),
-        "30" => Ok(Cutoff::Khz30),
-        "wide" => Ok(Cutoff::Wide80),
-        _ => Err("use 40, 30 or wide".to_owned()),
-    }
-}
-
-fn parse_gain(s: &str) -> Result<f32, String> {
-    s.parse::<f32>()
-        .ok()
-        .filter(|g| g.is_finite() && (-60.0..=24.0).contains(g))
-        .ok_or_else(|| "use a number of dB from -60 to 24".to_owned())
 }
 
 pub fn main() -> ExitCode {
@@ -271,19 +139,6 @@ fn send_ready(path: &std::ffi::OsStr) -> io::Result<()> {
     UnixDatagram::unbound()?.send_to_addr(b"READY=1", &addr).map(drop)
 }
 
-/// Whether this process may write in the directory `dir`.
-#[allow(unsafe_code)]
-fn writable(dir: &Path) -> io::Result<()> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).map_err(io::Error::other)?;
-    // SAFETY: `c` is a valid NUL-terminated string for the duration of the call.
-    if unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
 /// Opens `path` for appending, creating it with mode 0600 (it can hold file names).
 fn open_log_file(path: &Path) -> io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -299,36 +154,7 @@ fn keeps_stderr(log_file: bool, journal_stream: bool) -> bool {
 fn run(args: Args) -> io::Result<()> {
     // Before anything is opened: images and sidecars share this limit.
     let nofile = startup::raise_nofile();
-    // The wide filter passes up to about 80 kHz, which 88.2 kHz PCM cannot hold (its Nyquist
-    // frequency is 44.1 kHz). The converter would quietly use 40 kHz instead: refuse the
-    // combination before mounting.
-    let rate = pcm_rate(args.pcm_rate).unwrap_or(PcmRate::R176400);
-    sacdfs::dsf::set_mc_album_suffix(!args.no_multichannel_album_suffix);
-    if let Some(dir) = &args.tags {
-        let dir = dir.canonicalize().map_err(|e| with_path(e, dir))?;
-        if !dir.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotADirectory,
-                format!("--tags {}: not a directory", dir.display()),
-            ));
-        }
-        if args.musicbrainz {
-            writable(&dir).map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("--musicbrainz writes to --tags {}, which isn't writable: {e}", dir.display()),
-                )
-            })?;
-        }
-        sacdfs::tags::install(Some(sacdfs::tags::Store::new(&dir)));
-    }
-    let pcm = PcmConfig { rate, cutoff: args.pcm_cutoff, gain_db: args.pcm_gain };
-    if let Err(e) = pcm.validate() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("--pcm-cutoff wide needs --pcm-rate 176400 or 352800 ({e})"),
-        ));
-    }
+    let pcm = args.serve.check()?;
     let source = args.source.canonicalize().map_err(|e| with_path(e, &args.source))?;
     // A FUSE mount still on the mount point (an earlier sacdfs that is stopping): mounting
     // over it would put this mount inside it, where its unmount takes this one along (#51).
@@ -351,53 +177,24 @@ fn run(args: Args) -> io::Result<()> {
     // Nothing sacdfs reads may lie under its own mount (#56): before the scan, which can
     // take a while on a large library.
     refuse_source_under_mountpoint(&source, &mountpoint)?;
-    let cache_dir = index_cache_dir(&args, &mountpoint)?;
+    let cache_dir = args.limits.index_cache_dir(Some(&mountpoint))?;
     warn_if_not_empty(&mountpoint);
     // Before any thread allocates (#73), and so before the walk below, which reads the top-level
     // folders on several threads (#175): glibc gives each thread that allocates an arena of its
     // own, and what the walk allocates and frees stays in them.
     sacdfs::engine::limit_malloc_arenas();
     // Only names are read here; images are opened when their directory is first listed.
-    let mut root = SourceDir::scan_with(&source, &args.sidecars, Some(&mountpoint))
-        .map_err(|e| with_path(e, &source))?;
+    let mut root = args.serve.scan(&source, Some(&mountpoint))?;
     refuse_images_under_mountpoint(&root, &mountpoint)?;
     skip_linked_images_under_mountpoint(&mut root, &mountpoint);
-    log::info!(
-        "{}: {} image files; sidecar files: {}",
-        source.display(),
-        root.image_count(),
-        args.sidecars.describe()
-    );
+    args.serve.log_scan(&source, &root);
     // What the memory limit asks of the defaults (#231, #237). Said here, before the fork, so
     // that whoever started it sees it without a log file.
-    let cgroup = memory::Cgroup::find();
-    let limit = cgroup.as_ref().map(memory::Cgroup::limit);
-    if limit.is_some() && args.tags.is_some() {
-        sacdfs::engine::map_large_allocations();
-    }
-    let threads =
-        if args.threads == 0 { memory::default_threads(default_threads(), limit) } else { args.threads };
-    let cache_mb = args.cache_mb.unwrap_or_else(|| memory::default_cache_mb(limit));
-    let budget = match args.listing_mb {
-        Some(0) => None,
-        Some(mb) => Some(mb.saturating_mul(1 << 20)),
-        None => memory::listing_budget(limit),
-    };
-    if let Some(limit) = limit {
-        log::info!(
-            "memory limit {} MiB: cache {cache_mb} MiB, {threads} decoder threads, listings {}",
-            limit >> 20,
-            budget.map_or_else(|| "not bounded".to_owned(), |b| format!("{} MiB", b >> 20)),
-        );
-        let plan = memory::Plan { limit, images: root.image_count(), cache_mb, threads, budget };
-        if let Some(warning) = plan.warning() {
-            log::warn!("{warning}");
-        }
-    }
+    let sizing = args.serve.sizing(&root);
 
     // Before daemonizing, which changes the working directory.
     if let Some(dir) = &cache_dir {
-        open_index_cache(dir);
+        serve::open_index_cache(dir);
     }
 
     // Become a daemon before any thread exists; the parent waits for the mount.
@@ -411,39 +208,25 @@ fn run(args: Args) -> io::Result<()> {
     // A SIGINT, SIGTERM or SIGHUP from here on is held until the check below, before
     // mounting, or the signal thread, after: either way no dead mount is left behind.
     let mut signals = stop_signals::catch()?;
-    let (max_open_images, sidecars_open) = startup::open_files_budget(nofile, args.max_open_images);
-    sacdfs::handles::global().configure(max_open_images, sacdfs::handles::DEFAULT_IDLE);
-    sacdfs::vfs::sidecar_slots::global().set_cap(sidecars_open);
-
-    // Opening the images of a directory listing runs on rayon's global pool.
-    let _ = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads.min(8))
-        .thread_name(|i| format!("sacdfs-toc-{i}"))
-        .build_global();
-    let output = Output {
-        dsf: args.format.dsf,
-        wav: args.format.wav,
-        samples_per_frame: rate.samples_per_frame() as u32,
-        pauses_kept: args.pauses == "kept",
-    };
-    let engine = Arc::new(Engine::with_pcm(threads, cache_mb.saturating_mul(1 << 20), pcm)?);
-    // An idle mount gives its cache and decoders back (#150).
-    engine.start_idle_release()?;
-    let shedding = engine.clone();
-    let tree = Tree::with_options(root, Tuning::default(), output)
-        .with_flatten(args.flatten)
-        .with_listing_budget(budget)
-        .with_pcm(&pcm)
-        .excluding(&mountpoint)
-        // The tags files' state is kept with the seek index (#81).
-        .with_tag_watch(cache_dir.as_ref().map(|d| d.join("tag-keys")));
-    // A directory SOURCE is re-read when it changes (#101); a single image has no directory.
-    let tree = Arc::new(if source.is_dir() { tree.watching(&args.sidecars) } else { tree });
+    let open_files = startup::open_files_budget(nofile, args.limits.max_open_images);
+    let (tree, engine) = serve::build(
+        &args.serve,
+        serve::Parts {
+            source: &source,
+            root,
+            pcm,
+            sizing: &sizing,
+            exclude: Some(&mountpoint),
+            cache_dir: cache_dir.as_deref(),
+            open_files,
+        },
+    )?;
     // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let tags_tree = tree.clone();
-    let fs = SacdFs::new(tree, engine, threads.clamp(4, 16), uid, gid)?
-        .with_request_timeout(Some(Duration::from_secs(args.request_timeout)))?;
+    let shedding = engine.clone();
+    let fs = SacdFs::new(tree, engine, serve::request_threads(sizing.threads), uid, gid)?
+        .with_request_timeout(args.limits.request_timeout())?;
 
     let mut config = Config::default();
     config.mount_options = vec![
@@ -559,54 +342,8 @@ fn run(args: Args) -> io::Result<()> {
             }
         }
     })?;
-    sacdfs::handles::start_idle_closer()?;
-    if let Some(cgroup) = cgroup {
-        let (tree, engine) = (tags_tree.clone(), shedding);
-        std::thread::Builder::new()
-            .name("sacdfs-memory".to_owned())
-            .spawn(move || memory::watch(&cgroup, &tree, &engine))?;
-    }
-    if let Some(cache) = index_cache::global() {
-        let cache = cache.clone();
-        std::thread::Builder::new().name("sacdfs-index".to_owned()).spawn(move || {
-            let mut warned = false;
-            loop {
-                std::thread::sleep(FLUSH_EVERY);
-                if let Err(e) = cache.flush() {
-                    if !std::mem::replace(&mut warned, true) {
-                        log::warn!("seek index cache {}: {e}", cache.dir().display());
-                    }
-                }
-            }
-        })?;
-    }
-    // The background lookup (#185): after the mount is up, on a thread of its own.
-    let mut lookups = match args.tags.as_deref().filter(|_| args.musicbrainz) {
-        Some(dir) => {
-            let config = sacdfs::lookup::worker::Config {
-                tags: dir.canonicalize().map_err(|e| with_path(e, dir))?,
-                state: cache_dir.as_ref().map(|d| d.join("musicbrainz")),
-                options: sacdfs::lookup::Options {
-                    by_name: args.lookup_name,
-                    by_durations: args.lookup_durations,
-                    no_suffix: args.no_multichannel_album_suffix,
-                    ..sacdfs::lookup::Options::default()
-                },
-                first_delay: sacdfs::lookup::worker::FIRST_DELAY,
-                pass_every: sacdfs::lookup::worker::PASS_EVERY,
-            };
-            let client = sacdfs::lookup::Client::new(sacdfs::lookup::Http::new());
-            let tree = tags_tree.clone();
-            log::info!(
-                "musicbrainz: background lookups on, by number{}{}, from {} s after the mount",
-                if args.lookup_name { ", name" } else { "" },
-                if args.lookup_durations { ", durations" } else { "" },
-                config.first_delay.as_secs()
-            );
-            Some(sacdfs::lookup::worker::Worker::start(config, client, move || tree.images())?)
-        }
-        None => None,
-    };
+    let mut background =
+        serve::start_background(&args.serve, sizing, &tags_tree, &shedding, cache_dir.as_deref())?;
     if let Some(n) = notify {
         n.ok();
     }
@@ -620,18 +357,7 @@ fn run(args: Args) -> io::Result<()> {
         log::warn!("session ended: {e}; detaching {}", mountpoint.display());
         let _ = lazy_unmount(&mountpoint);
     }
-    if let Some(w) = lookups.as_mut() {
-        w.stop();
-    }
-    tags_tree.save_tag_watch();
-    if let Some(cache) = index_cache::global() {
-        match cache.flush() {
-            Ok(n) => log::debug!("seek index cache: {n} entries written"),
-            Err(e) => log::warn!("seek index cache {}: {e}", cache.dir().display()),
-        }
-    }
-    let (calls, bytes) = sacdfs::disc::total_reads();
-    log::info!("image reads for audio: {calls} calls, {bytes} bytes");
+    background.stop();
     match result {
         // The connection ended: the same end as the ENODEV that fuser takes for one (#322).
         // When a connection ends (an unmount, ours after a signal or one from outside such as
@@ -650,54 +376,6 @@ fn run(args: Args) -> io::Result<()> {
 /// The default of `--stop-grace`, in seconds. Shorter than every stop timeout shipped in
 /// `deploy/` (systemd 30 s, `sacdfs-ctl` 30 s, the container's 30 s less its servers' 10 s).
 const DEFAULT_STOP_GRACE: u64 = 10;
-
-/// How often the persistent seek index is saved, if it changed.
-const FLUSH_EVERY: Duration = Duration::from_secs(30);
-
-/// The directory of the persistent seek index the options ask for, if any.
-///
-/// One under the mount point would be written through sacdfs's own mount (#56): an
-/// `--index-cache` there is refused; the default directory there (a mount point at or above
-/// the cache directory, such as the home directory) only turns the cache off, since a cache
-/// that cannot be used is only a warning elsewhere too.
-fn index_cache_dir(args: &Args, mountpoint: &Path) -> io::Result<Option<PathBuf>> {
-    if args.no_index_cache {
-        return Ok(None);
-    }
-    let Some(dir) = args.index_cache.clone().or_else(index_cache::default_dir) else {
-        log::warn!("no seek index cache: neither XDG_CACHE_HOME nor HOME is set");
-        return Ok(None);
-    };
-    let dir = std::path::absolute(&dir).map_err(|e| with_path(e, &dir))?;
-    if !canonical_prefix(&dir).starts_with(mountpoint) {
-        return Ok(Some(dir));
-    }
-    let why = format!(
-        "seek index cache {} is inside the mount point {}: sacdfs would write it through its own mount",
-        dir.display(),
-        mountpoint.display()
-    );
-    if args.index_cache.is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{why}; choose another --index-cache"),
-        ));
-    }
-    log::warn!("{why}; no seek index cache (use --index-cache DIR)");
-    Ok(None)
-}
-
-/// Installs the persistent seek index in `dir`. A cache that cannot be used is only a
-/// warning: it costs speed, never the mount.
-fn open_index_cache(dir: &Path) {
-    match IndexCache::open(dir) {
-        Ok(cache) => {
-            log::debug!("seek index cache in {}", cache.dir().display());
-            index_cache::install(Arc::new(cache));
-        }
-        Err(e) => log::warn!("no seek index cache in {}: {e}", dir.display()),
-    }
-}
 
 /// The name the mount is listed under (the source field of `/proc/self/mountinfo`, and
 /// what `df` and `mount` show), for every mount.
@@ -795,29 +473,6 @@ fn warn_if_not_empty(mountpoint: &Path) {
     if std::fs::read_dir(mountpoint).is_ok_and(|mut d| d.next().is_some()) {
         log::warn!("{} is not empty: its files are hidden while sacdfs is mounted", mountpoint.display());
     }
-}
-
-/// `path` (absolute) with its longest existing ancestor made canonical and the rest kept as
-/// given: what `canonicalize` would give for a path that may not exist yet.
-fn canonical_prefix(path: &Path) -> PathBuf {
-    let mut rest = Vec::new();
-    let mut at = path;
-    loop {
-        if let Ok(c) = at.canonicalize() {
-            return rest.iter().rev().fold(c, |p, name| p.join(name));
-        }
-        match (at.parent(), at.file_name()) {
-            (Some(parent), Some(name)) => {
-                rest.push(name.to_owned());
-                at = parent;
-            }
-            _ => return path.to_owned(),
-        }
-    }
-}
-
-fn with_path(e: io::Error, path: &std::path::Path) -> io::Error {
-    io::Error::new(e.kind(), format!("{}: {e}", path.display()))
 }
 
 /// How long a new mount waits for an earlier FUSE mount on the same mount point to go away.
@@ -1403,14 +1058,6 @@ mod tests {
         skip_linked_images_under_mountpoint(&mut root, &mnt);
         assert_eq!(root.image_count(), 1);
         assert!(root.dirs.is_empty());
-    }
-
-    #[test]
-    fn canonical_prefix_of_a_missing_path() {
-        let d = tempfile::tempdir().unwrap();
-        let c = d.path().canonicalize().unwrap();
-        assert_eq!(canonical_prefix(&d.path().join("x/y")), c.join("x/y"));
-        assert_eq!(canonical_prefix(d.path()), c);
     }
 
     #[test]
