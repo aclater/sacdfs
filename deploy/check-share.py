@@ -23,6 +23,15 @@ from pathlib import Path
 
 REV = bytes(int(f"{b:08b}"[::-1], 2) for b in range(256))
 AREAS = {"2ch": "Stereo", "multichannel": "Multichannel"}
+# Where sacdfs deliberately lists a track differently from the manifest (#402); the same list
+# as DEPARTURES in tests/common/mod.rs. None: the track is not listed (it lies inside an
+# earlier track). (case, number): the track has exactly that manifest track's audio.
+DEPARTURES = {
+    ("track-starts-overlap", "2ch", 2): None,
+    ("track-starts-overlap", "2ch", 3): None,
+    ("track-duration-max", "2ch", 1): ("track-lsn-reversed", 1),
+    ("track-duration-max", "2ch", 2): ("track-lsn-reversed", 2),
+}
 
 
 def dsf_channels(raw: bytes) -> list[bytes]:
@@ -54,6 +63,11 @@ def main() -> int:
     a = ap.parse_args()
     only = set(filter(None, a.cases.split(",")))
     cases = json.loads(a.manifest.read_text())["cases"]
+    by_id = {c["id"]: c for c in cases}
+
+    def reference(cid, slot, num):
+        area = next(x for x in by_id[cid]["expected"]["audio"] if x["area"] == slot)
+        return next(t for t in area["tracks"] if t["number"] == num)
     checked = failed = 0
     for case in cases:
         cid = case["id"]
@@ -75,6 +89,14 @@ def main() -> int:
                 dsf = [adir / n for n in names if n.endswith(".dsf") and int(re.match(r"\d+", n)[0]) == num]
                 wav = [adir / n for n in names if n.endswith(".wav") and int(re.match(r"\d+", n)[0]) == num]
                 where = f"{cid}/{AREAS[area['area']]}/{num}"
+                key = (cid, area["area"], num)
+                if key in DEPARTURES and DEPARTURES[key] is None:
+                    if dsf or wav:
+                        print(f"FAIL {where}: listed, but should be left out")
+                        failed += 1
+                    continue
+                if key in DEPARTURES:
+                    t = reference(DEPARTURES[key][0], area["area"], DEPARTURES[key][1])
                 if len(dsf) != 1:
                     print(f"FAIL {where}: {len(dsf)} DSF files")
                     failed += 1
