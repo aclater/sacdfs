@@ -16,6 +16,12 @@ All notable changes to sacdfs are recorded here. The format follows
   contents until sacdfs-win reports a change: reading the corpus 4 KiB at a time takes half the
   spike's time, and a second pass a twentieth
   ([winfsp/README.md](winfsp/README.md)).
+- **A Windows download and install guide (#419).** Each release has
+  `sacdfs-<version>-x86_64-windows.zip` (`sacdfs-win.exe` with the C runtime built in; it needs
+  WinFsp installed), with a checksum and a build attestation, built and checked against the
+  corpus on Windows by the release workflow. The guide covers the install, Explorer, starting it
+  in the background or at logon through WinFsp.Launcher, a drive for every user, names, and
+  Microsoft Defender ([docs/install/windows.md](docs/install/windows.md)).
 
 ### Changed
 - **The core builds for Windows and macOS (#419, #420).** The calls that differ between
