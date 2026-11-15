@@ -98,8 +98,9 @@ never moved.
    version, or CHANGELOG.md has no section for it.
 6. **After:** the release has both archives with `.sha256`, `.intoto.jsonl` and
    `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
-   `gh attestation verify`. A version with a hyphen (`0.2.0-rc.1`) is marked as a
-   pre-release and doesn't move `:latest`.
+   `gh attestation verify`; the workflow's last image step has verified the image index, each
+   architecture's image by its digest and each `-<arch>` tag (#379). A version with a hyphen
+   (`0.2.0-rc.1`) is marked as a pre-release and doesn't move `:latest`.
 7. **Install instructions:** point them at the new version in a docs pull request: the guides
    in `docs/install/`, `deploy/nas-compose.yaml`, the Unraid template
    (`deploy/unraid/sacdfs.xml`, `<Repository>`) and the TrueNAS catalog app
