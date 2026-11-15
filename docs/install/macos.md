@@ -3,12 +3,16 @@
 This shows your SACD images as a folder of DSF and WAV files on a Mac. The Mac's own NFS client
 mounts the folder (NFS is the Network File System, here used only inside the Mac), so there is
 nothing else to install and no security setting to change: no macFUSE, no FUSE-T, no kernel
-extension, no restart. About 10 minutes.
+extension, no restart.
 
 Checked on macOS 27.2 in a VM on Apple hardware (Apple Silicon, from the command line), and on
-GitHub's macOS 26 (Apple Silicon) and macOS 15 (Intel) runners, with sacdfs built from main
-before 0.7.0. The download steps (1 to 3) wait for the first release with macOS archives,
-0.7.0: they are not run yet. See [Details](#details).
+GitHub's macOS 26 (Apple Silicon) and macOS 15 (Intel) runners, with sacdfs built from its
+source before 0.7.0. See [Details](#details).
+
+**Build from source until the first macOS release.** Releases don't include Mac programs yet:
+they will once sacdfs's NFS layer has moved to a maintained library (#420). Until then, steps 1
+to 3 build sacdfs on the Mac: about 10 minutes, and about 2 GB of disk for Apple's command
+line tools and Rust.
 
 ## What you need
 
@@ -18,44 +22,39 @@ before 0.7.0. The download steps (1 to 3) wait for the first release with macOS 
 
 ## Steps
 
-1. **Download sacdfs and its checksum.** In Terminal, on Apple Silicon (`uname -m` prints
-   `arm64`):
+1. **Install Apple's command line tools** (the compiler's linker):
 
    ```sh
-   cd ~/Downloads
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.0/sacdfs-0.7.0-aarch64-macos.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.0/sacdfs-0.7.0-aarch64-macos.tar.gz.sha256
+   xcode-select --install
    ```
 
-   On Intel (`uname -m` prints `x86_64`), the same two lines with `x86_64` in place of
-   `aarch64`, four times.
+   A window asks to install them: click Install. If it says they are installed already, go
+   on.
 
-2. **Check the download.**
+2. **Install Rust**, for your user only:
 
    ```sh
-   shasum -a 256 -c sacdfs-0.7.0-aarch64-macos.tar.gz.sha256
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+   source ~/.cargo/env
    ```
 
-   *You should see* `sacdfs-0.7.0-aarch64-macos.tar.gz: OK`.
+   *You should see* `Rust is installed now. Great!`.
 
-3. **Unpack it and put the programs in a `bin` folder of your own.**
+3. **Build and install sacdfs** with the Mac's mount (`--features nfs`):
 
    ```sh
-   tar -xzf sacdfs-0.7.0-aarch64-macos.tar.gz
-   mkdir -p ~/bin
-   cp sacdfs-0.7.0-aarch64-macos/sacdfs-nfs sacdfs-0.7.0-aarch64-macos/sacdfs ~/bin/
-   ~/bin/sacdfs-nfs --version
+   cargo install --locked --features nfs --git https://github.com/aclater/sacdfs sacdfs
+   ~/.cargo/bin/sacdfs-nfs --version
    ```
 
-   *You should see* `sacdfs-nfs 0.7.0`. If macOS says the program "cannot be opened because the
-   developer cannot be verified", it was downloaded with a web browser, which marks the file;
-   `curl` doesn't. Remove the mark with `xattr -d com.apple.quarantine ~/bin/sacdfs-nfs ~/bin/sacdfs`.
+   *You should see* `Installed package sacdfs ...` (`executables sacdfs, sacdfs-nfs`), then
+   `sacdfs-nfs` and its version. The programs are in `~/.cargo/bin`.
 
 4. **Make an empty folder to mount on, and start sacdfs.**
 
    ```sh
    mkdir -p ~/SACD
-   ~/bin/sacdfs-nfs ~/Music/"SACD images" ~/SACD
+   ~/.cargo/bin/sacdfs-nfs ~/Music/"SACD images" ~/SACD
    ```
 
    *You should see* `mounted on /Users/you/SACD` and `serving ... on 127.0.0.1:20501` (the
@@ -72,7 +71,7 @@ before 0.7.0. The download steps (1 to 3) wait for the first release with macOS 
 Instead of step 4, write a launch agent with the same command and `--launch-agent`:
 
 ```sh
-~/bin/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD
+~/.cargo/bin/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD
 launchctl load -w ~/Library/LaunchAgents/io.github.aclater.sacdfs-nfs.plist
 ```
 
@@ -141,6 +140,9 @@ user of the Mac can read the files served**, as with `--allow-other` on Linux.
   doesn't sleep), a real login, speed against Linux on real discs, and macOS older than 15.
   They need a Mac with a screen and real discs: a VM with graphics, or a Mac set aside for
   tests.
-- **Signing:** the programs are not signed by a developer or notarised by Apple, so macOS
-  only lets them run without a prompt when downloaded with `curl` (step 1), or after the
-  `xattr` command in step 3.
+- **The build check:** the VM got the command line tools with `softwareupdate` instead of
+  the `xcode-select --install` window, which needs a screen; steps 2 and 3 ran as written
+  (from the branch of this change, before it was on main).
+- **Signing:** built on your own Mac, the programs need no signature. Release archives, when
+  they come, won't be signed by a developer or notarised by Apple either (see
+  [design](../design.md#the-nfs-front-end-420)).

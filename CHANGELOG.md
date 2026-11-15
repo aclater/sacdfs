@@ -18,9 +18,9 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#the-nfs-front-end-420)). Part of #420.
 - **macOS: mount sacdfs on a Mac (#420).** `sacdfs-nfs SOURCE MOUNTPOINT` mounts with the Mac's
   own NFS client, as the user, with nothing else installed, and takes the same options as the
-  Linux mount. `--launch-agent` writes a launchd agent that mounts at each login. Releases get
-  `sacdfs-<version>-aarch64-macos.tar.gz` (Apple Silicon) and `-x86_64-macos.tar.gz` (Intel),
-  for macOS 11 and later, not signed or notarised ([macOS guide](docs/install/macos.md)).
+  Linux mount. `--launch-agent` writes a launchd agent that mounts at each login. Built from source for now
+  ([macOS guide](docs/install/macos.md)): the release workflow builds and tests macOS archives
+  but doesn't publish them until the NFS layer moves to a maintained library.
 
 ### Changed
 - **The core builds for Windows and macOS (#419, #420).** The calls that differ between

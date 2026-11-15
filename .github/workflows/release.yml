@@ -11,7 +11,10 @@
 #     sacdfs-<version>-x86_64-macos.tar.gz (Intel), each with sacdfs-nfs (the mount, over the
 #     Mac's own NFS client), sacdfs (verify and tags), COPYING, README.md, CHANGELOG.md and
 #     NFSSERVE-LICENSE (the vendored NFS layer's BSD-3-Clause notice), with a .sha256 checksum
-#     and an attestation. Not signed or notarised (docs/install/macos.md);
+#     and an attestation. Not signed or notarised (docs/install/macos.md). Built and tested on
+#     every run, but published only when the repository variable SACDFS_MACOS_RELEASE is
+#     "true": it stays off until the NFS layer moves from the vendored copy to a maintained
+#     crate (#420);
 #   - the installer, install.sh (#340), with this version as its default and the SHA-256 of
 #     this release's archives built in (it checks downloads against those), also as an asset
 #     of its own with a .sha256 checksum and an attestation, so that
@@ -476,13 +479,16 @@ jobs:
       VERSION: ${{ needs.preflight.outputs.version }}
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
+      MACOS_RELEASE: ${{ vars.SACDFS_MACOS_RELEASE }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: bin-*
           path: dist
           merge-multiple: true
+      # macOS archives only once SACDFS_MACOS_RELEASE is "true" (see the top of this file).
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        if: vars.SACDFS_MACOS_RELEASE == 'true'
         with:
           pattern: mac-*
           path: dist
@@ -533,11 +539,13 @@ jobs:
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
             echo "- \`sacdfs-$VERSION-aarch64-linux.tar.gz\`: aarch64 (64-bit ARM)."
             echo
+            if [[ "$MACOS_RELEASE" == true ]]; then
             echo "macOS 11 or later, mounted by the Mac's own NFS client with nothing else installed (\`sacdfs-nfs\`; [macOS guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/macos.md)). Not signed or notarised: download with \`curl\`, as the guide shows."
             echo
             echo "- \`sacdfs-$VERSION-aarch64-macos.tar.gz\`: Apple Silicon."
             echo "- \`sacdfs-$VERSION-x86_64-macos.tar.gz\`: Intel."
             echo
+            fi
             echo "Container image for a NAS (SMB and NFS): \`$IMAGE:$VERSION\` (generic CPU; amd64 and arm64)."
             echo
             echo "Installer: \`install.sh\` finds the system (a NAS or Linux computer) and sets sacdfs up ([install guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/README.md)). Over SSH:"
