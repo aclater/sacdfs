@@ -32,6 +32,7 @@ pub mod pcm;
 pub mod platform;
 pub mod printable;
 pub mod safe_file;
+pub mod serve;
 pub mod sidecar;
 pub mod tags;
 pub mod tags_cli;

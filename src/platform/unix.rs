@@ -176,6 +176,18 @@ pub fn read_link_at(dir: &Dir, name: &OsStr) -> io::Result<PathBuf> {
     Ok(PathBuf::from(readlinkat(dir, name)?))
 }
 
+#[allow(unsafe_code)]
+pub fn writable(dir: &Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).map_err(io::Error::other)?;
+    // SAFETY: `c` is a valid NUL-terminated string for the duration of the call.
+    if unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 pub fn fs_size(path: &Path) -> io::Result<(u64, u32)> {
     let st = nix::sys::statvfs::statvfs(path).map_err(io::Error::from)?;
     let frsize = if st.fragment_size() > 0 { st.fragment_size() } else { st.block_size() };

@@ -24,6 +24,9 @@ All notable changes to sacdfs are recorded here. The format follows
   `src/linux_main.rs`. On other systems the `sacdfs` binary runs `verify` and `tags` and
   doesn't mount
   ([design](docs/design.md#the-platform-layer-419-420)).
+- **The mount options and start-up steps that every front end shares are in the library
+  (`sacdfs::serve`).** The Windows and macOS front ends take the same options, defaults and help
+  text as the Linux mount. The Linux `--help` is unchanged.
 - **The cache of frames is 32 MiB under a memory limit of 256 MiB or more; 16 MiB stays only
   below 256 MiB (#271).** It was 16 MiB up to a 512 MiB limit. Through the Linux kernel SMB client
   that made whole-file WAV copies 12 to 31 % slower than at 32 MiB, and on 2 slow cores at 256 MiB
