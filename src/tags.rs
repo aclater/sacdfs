@@ -40,6 +40,8 @@ use scarletbook::{Slot, Toc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::safe_file;
+
 /// The names of the TagSet items a tags file can set, with the ID3 frame each is written as.
 pub const ITEMS: [(&str, &str, TagItem); 12] = [
     ("title", "TIT2", TagItem::TrackTitle),
@@ -113,7 +115,17 @@ pub struct TagsFile {
 impl TagsFile {
     /// Parses a tags file's text.
     pub fn parse(text: &str) -> Result<TagsFile, String> {
-        let f: TagsFile = toml::from_str(text).map_err(|e| e.to_string())?;
+        // Where it fails, not the text there nor the message (which may quote it): a tags file
+        // may be a hard link to a file its writer can't read.
+        let f: TagsFile = toml::from_str(text).map_err(|e| match e.span() {
+            Some(span) => {
+                let before = text.get(..span.start).unwrap_or(text);
+                let line = before.matches('\n').count() + 1;
+                let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+                format!("not a valid tags file: line {line}, column {col}")
+            }
+            None => "not a valid tags file".to_owned(),
+        })?;
         for (_, fields) in f.levels() {
             for key in fields.keys() {
                 if key != ART && Key::of(key).is_none() {
@@ -449,14 +461,9 @@ pub fn read_picture(dir: &Path, name: &str) -> io::Result<Picture> {
         return Err(bad("not a file name in the tags directory"));
     }
     let path = dir.join(name);
-    let meta = fs::symlink_metadata(&path)?;
-    if !meta.is_file() {
-        return Err(bad("not a regular file"));
-    }
-    if meta.len() > MAX_ART_BYTES as u64 {
-        return Err(bad(&format!("larger than {} KiB", MAX_ART_BYTES >> 10)));
-    }
-    let bytes = fs::read(&path)?;
+    // One descriptor, opened without following a link and checked with fstat: no check by name
+    // that the file could change after.
+    let (bytes, _) = safe_file::read_regular(&path, MAX_ART_BYTES as u64)?;
     let mime = picture_mime(&bytes).ok_or_else(|| bad("not a JPEG or PNG image"))?;
     Ok((mime, Arc::new(bytes)))
 }
@@ -545,16 +552,23 @@ impl Store {
                 return tags.clone();
             }
         }
-        let tags =
-            match fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| TagsFile::parse(&s)) {
-                Ok(f) if !f.is_empty() => Some(Arc::new(DiscTags::new(f, mtime, &self.dir))),
-                Ok(_) => None,
-                Err(e) => {
-                    log::warn!("tags: {}: {e}; ignored", path.display());
-                    None
-                }
-            };
-        c.insert(key, (mtime, meta.len(), tags.clone()));
+        // Read through one descriptor that follows no link: the check above is by name only.
+        // The stamp kept is that descriptor's, so that it and the tags come from one file.
+        let (stamp, tags) = match safe_file::read_text(&path, safe_file::MAX_TAGS_TEXT)
+            .map_err(|e| e.to_string())
+            .and_then(|(s, m)| TagsFile::parse(&s).map(|f| (f, m)))
+        {
+            Ok((f, m)) => {
+                let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                let tags = (!f.is_empty()).then(|| Arc::new(DiscTags::new(f, mtime, &self.dir)));
+                ((mtime, m.len()), tags)
+            }
+            Err(e) => {
+                log::warn!("tags: {}: {}; ignored", safe_file::shown(&path), safe_file::printable(&e));
+                ((mtime, meta.len()), None)
+            }
+        };
+        c.insert(key, (stamp.0, stamp.1, tags.clone()));
         tags
     }
 }
@@ -648,7 +662,9 @@ impl Watch {
     /// `None`: not kept). A file that cannot be read is as an empty one.
     pub fn load<'a>(file: Option<PathBuf>, images: impl Iterator<Item = &'a Path>) -> Watch {
         let mut known: HashMap<String, (String, FileState)> = HashMap::new();
-        if let Some(text) = file.as_deref().and_then(|f| fs::read_to_string(f).ok()) {
+        if let Some((text, _)) =
+            file.as_deref().and_then(|f| safe_file::read_text(f, safe_file::MAX_STATE_TEXT).ok())
+        {
             let mut lines = text.lines();
             if lines.next() == Some(WATCH_HEADER) {
                 for line in lines {
@@ -748,15 +764,13 @@ impl Watch {
             };
             text.push_str(&format!("{}\t{key}\t{m}\t{l}\n", path_hash(image)));
         }
-        let tmp = file.with_extension("tmp");
         let r = file
             .parent()
             .map_or(Ok(()), fs::create_dir_all)
-            .and_then(|()| fs::write(&tmp, text))
-            .and_then(|()| fs::rename(&tmp, &file));
+            .and_then(|()| safe_file::write_atomic(&file, text.as_bytes(), safe_file::MODE));
         match r {
             Ok(()) => self.dirty = false,
-            Err(e) => log::warn!("tags: {}: {e}; not kept", file.display()),
+            Err(e) => log::warn!("tags: {}: {e}; not kept", safe_file::shown(&file)),
         }
     }
 }
@@ -1016,5 +1030,46 @@ TIT2 = "Three (stereo)"
         }
         fs::remove_file(d.path().join("a.png")).unwrap();
         assert!(disc.picture("a.png").is_none());
+    }
+
+    /// The watch file is written through a new temporary file, and is not read through a link;
+    /// a cover that is a link is not read.
+    #[test]
+    fn watch_and_pictures_follow_no_link() {
+        use std::os::unix::fs::symlink;
+        let d = tempfile::tempdir().unwrap();
+        let victim = d.path().join("victim");
+        fs::write(&victim, b"precious").unwrap();
+        let file = d.path().join("cache/tag-keys");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        symlink(&victim, file.with_extension("tmp")).unwrap();
+        let image = d.path().join("a.iso");
+        let mut w = Watch::load(Some(file.clone()), std::iter::empty());
+        w.images.insert(image.clone(), ("0123456789abcdef0123456789abcdef".to_owned(), None));
+        w.dirty = true;
+        w.save();
+        assert_eq!(fs::read(&victim).unwrap(), b"precious");
+        let saved = fs::read(&file).unwrap();
+        assert!(saved.starts_with(WATCH_HEADER.as_bytes()));
+        // A watch file that is a link is as none.
+        fs::rename(&file, &victim).unwrap();
+        symlink(&victim, &file).unwrap();
+        assert!(Watch::load(Some(file), [image.as_path()].into_iter()).images.is_empty());
+        // A cover that is a link.
+        let tags = d.path().join("tags");
+        fs::create_dir_all(&tags).unwrap();
+        fs::write(&victim, b"\xFF\xD8\xFF\xE0 a JPEG").unwrap();
+        symlink(&victim, tags.join("c.jpg")).unwrap();
+        assert!(read_picture(&tags, "c.jpg").is_err());
+        fs::copy(&victim, tags.join("d.jpg")).unwrap();
+        assert!(read_picture(&tags, "d.jpg").is_ok());
+    }
+
+    /// A tags file that doesn't parse is reported by where, never by its text.
+    #[test]
+    fn a_parse_error_shows_no_text() {
+        let e = TagsFile::parse("[album]\ngenre = \"Jazz\"\nroot:secret-hash:19000\n").unwrap_err();
+        assert!(!e.contains("secret"), "{e}");
+        assert!(e.starts_with("not a valid tags file: line 3, column "), "{e}");
     }
 }

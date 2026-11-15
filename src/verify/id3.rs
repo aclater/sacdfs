@@ -254,11 +254,21 @@ pub struct Losses {
     pub art: bool,
     /// ReplayGain values (TXXX "replaygain_...", RVA2, RGAD).
     pub replaygain: bool,
-    /// Every other frame key sacdfs's tag lacks or holds another value for.
+    /// Every other frame key sacdfs's tag lacks or holds another value for: at most
+    /// [`MAX_OTHER`] of them, each cut to [`MAX_KEY_CHARS`] characters.
     pub other: BTreeSet<String>,
+    /// How many more keys there were past [`MAX_OTHER`].
+    pub more: usize,
     /// A tag that was not read, and why.
     pub unread: Option<String>,
 }
+
+/// The most keys [`Losses::other`] holds. *Why a bound:* a tag can hold thousands of frames,
+/// and each is a key in the report's row.
+pub const MAX_OTHER: usize = 32;
+
+/// The longest key kept in [`Losses::other`], in characters (a `TXXX` description can be long).
+pub const MAX_KEY_CHARS: usize = 128;
 
 impl Losses {
     /// Classifies the frames of `extract` that `served` does not have with the same value.
@@ -325,7 +335,12 @@ impl Losses {
         } else if lower.starts_with("txxx:replaygain") || key == "RVA2" || key == "RGAD" {
             self.replaygain = true;
         } else {
-            self.other.insert(key.to_owned());
+            let key: String = key.chars().take(MAX_KEY_CHARS).collect();
+            if self.other.len() < MAX_OTHER || self.other.contains(&key) {
+                self.other.insert(key);
+            } else {
+                self.more += 1;
+            }
         }
     }
 
@@ -349,7 +364,11 @@ impl Losses {
         if !self.other.is_empty() {
             // Sorted as written, so that a resumed report writes the same line (#161).
             let keys: BTreeSet<String> = self.other.iter().map(|k| k.replace([',', '|'], "_")).collect();
-            parts.push(format!("other={}", keys.into_iter().collect::<Vec<_>>().join("|")));
+            let mut keys: Vec<String> = keys.into_iter().collect();
+            if self.more > 0 {
+                keys.push(format!("+{} more", self.more));
+            }
+            parts.push(format!("other={}", keys.join("|")));
         }
         if let Some(u) = &self.unread {
             parts.push(format!("unread={}", u.replace(',', ";")));
@@ -367,7 +386,13 @@ impl Losses {
                 "replaygain" => l.replaygain = true,
                 _ => {
                     if let Some(k) = p.strip_prefix("other=") {
-                        l.other.extend(k.split('|').map(str::to_owned));
+                        for k in k.split('|') {
+                            let more = k.strip_prefix('+').and_then(|n| n.strip_suffix(" more"));
+                            match more.and_then(|n| n.parse::<usize>().ok()) {
+                                Some(n) => l.more += n,
+                                None => l.add(k),
+                            }
+                        }
                     } else if let Some(u) = p.strip_prefix("unread=") {
                         l.unread = Some(u.to_owned());
                     }
@@ -451,6 +476,23 @@ pub(crate) mod tests {
         assert!(l.musicbrainz && l.art && l.replaygain);
         assert_eq!(l.other.iter().collect::<Vec<_>>(), vec!["TCON"]);
         assert_eq!(Losses::parse(&l.render()), l);
+    }
+
+    /// A tag with thousands of frames, or a long description, makes a row of bounded length.
+    #[test]
+    fn other_keys_are_bounded() {
+        let mut l = Losses::default();
+        for i in 0..4096 {
+            l.add(&format!("TXXX:k{i:04}"));
+        }
+        l.add(&format!("TXXX:{}", "x".repeat(1000)));
+        assert_eq!(l.other.len(), MAX_OTHER);
+        assert_eq!(l.more, 4096 + 1 - MAX_OTHER);
+        assert!(l.other.iter().all(|k| k.chars().count() <= MAX_KEY_CHARS));
+        let r = l.render();
+        assert!(r.ends_with(&format!("|+{} more", l.more)), "{r}");
+        assert!(r.len() < MAX_OTHER * (MAX_KEY_CHARS + 1) + 32);
+        assert_eq!(Losses::parse(&r), l);
     }
 
     #[test]

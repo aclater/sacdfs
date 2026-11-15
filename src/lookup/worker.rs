@@ -143,7 +143,10 @@ fn stamp(image: &Path) -> Option<(u64, u64)> {
 impl State {
     fn load(file: Option<PathBuf>) -> State {
         let mut entries = HashMap::new();
-        if let Some(text) = file.as_deref().and_then(|f| fs::read_to_string(f).ok()) {
+        if let Some((text, _)) = file
+            .as_deref()
+            .and_then(|f| crate::safe_file::read_text(f, crate::safe_file::MAX_STATE_TEXT).ok())
+        {
             let mut lines = text.lines();
             if lines.next() == Some(STATE_HEADER) {
                 for line in lines {
@@ -191,7 +194,7 @@ impl State {
             .and_then(|()| crate::tags_cli::write_atomic(file, text.as_bytes()));
         match r {
             Ok(()) => self.dirty = false,
-            Err(e) => log::warn!("musicbrainz: {}: {e}", file.display()),
+            Err(e) => log::warn!("musicbrainz: {}: {e}", crate::safe_file::shown(file)),
         }
     }
 }
@@ -346,7 +349,9 @@ fn pass<T: Transport>(
         }
         sum.looked_at += 1;
         let asked = client.requests();
-        let r = fetch_image(&config.tags, image, options, client, |line| log::info!("musicbrainz: {line}"));
+        let r = fetch_image(&config.tags, image, options, client, |line| {
+            log::info!("musicbrainz: {}", crate::safe_file::printable(&line));
+        });
         match r {
             Ok(o) => {
                 failed_in_a_row = 0;
@@ -377,12 +382,20 @@ fn pass<T: Transport>(
             }
             Err(Failure::Local(e)) => {
                 sum.failed += 1;
-                log::info!("musicbrainz: {}: nothing written: {e}", image.display());
+                log::info!(
+                    "musicbrainz: {}: nothing written: {}",
+                    crate::safe_file::shown(image),
+                    crate::safe_file::printable(&e)
+                );
             }
             Err(Failure::Network(e)) => {
                 sum.failed += 1;
                 failed_in_a_row += 1;
-                log::warn!("musicbrainz: {}: nothing written: {e}", image.display());
+                log::warn!(
+                    "musicbrainz: {}: nothing written: {}",
+                    crate::safe_file::shown(image),
+                    crate::safe_file::printable(&e)
+                );
                 if failed_in_a_row >= MAX_FAILED_IN_A_ROW {
                     log::warn!(
                         "musicbrainz: {failed_in_a_row} discs without an answer in a row: trying again in {} min",
@@ -399,8 +412,9 @@ fn pass<T: Transport>(
             Err(Failure::Stop(e)) => {
                 sum.failed += 1;
                 log::warn!(
-                    "musicbrainz: {}: {e}; no more lookups for {} h",
-                    image.display(),
+                    "musicbrainz: {}: {}; no more lookups for {} h",
+                    crate::safe_file::shown(image),
+                    crate::safe_file::printable(&e),
                     AFTER_STOP.as_secs() / 3600
                 );
                 sum.cut_short = true;
