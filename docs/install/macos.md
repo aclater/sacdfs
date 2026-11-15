@@ -118,7 +118,8 @@ user of the Mac can read the files served**, as with `--allow-other` on Linux.
 ## Details
 
 - **How it works:** `sacdfs-nfs` serves NFS version 3 on 127.0.0.1 and runs `mount_nfs` as
-  you. The mount is read-only, `nosuid`, `nodev` and `noexec`; names are found in both Unicode
+  you. `sacdfs SOURCE MOUNTPOINT` does the same on a Mac, and `sacdfs verify` and
+  `sacdfs tags` work as on Linux. The mount is read-only, `nosuid`, `nodev` and `noexec`; names are found in both Unicode
   forms (`nfc`). See [design](../design.md#the-nfs-front-end-420).
 - **Spotlight** doesn't index the mount, as for NFS mounts in general.
 - **What was checked in the VM** (from the command line, as the user, with no root):
