@@ -41,12 +41,45 @@ pub fn mtime(m: &Metadata) -> (i64, i64) {
     imp::mtime(m)
 }
 
-/// A file's identity on its system: its device (volume) and file numbers. Two paths with the
-/// same identity are the same file. *Fallback:* (0, 0) where the system's numbers aren't read
-/// yet, so that only the size and time tell a replaced file.
-pub fn file_id(m: &Metadata) -> (u64, u64) {
-    imp::file_id(m)
+/// The identity of open `file`, whose metadata is `m`: its device (volume) and file numbers.
+/// Two files with the same identity are the same file. Unix reads them from `m`; Windows asks
+/// the handle for the volume serial number and file index. *Fallback:* (0, 0) if the system
+/// can't tell, so that only the size and time tell a replaced file.
+pub fn file_id(file: &File, m: &Metadata) -> (u64, u64) {
+    imp::file_id(file, m)
 }
+
+/// The metadata and identity ([`file_id`]) of the file at `path`, following links: on Unix one
+/// `stat`; on Windows an open of the file, without reading it.
+pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
+    imp::file_id_at(path)
+}
+
+/// The base folder for a per-user cache: `$XDG_CACHE_HOME`, else `~/.cache` on Unix;
+/// `%LOCALAPPDATA%` on Windows. Only an absolute path counts.
+pub fn cache_home() -> Option<PathBuf> {
+    imp::cache_home()
+}
+
+/// Whether `e` is a passing condition of the process or the system (out of file descriptors
+/// or memory, an I/O error, interrupted; on Windows also a file another program holds open
+/// without sharing, as a copy in progress does) rather than about the file itself.
+pub fn is_transient(e: &io::Error) -> bool {
+    imp::is_transient(e)
+}
+
+/// The OS error code of an I/O error of the device (`EIO`; `ERROR_IO_DEVICE` on Windows).
+pub const IO_ERROR: i32 = imp::IO_ERROR;
+
+/// Refuses `file`, opened with [`OpenFlags::NO_FOLLOW`], if it is a link: on Unix the open
+/// already failed for one; on Windows, where the link itself was opened, its attributes tell.
+pub fn refuse_link(file: &File) -> io::Result<()> {
+    imp::refuse_link(file)
+}
+
+/// The OS error code for "too many open files" (`EMFILE`; `ERROR_TOO_MANY_OPEN_FILES` on
+/// Windows), for `vfs::Error::Os`.
+pub const TOO_MANY_OPEN_FILES: i32 = imp::TOO_MANY_OPEN_FILES;
 
 /// The error of a file that changed since it was listed (`ESTALE` on Unix).
 pub fn stale() -> io::Error {
@@ -129,16 +162,15 @@ pub fn open_regular(path: &Path) -> io::Result<File> {
     imp::open_regular(path)
 }
 
-/// The start of the first hole of `file` at or after `at` (`SEEK_HOLE`). `None` on any error,
-/// including none past `at` (`ENXIO`) and no support (`EINVAL`): either way, nothing more is
-/// found. *Fallback:* always `None` on Windows, where `FSCTL_QUERY_ALLOCATED_RANGES` is the
-/// equivalent.
+/// The start of the first hole of `file` at or after `at` (`SEEK_HOLE`; on Windows from
+/// `FSCTL_QUERY_ALLOCATED_RANGES`). `None` on any error, including none past `at` (`ENXIO`)
+/// and no support (`EINVAL`): either way, nothing more is found.
 pub fn next_hole(file: &File, at: u64) -> Option<u64> {
     imp::next_hole(file, at)
 }
 
-/// The start of the first data of `file` at or after `at` (`SEEK_DATA`): `Ok(None)` if there
-/// is none past `at` (`ENXIO`).
+/// The start of the first data of `file` at or after `at` (`SEEK_DATA`; on Windows from
+/// `FSCTL_QUERY_ALLOCATED_RANGES`): `Ok(None)` if there is none past `at` (`ENXIO`).
 pub fn next_data(file: &File, at: u64) -> io::Result<Option<u64>> {
     imp::next_data(file, at)
 }
@@ -204,13 +236,16 @@ pub fn writable(dir: &Path) -> io::Result<()> {
     imp::writable(dir)
 }
 
-/// The total size of the filesystem holding `path`: (blocks, block size).
+/// The total size of the filesystem holding `path`: (blocks, block size). Windows:
+/// `GetDiskFreeSpaceExW`'s total, in blocks of 4096 bytes.
 pub fn fs_size(path: &Path) -> io::Result<(u64, u32)> {
     imp::fs_size(path)
 }
 
 /// Lowers the calling thread's CPU and I/O priority as far as the system allows without
-/// privileges, for background work. Best effort: each step that failed, by name.
+/// privileges, for background work: nice 19 and the idle I/O class on Linux, `PRIO_DARWIN_BG`
+/// on macOS, `THREAD_MODE_BACKGROUND_BEGIN` on Windows. Best effort: each step that failed, by
+/// name.
 pub fn lower_thread_priority() -> Vec<(&'static str, io::Error)> {
     imp::lower_thread_priority()
 }
@@ -220,4 +255,119 @@ pub fn lower_thread_priority() -> Vec<(&'static str, io::Error)> {
 /// or the thread is unknown.
 pub fn process_name(tid: u32) -> Option<String> {
     imp::process_name(tid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn file_of(len: usize) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(&(0..len).map(|i| i as u8).collect::<Vec<_>>()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn positional_reads() {
+        let f = file_of(1000);
+        let mut buf = [0u8; 10];
+        read_exact_at(f.as_file(), &mut buf, 500).unwrap();
+        assert_eq!(buf[0], (500 % 256) as u8);
+        assert!(read_at(f.as_file(), &mut buf, 995).unwrap() <= 5);
+        let e = read_exact_at(f.as_file(), &mut buf, 995).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn identity_tells_files_apart() {
+        let (a, b) = (file_of(10), file_of(10));
+        let id = |f: &tempfile::NamedTempFile| file_id(f.as_file(), &f.as_file().metadata().unwrap());
+        assert_eq!(id(&a), id(&a));
+        assert_eq!(file_id_at(a.path()).unwrap().1, id(&a));
+        assert_eq!(file_id_at(a.path()).unwrap().0.len(), 10);
+        assert_ne!(id(&a), id(&b));
+        assert_ne!(id(&a), (0, 0));
+    }
+
+    #[test]
+    fn modification_times_match_the_system_time() {
+        let f = file_of(1);
+        let m = f.as_file().metadata().unwrap();
+        let d = m.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap();
+        assert_eq!(mtime(&m), (d.as_secs() as i64, i64::from(d.subsec_nanos())));
+    }
+
+    #[test]
+    fn errors_are_recognised() {
+        assert!(is_stale(&stale()));
+        assert!(!is_stale(&io::Error::other("x")));
+        assert!(is_cross_device(&cross_device()));
+        assert!(!is_cross_device(&stale()));
+    }
+
+    #[test]
+    fn path_bytes_round_trip() {
+        let name = std::ffi::OsStr::new("Künstler/Ä 01 - x.dsf");
+        assert_eq!(os_from_bytes(name.as_encoded_bytes().to_vec()), name);
+    }
+
+    #[test]
+    fn a_folder_is_not_a_regular_file() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(open_regular(d.path()).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        let f = file_of(3);
+        assert_eq!(open_regular(f.path()).unwrap().metadata().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_plain_file_is_all_data() {
+        let f = file_of(8192);
+        assert_eq!(next_data(f.as_file(), 0).unwrap(), Some(0));
+        assert_eq!(next_data(f.as_file(), 100).unwrap(), Some(100));
+        // The only hole is the virtual one at the end, where a file system reports holes.
+        if let Some(h) = next_hole(f.as_file(), 0) {
+            assert_eq!(h, 8192);
+        }
+    }
+
+    #[test]
+    fn the_file_system_has_a_size() {
+        let d = tempfile::tempdir().unwrap();
+        let (blocks, size) = fs_size(d.path()).unwrap();
+        assert!(blocks > 0 && size > 0);
+    }
+
+    #[test]
+    fn folders_open_one_name_at_a_time() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("a/b")).unwrap();
+        std::fs::write(d.path().join("a/b/x.jpg"), b"art").unwrap();
+        let root = open_root(d.path()).unwrap();
+        let dir = open_dir_at(&root, &[OsStr::new("a"), OsStr::new("b")]).unwrap();
+        let st = stat_at(&dir, OsStr::new("x.jpg")).unwrap();
+        assert!(st.regular);
+        assert_eq!(st.size, 3);
+        let (f, st2) = open_file_at(&dir, OsStr::new("x.jpg")).unwrap();
+        assert_eq!(st2.size, 3);
+        let mut buf = [0u8; 3];
+        read_exact_at(&f, &mut buf, 0).unwrap();
+        assert_eq!(&buf, b"art");
+        assert!(!stat_dir(&dir).unwrap().regular);
+        assert!(open_dir_at(&root, &[OsStr::new("a"), OsStr::new("b"), OsStr::new("x.jpg")]).is_err());
+        assert!(open_dir_at(&root, &[OsStr::new("none")]).is_err());
+    }
+
+    #[test]
+    fn the_background_priority_goes_in() {
+        let failed = std::thread::spawn(lower_thread_priority).join().unwrap();
+        assert!(failed.is_empty(), "{failed:?}");
+    }
+
+    #[test]
+    fn a_new_temporary_folder_is_writable() {
+        let d = tempfile::tempdir().unwrap();
+        writable(d.path()).unwrap();
+    }
 }
