@@ -179,6 +179,13 @@ All notable changes to sacdfs are recorded here. The format follows
   the same. Audio bytes are unchanged: only when frames are decoded ahead changes.
 
 ### Documentation
+- **SMB clients on 0.6.3 and main: leases, listing cost and read-ahead (#325, #205, #266).**
+  Re-measured with the Linux kernel client and Windows 11 (in a VM): with directory leases on,
+  neither client shows a new image in a folder it keeps using, for an ordinary folder as much as
+  for sacdfs, so the container keeps them off; that now costs Windows about 13 % more requests
+  (docs/deployment.md). A listing costs 0.4 to 0.7 requests per entry on both clients and both
+  releases (docs/performance.md). A real tag importer (beets) and Windows' shell are added to the
+  read-ahead figures: `rsize=262144` stays the advice for Linux mounts, Windows needs no setting.
 - **Installer restarts and the container route, checked on NAS VMs (part of #340, #283).** With
   the 0.6.3 release files, a power cycle after the install brought sacdfs back by itself, with
   identical files, on Synology DSM, ASUSTOR ADM, TerraMaster TOS, ReadyNAS OS and Debian 12 with

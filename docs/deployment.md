@@ -1160,7 +1160,11 @@ about a seventh of the CPU, copies of WAV files ran at 101 to 109 MB/s instead o
 player's reads were unchanged. `cache=none` cuts a scan further (99 KB per file), but then every
 read waits a round trip. If every client is Linux, the share can do it for all of them instead:
 `SMB_EXTRA_GLOBAL=smb2 max read = 262144` (same scan figures). Measured on 0.6.2 with a Linux 6.19 client
-([performance](performance.md#client-settings-on-a-nas-062)).
+([performance](performance.md#client-settings-on-a-nas-062)), and again on 0.6.3 and main with a Linux
+7.2 client, with the same result. An importer that reads 1 MiB at a time itself (beets) gains less from
+`rsize=262144`: about half the bytes and CPU instead of a seventh. Windows needs no setting: its shell reads about 261 KB of each WAV file
+for tags, and the share setting only made its copies a little slower, so the container leaves it off
+([performance](performance.md#client-read-ahead-by-client-and-release-063-main)). macOS was not measured.
 
 File managers open `smb://nas/sacd` directly.
 
@@ -1454,6 +1458,38 @@ was added, 58 s later (the Linux default and leases-on rows twice, the rest once
 The cost of leases off, from #312, re-counted for #325 in the same Windows VM (thumbnail pass over the
 196 files, requests to sacdfs, two runs each): 2,082 and 2,103 with leases off, 495 and 481 with leases
 on.
+
+**Re-checked on main (2026-11-15).** The same Samba 4.24.7 (0.6.3 ships it too), on a larger tree: 40 images with
+their art (1,640 files in 145 folders), the container on two cores. Linux: the kernel client of Fedora 44
+(kernel 7.2.15) on the same host. Windows: Windows 11 Pro 25H2 in a VM on the same host (not on the
+vendor's hardware). A new album folder was added to an artist folder; "every second" lists that folder
+each second for up to 150 s, "once after 60 s" lists it once, 60 s after the addition, having left it alone:
+
+| New image shows (main) | Linux kernel client, every second | Linux, once after 60 s | Windows 11, every second | Windows, once after 60 s |
+|---|---|---|---|---|
+| Leases off (default) | 2.0 s | yes | 8.1 s | yes |
+| Leases on | not within 150 s | yes | not within 150 s | no |
+| Leases on, a plain folder (not sacdfs), `kernel change notify = no` | not within 150 s | yes | not within 150 s | no |
+| Leases on, a plain folder, `kernel change notify = yes` | not within 150 s | yes | not within 150 s | no |
+
+So nothing changed since 0.6.0: with leases, a client that keeps using a folder keeps its old listing, for
+an ordinary folder as much as for sacdfs. The Linux client drops an unused folder's lease after about 30 s
+and then lists it afresh; Windows didn't.
+
+What leases off costs now is much less than on 0.6.0: Windows no longer reopened the folder for each file
+(whether that is the newer Windows build or the larger tree wasn't determined). Explorer's thumbnail call on all 1,640 files,
+requests to sacdfs counted with the request log on:
+
+| Windows 11, requests to sacdfs | 0.6.3, leases off | main, leases off | main, leases on |
+|---|---|---|---|
+| Listing (`Get-ChildItem -Recurse`, 1,784 entries) | 957 | 956 | 811 |
+| Thumbnail pass | 4,889 | 4,984 | 4,414 |
+
+Timed without the request log (under a benchmark lock, main, four pairs of runs: two on the tree before its
+art was added, 1,488 files, and two on 1,640), the thumbnail pass took 25.8, 28.4, 26.7 and 27.0 s with leases
+off and 25.4, 25.5, 26.9 and 26.9 s with leases on. Leases off
+costs about 13 % more requests and 0 to 10 % in time, and leases on costs new images for as long as a
+client keeps the folder. The container keeps leases off.
 
 **If you run your own Samba** on a sacdfs mount instead of the container, put the container's settings in
 `smb.conf`. In `[global]`:
