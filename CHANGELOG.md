@@ -30,6 +30,10 @@ All notable changes to sacdfs are recorded here. The format follows
   Linux mount. `--launch-agent` writes a launchd agent that mounts at each login. Built from source for now
   ([macOS guide](docs/install/macos.md)): the release workflow builds and tests macOS archives
   but doesn't publish them until the NFS layer moves to a maintained library.
+- **sacdfs-win: files over 64 MiB are read past Windows's cache manager (#419).** A buffered
+  copy of a 5.2 GB WAV ran at 11 MB/s through it and runs at 52 MB/s now (Windows 11 in a VM;
+  58 MB/s with `--no-kernel-cache`); smaller files keep the cache, which reads a second time
+  20 times as fast. Attributes and listings are cached as before.
 
 ### Fixed
 - **NFS from the container on hosts with kernels before 6.2 (#439).** On Debian 12 (kernel

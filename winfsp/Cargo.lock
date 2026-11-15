@@ -901,6 +901,7 @@ dependencies = [
  "sacdfs",
  "windows",
  "winfsp",
+ "winfsp-sys",
 ]
 
 [[package]]
