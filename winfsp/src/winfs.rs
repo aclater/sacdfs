@@ -40,6 +40,9 @@ const STATUS_UNEXPECTED_IO_ERROR: i32 = 0xC000_00E9_u32 as i32;
 const STATUS_END_OF_FILE: i32 = 0xC000_0011_u32 as i32;
 const STATUS_TOO_MANY_OPENED_FILES: i32 = 0xC000_011F_u32 as i32;
 
+/// Files larger than this are read past Windows's cache manager (see `open`).
+const NO_DATA_CACHE_ABOVE: u64 = 64 << 20;
+
 // CreateOptions bits.
 const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
 const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
@@ -371,6 +374,15 @@ impl FileSystemContext for WinFs {
             }
             _ => None,
         };
+        // Large files aren't kept by Windows's cache manager: a buffered copy of a 5 GB track
+        // ran at 11 MB/s through it against 58 MB/s without (Windows 11 VM, #419), and nobody
+        // reads a track that size twice soon. Their attributes are still cached.
+        if found.attr.kind == Kind::File && found.attr.size > NO_DATA_CACHE_ABOVE {
+            // SAFETY: called while answering this open (WinFsp's operation context is set).
+            unsafe {
+                self.with_operation_response(|rsp| rsp.Rsp.Create.Opened.set_DisableCache(1));
+            }
+        }
         fill(file_info.as_mut(), &found.attr);
         let normal: Vec<u16> = found.path.encode_utf16().collect();
         file_info.set_normalized_name(&normal, None);

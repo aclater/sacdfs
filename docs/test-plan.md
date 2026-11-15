@@ -923,3 +923,13 @@ If a gate cannot be run, the release report says so; it is never counted as pass
   - **Stop checks** (SIGTERM with a file open, SIGTERM at start, an outside unmount) gave the same results as 0.6.3.
 
 **Not run:** macOS, Tier 1 scripted servers, aarch64 builds on hardware, the arm64 image, the NAS container route, a real restart on QNAP, players.
+
+## Results: media servers on main, Linux, macOS and Windows (2026-11-15)
+
+A wider client round, not a release gate. sacdfs from main (commit 243588d for Linux; `sacdfs-nfs` from the #432 branch on macOS; the #434 build of `sacdfs-win` on Windows), on the CC0 test corpus (33 discs, 93 DSF tracks, CJK text, art on 22 of 42 area folders). Each server was a fresh instance with no account sign-in, checked by library scan, tags, art and a stream or decode through its own API, never audio output. Details per server are in [clients.md](clients.md#media-servers-on-main-2026-11-15).
+
+- **Linux** (Fedora 44 in a VM, servers in containers): Navidrome, Jellyfin, Emby, Plex Media Server (unclaimed), Lyrion, MPD, MinimServer and Asset UPnP each found 93 of 93 tracks (186 of 186 with `dsf,wav`) over the FUSE mount, SMB 3.1.1 and NFS 4.2, with tags equal to the mount's, and served or decoded DSF. Every result equals the same server on a plain copy of the tree. Rescans with nothing changed read nothing from sacdfs. sacdfs peaked at 15 to 35 MiB RSS with no unexpected warnings.
+- **macOS 27.2 in a VM on Apple hardware** (local NFS route): Navidrome, Jellyfin, Emby and Asset UPnP behave as on Linux. Plex can't be set up without a plex.tv sign-in on macOS, Kodi doesn't start without OpenGL, and the GUI-only players are untested (list in clients.md). SMB was not run.
+- **Windows 11 in a VM, not on the vendor's hardware** (native WinFsp with the #434 build, and SMB 3.1.1): Jellyfin and Emby as on Linux. foobar2000 with foo_input_sacd found 93 of 93 with tags and art. Kodi found 70 of 93, merging the corpus's repeated discs, the same on a plain copy. Windows Media Player's library takes the WAV files only. Plex can't be set up unclaimed without a sign-in. Universal Media Server, JRiver and Asset UPnP were untested: no port in the VM, or no unattended install.
+- **Not run:** Roon (Linux over SMB is covered by the long-running NAS install; Windows and macOS not run, since a Roon account has one active core), Audirvana (account), audio output of any kind.
+- **One sacdfs bug:** WAV `LIST`/`INFO` tags are UTF-8, and Windows Explorer and Windows Media Player show non-ASCII ones as mojibake ([#444](https://github.com/aclater/sacdfs/issues/444)). Emby shows no album art on Linux and macOS, also on a plain copy, and Plex now uses the folder art (24 of 42 albums), unlike the result recorded under #95.

@@ -301,6 +301,14 @@ impl Filesystem for SacdFs {
         if let Err(missing) = config.add_capabilities(InitFlags::FUSE_EXPORT_SUPPORT) {
             log::info!("the kernel offers no FUSE export support ({missing:?}): no NFS export");
         }
+        // The kernel answers POSIX ACL reads (system.posix_acl_access, _default) with "no
+        // ACL" (ENODATA) instead of "not supported" on kernels before 6.2 (#439). NFS-Ganesha
+        // reads the ACL of every file it serves and fails the request on EOPNOTSUPP. The
+        // kernel then asks getxattr below, whose ENOSYS it remembers, so nothing more reaches
+        // sacdfs; the mount already checks modes itself (default_permissions).
+        if let Err(missing) = config.add_capabilities(InitFlags::FUSE_POSIX_ACL) {
+            log::info!("the kernel offers no FUSE POSIX ACL support ({missing:?})");
+        }
         Ok(())
     }
 
@@ -404,7 +412,7 @@ impl Filesystem for SacdFs {
 
     // No extended attributes (#174, docs/design.md). getxattr: ENOSYS, which the kernel
     // remembers for the whole mount (#61) and then answers every later call itself, with
-    // EOPNOTSUPP. ENODATA is an answer about one file: Samba asked it again for every open
+    // EOPNOTSUPP (ENODATA for the POSIX ACL names, with FUSE_POSIX_ACL in `init`). ENODATA is an answer about one file: Samba asked it again for every open
     // (security.capability, the POSIX ACL names), about 3.4 times per file in a Roon scan.
     // listxattr: an empty list, not ENOSYS. NFS-Ganesha forwards an NFSv4.2 client's
     // LISTXATTRS here and passes EOPNOTSUPP on as NFS4ERR_NOTSUPP, which the Linux NFS client

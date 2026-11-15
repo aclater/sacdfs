@@ -19,17 +19,115 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 | Client | Version tested | sacdfs tested | Connection | Result | Notes |
 |---|---|---|---|---|---|
 | [Roon](#roon) | Roon 2.x (Roon Server official image); 2.74 build 1719 on 0.4.1-rc.1 | 0.1.1, 0.2.0-rc.1 to rc.4, 0.2.0 final, 0.4.1-rc.1 | SMB, same NAS | Works (0.4.1-rc.1: no regression, no extended-attribute requests in a Force Rescan) | Use `dsf` only; needs the SMB-mount rights; art and playlists work; picks up upgrades by itself; multichannel areas are separate albums |
-| [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4, 0.4.1-rc.1 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 0.4.1-rc.1: healthy, upgrade and rollback from 0.4.0 fine, 279 untitled tracks named, 3 albums (26 tracks) still blank in Plex (cause unknown); 0.1.1: 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used ([#95](https://github.com/aclater/sacdfs/issues/95)) |
+| [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4, 0.4.1-rc.1 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 0.4.1-rc.1: healthy, upgrade and rollback from 0.4.0 fine, 279 untitled tracks named, 3 albums (26 tracks) still blank in Plex (cause unknown); 0.1.1: 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used on 0.2.0-rc.4 ([#95](https://github.com/aclater/sacdfs/issues/95)), used on main in November 2026 ([media servers on main](#media-servers-on-main-2026-11-15)) |
 | [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.4.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
 | [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
 | [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
 | [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.15 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
 | [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
 | [Windows Explorer, PowerShell, Robocopy](#windows-explorer-and-robocopy) | Windows 11 build 26200 | 0.2.0-rc.1, 0.4.1-rc.1, 0.6.0-rc.1 | SMB 3, SMB 3.1.1, same host | Works | 0.4.1-rc.1: 186 of 186 audio copies byte-identical, a second Robocopy pass skips all 196 files; RF64 reads and seeks past 4 GiB; another SMB port works (`/TCPPORT`) |
-| [foobar2000](#foobar2000) | 2.26.2 (portable), foo_input_sacd 2.0.27 | 0.2.0-rc.1, 0.4.1-rc.1 | SMB 3, SMB 3.1.1 | Works (0.4.1-rc.1) | 186 files found with tags and length; stereo, 5ch, 6ch start in under 0.4 s; seek to 60 % works; audio not heard |
+| [foobar2000](#foobar2000) | 2.26.2 (portable), foo_input_sacd 2.0.27 | 0.2.0-rc.1, 0.4.1-rc.1, main (November 2026) | SMB 3, SMB 3.1.1; WinFsp | Works (0.4.1-rc.1; main: 93 of 93 with tags and art over WinFsp) | 186 files found with tags and length; stereo, 5ch, 6ch start in under 0.4 s; seek to 60 % works; audio not heard |
 | [JRiver Media Center](#jriver-media-center) | 36.0.38 (trial) | 0.4.1-rc.1 | SMB 3.1.1 | Partial | 186 files, 7 albums, tags, art for 3 of 5 artists; plays; seek, multichannel and rescan not checked |
+| Emby | 4.10.2 | main (November 2026) | Container with an `rslave` bind; FUSE, SMB, NFS; macOS local NFS; Windows WinFsp and SMB | Works, no art | 93 of 93, tags and streams correct; no album art and no album for a disc without text, the same on a plain copy ([media servers on main](#media-servers-on-main-2026-11-15)) |
+| Kodi | 21.3 | main (November 2026) | Windows WinFsp and SMB | Works | 70 of 93: it merges repeated discs, also on a plain copy; doesn't start in a macOS VM without OpenGL ([media servers on main](#media-servers-on-main-2026-11-15)) |
+| Asset UPnP | R2026-11-10 (trial) | main (November 2026) | Container with an `rslave` bind; FUSE, SMB, NFS; macOS local NFS | Works | 93 of 93, art, DSF and its own WAV and L16 conversions ([media servers on main](#media-servers-on-main-2026-11-15)) |
 | [Linux NFS and SMB mounts](#linux-nfs-and-smb-mounts) | Fedora 44, RHEL 10.1 and 9.7, Debian 13 and 12, Ubuntu 26.04 and 24.04 kernels | 0.4.1-rc.1, 0.5.0-rc.1 | NFSv4.2, SMB 3.1.1 | Works | All checks pass; Ubuntu 24.04 cloud image needs `linux-modules-extra` for non-ASCII names over SMB; after a Podman container restart NFS needs a remount |
 | [FFmpeg, sox, mediainfo, ExifTool, mpv, VLC](#ffmpeg-sox-mediainfo-exiftool-mpv-and-vlc) | 7.1.5, 14.4.2, 25.04, 13.25, 0.40.0, VLC 3 | 0.4.1-rc.1 | Mount | Works | sox and ExifTool do not read DSF; this VLC cannot decode DSD (also true of a plain copy) |
+
+## Media servers on main (2026-11-15)
+
+Run on main at commit 243588d, the 0.6.4 code with the shared platform layer, before the Windows
+and macOS front ends merged. The macOS runs used `sacdfs-nfs` built from the #432 branch, and
+the Windows runs the #434 build of `sacdfs-win`. The
+library was the CC0 test corpus ([tests/corpus](../tests/corpus)), not the five-disc library of the
+sections above, so counts don't compare directly with them. It holds the corpus's 33 valid discs,
+one folder each, laid out with `--flatten`:
+- 93 DSF tracks (186 files with `dsf,wav`) in 42 area folders. By album tag and album artist they
+  make 32 albums, 12 of them "… (Multichannel)". There are fewer albums than area folders
+  because some discs are the same disc in other sector formats.
+- Channel counts 1 to 6, DST and plain DSD, and disc text in every character set, with Japanese,
+  Chinese and Korean titles.
+- Generated covers beside 17 of the images (`folder.jpg` on 11, `cover.png` on 6), so 22 area
+  folders have art.
+- Tracks of 23 to 175 ms. Scan times and bytes served are therefore small, and say little about a
+  real library.
+- The corpus's deliberate faults give three expected warnings per session, from its invalid and
+  missing DST frames. They are left out of the warning counts below.
+
+How each run went:
+- **Expected values** come from ffprobe on the mount (title, album, album artist, duration and
+  channels for every file).
+- **Each server** was a fresh instance with its API used from the same host, with no account
+  sign-in.
+- **Plain-copy control:** every Linux server was also run on a plain copy of the same tree, to
+  separate the server's behaviour from sacdfs's. All eight gave the same counts, art and stream
+  results on the copy as on sacdfs.
+
+**Linux:** a Fedora 44 VM, with each server in a container binding the mount's parent `ro,rslave`. Three routes, each with `dsf`:
+- the FUSE mount;
+- SMB 3.1.1 from the published container, mounted by the kernel's client on the same VM;
+- NFS 4.2 from the same container.
+
+`dsf,wav` was run on the FUSE mount. The results were the same on all three routes, and are given once.
+
+| Server | Version | Tracks (`dsf` / `dsf,wav`) | Albums | Art | Stream through the server | Rescan with nothing changed |
+|---|---|---|---|---|---|---|
+| Navidrome | 0.64.2 | 93 / 186 of 93 / 186 | 32 (12 multichannel, 6 CJK) | 20 of 32 albums | Raw DSF byte-identical; MP3 transcode of a 6-channel DST track | 0 reads |
+| Jellyfin | 12.4.0 | 93 / 186 | 42, one per area folder | 22 of 42 | Static DSF stream; MP3 transcode | 0 reads |
+| Emby | 4.10.2 | 93 / 186 | 31 | **none**, the same on the plain copy | Static DSF stream; MP3 transcode | 0 reads |
+| Plex Media Server | 1.43.5, unclaimed | 93 / 186 | 42 | 24 of 42, folder art used | Direct download; MP3 transcode | 0 reads |
+| Lyrion Music Server | 9.1.1 | 93 / 186 | 42 | 22 of 42 | Download through `/music/ID/download` | 0 reads |
+| MPD | 0.24.18 | 93 / 186 | 32 | `albumart` in 22 of 42 folders | Null-output decode as `dsd64:6` and `dsd64:2` | 0 reads |
+| MinimServer | 2.2 | 93 / 186 | 32 | 20 of 32 albums | Whole file and ranges over HTTP | Restart with its cache: 0 opens |
+| Asset UPnP (trial) | R2026-11-10 | 93 / 186 (its own count) | 42 | 20 of 32 albums | DSF as is, and its own DSD-to-WAV and L16 conversions | 0 reads |
+
+Every server's track titles and album names matched the tags, CJK included. Durations matched within 20 ms, except where a server stores whole seconds. The exception is Emby, which shows no album for the one disc with no text, also on the plain copy.
+
+sacdfs peaked at 15 to 35 MiB RSS and used under 1 CPU-second per session, with no unexpected warnings. Navidrome's raw stream of the largest files of one real disc copied to the VM (a 1.6 GB WAV and a 1.1 GB DSF) hashed the same as the mount, as did a 1 MiB range at 90 %. That disc has no file over 4 GiB, so RF64 through a server was not run here.
+
+**macOS 27.2 in a VM on Apple hardware:** the native route, `sacdfs-nfs` mounting the folder through the Mac's own NFS client. The VM ran headless, with no audio, no clipboard and no graphics.
+
+| App | Version | Result |
+|---|---|---|
+| Navidrome | 0.64.2 | The same as on Linux: 93 / 186 tracks, 32 albums, art on 20, raw stream and MP3 transcode |
+| Jellyfin | 12.4.0 | The same as on Linux: 93 / 186 tracks, 42 albums, art on 22 of 42, stream and transcode |
+| Emby | 4.10.2 | The same as on Linux: no album art, no album for the disc with no text |
+| Asset UPnP (trial) | R2026-11-10 | The same as on Linux, when started from a shell. Started from the Finder session, it stayed at "Scanning Library..." and sent no request to sacdfs; the cause was not found |
+| Plex Media Server | 1.43.5 | Untested beyond start-up. Unclaimed, the macOS build refuses API calls from the same host without a plex.tv token (HTTP 401), where the Linux build accepts them, so no library could be made without a sign-in |
+| VLC (command line) | 3.0.24 | No DSD decoder, as on Linux. A stereo WAV decodes to a file. A 6-channel WAV of 0.17 s gave no output, the same on a plain copy |
+| Kodi | 21.3 | Untested: it crashes at start for lack of OpenGL in the VM |
+| Music, Swinsian | — | Untested: their scripting needs a consent prompt that can't be answered in a headless VM |
+| foobar2000 for Mac, IINA, Vox, HQPlayer | — | Untested: GUI only, with no command line or scripting for a library scan |
+| Audirvana, Colibri | — | Untested: they need an account or an Apple ID sign-in |
+| MinimServer | — | Untested: the download needs a licence page in a browser |
+
+Not run on macOS: SMB (the test host's firewall refused the port), `dsf,wav` for servers other than Navidrome and Jellyfin, and anything that needs audio output.
+
+**Windows 11 in a VM, not on the vendor's hardware** (build 26200, 2 vCPUs). Two routes:
+- the native front end, the #434 build of `sacdfs-win` on WinFsp 2.1, mounted as a drive letter;
+- SMB 3.1.1 from the published container on the same host (`net use … /TCPPORT`).
+
+Each app ran in the logged-on session and was driven through its own API or command line. Nothing was played to a sound device.
+
+| App | Version | Native (WinFsp) | SMB | Notes |
+|---|---|---|---|---|
+| Jellyfin | 12.4.0 | 93 of 93, 42 albums, art 22 of 42, static stream and MP3 transcode | the same | as on Linux |
+| Emby | 4.10.2 | 93 of 93, 31 albums, stream and transcode; no album art | the same | as on Linux |
+| foobar2000 + foo_input_sacd, driven by foo_beefweb | 2.26.2, 2.0.27, 0.10 | 93 of 93 with tags, lengths, channels 1 to 6 and DSD64; art in 22 of 42 folders | tags and lengths the same; art not confirmed (see below) | |
+| Kodi | 21.3 | 70 of 93 tracks, 32 albums, CJK titles, thumbnails for 15 albums | the same | The 23 missing tracks are the repeated discs (one disc in three sector formats), which Kodi merges; the same on a plain copy |
+| Windows Media Player library (COM) | Windows 11 | WAV: 93 of 93 added, durations right; DSF refused (no DSF support) | not run | Non-ASCII WAV tags show as mojibake, as in Explorer ([#444](https://github.com/aclater/sacdfs/issues/444)) |
+| VLC (command line) | 3.0.24 | No DSD decoder; a stereo WAV decodes to a file; short WAVs of other discs gave no output | not run | as on macOS |
+| Plex Media Server | 1.43.5 | Untested beyond start-up: like macOS, the Windows build answers API calls from the same host with 401 when unclaimed | — | |
+| Universal Media Server | 15.9.0 | Untested: installed, but it opened no port within minutes in the VM; cause not found | — | |
+| JRiver Media Center | 36.0.51 (trial) | Untested: the installer didn't finish unattended | — | 0.4.1-rc.1 result above |
+| Asset UPnP | trial | Untested: the installer didn't finish unattended | — | Linux and macOS above |
+
+sacdfs-win peaked at 13 to 22 MiB working set, with no unexpected warnings. Not run on Windows:
+- **GUI only, with no command line or API for a library scan:** MusicBee, Dopamine, AIMP, MediaMonkey (free), MPC-BE and MPC-HC, HQPlayer Desktop.
+- **An account sign-in needed:** Audirvana.
+- **Not attempted in this round:** MinimServer and Serviio.
+
+**Not run in this round:** Roon (Linux over SMB is covered by the long-running NAS install; Windows and macOS were not run, since a Roon account has one active core), Audirvana Studio on Linux (it needs an account), and Sonos and other players.
 
 ## 0.6.0-rc.1 checks
 
@@ -242,7 +340,8 @@ times; see [restarts and rescans](#restarts-and-rescans).
 - Consider turning off the nightly deep analysis, or keep the 16 MiB cache.
 
 **Limits.**
-- Plex does not use the folder art from sacdfs ([#95](https://github.com/aclater/sacdfs/issues/95)):
+- On main in November 2026 (Plex 1.43.5, Prefer local metadata on, the CC0 corpus), Plex used the folder art: 24 of 42 albums had a poster, the same on a plain copy of the tree ([above](#media-servers-on-main-2026-11-15)). The older result follows.
+  On 0.2.0-rc.4 and 0.1.1, Plex did not use the folder art from sacdfs ([#95](https://github.com/aclater/sacdfs/issues/95)):
   in the 0.2.0-rc.4 run 230 of 264 album bundles held a local-style poster and 71 an online one
   (approximate), and on 0.1.1 every poster of a 32-disc subset came from online sources.
 - In the whole-tree 0.2.0-rc.4 run Plex still merged the Stereo and Multichannel copies of a
@@ -427,6 +526,8 @@ authentication, sacdfs 0.2.0-rc.1, `dsf,wav`, `--flatten`, 93 DSF + 93 WAV (54.9
 - Windows can use another SMB port: `net use S: \\host\sacd /user:... /TCPPORT:18445` worked on this build (one port per server name). The deployment guide said Windows can only use 445; that is wrong for this build and is corrected there.
 
 Not checked: Explorer's large-icon view in a real window, a real audio output, Japanese, Chinese or Korean names, library changes, an output-version change.
+
+**Non-ASCII WAV tags** (main, November 2026, Windows 11 in a VM): Explorer and the Windows Media Player library show accented and CJK titles in WAV files as mojibake, because the files' `LIST`/`INFO` tags are UTF-8 and Windows reads them in the ANSI code page ([#444](https://github.com/aclater/sacdfs/issues/444)). Programs that read the `id3 ` chunk show them correctly.
 
 **Robocopy speed ([#225](https://github.com/aclater/sacdfs/issues/225)).** Robocopy from a Windows VM ran at one of two speeds, 3 to 4.5 times apart. The test VM's emulated network card caused it, not sacdfs, Samba, Robocopy or the sacdfs version. Windows 11 25H2 ran in a VM (4 vCPUs configured, of which Windows used 2; 8 GB) and the container in a Fedora 44 VM (8 vCPUs) on one host's libvirt bridge. Each run copied one DST disc (61 files, 19.8 GiB) with `robocopy /MIR /MT:1` from a fresh container over a new SMB connection:
 

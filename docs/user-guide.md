@@ -735,7 +735,7 @@ are decoded, so a library is read about once.
 | `ERROR` | The file is truncated, broken or unreadable, or sacdfs could not read its track. | Keep it until you know why. |
 | `NOT-COMPARABLE` | FLAC or WAV. A CD-layer rip isn't in the SACD image at all, and a PCM conversion of the SACD layer made by another converter never matches sacdfs's WAV bit for bit. | Your call: sacdfs's WAV replaces it only if you prefer it. |
 
-**Pauses and silence.** Extracts made with the pauses kept (`sacd_extract -p`, `pysacd-extract -b`)
+**Pauses and silence.** Extracts made with the pauses kept (`sacd_extract -b`, `pysacd-extract -b`)
 hold the track plus the pause audio before or after it, and older extractors drop the last frame
 of a disc or side. verify looks for the served track inside such an extract (or the extract
 inside the served track) and measures the audio outside the common part, per region. A region is
@@ -746,6 +746,11 @@ at or below -60.2 dB (one bit reads -66.2 dB). When everything extra is silence 
 above -60.2 dB). A person decides about those. Up to 60 s of difference in length is
 considered; sacdfs does not serve pauses, so deleting an `IDENTICAL-PAUSE` extract drops its
 silence. The summary counts these files in the reclaimable space.
+
+**Gapless chains.** Extracts written as one chain without padding (`sacd_extract -z`) are not
+recognised yet. Each file but the last ends on a whole DSF block and carries the rest of its track into the
+next file, so verify reports them `NO-MATCH` or `DIFFERENT`. Keep them
+([#442](https://github.com/aclater/sacdfs/issues/442)).
 
 **What a deletion would lose.** The `loses` column lists what the extract's tags hold that
 sacdfs's own tag for the track doesn't: `musicbrainz` (MusicBrainz IDs), `art` (embedded
