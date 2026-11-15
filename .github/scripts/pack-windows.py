@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Pack the Windows release zip (#419): pack-windows.py NAME EXE FILE[=NAME_IN_ZIP]...
 
-Writes dist/NAME.zip, and dist/NAME.zip.sha256 as `sha256sum` writes it, holding NAME/sacdfs-win.exe and NAME/<each FILE's name, or the name after
-`=`>. Reproducible: entries in a fixed order, each dated at the
-commit's time (SOURCE_DATE_EPOCH, else `git log -1`), with fixed attributes."""
+Writes dist/NAME.zip, and dist/NAME.zip.sha256 as `sha256sum` writes it, holding sacdfs-win.exe
+and each FILE (named as it is, or by the name after `=`), with no folder around them, so that
+the install guide's Expand-Archive puts sacdfs-win.exe straight into the folder it names.
+Reproducible: entries in a fixed order, each dated at the commit's time (SOURCE_DATE_EPOCH,
+else `git log -1`), with fixed attributes."""
 import hashlib
 import os
 import subprocess
@@ -26,7 +28,7 @@ def main():
     os.makedirs("dist", exist_ok=True)
     with zipfile.ZipFile(f"dist/{name}.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for arc, src in sorted(entries):
-            info = zipfile.ZipInfo(f"{name}/{arc}", date_time=date)
+            info = zipfile.ZipInfo(arc, date_time=date)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 0
             info.external_attr = 0

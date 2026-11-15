@@ -65,7 +65,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
    *You should see* a line ending `mounted D:\Music\SACD on S:`. Leave the window open: the drive
    stays while sacdfs-win runs.
 
-6. **Open the drive.** In Explorer, open **This PC**, then **sacdfs (S:)**. *You should see* one
+6. **Open the drive.** In Explorer, open **This PC**, then the drive **S:**. *You should see* one
    folder per disc, each with `Stereo` and, for multichannel discs, `Multichannel` folders of
    `.dsf` and `.wav` files. Point your player's library at `S:\`.
 
@@ -92,7 +92,12 @@ under their own account, and stop it cleanly.
    ```
 
    `RunAs "."` runs sacdfs-win as the user who starts it; `Security` lets every user of the PC
-   (`BU`) start and stop their own.
+   (`BU`) start and stop their own. The first line copies the program from the folder of the
+   account the administrator window runs as; if that's another account than the one you
+   unpacked it with in step 4, copy `sacdfs-win.exe` from that account's
+   `AppData\Local\Programs\sacdfs` folder instead. The program goes under
+   `C:\Program Files`, where only administrators can change it, because the launcher may run it
+   as SYSTEM.
 
 2. **Start it** (a normal PowerShell window from now on), with your folder and drive letter.
    `music` is a name for this mount, used to stop it:
