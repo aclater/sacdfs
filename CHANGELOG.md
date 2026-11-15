@@ -7,6 +7,11 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **On Windows, sidecar files are opened relative to their folder's handle, and the seek index
+  folder is private (#419).** A folder of SOURCE renamed or replaced by a link while sacdfs walks
+  it can no longer send a cover's open elsewhere (`NtCreateFile` relative to the folder opened,
+  never following a link: the Windows counterpart of `openat`), and a seek index folder made by
+  sacdfs gets an access list for its owner and SYSTEM only, also outside the user's profile.
 - **The core builds for Windows and macOS (#419, #420).** The calls that differ between
   systems are now in one module, `sacdfs::platform`, and the Linux behaviour is unchanged.
   `fuser` is Linux-only and `nix` and `signal-hook` are Unix-only. The Linux mount moved to
