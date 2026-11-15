@@ -56,7 +56,7 @@ Open **Albums**. Each disc is an album; a multichannel area is its own album, "A
 
 - **`SACDFS_FORMATS=dsf`** (or `dsf,wav` for both): both worked (186 of 186 with `dsf,wav`). `dsf` alone is smaller and faster.
 - **`SACDFS_FLATTEN=1`.** Each disc's `Stereo` and `Multichannel` folders then sit under the album.
-- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit up to 512 MiB).
+- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit below 256 MiB).
 - **Share the folder that holds the mount, with `ro,rslave`.** Sharing the mount point itself leaves the container on a dead mount after sacdfs restarts. `label=disable` is for SELinux hosts.
 - **`ND_MUSICFOLDER`** points Navidrome at the music folder; its default is `/music`.
 - **Navidrome on another Linux machine, through a kernel SMB mount:** add `cache=none` or `rsize=262144` to that mount's options. By default the client reads ahead up to 8 MiB around each header and tag read, and sacdfs decodes all of it. On a NAS (0.6.2, Linux 6.19 client), a header-and-tags scan made sacdfs serve 1,835 KB per file by default, 262 KB with `rsize=262144` and 99 KB with `cache=none`, with about a seventh and a tenth of the CPU. Copies were faster with either, not slower. With `cache=none` every player read waits one network round trip (median 1.4 to 1.7 ms there, against 0.03 ms); with `rsize=262144` player reads were unchanged ([performance](../performance.md#client-settings-on-a-nas-062)). Navidrome itself was not run for these figures; the scan was a tag reader's reads (on 0.6.0, Navidrome's own scan on one machine showed the same, [performance](../performance.md#a-players-import-over-smb-266)).

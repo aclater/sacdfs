@@ -7,6 +7,16 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **The cache of frames is 32 MiB under a memory limit of 256 MiB or more; 16 MiB stays only
+  below 256 MiB (#271).** It was 16 MiB up to a 512 MiB limit. Through the Linux kernel SMB client
+  that made whole-file WAV copies 12 to 31 % slower than at 32 MiB, and on 2 slow cores at 256 MiB
+  a player beside four copies stalled up to 3.4 s, against 1.0 s at 32 MiB with 18 % less CPU;
+  the default had been measured only with local reads. This is also why one WAV copy over SMB
+  was still 10 to 12 % slower than 0.4.1 for 6 channels (0.4.1's container always passed 32): at
+  32 MiB, 0.6.3 and main are 5 to 11 % faster than 0.4.1. The larger cache takes about 16 MiB
+  more, which the memory watch gives back above 85 % of the limit. `SACDFS_CACHE_MB` or
+  `--cache-mb` still set it
+  ([performance](docs/performance.md#one-reader-over-smb-by-release-and-the-cache-under-a-memory-limit-271-2026-11-14)).
 - **The security policy says more about disclosure and about how a report is handled.**
   [SECURITY.md](SECURITY.md) now has the terms of coordinated disclosure (private until a fixed
   release or 90 days, a CVE when warranted), what to do when GitHub's private reporting can't

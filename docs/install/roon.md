@@ -58,7 +58,7 @@ Roon's log shows `[roon/cifs] Connected`, and the albums appear as Roon imports 
 - **`SACDFS_FORMATS=dsf`.** With both formats every track shows twice; Roon plays DSD and converts it itself.
 - **`SACDFS_FLATTEN=1`.** Each disc's `Stereo` and `Multichannel` folders then sit under the album.
 - **`SMB_USER` and `SMB_PASSWORD`.** Roon asks for a user name and password.
-- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit up to 512 MiB); the tests ran with 16, which also works.
+- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit below 256 MiB); the tests ran with 16, which also works.
 - **A Docker network of its own for sacdfs.** Roon needs port 445; see step 1.
 - **Playlists.** Write entries as paths relative to the share.
 - **Multichannel areas.** Roon shows them as separate albums under its own canonical titles, so the "(Multichannel)" suffix is not visible there.

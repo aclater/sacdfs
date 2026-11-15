@@ -58,7 +58,7 @@ Open **My Music**, **Albums**. Each disc is an album; a multichannel area is its
 
 - **`SACDFS_FORMATS=dsf`** (or `dsf,wav`): both worked.
 - **`SACDFS_FLATTEN=1`.** Each disc's `Stereo` and `Multichannel` folders then sit under the album.
-- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit up to 512 MiB).
+- **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit below 256 MiB).
 - **Share the folder that holds the mount, with `ro,rslave`.** Sharing the mount point itself leaves the container on a dead mount after sacdfs restarts. `label=disable` is for SELinux hosts.
 - **Players.** The stock `convert.conf` passes DSF through unchanged, so the player must play DSD. A player without DSD gets nothing unless a DSD plugin converts it (not tested). squeezelite is stereo only, so it stopped on 5.1 files.
 - **A direct mount instead of Docker or Podman.** The image's own user (uid 499) cannot read a FUSE mount made without `allow_other`. For a rootless container reading such a mount, add `-e PUID=0 -e PGID=0 -e EXTRA_ARGS="--user root"` to step 2 (root in a rootless container is the mount's owner). Both `PUID=0` and `EXTRA_ARGS` are needed: with `PUID=0` alone LMS falls back to `nobody` and cannot write its `/config`. This was run on 0.6.0 and LMS scanned all 13 files. With the SMB mount of the Docker or Podman guide the default user works, which was also run on 0.6.0.
