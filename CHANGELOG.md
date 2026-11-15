@@ -7,6 +7,15 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A Windows front end, `sacdfs-win` (#419).** It mounts SOURCE read-only as a drive letter or
+  a folder through [WinFsp](https://github.com/winfsp/winfsp), over the same core as the Linux
+  mount, with the same options and defaults. Names Windows refuses are shown with the SMB
+  share's look-alike characters, lookups ignore case, and Ctrl+C or a service stop unmounts
+  cleanly. Every file of the test corpus is byte-identical to the Linux mount, checked on every
+  pull request by a new `windows` workflow. Small reads are read ahead, and Windows caches file
+  contents until sacdfs-win reports a change: reading the corpus 4 KiB at a time takes half the
+  spike's time, and a second pass a twentieth
+  ([winfsp/README.md](winfsp/README.md)).
 - **`sacdfs-nfs`: SACD images served over NFSv3, for the system's own NFS client (#420; feature
   `nfs`).** The route to macOS, where the Mac's NFS client mounts it as the user with nothing
   installed, and a way to serve NFS clients on Linux without FUSE. It listens on 127.0.0.1 only
@@ -23,6 +32,11 @@ All notable changes to sacdfs are recorded here. The format follows
   but doesn't publish them until the NFS layer moves to a maintained library.
 
 ### Changed
+- **On Windows, paths in log lines are written as people write them (#419).** `C:\music\a.iso`
+  instead of `\\?\C:\music\a.iso`, and `\\nas\music` instead of `\\?\UNC\nas\music`. Display only:
+  the paths sacdfs opens keep the verbatim form, under which Windows takes every name literally
+  (a trailing dot, a device name, more than 260 characters); `verify` reports keep it too, since
+  a resumed run matches rows by exact path.
 - **The TrueNAS catalog app runs 0.6.4 (#284).** `deploy/truenas/sacdfs` named the 0.6.3 image,
   which has the three advisories fixed in 0.6.4; the app's version is now 1.0.2. Rendered with
   the catalog's tooling and installed on TrueNAS SCALE 25.10.8 in a VM
