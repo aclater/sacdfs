@@ -1691,6 +1691,12 @@ this PR adds.
   read-ahead window is let go of at the program's last close (Windows keeps a cached file open
   long after that).
 
+**Large files and the cache manager (#419, after the first front-end PR):** a buffered Robocopy
+of one 5.2 GB RF64 WAV (a real 6-channel disc at `--pcm-rate 352800`) took 430 s (11 MB/s) with
+Windows's cache manager on that file, 85 s (58 MB/s) with `--no-kernel-cache`, and 96 s (52 MB/s)
+now that files over 64 MiB are opened without data caching (their attributes are still cached).
+`/J` (unbuffered) took 98 to 99 s in every case.
+
 **What's left:** a first pass of 4 KiB reads takes about 2.6 times as long as on Linux (one
 WinFsp round trip per read), 1 MiB reads 1.3 times.
 

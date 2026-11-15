@@ -30,6 +30,21 @@ All notable changes to sacdfs are recorded here. The format follows
   Linux mount. `--launch-agent` writes a launchd agent that mounts at each login. Built from source for now
   ([macOS guide](docs/install/macos.md)): the release workflow builds and tests macOS archives
   but doesn't publish them until the NFS layer moves to a maintained library.
+- **sacdfs-win: files over 64 MiB are read past Windows's cache manager (#419).** A buffered
+  copy of a 5.2 GB WAV ran at 11 MB/s through it and runs at 52 MB/s now (Windows 11 in a VM;
+  58 MB/s with `--no-kernel-cache`); smaller files keep the cache, which reads a second time
+  20 times as fast. Attributes and listings are cached as before.
+
+### Fixed
+- **NFS from the container on hosts with kernels before 6.2 (#439).** On Debian 12 (kernel
+  6.1), and so OpenMediaVault 7 and CasaOS on Debian 12, every listing of the NFS export failed
+  with "Unknown error 524". NFS-Ganesha reads each file's POSIX ACL, and those kernels answered
+  "not supported" for the FUSE mount; Ganesha passed that on. sacdfs now asks the kernel for
+  FUSE's POSIX ACL support, and the kernel answers "no ACL" itself, as newer kernels already
+  did. Nothing else changes: still at most one `GETXATTR` reaches sacdfs per mount. Checked on
+  Debian 12 in a VM with docker.io: all 910 corpus files hash the same over NFS, over SMB and
+  inside the container; SMB is unchanged
+  ([design](docs/design.md#kernel-caching), "Extended attributes").
 
 ### Changed
 - **On Windows, paths in log lines are written as people write them (#419).** `C:\music\a.iso`
@@ -37,6 +52,11 @@ All notable changes to sacdfs are recorded here. The format follows
   the paths sacdfs opens keep the verbatim form, under which Windows takes every name literally
   (a trailing dot, a device name, more than 260 characters); `verify` reports keep it too, since
   a resumed run matches rows by exact path.
+- **On Windows, sidecar files are opened relative to their folder's handle, and the seek index
+  folder is private (#419).** A folder of SOURCE renamed or replaced by a link while sacdfs walks
+  it can no longer send a cover's open elsewhere (`NtCreateFile` relative to the folder opened,
+  never following a link: the Windows counterpart of `openat`), and a seek index folder made by
+  sacdfs gets an access list for its owner and SYSTEM only, also outside the user's profile.
 - **The TrueNAS catalog app runs 0.6.4 (#284).** `deploy/truenas/sacdfs` named the 0.6.3 image,
   which has the three advisories fixed in 0.6.4; the app's version is now 1.0.2. Rendered with
   the catalog's tooling and installed on TrueNAS SCALE 25.10.8 in a VM

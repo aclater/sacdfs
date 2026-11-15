@@ -31,6 +31,8 @@ log = "0.4"
 # notification. Not its `system` feature: that reads the registry in the build script, so it
 # only builds on Windows; the front end finds WinFsp's install folder itself (`load_winfsp`).
 winfsp = { version = "=0.13.2", default-features = false, features = ["delayload", "notify"] }
+# The bindings winfsp is built on, for the open's response (DisableCache), at winfsp's version.
+winfsp-sys = { version = "=0.12.1", default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
