@@ -71,16 +71,7 @@ fn check_case(case: &Value, tuning: Tuning, cache: usize, stats: &mut Stats) {
         );
         return;
     }
-    let mut want = BTreeMap::new();
-    for area in expected["audio"].as_array().unwrap() {
-        let dir = area_dir(area["area"].as_str().unwrap()).to_owned();
-        for t in area["tracks"].as_array().unwrap() {
-            let n = t["number"].as_u64().unwrap() as u32;
-            if t["outcome"] == "ok" {
-                want.insert((dir.clone(), n), t.clone());
-            }
-        }
-    }
+    let want = listed_tracks(case);
     let shown: Vec<_> = files.keys().cloned().collect();
     let wanted: Vec<_> = want.keys().cloned().collect();
     assert_eq!(shown, wanted, "{id}: files shown");
@@ -314,4 +305,8 @@ fn golden_dsf_corpus() {
 
 /// The DSF output version (`sacdfs::ident::DSF_VERSION`) that [`GOLDEN_DSF`] was taken with.
 const GOLDEN_DSF_VERSION: u32 = 3;
-const GOLDEN_DSF: (usize, &str) = (457, "55fdd8881f76faada075814cf0f56c2c");
+/// Taken again, at the same version, when tracks whose frames overlap were first listed
+/// without sharing frames (`DEPARTURES`): two files fewer and two shorter, all on images
+/// with overlapping tracks. *Why not a new `DSF_VERSION`:* it would move the mtime of every
+/// file of every library, and no file of a disc whose tracks do not overlap changed.
+const GOLDEN_DSF: (usize, &str) = (455, "46055fa900a6f125b9c5a19231b44ea2");

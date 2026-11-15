@@ -132,6 +132,21 @@ All notable changes to sacdfs are recorded here. The format follows
   a line display in another order. Now every log line escapes control characters, Unicode format
   characters and U+2028/U+2029 as `\n`, `\t`, `\r` or `\u{…}`, on the console and with
   `--log-file`. The names on the mount are unchanged.
+- **A damaged, truncated or padded image no longer lists tracks far larger than its data (#402).**
+  A track's size comes from the TOC, and the only check against the image counted the area's
+  sectors the file has. An image extended with a hole, or padded with zero bytes, passed it, and
+  its tracks listed at gigabytes each from a few megabytes of audio. Now sectors in a hole (found
+  with `SEEK_HOLE`, at no read cost, where the file system reports holes)
+  or in a long zero run (sampled, at most 64 one-sector reads, only in an area whose play time
+  claims more than a real disc could fit) count as missing, as a truncated image's do; only gaps
+  of 1 MiB or more count. Tracks whose frames overlap are listed without sharing frames: one that
+  runs into the next track ends where that track starts, and one that starts where an earlier
+  track starts is left out, so an area's files never add up to more than one area. With
+  `--pauses kept`, a track keeps its pause only where that overlaps no other track and fits the
+  image. Each change is logged at info with the reason. Images whose tracks fit and don't
+  overlap list exactly as before (every other corpus case is unchanged); listing the corpus takes
+  the same time, and a 4 GiB image about 0.7 ms more on btrfs with compression
+  ([design](docs/design.md#track-sizes)).
 - **A player that starts beside copies gets its first reads sooner (#363).** A player starting
   while another plays and copies start can't be told from the copies in its first half second, and
   every one of them read ahead 2 s of audio, so its first reads waited behind about 600 frames of
