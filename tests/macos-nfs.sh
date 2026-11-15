@@ -74,7 +74,15 @@ wait_for() {
     exit 1
 }
 
-listening() { nc -z 127.0.0.1 "$PORT" 2> /dev/null; }
+# Our server, not another program on the port: it must still be running.
+listening() {
+    kill -0 "$pid" 2> /dev/null || {
+        echo "the server exited; its log:" >&2
+        cat "$work/server.log" >&2
+        exit 1
+    }
+    nc -z 127.0.0.1 "$PORT" 2> /dev/null
+}
 
 # Starts the server; with "mount", the macOS helper mounts it too, else (Linux) it is
 # mounted here with sudo.
@@ -89,7 +97,7 @@ start() {
     pid=$!
     wait_for "the server" listening
     if [ "${1:-}" = mount ]; then
-        sudo mount -t nfs -o "vers=3,proto=tcp,port=$PORT,mountport=$PORT,mountproto=tcp,ro,nolock,soft,timeo=10,retrans=30,rsize=1048576" \
+        sudo mount -t nfs -o "vers=3,proto=tcp,port=$PORT,mountport=$PORT,mountproto=tcp,nolock,soft,timeo=10,retrans=30,rsize=1048576,ro,nosuid,nodev,noexec" \
             127.0.0.1:/ "$mnt"
     fi
 }

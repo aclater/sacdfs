@@ -41,7 +41,8 @@ pub struct Args {
     #[arg(long, default_value_t = DEFAULT_LISTEN, value_name = "ADDR")]
     pub listen: IpAddr,
     /// Port to listen on (default: 20000 plus the user ID's last four digits, so one per
-    /// user). 0: any free port.
+    /// user; 1007 for root, below 1024 so that no other user can take it over). 0: any free
+    /// port.
     #[arg(long, value_name = "PORT")]
     pub port: Option<u16>,
     /// Answer every caller: the default when run as root, as for `sacdfs`. Otherwise only
@@ -111,6 +112,7 @@ pub fn run(args: Args) -> io::Result<()> {
                     format!("{}: not a directory", m.display()),
                 ));
             }
+            serve::check_mountpoint(&m, uid)?;
             // Nothing sacdfs reads may lie under its own mount (#56).
             if source.starts_with(&m) {
                 return Err(io::Error::new(

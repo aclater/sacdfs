@@ -93,8 +93,10 @@ jobs:
           tests/macos-nfs.sh target/release/sacdfs-nfs nfs.sha256
           cmp fuse.sha256 nfs.sha256
           echo "$(wc -l < nfs.sha256) files: identical to Linux"
-      # For checks in a macOS VM (#420): the binary this job tested.
+      # For checks in a macOS VM (#420): the binary this job tested. Not from forks' pull
+      # requests, whose binaries nobody should run.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         with:
           name: sacdfs-nfs-${{ matrix.runner }}
           path: target/release/sacdfs-nfs

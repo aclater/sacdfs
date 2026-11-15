@@ -87,6 +87,12 @@ pub async fn mountproc3_mnt(
 ) -> Result<(), std::io::Error> {
     let mut path = dirpath::new();
     path.deserialize(input)?;
+    // sacdfs: MNTPATHLEN (RFC 1813), not a walk of whatever length the record allows.
+    if path.len() > 1024 {
+        make_success_reply(xid).serialize(output)?;
+        mountstat3::MNT3ERR_NAMETOOLONG.serialize(output)?;
+        return Ok(());
+    }
     let utf8path = std::str::from_utf8(&path).unwrap_or_default();
     debug!("mountproc3_mnt({:?},{:?}) ", xid, utf8path);
     let path = if let Some(path) = utf8path.strip_prefix(context.export_name.as_str()) {
