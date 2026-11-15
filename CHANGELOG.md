@@ -16,12 +16,36 @@ All notable changes to sacdfs are recorded here. The format follows
   contents until sacdfs-win reports a change: reading the corpus 4 KiB at a time takes half the
   spike's time, and a second pass a twentieth
   ([winfsp/README.md](winfsp/README.md)).
+- **`sacdfs-nfs`: SACD images served over NFSv3, for the system's own NFS client (#420; feature
+  `nfs`).** The route to macOS, where the Mac's NFS client mounts it as the user with nothing
+  installed, and a way to serve NFS clients on Linux without FUSE. It listens on 127.0.0.1 only
+  by default, on a port per user, and answers only its own user's calls (a guard against
+  mistakes: any local user can read the files). File handles stay valid across a server
+  restart, open files included, and the volume's size is the images' total, as on Linux. With
+  a MOUNTPOINT it mounts and, when stopped, unmounts. The protocol layer is vendored from
+  nfsserve 0.11.0 (BSD-3-Clause), with bounded decoding and a fuzz target
+  ([design](docs/design.md#the-nfs-front-end-420)). Part of #420.
+- **macOS: mount sacdfs on a Mac (#420).** `sacdfs-nfs SOURCE MOUNTPOINT` mounts with the Mac's
+  own NFS client, as the user, with nothing else installed, and takes the same options as the
+  Linux mount. `--launch-agent` writes a launchd agent that mounts at each login. Built from source for now
+  ([macOS guide](docs/install/macos.md)): the release workflow builds and tests macOS archives
+  but doesn't publish them until the NFS layer moves to a maintained library.
 - **sacdfs-win: files over 64 MiB are read past Windows's cache manager (#419).** A buffered
   copy of a 5.2 GB WAV ran at 11 MB/s through it and runs at 52 MB/s now (Windows 11 in a VM;
   58 MB/s with `--no-kernel-cache`); smaller files keep the cache, which reads a second time
   20 times as fast. Attributes and listings are cached as before.
 
 ### Changed
+- **On Windows, paths in log lines are written as people write them (#419).** `C:\music\a.iso`
+  instead of `\\?\C:\music\a.iso`, and `\\nas\music` instead of `\\?\UNC\nas\music`. Display only:
+  the paths sacdfs opens keep the verbatim form, under which Windows takes every name literally
+  (a trailing dot, a device name, more than 260 characters); `verify` reports keep it too, since
+  a resumed run matches rows by exact path.
+- **On Windows, sidecar files are opened relative to their folder's handle, and the seek index
+  folder is private (#419).** A folder of SOURCE renamed or replaced by a link while sacdfs walks
+  it can no longer send a cover's open elsewhere (`NtCreateFile` relative to the folder opened,
+  never following a link: the Windows counterpart of `openat`), and a seek index folder made by
+  sacdfs gets an access list for its owner and SYSTEM only, also outside the user's profile.
 - **The TrueNAS catalog app runs 0.6.4 (#284).** `deploy/truenas/sacdfs` named the 0.6.3 image,
   which has the three advisories fixed in 0.6.4; the app's version is now 1.0.2. Rendered with
   the catalog's tooling and installed on TrueNAS SCALE 25.10.8 in a VM

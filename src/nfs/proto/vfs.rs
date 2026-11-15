@@ -1,0 +1,256 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// From nfsserve 0.11.0 (Copyright (c) 2023, XetData; Copyright (c) 2025, Hugging Face), with
+// sacdfs's changes: see mod.rs and this folder's LICENSE.
+
+use async_trait::async_trait;
+
+use super::nfs;
+use super::nfs::*;
+#[derive(Default, Debug)]
+pub struct DirEntrySimple {
+    pub fileid: fileid3,
+    pub name: filename3,
+}
+#[derive(Default, Debug)]
+pub struct ReadDirSimpleResult {
+    pub entries: Vec<DirEntrySimple>,
+    pub end: bool,
+}
+
+#[derive(Default, Debug)]
+pub struct DirEntry {
+    pub fileid: fileid3,
+    pub name: filename3,
+    pub attr: fattr3,
+}
+#[derive(Default, Debug)]
+pub struct ReadDirResult {
+    pub entries: Vec<DirEntry>,
+    pub end: bool,
+}
+
+impl ReadDirSimpleResult {
+    fn from_readdir_result(result: &ReadDirResult) -> ReadDirSimpleResult {
+        let entries: Vec<DirEntrySimple> = result
+            .entries
+            .iter()
+            .map(|e| DirEntrySimple { fileid: e.fileid, name: e.name.clone() })
+            .collect();
+        ReadDirSimpleResult { entries, end: result.end }
+    }
+}
+
+/// What capabilities are supported
+pub enum VFSCapabilities {
+    ReadOnly,
+    ReadWrite,
+}
+
+/// The basic API to implement to provide an NFS file system
+///
+/// Opaque FH
+/// ---------
+/// Files are only uniquely identified by a 64-bit file id. (basically an inode number)
+/// The implementation makes the opaque file handle from it ([`NFSFileSystem::id_to_fh`]) and
+/// checks it ([`NFSFileSystem::fh_to_id`]). *sacdfs:* nfsserve's own handles held the
+/// server's start time, so every handle went stale when the server restarted.
+//
+/// readdir pagination
+/// ------------------
+/// We do not use cookie verifier. We just use the start_after.  The
+/// implementation should allow startat to start at any position. That is,
+/// the next query to readdir may be the last entry in the previous readdir
+/// response.
+//
+/// There is a wierd annoying thing about readdir that limits the number
+/// of bytes in the response (instead of the number of entries). The caller
+/// will have to truncate the readdir response / issue more calls to readdir
+/// accordingly to fill up the expected number of bytes without exceeding it.
+//
+/// Other requirements
+/// ------------------
+///  getattr needs to be fast. NFS uses that a lot
+//
+///  The 0 fileid is reserved and should not be used
+#[async_trait]
+pub trait NFSFileSystem: Sync {
+    /// Returns the set of capabilities supported
+    fn capabilities(&self) -> VFSCapabilities;
+    /// Returns the ID the of the root directory "/"
+    fn root_dir(&self) -> fileid3;
+    /// Look up the id of a path in a directory
+    ///
+    /// i.e. given a directory dir/ containing a file a.txt
+    /// this may call lookup(id_of("dir/"), "a.txt")
+    /// and this should return the id of the file "dir/a.txt"
+    ///
+    /// This method should be fast as it is used very frequently.
+    async fn lookup(&self, dirid: fileid3, filename: &filename3) -> Result<fileid3, nfsstat3>;
+
+    /// Returns the attributes of an id.
+    /// This method should be fast as it is used very frequently.
+    async fn getattr(&self, id: fileid3) -> Result<fattr3, nfsstat3>;
+
+    /// Sets the attributes of an id
+    /// this should return Err(nfsstat3::NFS3ERR_ROFS) if readonly
+    async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3>;
+
+    /// Reads the contents of a file returning (bytes, EOF)
+    /// Note that offset/count may go past the end of the file and that
+    /// in that case, all bytes till the end of file are returned.
+    /// EOF must be flagged if the end of the file is reached by the read.
+    async fn read(&self, id: fileid3, offset: u64, count: u32) -> Result<(Vec<u8>, bool), nfsstat3>;
+
+    /// Writes the contents of a file returning (bytes, EOF)
+    /// Note that offset/count may go past the end of the file and that
+    /// in that case, the file is extended.
+    /// If not supported due to readonly file system
+    /// this should return Err(nfsstat3::NFS3ERR_ROFS)
+    async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3>;
+
+    /// Creates a file with the following attributes.
+    /// If not supported due to readonly file system
+    /// this should return Err(nfsstat3::NFS3ERR_ROFS)
+    async fn create(
+        &self,
+        dirid: fileid3,
+        filename: &filename3,
+        attr: sattr3,
+    ) -> Result<(fileid3, fattr3), nfsstat3>;
+
+    /// Creates a file if it does not already exist
+    /// this should return Err(nfsstat3::NFS3ERR_ROFS)
+    async fn create_exclusive(&self, dirid: fileid3, filename: &filename3) -> Result<fileid3, nfsstat3>;
+
+    /// Makes a directory with the following attributes.
+    /// If not supported dur to readonly file system
+    /// this should return Err(nfsstat3::NFS3ERR_ROFS)
+    async fn mkdir(&self, dirid: fileid3, dirname: &filename3) -> Result<(fileid3, fattr3), nfsstat3>;
+
+    /// Removes a file.
+    /// If not supported due to readonly file system
+    /// this should return Err(nfsstat3::NFS3ERR_ROFS)
+    async fn remove(&self, dirid: fileid3, filename: &filename3) -> Result<(), nfsstat3>;
+
+    /// Removes a file.
+    /// If not supported due to readonly file system
+    /// this should return Err(nfsstat3::NFS3ERR_ROFS)
+    async fn rename(
+        &self,
+        from_dirid: fileid3,
+        from_filename: &filename3,
+        to_dirid: fileid3,
+        to_filename: &filename3,
+    ) -> Result<(), nfsstat3>;
+
+    /// Returns the contents of a directory with pagination.
+    /// Directory listing should be deterministic.
+    /// Up to max_entries may be returned, and start_after is used
+    /// to determine where to start returning entries from.
+    ///
+    /// For instance if the directory has entry with ids [1,6,2,11,8,9]
+    /// and start_after=6, readdir should returning 2,11,8,...
+    //
+    async fn readdir(
+        &self,
+        dirid: fileid3,
+        start_after: fileid3,
+        max_entries: usize,
+    ) -> Result<ReadDirResult, nfsstat3>;
+
+    /// Simple version of readdir.
+    /// Only need to return filename and id
+    /// *sacdfs:* takes `start_after` too: nfsserve's READDIR always listed from the start, so
+    /// a folder longer than one reply was listed again and again.
+    async fn readdir_simple(
+        &self,
+        dirid: fileid3,
+        start_after: fileid3,
+        count: usize,
+    ) -> Result<ReadDirSimpleResult, nfsstat3> {
+        Ok(ReadDirSimpleResult::from_readdir_result(&self.readdir(dirid, start_after, count).await?))
+    }
+
+    /// Makes a symlink with the following attributes.
+    /// If not supported due to readonly file system
+    /// this should return Err(nfsstat3::NFS3ERR_ROFS)
+    async fn symlink(
+        &self,
+        dirid: fileid3,
+        linkname: &filename3,
+        symlink: &nfspath3,
+        attr: &sattr3,
+    ) -> Result<(fileid3, fattr3), nfsstat3>;
+
+    /// Reads a symlink
+    async fn readlink(&self, id: fileid3) -> Result<nfspath3, nfsstat3>;
+
+    /// Get static file system Information
+    async fn fsinfo(&self, root_fileid: fileid3) -> Result<fsinfo3, nfsstat3> {
+        let dir_attr: nfs::post_op_attr = match self.getattr(root_fileid).await {
+            Ok(v) => nfs::post_op_attr::attributes(v),
+            Err(_) => nfs::post_op_attr::Void,
+        };
+
+        let res = fsinfo3 {
+            obj_attributes: dir_attr,
+            rtmax: 1024 * 1024,
+            rtpref: 1024 * 124,
+            rtmult: 1024 * 1024,
+            wtmax: 1024 * 1024,
+            wtpref: 1024 * 1024,
+            wtmult: 1024 * 1024,
+            dtpref: 1024 * 1024,
+            maxfilesize: 128 * 1024 * 1024 * 1024,
+            time_delta: nfs::nfstime3 { seconds: 0, nseconds: 1000000 },
+            properties: nfs::FSF_SYMLINK | nfs::FSF_HOMOGENEOUS | nfs::FSF_CANSETTIME,
+        };
+        Ok(res)
+    }
+
+    /// Converts the fileid to an opaque NFS file handle. *sacdfs:* required, and async, so that
+    /// the handle can carry what is needed to check it again after a restart.
+    async fn id_to_fh(&self, id: fileid3) -> nfs_fh3;
+    /// Converts an opaque NFS file handle to a fileid: `NFS3ERR_BADHANDLE` if it is not one,
+    /// `NFS3ERR_STALE` if its file is gone. *sacdfs:* required and async (see above).
+    async fn fh_to_id(&self, id: &nfs_fh3) -> Result<fileid3, nfsstat3>;
+    /// Converts a complete path to a fileid.  Optional.
+    /// The default implementation walks the directory structure with lookup()
+    async fn path_to_id(&self, path: &[u8]) -> Result<fileid3, nfsstat3> {
+        let splits = path.split(|&r| r == b'/');
+        let mut fid = self.root_dir();
+        for component in splits {
+            if component.is_empty() {
+                continue;
+            }
+            fid = self.lookup(fid, &component.into()).await?;
+        }
+        Ok(fid)
+    }
+
+    /// The write and cookie verifier. *sacdfs:* required: stable across restarts.
+    fn serverid(&self) -> cookieverf3;
+
+    /// Dynamic file system information (FSSTAT). *sacdfs:* added; nfsserve answered a fixed
+    /// 1 TiB, all of it free.
+    async fn fsstat(&self, root_fileid: fileid3) -> Result<FsStat, nfsstat3>;
+
+    /// Whether a call with these credentials may be answered: `auth` is the AUTH_SYS
+    /// credential, `None` for any other flavour. *sacdfs:* added.
+    fn permits(&self, auth: Option<&super::rpc::auth_unix>) -> bool;
+}
+
+/// What FSSTAT reports, without its attributes. *sacdfs:* added.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FsStat {
+    /// Bytes in total, free, and free to this user.
+    pub tbytes: u64,
+    pub fbytes: u64,
+    pub abytes: u64,
+    /// Files (inodes) in total, free, and free to this user.
+    pub tfiles: u64,
+    pub ffiles: u64,
+    pub afiles: u64,
+    /// Seconds for which the answer does not change (0: may change at any time).
+    pub invarsec: u32,
+}
