@@ -1,0 +1,32 @@
+{
+  "architectures": [
+    "amd64",
+    "arm64"
+  ],
+  "category": "Media",
+  "author": "aclater",
+  "developer": "aclater",
+  "tagline": "SACD disc images as DSF and WAV files over SMB and NFS",
+  "description": "sacdfs serves the SACD disc images (ISO files) in a folder as DSF and WAV files, read-only,\nover SMB and NFS v4. Players and file managers see one folder per disc, with one file per\ntrack; nothing is extracted or written to disk.\n\nIt has no web UI. Mount the share from a client: SMB on port 10445\n(smb://<this server>:10445/sacd) and NFS v4 on port 12049 (<this server>:/sacd).\n",
+  "tips": {
+    "before_install": "Choose the folder that holds your SACD images (ISO files) for /images; it is mounted read-only.\nWithout SMB_USER and SMB_PASSWORD the share is open to the whole network as a read-only guest share.\nThe container needs /dev/fuse and the capabilities listed in the compose file to mount FUSE;\nit is not privileged.\n"
+  },
+  "update_at": "2026-11-15",
+  "website": "https://github.com/aclater/sacdfs",
+  "repo": "https://github.com/aclater/sacdfs",
+  "support": "https://github.com/aclater/sacdfs/issues",
+  "docs": "https://github.com/aclater/sacdfs/blob/main/docs/install/store-apps.md",
+  "title": "sacdfs",
+  "release_note": "First listing, sacdfs 0.6.4.",
+  "base_url": "https://cdn.jsdelivr.net/gh/aclater/sacdfs@store-apps/deploy/casaos/dist",
+  "id": "io.github.aclater.sacdfs",
+  "version": "0.6.4",
+  "categories": [
+    "media"
+  ],
+  "min_memory": 0,
+  "min_image_size": {
+    "amd64": 165210843,
+    "arm64": 477513209
+  }
+}
