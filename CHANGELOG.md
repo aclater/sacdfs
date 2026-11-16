@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-11-16
+
+Tested as release candidate 0.6.5-rc.1; the results are in docs/test-plan.md ("Results: 0.6.5
+gate"). No change to the program on top of rc.1: everything is in the 0.6.5-rc.1 section below.
+The Windows guide's download commands name this release. Audio bytes are those of 0.6.4, except on
+images whose tracks overlap, which #402 changes. Known: the first listing of a library on an NFS
+share takes one NFS round trip more per disc area for the hole check of #402 (0.18 s to 0.32 s for
+416 images; #451).
 ### Changed
 - **scarletbook and scarletbook-pcm 0.6.0 (`=0.6.0`).** The interface release before
   scarletbook 1.0, ported by its migration guide. The DSF and WAV files of the test corpus are
@@ -1765,7 +1773,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.5-rc.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5
 [0.6.5-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5-rc.1
 [0.6.4]: https://github.com/aclater/sacdfs/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3
