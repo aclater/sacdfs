@@ -6,6 +6,21 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **scarletbook and scarletbook-pcm 0.6.0 (`=0.6.0`).** The interface release before
+  scarletbook 1.0, ported by its migration guide. The DSF and WAV files of the test corpus are
+  byte-identical to 0.5.9's, so `DSF_VERSION` and `WAV_VERSION` stay. One output change: a tag
+  built from a tags file may now be up to 1 MiB (`MAX_TAG_BYTES`) long, where 0.5.9 refused the
+  last 10 bytes before it and served the disc's own tag; such a track now gets its tags file,
+  with a new mtime and generation from its tag stamp
+  ([design](docs/design.md#engine)).
+- **Tag items lose their control characters in sacdfs before the ID3 writer.** scarletbook 0.6.0
+  keeps them in a TOC's strings, and the writer removed them on its own; sacdfs now does it
+  first, the same way, so every disc's files keep their bytes. Only a tags file's track or disc
+  number or date that holds one changes: it is now read without it, where the writer dropped
+  the number and the year in TCOP
+  ([design](docs/design.md#dsf-files)).
+
 ## [0.6.5-rc.1] - 2026-11-16
 
 The Windows front end `sacdfs-win` and its release zip, the core's platform layer, the macOS
