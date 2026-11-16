@@ -51,6 +51,10 @@ All notable changes to sacdfs are recorded here. The format follows
   Debian 12 in a VM with docker.io: all 910 corpus files hash the same over NFS, over SMB and
   inside the container; SMB is unchanged
   ([design](docs/design.md#kernel-caching), "Extended attributes").
+- **WAV INFO fields have no control characters.** A disc whose text holds U+007F or C1
+  characters (or a tags file with any control character) got them in INAM, IART and IPRD,
+  while the WAV file's ID3 tag left them out. INFO now leaves them out too. Other discs are
+  unchanged.
 
 ### Changed
 - **On Windows, paths in log lines are written as people write them (#419).** `C:\music\a.iso`

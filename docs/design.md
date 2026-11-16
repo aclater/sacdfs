@@ -1070,7 +1070,8 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   in an `id3 ` chunk (FFmpeg, TagLib, mutagen, foobar2000 and mp3tag read it), and a
   `LIST`/`INFO` chunk for software that reads only that: INAM (title), IART (performer), IPRD
   (album), ITRK (the track number), ICRD (date), IGNR (the first genre), the first value of the
-  same tag items, UTF-8 and NUL-terminated. *Why INFO from the items, not from the ID3 frames:*
+  same tag items, UTF-8 and NUL-terminated, without control characters (C0, DEL, C1), as the
+  ID3 writer leaves them out. *Why INFO from the items, not from the ID3 frames:*
   the library has no INFO writer, and built from one `TagSet` the two cannot disagree. The WAV
   output version moved to 2 with the DSF one (#28): the same 40 files' `id3 ` chunk changed. A chunk with
   nothing to hold is left out. *Why after the audio:* so that the header, and with it the
