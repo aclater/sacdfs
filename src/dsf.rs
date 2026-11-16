@@ -57,6 +57,8 @@ pub const FRAME_ORDER: [&[u8; 4]; 12] = [
 ///   as `TPE2` and the date as `TDRC`, as sacdfs 0.1 wrote them. *Why these:* with them, 53 of
 ///   the 93 real-disc files kept their bytes; the other 40 differ only in `TCOP`, which the
 ///   library writes as ID3v2.4 asks (the date's year, a space, the copyright).
+/// - Control characters removed, not replaced (W9, the default), from items sacdfs has already
+///   filtered ([`crate::tags::without_controls`]).
 /// - The channel type of an area without a defined loudspeaker layout: that of its channel
 ///   count ([`count_channel_type`]); the library leaves the choice to the writer.
 pub fn options(area: &Area, track: &Track) -> OutputOptions {
@@ -69,7 +71,8 @@ pub fn options(area: &Area, track: &Track) -> OutputOptions {
                 .with_padding(0)
                 .with_frame_order(FRAME_ORDER.iter().map(|f| **f).collect())
                 .with_album_artist(AlbumArtistFrame::Tpe2)
-                .with_date(DateFrame::Tdrc),
+                .with_date(DateFrame::Tdrc)
+                .with_control_replacement(None),
         )
 }
 
@@ -228,7 +231,8 @@ pub fn tagged(toc: &Toc, area: &Area, track: &Track, image: Option<&Path>) -> Op
             &options.clone().with_tags(tags),
         )
     };
-    let of_set = |s: &TagSet| if s.is_empty() { Tags::None } else { Tags::Set(s.clone()) };
+    let of_set =
+        |s: &TagSet| if s.is_empty() { Tags::None } else { Tags::Set(crate::tags::without_controls(s)) };
     let user = crate::tags::lookup(toc).and_then(|d| Some((d.mtime, d.overrides(area.slot, track.number)?)));
     if let Some((mtime, o)) = user {
         let (mut set, _) = filled_tag_set(toc, area, track, &options, image);
@@ -411,6 +415,60 @@ mod tests {
         assert_eq!(urls.len(), 2);
         assert!(urls.iter().all(|u| u.bytes().all(|b| b.is_ascii_graphic())), "{urls:?}");
         assert!(urls[0].contains("%00%1B%0A%7F%C2%85%C2%9B"), "{urls:?}");
+    }
+
+    /// sacdfs's own removal of control characters ([`crate::tags::without_controls`]) leaves
+    /// the ID3 writer nothing to remove: the same tag bytes as the raw items, with line breaks
+    /// only in the comment frames.
+    #[test]
+    fn own_control_filter_matches_the_writer() {
+        let image =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/images/full-text.iso");
+        let disc = crate::disc::Disc::open(&image, 0, crate::disc::Tuning::default()).unwrap();
+        let toc = disc.toc();
+        let (area, track) = (&toc.areas[0], &toc.areas[0].tracks[0]);
+        let controls = "\0\x1b\n\x7f\u{85}\u{9b}";
+        let mut raw = TagSet::new();
+        for (i, item) in [
+            TagItem::TrackTitle,
+            TagItem::Performer,
+            TagItem::Songwriter,
+            TagItem::Composer,
+            TagItem::Arranger,
+            TagItem::Message,
+            TagItem::ExtraMessage,
+            TagItem::Isrc,
+            TagItem::Genre,
+            TagItem::Album,
+            TagItem::AlbumArtist,
+            TagItem::Publisher,
+            TagItem::Copyright,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            raw.push(item, &format!("v{i}{controls}a"));
+            raw.push(item, &format!("{controls}w{i}"));
+        }
+        raw.set(TagItem::TrackNumber, "3");
+        raw.set(TagItem::Date, "2001-02-03");
+        raw.set_custom(&format!("D{controls}"), &format!("x{controls}y"));
+        let filtered = crate::tags::without_controls(&raw);
+        assert_ne!(filtered, raw);
+        let tag = |set: TagSet| {
+            let o = options(area, track).with_tags(Tags::Set(set));
+            let l = LibLayout::new(toc, area.slot, track.start_frame, track.end_frame(), Format::Dsf, &o)
+                .unwrap();
+            region(&l, RegionKind::Trailer)
+        };
+        let ours = tag(filtered);
+        assert_eq!(ours, tag(raw));
+        for f in crate::verify::id3::frames(&ours) {
+            let lines = f.key.starts_with("COMM");
+            assert!(!f.value.chars().any(|c| c.is_control() && !(lines && c == '\n')), "{f:?}");
+        }
+        let clean = TagSet::from_toc(toc, area, Some(track), &options(area, track));
+        assert_eq!(crate::tags::without_controls(&clean), clean);
     }
 
     #[test]

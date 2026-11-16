@@ -46,7 +46,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.5.9, from crates.io (`=0.5.9`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.6.0, from crates.io (`=0.6.0`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -62,6 +62,13 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   fix (`AreaIndex::from_bytes` refuses a form of saved index the library never writes) and no
   speed change; *why:* the pin follows the newest release that passes the gates; bytes unchanged,
   gated as above. 0.5.9 (after 0.4.1): faster DST decoding and a rewrite of the DSF partial-row code; *why:* same rule; bytes unchanged, gated as above; *trade-off:* a DSF read on damaged media can now fail because of a bad neighbouring position (library notes).
+  0.6.0: the interface release before scarletbook 1.0 (non-exhaustive types, renamed entry points,
+  `Cutoff::Standard`), ported by its migration guide; *why:* same rule; bytes unchanged on the
+  corpus, gated as above. Its TOC text keeps control characters, which sacdfs filters itself
+  ([DSF files](#dsf-files), "Control characters"). One output change: a tag scarletbook
+  builds may now be up to `MAX_TAG_BYTES` long, where 0.5.9 refused the last 10 bytes before it
+  (no footer, no padding, as sacdfs writes it); a tags file whose tag lands there is applied
+  instead of left out, and those files move by their tag stamp, not by an output version.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -1007,6 +1014,15 @@ from 539 lines to 144, all of it the options below).
   else the disc text (*why:* a set's discs share the album title, so players group them as one
   album; the library's default takes the disc's first), and no TPOS for a one-disc set
   ("1/1" says nothing).
+- **Control characters** (`tags::without_controls`): removed from every tag item before the
+  writer gets the set, line breaks kept in the comments only. *Why:* scarletbook (0.6.0) keeps
+  control characters in a TOC's strings (C0, DEL and C1 in ISRCs and catalogue numbers, DEL
+  and C1 in free text), and sacdfs filters what it serves itself: file names
+  (`names::sanitize`), WAV INFO, log lines and reports (escaped), lookup queries
+  (percent-encoded). The writer is also set to remove them (W9); with sacdfs's filter first it
+  finds none, so the bytes are the same, but for a tags file's track or disc number or date
+  holding one: read without it, where the writer, checking the raw value, dropped the number
+  and the year in TCOP.
 - **What changed against 0.1** (all 93 real-disc files compared, header and tag): 53 are
   byte-identical; the other 40 differ only in TCOP, which the library writes as ID3v2.4 asks:
   the date's year, a space, then the copyright (a stored "Label 2007" becomes "2007 Label
@@ -1132,6 +1148,9 @@ speaker of each channel in decoded-frame order (`Area::channel_speakers`):
   usable default, and a file is always shown. sacdfs logs it at Info once per disc, when the
   image is opened, naming the areas and their stored fields, so that a surprising mask can be
   traced to the disc.
+- **A speaker sacdfs doesn't know** (scarletbook's `Speaker` may gain variants from 0.6.0) gives
+  the WAV mask of the channel count too. *Why:* a mask without that speaker's bit would have
+  fewer bits than the file has channels.
 
 ## Reading a range of a DSF file
 

@@ -323,6 +323,35 @@ fn without_custom(set: &TagSet, custom: &[(String, String)]) -> TagSet {
     out
 }
 
+/// `set` with the control characters (C0, DEL and C1) of its values and descriptions removed,
+/// line breaks kept in the messages only. *Why:* scarletbook 0.6.0 keeps control characters in
+/// the strings of a TOC (all of them in ISRCs and catalogue numbers, DEL and C1 in free text),
+/// and sacdfs filters what it writes itself rather than rely on the ID3 writer's own removal
+/// (W9). This is what that removal does, so the writer finds nothing left and the tag's bytes
+/// are the same.
+pub fn without_controls(set: &TagSet) -> TagSet {
+    let dirty = |s: &str| s.chars().any(char::is_control);
+    if !ALL_ITEMS.iter().any(|i| set.get(*i).iter().any(|v| dirty(v)))
+        && !set.custom().iter().any(|(d, v)| dirty(d) || dirty(v))
+    {
+        return set.clone();
+    }
+    let clean = |s: &str, lines: bool| -> String {
+        s.chars().filter(|c| !c.is_control() || (lines && *c == '\n')).collect()
+    };
+    let mut out = TagSet::new();
+    for item in ALL_ITEMS {
+        let lines = matches!(item, TagItem::Message | TagItem::ExtraMessage);
+        for v in set.get(item) {
+            out.push(item, &clean(v, lines));
+        }
+    }
+    for (d, v) in set.custom() {
+        out.set_custom(&clean(d, false), &clean(v, false));
+    }
+    out
+}
+
 /// Every TagSet item, for copying a set.
 const ALL_ITEMS: [TagItem; 20] = [
     TagItem::TrackTitle,

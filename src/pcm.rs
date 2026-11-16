@@ -147,7 +147,7 @@ fn sb_config(channels: u8, cfg: &PcmConfig) -> sb::PcmConfig {
         PcmRate::R352800 => sb::PcmRate::Hz352800,
     };
     let cutoff = match cfg.cutoff {
-        Cutoff::Khz40 => sb::Cutoff::Default,
+        Cutoff::Khz40 => sb::Cutoff::Standard,
         Cutoff::Khz30 => sb::Cutoff::Low,
         Cutoff::Wide80 => sb::Cutoff::Wide,
     };
