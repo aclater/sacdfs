@@ -6,14 +6,6 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.6.5] - 2026-11-16
-
-Tested as release candidate 0.6.5-rc.1; the results are in docs/test-plan.md ("Results: 0.6.5
-gate"). No change to the program on top of rc.1: everything is in the 0.6.5-rc.1 section below.
-The Windows guide's download commands name this release. Audio bytes are those of 0.6.4, except on
-images whose tracks overlap, which #402 changes. Known: the first listing of a library on an NFS
-share takes one NFS round trip more per disc area for the hole check of #402 (0.18 s to 0.32 s for
-416 images; #451).
 ### Changed
 - **scarletbook and scarletbook-pcm 0.6.0 (`=0.6.0`).** The interface release before
   scarletbook 1.0, ported by its migration guide. The DSF and WAV files of the test corpus are
@@ -28,6 +20,21 @@ share takes one NFS round trip more per disc area for the hole check of #402 (0.
   number or date that holds one changes: it is now read without it, where the writer dropped
   the number and the year in TCOP
   ([design](docs/design.md#dsf-files)).
+
+### Fixed
+- **WAV INFO fields have no control characters.** A disc whose text holds U+007F or C1
+  characters (or a tags file with any control character) got them in INAM, IART and IPRD,
+  while the WAV file's ID3 tag left them out. INFO now leaves them out too. Other discs are
+  unchanged.
+
+## [0.6.5] - 2026-11-16
+
+Tested as release candidate 0.6.5-rc.1; the results are in docs/test-plan.md ("Results: 0.6.5
+gate"). No change to the program on top of rc.1: everything is in the 0.6.5-rc.1 section below.
+The Windows guide's download commands name this release. Audio bytes are those of 0.6.4, except on
+images whose tracks overlap, which #402 changes. Known: the first listing of a library on an NFS
+share takes one NFS round trip more per disc area for the hole check of #402 (0.18 s to 0.32 s for
+416 images; #451).
 
 ## [0.6.5-rc.1] - 2026-11-16
 
@@ -70,21 +77,6 @@ docs/test-plan.md ("Results: 0.6.5 gate").
   copy of a 5.2 GB WAV ran at 11 MB/s through it and runs at 52 MB/s now (Windows 11 in a VM;
   58 MB/s with `--no-kernel-cache`); smaller files keep the cache, which reads a second time
   20 times as fast. Attributes and listings are cached as before.
-
-### Fixed
-- **NFS from the container on hosts with kernels before 6.2 (#439).** On Debian 12 (kernel
-  6.1), and so OpenMediaVault 7 and CasaOS on Debian 12, every listing of the NFS export failed
-  with "Unknown error 524". NFS-Ganesha reads each file's POSIX ACL, and those kernels answered
-  "not supported" for the FUSE mount; Ganesha passed that on. sacdfs now asks the kernel for
-  FUSE's POSIX ACL support, and the kernel answers "no ACL" itself, as newer kernels already
-  did. Nothing else changes: still at most one `GETXATTR` reaches sacdfs per mount. Checked on
-  Debian 12 in a VM with docker.io: all 910 corpus files hash the same over NFS, over SMB and
-  inside the container; SMB is unchanged
-  ([design](docs/design.md#kernel-caching), "Extended attributes").
-- **WAV INFO fields have no control characters.** A disc whose text holds U+007F or C1
-  characters (or a tags file with any control character) got them in INAM, IART and IPRD,
-  while the WAV file's ID3 tag left them out. INFO now leaves them out too. Other discs are
-  unchanged.
 
 ### Changed
 - **On Windows, paths in log lines are written as people write them (#419).** `C:\music\a.iso`
