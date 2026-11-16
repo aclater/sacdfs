@@ -101,7 +101,7 @@ otherwise stated as untested.
 | MPD (so moOde, Volumio) | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Same tracks, albums, art and bytes as 0.4.1 ([results](#results-050-gate)) |
 | MinimServer | 1 | rslave bind | Scripted container | 0.4.1-rc.1, against 0.4.0 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Same tracks, albums, art and bytes as 0.4.1 ([results](#results-050-gate)) |
 | Windows 11 Explorer, PowerShell, Robocopy | 1 | SMB 3 | Unattended VM, not a physical client | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0; the 0.4.1-rc.1 result stands |
-| Windows 11, native: `sacdfs-win` on WinFsp (Explorer as a normal user, Robocopy, files over 4 GiB, WinFsp.Launcher) | 2 | Local drive letter (WinFsp) | `windows` workflow on every pull request (corpus bytes against Linux); the rest in a Windows 11 VM by hand | New in 0.6.5; not in 0.4.1 or 0.5.0 | — | — |
+| Windows 11, native: `sacdfs-win` on WinFsp (Explorer as a normal user, Robocopy, files over 4 GiB, WinFsp.Launcher) | 2 | Local drive letter (WinFsp) | `windows` workflow on every pull request (corpus bytes against Linux); the rest in a Windows 11 VM by hand | 0.6.5-rc.1: guide followed, 186 of 186 files identical to Linux ([results](#results-065-gate)); not in 0.4.1 or 0.5.0 | — | — |
 | Linux NFS and SMB mounts (Fedora, RHEL, Debian, Ubuntu) | 1 | NFSv4, SMB 3 | VMs and containers | 0.4.1-rc.1 on seven distributions | SMB 3.1.1 and NFS 4.2 listings correct, 10 files byte-identical over both, writes refused, SMB reconnects after a restart. Which distributions: not recorded | 22 of 22 on six distributions, 21 of 22 on Ubuntu 24.04 (known), as on 0.4.1 ([results](#results-050-gate)) |
 | beets-pysacd | 1 | Local mount | Its CI, plus an import run | sacdfs main, each change | CI on main green (2026-11-05); import run on the rc.2 mount: pass, see [results](#results-041-rc2-gate-2026-11-06). Run on 0.4.0 too, same result | Not run on 0.5.0 |
 | FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
@@ -933,3 +933,74 @@ A wider client round, not a release gate. sacdfs from main (commit 243588d for L
 - **Windows 11 in a VM, not on the vendor's hardware** (native WinFsp with the #434 build, and SMB 3.1.1): Jellyfin and Emby as on Linux. foobar2000 with foo_input_sacd found 93 of 93 with tags and art. Kodi found 70 of 93, merging the corpus's repeated discs, the same on a plain copy. Windows Media Player's library takes the WAV files only. Plex can't be set up unclaimed without a sign-in. Universal Media Server, JRiver and Asset UPnP were untested: no port in the VM, or no unattended install.
 - **Not run:** Roon (Linux over SMB is covered by the long-running NAS install; Windows and macOS not run, since a Roon account has one active core), Audirvana (account), audio output of any kind.
 - **One sacdfs bug:** WAV `LIST`/`INFO` tags are UTF-8, and Windows Explorer and Windows Media Player show non-ASCII ones as mojibake ([#444](https://github.com/aclater/sacdfs/issues/444)). Emby shows no album art on Linux and macOS, also on a plain copy, and Plex now uses the folder art (24 of 42 albums), unlike the result recorded under #95.
+
+## Results: 0.6.5 gate
+
+What was run on 0.6.5-rc.1 (tag `v0.6.5-rc.1`), with 0.6.4 as the baseline (and 0.6.3 where a table has the column). The 0.6.5 final carries only the version and documentation on top of rc.1: it is tagged on a `release/0.6.5` branch cut at the rc's commit, because `main` has 0.7.0 work since. Anything missing here is untested on 0.6.5-rc.1.
+
+**What changed since 0.6.4, and so what ran.** `git diff v0.6.4 v0.6.5-rc.1 -- src Cargo.lock` touches the read path (pacing #362 and #363, the frame cache under a memory limit #271, EIO logging #339), listing (#402), the platform layer and two new front ends. So the soak ran, and the full client matrix.
+
+- **Release artifacts.** The release workflow succeeded. The pre-release has the x86_64, x86_64-v3 and aarch64 Linux archives, the Windows zip and `install.sh`, each with a `.sha256` and an `.intoto.jsonl`, and `SHA256SUMS`; no macOS archive (the repository variable that publishes them is unset). Every checksum verifies, and `gh attestation verify` passes on all five assets, on the image by tag, on the `-amd64` and `-arm64` tags and on each architecture's image by its digest (#379). `:latest` stayed on 0.6.4. The Linux archives hold the same nine files as before; `--version` prints `sacdfs 0.6.5-rc.1` on all three (aarch64 under `qemu-user`); the newest glibc symbol is 2.17; the archive's `nas-compose.yaml` names the 0.6.5-rc.1 image; the released `install.sh` differs from the tagged one in its version and its three archive checksums, and the archives carry it without the checksum lines, as in 0.6.4. The Windows zip holds `sacdfs-win.exe`, `README.md` (the Windows guide), `COPYING` and `CHANGELOG.md`.
+- **Checks:** formatting, clippy, docs and cargo-deny pass. The full test suite with FUSE tests passes (448 tests; 462 with the `nfs` feature), as do the file-handle tests as root and the NFS loopback export.
+- **Audio:** of the corpus's 914 DSF and WAV files, 906 are byte-identical to 0.6.4's (453 of 457 with `--format dsf`), on the x86_64 and x86_64-v3 builds, in five output configurations (default, 88.2 and 352.8 kHz WAV, flattened, DSF only). The other eight come from the two corpus images whose tracks overlap (`track-duration-max`, `track-starts-overlap`): changed or left out as #402 describes. On eight real discs (DST stereo, DST multichannel, plain DSD; hybrid and not) all 128 DSF and 128 WAV files are byte-identical to 0.6.4's.
+- **Real-disc tests** (`scripts/real-discs.sh`, those eight images): 3 of 3 passed, 0 skipped, exit 0, on 0.6.4 and on rc.1.
+- **Whole library** (over 400 images over NFS; 4,911 DSF and 4,911 WAV files listed): the default listing (13,948 entries) and a DSF-only listing (9,037) are identical to 0.6.4's in names, types, sizes and mtimes; no image in it is clamped by #402. Memory with a DSF-only mount, listed / after reading the first and last 64 KiB of every file / after 10 minutes idle: 0.6.4 26.6 / 71.6 / 31.8 MiB, rc.1 28.0 / 73.4 / 33.3 MiB.
+
+**Performance,** medians, each under the benchmark lock with 8 pinned threads on a lightly loaded 32-thread machine:
+
+| | 0.6.3 | 0.6.4 | 0.6.5-rc.1 |
+|---|---|---|---|
+| Local read, real disc, DST stereo, DSF / WAV (11 rounds) | 7.66 / 8.81 s | 7.65 / 8.83 s | 7.68 / 8.85 s |
+| Local read, real disc, DST multichannel, DSF / WAV | 20.22 / 25.71 s | 20.23 / 25.63 s | 20.32 / 25.65 s |
+| Local read, real disc, plain DSD, DSF / WAV | 0.351 / 1.512 s | 0.351 / 1.502 s | 0.352 / 1.500 s |
+| Local read, corpus, DST stereo / DST multichannel / plain DSD, DSF | 0.251 / 0.308 / 0.109 s | 0.251 / 0.309 / 0.111 s | 0.251 / 0.311 / 0.114 s |
+| Whole-library mount over NFS (11 rounds) | | 0.102 s | 0.095 s |
+| Whole-library first listing over NFS | | 0.178 s | **0.324 s** |
+
+Reads are within 3 % of 0.6.4 everywhere. The first listing over NFS is 0.15 s slower: #402's hole check makes one `lseek(SEEK_HOLE)` per disc area, and an NFS 4.2 client sends each as a SEEK to the server (471 SEEK calls for this library on rc.1, none on 0.6.4). It is paid once per listing and is negligible on local disks; [#451](https://github.com/aclater/sacdfs/issues/451) is the follow-up.
+
+**Pacing and the cache under a memory limit,** the published images of 0.6.3, 0.6.4 and 0.6.5-rc.1, Linux kernel SMB 3.1.1 and NFS 4.2 clients on loopback, the server in a 2- or 4-CPU container with 256 or 512 MiB, a fresh container per run, builds alternated, timed client runs under the benchmark lock, medians. The host was shared with other work (load 23 to 31 in the 4-copy cells), so the cells are compared within this table only.
+
+| Cell | 0.6.3 | 0.6.4 | 0.6.5-rc.1 |
+|---|---|---|---|
+| SMB, 2 slow cores, 4 copies beside a player: worst read / copies / sacdfs CPU | 2.31 s / 230 s / 448 s | 2.00 s / 241 s / 470 s | **60 ms** (one run of 3: 562 ms) / 191 s / 373 s |
+| SMB, 2 cores, 1 copy: worst read / copy | 52 ms / 42.0 s | 57 ms / 42.2 s | 51 ms / 34.1 s |
+| SMB, 4 cores, 1 copy: worst read / copy | 30 ms / 24.3 s | 32 ms / 23.4 s | 31 ms / 19.0 s |
+| SMB, 4 cores, 4 copies: worst read / copies | 31 ms / 110.2 s | 30 ms / 110.4 s | 32 ms / 89.3 s |
+| SMB, 4 cores, 4 copies, a second player: its worst read | 666 ms | 716 ms | **61 ms** (one run of 3: 627 ms) |
+| SMB, 2 slow cores, no copies, a second player: its worst read | 161 ms | 71 ms | 40 ms |
+| NFS, 2 slow cores, four 6-channel copies beside a player: worst read / reads over 100 ms per run / copies | 352 ms / 48 / 134 s | 301 ms / 60 / 134 s | **52 ms / 0 / 111 s** |
+| One 6-channel WAV (1.66 GB) over SMB, 256 / 512 MiB limit | 29.8 / 28.6 s | 30.0 / 29.9 s | 26.5 / 26.4 s |
+| One stereo WAV (1.24 GB) over SMB, 256 / 512 MiB limit | 5.59 / 5.63 s | 5.69 / 5.65 s | 4.74 / 4.76 s |
+| sacdfs peak resident memory in the one-WAV copy | 36 MiB | 36 MiB | 53 MiB |
+| Tag scan through a Linux SMB mount, server CPU per file, default / `rsize=262144` | 115 / 13 ms | 115 / 13 ms | 115 / 13 ms |
+
+The player stalls that 0.6.3 and 0.6.4 show beside copies on 2 slow cores are gone in most runs, though not every run. Copies are 12 to 22 % faster with 15 to 20 % less server CPU, more than the CHANGELOG's figures, most likely from the 32 MiB cache (#271) at these limits; not checked further. No out-of-memory kill at either limit.
+
+**Soak.** `scripts/soak.py --hours 2 --sample-paths --warmup 600` on two Linux machines (32 and 20 threads, both busy with other jobs), 0.6.5-rc.1 side by side with 0.6.4 on the same five images and the same load, both built from their tags with the same toolchain.
+
+| | A 0.6.4 | A rc.1 | B 0.6.4 | B rc.1 |
+|---|---|---|---|---|
+| Verdict | pass | pass | pass | pass |
+| Read | 499.7 GB | 497.5 GB | 150.7 GB | 162.5 GB |
+| Warm resident size | 120.7 MiB | 115.8 MiB | 99.0 MiB | 100.4 MiB |
+| Peak above warm | +3.7 MiB | +8.5 MiB | +9.5 MiB | +8.8 MiB |
+| Second-half trend (limit about 5 MiB/h) | +2.93 MiB/h | +0.80 MiB/h | +1.37 MiB/h | −0.59 MiB/h |
+| Threads, peak | 53 | 49 | 44 | 41 |
+| Open files, max | 18 | 18 | 18 | 18 |
+| Stalls / remounts | 39 / 23 | 39 / 23 | 39 / 23 | 39 / 23 |
+| Unexpected read errors | 0 | 0 | 0 | 0 |
+
+- No remount failed. The soak's FIFO stalls end in the refusal of a non-regular image since 0.6.4, so they don't reach the read watchdog ([#422](https://github.com/aclater/sacdfs/issues/422)); `tests/stall.rs` covers the watchdog. The stalled image logs far fewer lines on rc.1 (33 against 172, 36 against 109): the rate-limited EIO log of #339.
+- **Stop checks** on the published x86_64 binaries of both versions, on both machines, with the same results on each: SIGTERM with a file held open (#276) took the mount out of the table at once and sacdfs exited 0 after the 10 s grace; 200 SIGTERMs 0 to 40 ms after the start (#334) hung none and left no mount, each within 9 ms; 100 outside `fusermount3 -u` while idle (#333, #322) exited 0 within 8 ms.
+
+**Clients,** on the rc's release binary and image (details in [clients.md](clients.md#065-rc1-checks)):
+
+- **Linux NFS 4.2 and SMB 3.1.1:** 22 of 22 checks on Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12 and Ubuntu 26.04; Ubuntu 24.04 passes 21 of 22 (the known non-ASCII SMB `stat` problem), as on 0.6.4. Requests per workload equal 0.6.4's (NFS `ls -lR` 1,703, `find` 180, `getfattr -d -R` 1,993, kind for kind; SMB 141 and 143 against 142 and 144). A 206-file, 126.0 GB tree is identical to 0.6.4's by `cmp` on the mount and through the Linux SMB client.
+- **Jellyfin, Navidrome, Lyrion, MPD and MinimServer:** the same tracks, albums, art and bytes as 0.6.4, with `dsf` and `dsf,wav`; requests within 5 %.
+- **The NFS fix for kernels before 6.2 (#439):** on Debian 12 with its 6.1 kernel, in VMs, the container's NFS export lists and every file hashes the same over NFS, over SMB and inside the container, under Docker and rootful Podman; 0.6.4 fails there with "Unknown error 524". Capabilities per program and the open-files case are as on 0.6.4.
+- **Windows 11, in a VM, not on physical hardware:** the native `sacdfs-win` from the release zip, following the Windows guide as a normal user (install, checksum, drive letter, Explorer, Ctrl+C, WinFsp.Launcher, a logon task across a restart, a service): 186 of 186 files hash like the Linux build's read, RF64 files over 4 GiB included; writes refused. Over SMB 3.1.1 to the rc image, the same results as 0.6.4, and one-WAV Robocopy copies within 3 % (stereo 1.73 s against 1.68 s, 6-channel 6.26 s against 6.47 s).
+
+**Installer and NAS** (each in a VM, not on the vendor's hardware), with the release's own `install.sh`: on QNAP QuTScloud 5.2.9, Synology DSM 7.4.1 and TerraMaster TOS 7.0 a fresh install, an upgrade over 0.6.4 installed by its own installer, and `--uninstall` twice; all 28 files of three corpus images identical to the rc and 0.6.4 binaries' read; a second run changed nothing; the start-at-boot entry written, updated and removed; on Synology and TerraMaster the service back after a power cycle. The container route (`nas-compose.yaml`) on Debian 12 with UGREEN's kernel (6.18) and on Debian 12 with its stock 6.1 kernel: NFS and SMB both list and hash identically. The installer's container suites (BusyBox, BusyBox with no C library, Fedora 44, UBI 7) pass.
+
+**Not run:** macOS (the macOS route has no published archive in this release; the media-server round on `main` below covered it), Roon and Plex at scale (the project's own NAS deployments move to the release after the tag; players are not driven), the Tier 2 tools, foobar2000 and JRiver, a physical Windows PC or NAS, a QNAP power cycle, ASUSTOR and ReadyNAS, aarch64 on hardware, and a soak of the published binaries (the soaks ran source builds of the tags).
