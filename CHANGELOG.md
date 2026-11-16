@@ -6,6 +6,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.5-rc.1] - 2026-11-16
+
+The Windows front end `sacdfs-win` and its release zip, the core's platform layer, the macOS
+NFS route (built from source; no macOS archive yet), the NFS fix for hosts with kernels before
+6.2, and the pacing and logging changes on `main` since 0.6.3. The gate results are in
+docs/test-plan.md ("Results: 0.6.5 gate").
+
 ### Added
 - **A Windows front end, `sacdfs-win` (#419).** It mounts SOURCE read-only as a drive letter or
   a folder through [WinFsp](https://github.com/winfsp/winfsp), over the same core as the Linux
@@ -119,6 +126,15 @@ All notable changes to sacdfs are recorded here. The format follows
   each unexpected read error, to find it in the logs.
 
 ### Fixed
+- **NFS from the container on hosts with kernels before 6.2 (#439).** On Debian 12 (kernel
+  6.1), and so OpenMediaVault 7 and CasaOS on Debian 12, every listing of the NFS export failed
+  with "Unknown error 524". NFS-Ganesha reads each file's POSIX ACL, and those kernels answered
+  "not supported" for the FUSE mount; Ganesha passed that on. sacdfs now asks the kernel for
+  FUSE's POSIX ACL support, and the kernel answers "no ACL" itself, as newer kernels already
+  did. Nothing else changes: still at most one `GETXATTR` reaches sacdfs per mount. Checked on
+  Debian 12 in a VM with docker.io: all 910 corpus files hash the same over NFS, over SMB and
+  inside the container; SMB is unchanged
+  ([design](docs/design.md#kernel-caching), "Extended attributes").
 - **The installer's container route no longer warns that nothing answers on its ports on
   ASUSTOR (#340).** BusyBox `nc` there has no `-z`, so the check failed although SMB and NFS
   answered; it now falls back to the listening sockets. On TrueNAS, its pointer names the
@@ -1734,7 +1750,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.5-rc.1...HEAD
+[0.6.5-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5-rc.1
 [0.6.4]: https://github.com/aclater/sacdfs/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3
 [0.6.3-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3-rc.1

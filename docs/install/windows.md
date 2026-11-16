@@ -4,7 +4,7 @@ This shows your SACD images as a drive letter of DSF and WAV files on a Windows 
 player on that PC can open. About 10 minutes. To play the discs from a NAS instead, install
 sacdfs on the NAS ([install guide](README.md)) and open its share from Windows.
 
-Checked before 0.7.0 with the zip the release workflow builds, on Windows 11 in a VM (x64),
+Checked before 0.6.5 with the zip the release workflow builds, on Windows 11 in a VM (x64),
 with WinFsp 2.1. See [Details](#details).
 
 ## What you need
@@ -34,14 +34,14 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
    ```powershell
    cd $HOME\Downloads
-   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.0/sacdfs-0.7.0-x86_64-windows.zip
-   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.0/sacdfs-0.7.0-x86_64-windows.zip.sha256
+   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.5/sacdfs-0.6.5-x86_64-windows.zip
+   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.5/sacdfs-0.6.5-x86_64-windows.zip.sha256
    ```
 
 3. **Check the download.**
 
    ```powershell
-   (Get-FileHash sacdfs-0.7.0-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.7.0-x86_64-windows.zip.sha256).Split(" ")[0]
+   (Get-FileHash sacdfs-0.6.5-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.6.5-x86_64-windows.zip.sha256).Split(" ")[0]
    ```
 
    *You should see* `True`. If you see `False`, delete both files and download them again.
@@ -49,7 +49,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 4. **Unpack it into your programs folder.**
 
    ```powershell
-   Expand-Archive sacdfs-0.7.0-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
+   Expand-Archive sacdfs-0.6.5-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
    Unblock-File $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe
    ```
 
