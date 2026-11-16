@@ -351,6 +351,68 @@ mod tests {
         assert!(none.get(TagItem::Album).is_empty());
     }
 
+    /// Control characters the library keeps in a disc's strings (C0 with NUL, DEL and C1 in the
+    /// ISRC and catalogue numbers; DEL and C1 in free text) reach no tag frame, WAV INFO field,
+    /// file name or lookup query.
+    #[test]
+    fn control_characters_in_disc_strings_go_nowhere() {
+        let image =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/images/full-text.iso");
+        let disc = crate::disc::Disc::open(&image, 0, crate::disc::Tuning::default()).unwrap();
+        let mut toc = disc.toc().clone();
+        let controls = "\0\x1b\n\x7f\u{85}\u{9b}";
+        toc.master.album_catalog_number = format!("CAT{controls}123");
+        toc.master.disc_catalog_number = format!("\0DISC\x7f{controls}456");
+        let t = &mut toc.areas[0].tracks[0];
+        t.isrc = Some(format!("US{controls}AB1\x002345678"));
+        t.text.title = Some(format!("Ti\x7ftle\u{85}\u{9b}{}", " end"));
+        let (area, track) = (&toc.areas[0], &toc.areas[0].tracks[0]);
+        let is_control = |s: &str| s.chars().any(char::is_control);
+
+        let tagged = tagged(&toc, area, track, None).unwrap();
+        let tag = region(&tagged.layout, RegionKind::Trailer);
+        let frames = crate::verify::id3::frames(&tag);
+        let value = |k: &str| frames.iter().find(|f| f.key == k).map(|f| f.value.clone()).unwrap();
+        assert_eq!(value("TSRC"), "USAB12345678");
+        assert_eq!(value("TIT2"), "Title end");
+        assert!(frames.iter().all(|f| !is_control(&f.value)), "{frames:?}");
+
+        let info = crate::wav::trailer(&tagged.set, &tag);
+        let fields = &info.bytes[..info.tag.start - 8];
+        assert!(fields.windows(9).any(|w| w == b"Title end"));
+        assert!(
+            !fields.contains(&0x7f)
+                && !fields.windows(2).any(|w| w[0] == 0xC2 && w[1] >= 0x80 && w[1] <= 0x9F)
+        );
+
+        let name = crate::names::track_file_name(track.number, track.text.title.as_deref(), "dsf");
+        assert!(!is_control(&name), "{name:?}");
+
+        #[derive(Default)]
+        struct Urls(Vec<String>);
+        impl crate::lookup::Transport for Urls {
+            fn get(&mut self, url: &str) -> Result<crate::lookup::Reply, String> {
+                self.0.push(url.to_owned());
+                Ok(crate::lookup::Reply {
+                    status: 200,
+                    body: br#"{"releases":[]}"#.to_vec(),
+                    retry_after: None,
+                })
+            }
+        }
+        let facts = crate::lookup::DiscFacts::new(&toc, &image);
+        assert_eq!(facts.numbers.len(), 2);
+        let zero = std::time::Duration::ZERO;
+        let mut client = crate::lookup::Client::paced(Urls::default(), zero, zero);
+        for n in &facts.numbers {
+            client.by_catalogue(n).unwrap();
+        }
+        let urls = &client.transport().0;
+        assert_eq!(urls.len(), 2);
+        assert!(urls.iter().all(|u| u.bytes().all(|b| b.is_ascii_graphic())), "{urls:?}");
+        assert!(urls[0].contains("%00%1B%0A%7F%C2%85%C2%9B"), "{urls:?}");
+    }
+
     #[test]
     fn channel_types() {
         assert_eq!((1..=6).map(count_channel_type).collect::<Vec<_>>(), [1, 2, 3, 4, 6, 7]);
