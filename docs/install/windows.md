@@ -4,7 +4,7 @@ This shows your SACD images as a drive letter of DSF and WAV files on a Windows 
 player on that PC can open. About 10 minutes. To play the discs from a NAS instead, install
 sacdfs on the NAS ([install guide](README.md)) and open its share from Windows.
 
-Checked before 0.6.5 with the zip the release workflow builds, on Windows 11 in a VM (x64),
+Checked with the 0.6.5-rc.1 release zip, following these steps, on Windows 11 in a VM (x64),
 with WinFsp 2.1. See [Details](#details).
 
 ## What you need
@@ -54,7 +54,9 @@ administrator": a drive mounted from an administrator window is hidden from Expl
    ```
 
    `Unblock-File` tells Windows the file is the one you checked, so it doesn't warn about a
-   downloaded program each time (see [Windows's warning](#windowss-warning)).
+   downloaded program each time (see [Windows's warning](#windowss-warning)). It matters for a
+   zip downloaded with a browser; `curl.exe` doesn't mark its downloads, so after step 2 it
+   changes nothing.
 
 5. **Mount your images.** Pick a free drive letter; this uses `S:`.
 
@@ -62,7 +64,8 @@ administrator": a drive mounted from an administrator window is hidden from Expl
    & $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe D:\Music\SACD S:
    ```
 
-   *You should see* a line ending `mounted D:\Music\SACD on S:`. Leave the window open: the drive
+   *You should see* a line ending `mounted D:\Music\SACD on S:`, then
+   `The service sacdfs has been started.` Leave the window open: the drive
    stays while sacdfs-win runs.
 
 6. **Open the drive.** In Explorer, open **This PC**, then the drive **S:**. *You should see* one
