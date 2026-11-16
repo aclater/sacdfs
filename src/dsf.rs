@@ -457,8 +457,8 @@ mod tests {
         assert_ne!(filtered, raw);
         let tag = |set: TagSet| {
             let o = options(area, track).with_tags(Tags::Set(set));
-            let l =
-                LibLayout::new(toc, area.slot, track.start_frame, track.end_frame(), Format::Dsf, &o).unwrap();
+            let l = LibLayout::new(toc, area.slot, track.start_frame, track.end_frame(), Format::Dsf, &o)
+                .unwrap();
             region(&l, RegionKind::Trailer)
         };
         let ours = tag(filtered);

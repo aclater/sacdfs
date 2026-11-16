@@ -95,7 +95,7 @@ fuzz_target!(|data: &[u8]| {
         2 => LoudspeakerLayout::Stereo,
         5 => LoudspeakerLayout::ThreeTwo,
         6 => LoudspeakerLayout::FivePointOne,
-        channels => LoudspeakerLayout::Unspecified { channels, config: shape[3] },
+        channels => LoudspeakerLayout::new(channels, shape[3]),
     };
     let header = wav::header_parts(&layout, speakers, trailer.bytes.len() as u64);
     assert_eq!(header.len(), wav::header_len(&layout));
