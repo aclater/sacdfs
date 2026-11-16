@@ -7,7 +7,7 @@ extension, no restart.
 
 Checked on macOS 27.2 in a VM on Apple hardware (Apple Silicon, from the command line), and on
 GitHub's macOS 26 (Apple Silicon) and macOS 15 (Intel) runners, with sacdfs built from its
-source before 0.7.0. See [Details](#details).
+source before 0.6.5. See [Details](#details).
 
 **Build from source until the first macOS release.** Releases don't include Mac programs yet:
 they will once sacdfs's NFS layer has moved to a maintained library (#420). Until then, steps 1
