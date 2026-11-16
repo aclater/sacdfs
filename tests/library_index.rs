@@ -25,14 +25,15 @@ use std::sync::Arc;
 use common::*;
 use sacdfs::disc::{Disc, Tuning};
 use scarletbook::{
-    AreaIndex, FrameContent, Image, IndexOptions, ReadAtReader, Speculation, SpeculativeOptions, TrackCursor,
+    AreaIndex, CursorOptions, FrameContent, Image, IndexOptions, ReadAtReader, SeekPolicy, Speculation,
+    SpeculativeOptions, TrackCursor,
 };
 
 type Img = Image<ReadAtReader<Arc<File>>>;
 
 fn library_image(disc: &Disc) -> Img {
     let file = Arc::new(File::open(&disc.path).unwrap());
-    Image::with_format(ReadAtReader::new(file), disc.toc().sector_format).unwrap()
+    Image::options().with_format(disc.toc().sector_format).open(ReadAtReader::new(file)).unwrap()
 }
 
 /// The positions `[first, end)` of an area read by `cursor`.
@@ -81,14 +82,24 @@ fn check_image(path: &Path, tuning: Tuning, interval: u32, every_frame: bool, ra
         if p == 0 || scarletbook::audio::check_range(area, 0, p, disc.toc().sectors).is_err() {
             continue;
         }
-        let straight = read_all(TrackCursor::for_range(area, 0, p, disc.toc().sectors).unwrap(), &mut image);
+        let straight = read_all(
+            TrackCursor::open_range(area, 0, p, disc.toc().sectors, CursorOptions::new()).unwrap(),
+            &mut image,
+        );
         assert_eq!(straight.len(), p as usize);
         let index = complete_index(&disc, a, interval, &mut image);
         // sacdfs reading the area straight through, as a player of every track would.
         assert!(located(&disc, a, 0, p) == straight, "{}: area {a}: straight read differs", path.display());
         let indexed = |first: u32, end: u32, image: &mut Img| {
             read_all(
-                TrackCursor::for_range_indexed(area, first, end, disc.toc().sectors, &index).unwrap(),
+                TrackCursor::open_range(
+                    area,
+                    first,
+                    end,
+                    disc.toc().sectors,
+                    CursorOptions::new().with_index(&index),
+                )
+                .unwrap(),
                 image,
             )
         };
@@ -167,21 +178,22 @@ fn provisional_readings(path: &Path, locator_exact: bool) -> (usize, usize, bool
         let mut differing = Vec::new();
         for first in 1..p {
             let end = (first + 4).min(p);
-            let mut c = TrackCursor::for_range_speculative(
+            let mut c = TrackCursor::open_range(
                 area,
                 first,
                 end,
                 disc.toc().sectors,
-                Some(&index),
-                options,
+                CursorOptions::new().with_index(&index).with_policy(SeekPolicy::Speculative(options)),
             )
             .unwrap();
             let mut got = Vec::new();
             while let Some(f) = c.next_frame(&mut image) {
                 got.push(f.unwrap().content);
             }
-            let exact =
-                read_all(TrackCursor::for_range(area, first, end, disc.toc().sectors).unwrap(), &mut image);
+            let exact = read_all(
+                TrackCursor::open_range(area, first, end, disc.toc().sectors, CursorOptions::new()).unwrap(),
+                &mut image,
+            );
             if located(&disc, a, first, end) != exact {
                 assert!(!locator_exact, "sacdfs differs at {first}");
                 located_differ += 1;
@@ -190,7 +202,7 @@ fn provisional_readings(path: &Path, locator_exact: bool) -> (usize, usize, bool
                 provisional += 1;
                 if got != exact {
                     differ += 1;
-                    differing.push(c.speculation_id().unwrap());
+                    differing.push(c.claim().unwrap());
                 }
                 index.absorb(&mut c).unwrap();
             }

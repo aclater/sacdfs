@@ -72,7 +72,7 @@ fn area_reference(disc: &Disc, area: usize, end: u32, area_end: u32, cfg: &PcmCo
     let dsd: Vec<Vec<u8>> = (0..dsd_end)
         .map(|t| {
             let content = cursor.content(disc, t).unwrap();
-            scarletbook::audio::decode_frame(&mut decoder, TrackFrame { number: t, content }, channels)
+            scarletbook::audio::decode_frame(&mut decoder, TrackFrame::new(t, content), channels)
                 .unwrap()
                 .data
         })
@@ -517,7 +517,7 @@ fn real_discs() {
         let mut conv = Converter::new(channels, &cfg);
         let mut decode = |t: u32| -> Vec<u8> {
             let content = cursor.content(&disc, t).unwrap();
-            scarletbook::audio::decode_frame(&mut decoder, TrackFrame { number: t, content }, channels)
+            scarletbook::audio::decode_frame(&mut decoder, TrackFrame::new(t, content), channels)
                 .unwrap()
                 .data
         };

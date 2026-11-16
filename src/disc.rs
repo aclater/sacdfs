@@ -357,7 +357,7 @@ impl Disc {
             let built = bytes.as_ref().map(|b| AreaIndex::from_bytes(area, sectors, b, INLINE_BUDGET));
             let set = built.is_some_and(|r| {
                 r.and_then(|idx| {
-                    let n = idx.hints();
+                    let n = idx.hint_count();
                     lib.set_seek_index(st.slot, idx).map(|()| loaded_hints[i] = n)
                 })
                 .inspect_err(|e| log::debug!("{}: saved seek index not used: {e}", path.display()))
@@ -454,7 +454,7 @@ impl Disc {
 
     /// The seek hints the area's index holds.
     pub fn seek_hints(&self, area: usize) -> usize {
-        self.areas.get(area).and_then(|st| self.lib.seek_index(st.slot)).map_or(0, |i| i.hints())
+        self.areas.get(area).and_then(|st| self.lib.seek_index(st.slot)).map_or(0, |i| i.hint_count())
     }
 
     /// The seek hints of the area loaded from the persistent seek index.
@@ -546,7 +546,11 @@ impl Cursor {
                 self.changed.store(true, Ordering::Relaxed);
                 self.lib.continue_range_frames(prev, self.slot, self.next_t, end)
             }
-            None => self.lib.range_frames_cursor(self.slot, self.next_t, end),
+            None => self.lib.frames_cursor(
+                self.slot,
+                scarletbook::FrameSpan::Range(self.next_t, end),
+                scarletbook::CursorOptions::new(),
+            ),
         };
         match next {
             Ok(c) => self.cursor = Some(c),
@@ -628,7 +632,7 @@ fn log_unspecified_layouts(path: &Path, toc: &Toc) {
         .areas
         .iter()
         .filter_map(|a| match a.loudspeaker_layout() {
-            scarletbook::LoudspeakerLayout::Unspecified { channels, config } => {
+            scarletbook::LoudspeakerLayout::Unspecified { channels, config, .. } => {
                 Some(format!("{:?} area (channel count {channels}, configuration {config:#04x})", a.slot))
             }
             _ => None,

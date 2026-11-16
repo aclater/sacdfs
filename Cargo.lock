@@ -1173,18 +1173,18 @@ dependencies = [
 
 [[package]]
 name = "scarletbook"
-version = "0.5.9"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20ebe6e6dbd2036f446fbffd44b4d091e7e617b055d0d2051f0f68f350233706"
+checksum = "a0e05d71c6f65f1fbc2d3f0226ced11ed5caad3569f2d6adf479883f4c27935c"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "scarletbook-pcm"
-version = "0.5.9"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1c7b222bde60695e535e8875f7e9851589b7d8e211666b4d569b9acf27cc648"
+checksum = "9748e84909ff456bd880efe6b63d87392dd92c829d9b5a106f2da13f63c69388"
 dependencies = [
  "thiserror",
 ]

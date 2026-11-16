@@ -91,27 +91,36 @@ pub mod speaker {
 /// samples need no reordering (a WAV file's channels must follow the mask bits).
 ///
 /// Any other combination of channel count and configuration ([`Unspecified`]) has no
-/// defined layout and keeps the mask of its channel count ([`count_mask`]).
+/// defined layout and keeps the mask of its channel count ([`count_mask`]). So does a layout
+/// with a speaker this code doesn't know (scarletbook's `Speaker` may gain variants): a mask
+/// without that speaker's bit would hold fewer bits than the file has channels.
 ///
 /// [`Unspecified`]: LoudspeakerLayout::Unspecified
 pub fn channel_mask(layout: LoudspeakerLayout) -> u32 {
     match layout {
         LoudspeakerLayout::Unspecified { channels, .. } => count_mask(channels),
-        defined => defined.speakers().unwrap_or(&[]).iter().fold(0, |m, s| m | speaker_bit(*s)),
+        defined => {
+            let speakers = defined.speakers().unwrap_or(&[]);
+            speakers
+                .iter()
+                .try_fold(0, |m, s| speaker_bit(*s).map(|b| m | b))
+                .unwrap_or_else(|| count_mask(u8::try_from(speakers.len()).unwrap_or(0)))
+        }
     }
 }
 
-/// The mask bit of a speaker.
-fn speaker_bit(s: Speaker) -> u32 {
+/// The mask bit of a speaker, or `None` for one this code doesn't know.
+fn speaker_bit(s: Speaker) -> Option<u32> {
     use speaker::*;
-    match s {
+    Some(match s {
         Speaker::FrontLeft => FL,
         Speaker::FrontRight => FR,
         Speaker::Centre => FC,
         Speaker::LowFrequencyEffects => LFE,
         Speaker::SurroundLeft => BL,
         Speaker::SurroundRight => BR,
-    }
+        _ => return None,
+    })
 }
 
 /// The channel mask for a channel count, for areas without a defined loudspeaker layout:
@@ -476,7 +485,7 @@ mod tests {
         for l in [LoudspeakerLayout::Stereo, LoudspeakerLayout::ThreeTwo, LoudspeakerLayout::FivePointOne] {
             // The decoded-frame order of the speakers is the order of their mask bits, which
             // is the order a WAV file's channels must have: no reordering needed.
-            let bits: Vec<u32> = l.speakers().unwrap().iter().map(|s| speaker_bit(*s)).collect();
+            let bits: Vec<u32> = l.speakers().unwrap().iter().map(|s| speaker_bit(*s).unwrap()).collect();
             assert!(bits.windows(2).all(|w| w[0] < w[1]), "{l:?}: {bits:x?}");
         }
         // Without a defined layout, the mask of the channel count, whatever the

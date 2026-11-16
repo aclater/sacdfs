@@ -46,7 +46,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.5.9, from crates.io (`=0.5.9`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.6.0, from crates.io (`=0.6.0`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -62,6 +62,12 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   fix (`AreaIndex::from_bytes` refuses a form of saved index the library never writes) and no
   speed change; *why:* the pin follows the newest release that passes the gates; bytes unchanged,
   gated as above. 0.5.9 (after 0.4.1): faster DST decoding and a rewrite of the DSF partial-row code; *why:* same rule; bytes unchanged, gated as above; *trade-off:* a DSF read on damaged media can now fail because of a bad neighbouring position (library notes).
+  0.6.0: the interface release before scarletbook 1.0 (non-exhaustive types, renamed entry points,
+  `Cutoff::Standard`), ported by its migration guide; *why:* same rule, and 1.0 keeps this
+  interface; bytes unchanged on the corpus, gated as above. One output change: a tag scarletbook
+  builds may now be up to `MAX_TAG_BYTES` long, where 0.5.9 refused the last 10 bytes before it
+  (no footer, no padding, as sacdfs writes it); a tags file whose tag lands there is applied
+  instead of left out, and those files move by their tag stamp, not by an output version.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -1132,6 +1138,9 @@ speaker of each channel in decoded-frame order (`Area::channel_speakers`):
   usable default, and a file is always shown. sacdfs logs it at Info once per disc, when the
   image is opened, naming the areas and their stored fields, so that a surprising mask can be
   traced to the disc.
+- **A speaker sacdfs doesn't know** (scarletbook's `Speaker` may gain variants from 0.6.0) gives
+  the WAV mask of the channel count too. *Why:* a mask without that speaker's bit would have
+  fewer bits than the file has channels.
 
 ## Reading a range of a DSF file
 
