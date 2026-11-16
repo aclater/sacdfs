@@ -6,7 +6,7 @@ review by each store's maintainers). This page says what is in the repository, h
 the Unraid template today, and what was checked where.
 
 Both entries run the same published image as [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml):
-`ghcr.io/aclater/sacdfs:0.6.4`, with the FUSE device, all capabilities dropped but the seven
+`ghcr.io/aclater/sacdfs:0.6.5`, with the FUSE device, all capabilities dropped but the seven
 the programs need (`SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`, `SETGID`,
 `NET_BIND_SERVICE`, `SETPCAP`; [why each one](../deployment.md#privileges)), no new privileges,
 AppArmor unconfined, SMB on port 10445 and NFS on 12049 (the NAS's own
@@ -116,6 +116,7 @@ Unraid.
   Run on a Linux host with rootless Podman standing in for Docker. Up to 0.6.3 one message was
   logged on every render: "No cap_drop for service: sacdfs", because the app kept the runtime's
   default capabilities; from 0.6.4 the app drops them all (see above).
+- **0.6.5:** the image tag set to 0.6.5, pinned by digest (`0.6.5@sha256:73eb56cb…`, the release's multi-arch index), `app_version` 0.6.5 and `version` 1.0.3, by hand as the catalog's `generate_metadata.py` sets them; the catalog tooling and a TrueNAS install were not re-run on 0.6.5.
 - **Re-run for 0.6.4 (#386):** `ci.py --render-only` with the catalog's library 2.3.18 renders
   both test value sets with `cap_drop: [ALL]`, the seven capabilities in `cap_add`, and
   `no-new-privileges`. Run on Fedora 44 in a VM with Docker. The app itself was not installed on
