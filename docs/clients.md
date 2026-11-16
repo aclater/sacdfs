@@ -129,6 +129,35 @@ sacdfs-win peaked at 13 to 22 MiB working set, with no unexpected warnings. Not 
 
 **Not run in this round:** Roon (Linux over SMB is covered by the long-running NAS install; Windows and macOS were not run, since a Roon account has one active core), Audirvana Studio on Linux (it needs an account), and Sonos and other players.
 
+## 0.6.5-rc.1 checks
+
+Run on the v0.6.5-rc.1 release binary and the published `0.6.5-rc.1` image, side by side with 0.6.4. The library was five real discs plus one more (a 5-track 6-channel disc whose WAV files pass 4 GiB): 206 DSF and WAV files, 126.0 GB, `dsf,wav` at `--pcm-rate 352800`. The files over 4 GiB are RF64.
+
+- **Linux NFS 4.2 and SMB 3.1.1 mounts,** 22 checks per client, in VMs: Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12 and Ubuntu 26.04 pass all 22 on both versions. Ubuntu 24.04 passes 21: `stat` sizes over SMB fail for the files with non-ASCII names, the known `linux-modules-extra` problem ([below](#linux-nfs-and-smb-mounts)), the same four files as on 0.6.4. Sample files, including RF64 past 4 GiB, hash like the server's own read over both protocols, and byte ranges across 4 GiB equal it. Four readers plus a tagger finished in 0.02 to 0.32 s per 60 MiB read, the tagger's worst file 0.12 to 0.30 s (0.6.4: 0.02 to 1.04 s and 0.02 to 0.71 s; cold, over a virtual network, so noisy).
+- **Requests per workload,** fresh server container and fresh mount for each workload (Fedora 44 client). NFS per kind, 0.6.4 then rc: identical. SMB totals differ by one request.
+
+  | Workload | 0.6.4 | 0.6.5-rc.1 |
+  |---|---|---|
+  | NFS `ls -lR` | 1,703 (LISTXATTR 234, GETXATTR 1, GETATTR 1) | 1,703 (the same, kind for kind) |
+  | NFS `find` | 180 | 180 (the same, kind for kind) |
+  | NFS `getfattr -d -R` | 1,993 (LISTXATTR 468, GETXATTR 1) | 1,993 (the same, kind for kind) |
+  | SMB `ls -lR` | 142 | 141 |
+  | SMB `find` | 144 | 143 |
+
+  All three NFS commands exit 0 with no error output; still no extended-attribute storm (1 GETXATTR).
+- **Bytes:** the 206-file tree (126.0 GB) from the 0.6.5-rc.1 binary is identical to 0.6.4's by `cmp` on the mount, and the two published images' SMB shares are identical through a Linux SMB 3.1.1 client. No ERROR or WARN lines from either build or either image (the mount cmp took 1,967 s, the SMB cmp 2,293 s).
+- **Scripted servers** (Jellyfin 12.4.0, Navidrome 0.64.2, Lyrion 9.1.1, MPD 0.24.18, MinimServer 2.2; each a fresh instance, FUSE mount bound `ro,rslave`, with `dsf` and `dsf,wav`, on the CC0 corpus's 33 valid discs with generated art): the same tracks (93 and 186), albums, art, durations and stream bytes as 0.6.4 in all ten runs. Requests in the first scan and the quiet rescan are within 5 % of 0.6.4 (Navidrome `dsf` first scan 2,012 to 1,903; Jellyfin `dsf` 3,019 to 3,006). The only WARN lines are the corpus's deliberate invalid-frame cases, the same on both builds.
+- **Container on Debian 12 (kernel 6.1), #439:** a VM with docker.io 20.10 and Podman 4.3. With 0.6.4, mounting the NFS export works but listing it fails with "Unknown error 524"; SMB lists. With 0.6.5-rc.1 the listing works under both Docker and rootful Podman, and all 910 corpus files hash the same over NFS, over SMB and inside the container. Both builds need `--security-opt apparmor=unconfined` on Debian (the error says so). Rootless Podman starts the SMB share (`NFS=0`) and its files hash like the container's.
+- **Capabilities,** per process, read from `/proc/PID/status`, Docker and rootful Podman, identical on both builds: sacdfs DAC_OVERRIDE and SYS_ADMIN; smbd SETUID, SETGID and NET_BIND_SERVICE; NFS-Ganesha DAC_READ_SEARCH.
+- **Open-files limit** (`--ulimit nofile=256`, three SMB connections each trying to hold 120 cover files, a fourth lists and reads meanwhile): the first connection's 64 opens succeed and the other 296 are refused with EMFILE, as on 0.6.4; every image stays listed, every track reads, and after release and after a fresh mount the cover reads. The refusal is logged once (0.6.4 added a "since start" count; rc's rate-limited line, #339, has none).
+- **One expected difference in bytes:** over the whole corpus (136 images, 914 files on 0.6.4, 910 on rc) the only files that differ are in the two cases #402 changes, `track-duration-max` (four files' bytes change) and `track-starts-overlap` (two tracks, four files, no longer listed). Every other corpus file is identical.
+- **Windows 11, in a VM, not on physical hardware** (build 26200, WinFsp 2.1), on five real discs (186 DSF and WAV files, 59.0 GB; 14 names with colons or question marks):
+  - **Native `sacdfs-win`** from the release zip, following [the Windows guide](install/windows.md) as a normal user: install, checksum, mount as a drive letter, Explorer, Ctrl+C and Ctrl+Break unmount, WinFsp.Launcher (per user and as SYSTEM), a logon task across a restart and a Windows service all work. All 186 files hash like the Linux build's read, including two RF64 WAV files over 4 GiB (`--pcm-rate 352800`) read and seeked past 4 GiB. Robocopy `/MIR` copied 58 files (11.5 GB) byte-identical and a second pass skipped all. Every name opens; WAV tags and thumbnails show; 8 of 8 write operations are refused.
+  - **SMB 3.1.1** to the 0.6.5-rc.1 image, against 0.6.4: listing 40 requests on both; the same names, WAV tags, thumbnails (198, 361 requests against 321, no storm) and write refusals; Robocopy `/MIR` of 58 files hashes like the server's read on both, and a second pass skips all. One WAV copied by Robocopy, median of alternating rounds: stereo 667 MB 1.73 s (0.6.4: 1.68 s), 6-channel 1.66 GB 6.26 s (0.6.4: 6.47 s).
+  - Not run: the UAC and SmartScreen prompts, a physical PC, Explorer's large-icon view. Non-ASCII WAV INFO tags still show wrongly in Explorer ([#444](https://github.com/aclater/sacdfs/issues/444)).
+- **Players beside copies** over SMB and NFS: see the [test plan](test-plan.md#results-065-gate).
+- **Not run on 0.6.5-rc.1:** macOS, Roon and Plex at scale, foobar2000, JRiver, the Tier 2 tools, Plex and Emby among the scripted servers, and the SMB route for the scripted servers.
+
 ## 0.6.0-rc.1 checks
 
 Run on the v0.6.0-rc.1 release binary and the published `0.6.0-rc.1` image; 0.5.0 was the baseline, run side by side. The table above keeps each client's last full run.
