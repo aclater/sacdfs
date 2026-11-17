@@ -24,7 +24,9 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
 
 sacdfs also runs **locally**, on the Linux machine that holds the images, as in the
 [user guide's quick start](user-guide.md#quick-start): a cold seek returns in about 2 ms, a
-WAV seek in under 3 ms. How
+WAV seek in under 3 ms. On a Windows PC it runs as `sacdfs-win`
+([windows.md](install/windows.md)), and on a Mac built from source
+([macos.md](install/macos.md)); see [Platforms](../README.md#platforms). How
 fast each way is, against the project's targets: [performance.md](performance.md).
 
 This guide covers the first: the container image in this repository (`Containerfile`), how
