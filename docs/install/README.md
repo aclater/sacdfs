@@ -105,6 +105,8 @@ discs over SMB and NFS for you.
 **Linux without a container (a PC, a Raspberry Pi, a NAS with only SSH)?**
 Use [binary.md](binary.md) to run sacdfs on your own computer, or
 [nas-binary.md](nas-binary.md) to run it on a NAS you reach over SSH.
+On Fedora, RHEL, Debian or Ubuntu, [packages.md](packages.md) installs it as an `.rpm` or
+`.deb` package with a systemd service.
 
 **A Mac, with the images on it or on a share it has mounted?**
 Use [macos.md](macos.md). It builds sacdfs from source (there is no macOS release build yet) and

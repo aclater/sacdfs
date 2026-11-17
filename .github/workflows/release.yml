@@ -700,7 +700,7 @@ jobs:
       # UBI 10 (ubi10/ubi 10.3), pinned by digest, as in ci.yml.
       image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
     env:
-      REF: ${{ inputs.packages_tag || (github.ref_type == 'tag' && github.ref_name) || github.sha }}
+      REF: ${{ (inputs.packages_tag && format('refs/tags/{0}', inputs.packages_tag)) || (github.ref_type == 'tag' && github.ref) || github.sha }}
     steps:
       - name: Packages
         run: dnf -y -q --setopt=install_weak_deps=False install git-core cargo rpm-build xz && dnf clean all
@@ -873,6 +873,7 @@ jobs:
       VERSION: ${{ needs.preflight.outputs.version }}
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       MACOS_RELEASE: ${{ vars.SACDFS_MACOS_RELEASE }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -945,7 +946,7 @@ jobs:
             echo "- \`sacdfs-$VERSION-aarch64-linux.tar.gz\`: aarch64 (64-bit ARM)."
             echo
             v=${VERSION/-/\~}
-            echo "Linux packages of the binaries above, x86_64 and aarch64 (\`/usr/bin/sacdfs\` and a systemd unit, not enabled; they need fuse3):"
+            echo "Linux packages of the binaries above, x86_64 and aarch64 (\`/usr/bin/sacdfs\` and a systemd unit, not enabled; they need fuse3; not signed with a package key: check the \`.sha256\` and the attestation; [packages guide](https://github.com/$GH_REPO/blob/main/docs/install/packages.md)):"
             echo
             echo "- \`sacdfs-$v-1.x86_64.rpm\`, \`sacdfs-$v-1.aarch64.rpm\`: Fedora, RHEL 9 and 10."
             echo "- \`sacdfs_$v-1_amd64.deb\`, \`sacdfs_$v-1_arm64.deb\`: Debian 12 and 13, Ubuntu 22.04 and 24.04."
@@ -1013,6 +1014,9 @@ jobs:
           [[ "$TAG" == "v$VERSION" ]] || { echo "::error::$TAG is not v$VERSION"; exit 1; }
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           ! grep -qE '\.(rpm|deb)(\.|$)' <<< "$assets" || { echo "::error::the release already has packages"; exit 1; }
+          # The notes send people to the packages guide: it must describe them.
+          guide=$(gh api "repos/$GH_REPO/contents/docs/install/packages.md?ref=main" -H "Accept: application/vnd.github.raw")
+          grep -qF "sacdfs-$VERSION-1.x86_64.rpm" <<< "$guide" || { echo "::error::docs/install/packages.md on main doesn't describe $VERSION's packages"; exit 1; }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: pkg-linux
@@ -1064,7 +1068,7 @@ jobs:
           gh release view "$TAG" --json body --jq .body > notes.md
           {
             v=${VERSION/-/\~}
-            echo "Linux packages of the binaries above, x86_64 and aarch64 (\`/usr/bin/sacdfs\` and a systemd unit, not enabled; they need fuse3):"
+            echo "Linux packages of the binaries above, x86_64 and aarch64 (\`/usr/bin/sacdfs\` and a systemd unit, not enabled; they need fuse3; not signed with a package key: check the \`.sha256\` and the attestation; [packages guide](https://github.com/$GH_REPO/blob/main/docs/install/packages.md)):"
             echo
             echo "- \`sacdfs-$v-1.x86_64.rpm\`, \`sacdfs-$v-1.aarch64.rpm\`: Fedora, RHEL 9 and 10."
             echo "- \`sacdfs_$v-1_amd64.deb\`, \`sacdfs_$v-1_arm64.deb\`: Debian 12 and 13, Ubuntu 22.04 and 24.04."
