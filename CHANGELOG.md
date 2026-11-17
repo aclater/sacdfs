@@ -13,6 +13,14 @@ All notable changes to sacdfs are recorded here. The format follows
   listed in `SHA256SUMS`. Not signed or notarised. The [macOS guide](docs/install/macos.md) now
   starts from them, with building from source as the alternative. The release workflow can add
   an earlier run's macOS archives to its release by hand (CONTRIBUTING.md, "Releasing").
+- **Linux packages (#460).** Each release gets `.rpm` and `.deb` packages for x86_64 and
+  aarch64, packed from the release's Linux binaries (not rebuilt): `/usr/bin/sacdfs`,
+  `sacdfs-ctl`, the systemd unit (not enabled on install) and the settings file
+  (`/etc/sysconfig/sacdfs` or `/etc/default/sacdfs`), with the service's seek index cache in
+  `/var/cache/sacdfs`, needing `fuse3`. Each is tested on UBI 9
+  and 10, Fedora 44 and 45, Debian 12 and 13 and Ubuntu 22.04 and 24.04, and has a `.sha256`
+  and an attestation. A source RPM (`packaging/sacdfs.spec`, the tag's source and its vendored
+  crates) rebuilds offline with the distribution's own Rust. 0.6.5 gets them as added assets.
 
 ### Changed
 - **scarletbook and scarletbook-pcm 0.6.0 (`=0.6.0`).** The interface release before

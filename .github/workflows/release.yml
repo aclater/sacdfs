@@ -25,6 +25,13 @@
 #     runtime; needs WinFsp installed), COPYING, CHANGELOG.md and the Windows install guide as
 #     README.md, with a .sha256 checksum and an attestation, after the packed program served the
 #     corpus with the Linux binary's bytes (job "windows");
+#   - Linux packages (#460), packed with nfpm from the x86_64 and aarch64 archives' files (the
+#     same binaries, not rebuilt; packaging/): sacdfs-<version>-1.<x86_64|aarch64>.rpm and
+#     sacdfs_<version>-1_<amd64|arm64>.deb, each with a .sha256 and an attestation, after each
+#     passed packaging/test-packages.sh in containers of the distributions they are for (job
+#     "packages-test"); and the source RPM for COPR, sacdfs-<version>-1.src.rpm (the tag's
+#     source, its vendored crates and packaging/sacdfs.spec), after it rebuilt offline on UBI 9,
+#     UBI 10 and Fedora (job "srpm-test");
 #   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
 #     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
 #   - the crate on crates.io (#155), for final versions only (no hyphen: not 0.4.0-rc.1),
@@ -40,6 +47,13 @@
 # artifacts, checks their checksums, attests them, adds them with their .sha256 and
 # .intoto.jsonl to the existing release, appends their lines to SHA256SUMS and adds the
 # macOS lines to the notes. The tag and the other assets are not touched.
+#
+# Linux packages of an earlier release (#460): run by hand on main with `packages_tag`. It
+# builds no binary: it packs that release's published x86_64 and aarch64 archives (after
+# checking their checksums and attestations) and its tag's source, runs the same tests, attests
+# the packages and the source RPM, adds them with their .sha256 and .intoto.jsonl to the
+# existing release, appends their lines to SHA256SUMS and adds their lines to the notes. The
+# tag and the other assets are not touched (job "packages-publish").
 #
 # The release checklist is in CONTRIBUTING.md, "Releasing".
 name: release
@@ -57,9 +71,14 @@ on:
         description: "With macos_run: the release's tag, e.g. v0.6.5"
         required: false
         default: ""
+      packages_tag:
+        description: "Publish only: an existing release's tag (e.g. v0.6.5) to add Linux packages to (empty: dry run)"
+        required: false
+        default: ""
   pull_request:
     paths:
       - ".github/workflows/release.yml"
+      - "packaging/**"
       - ".github/scripts/**"
       - "Containerfile"
       - "deploy/**"
@@ -90,8 +109,9 @@ jobs:
   # stops the release before anything is built.
   preflight:
     name: version and notes
-    # Not when publishing an earlier run's macOS archives: then nothing is built.
-    if: inputs.macos_run == ''
+    # Not when adding an earlier run's macOS archives or an earlier release's packages:
+    # then nothing is built.
+    if: inputs.macos_run == '' && inputs.packages_tag == ''
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -485,6 +505,268 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Linux packages (#460): the x86_64 and aarch64 archives' files packed as .rpm and .deb with
+  # nfpm (packaging/pack-linux.sh); the binary as built and tested above. On a manual run with
+  # `packages_tag`, the archives are that release's, downloaded and checked against their
+  # checksums and attestations instead. The previous final release's archives are packed the
+  # same way, for the upgrade test.
+  packages:
+    name: Linux packages (rpm, deb)
+    needs: [preflight, binaries]
+    if: >-
+      !cancelled() && (needs.binaries.result == 'success'
+      || (github.event_name == 'workflow_dispatch' && inputs.packages_tag != ''))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # gh attestation verify of the downloaded archives.
+      attestations: read
+    outputs:
+      version: ${{ steps.inputs.outputs.version }}
+    env:
+      PREFLIGHT_VERSION: ${{ needs.preflight.outputs.version }}
+      PACKAGES_TAG: ${{ inputs.packages_tag }}
+      MACOS_RUN: ${{ inputs.macos_run }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      NFPM_VERSION: 2.48.0
+      NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: This release's version; on a manual run, the release can take packages
+        id: inputs
+        run: |
+          fail() { echo "::error::$*"; exit 1; }
+          if [[ -n "$PACKAGES_TAG" ]]; then
+            [[ -z "$MACOS_RUN" ]] || fail "packages_tag and macos_run go in separate runs"
+            [[ "$GITHUB_REF" == refs/heads/main ]] || fail "run this from main"
+            [[ "$PACKAGES_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || fail "packages_tag is not a version tag"
+            assets=$(gh release view "$PACKAGES_TAG" --json assets --jq '.assets[].name')
+            ! grep -qE '\.(rpm|deb)$' <<< "$assets" || fail "the release already has packages"
+            grep -qx SHA256SUMS <<< "$assets" || fail "the release has no SHA256SUMS"
+            version=${PACKAGES_TAG#v}
+          else
+            version=$PREFLIGHT_VERSION
+          fi
+          [[ -n "$version" ]] || fail "no version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        if: inputs.packages_tag == ''
+        with:
+          name: bin-x86_64
+          path: in
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        if: inputs.packages_tag == ''
+        with:
+          name: bin-aarch64
+          path: in
+      # fetch TAG DIR: a release's two archives, checked against SHA256SUMS and their
+      # attestations (made by this workflow, from that tag).
+      - name: The archives (manual run, the release's) and the previous release's
+        run: |
+          fetch() {
+            local tag=$1 dir=$2 v=${1#v} a
+            mkdir -p "$dir"
+            gh release download "$tag" -D "$dir" -p SHA256SUMS \
+              -p "sacdfs-$v-x86_64-linux.tar.gz" -p "sacdfs-$v-aarch64-linux.tar.gz"
+            (cd "$dir" && sha256sum -c --ignore-missing SHA256SUMS \
+              && [[ $(sha256sum -c --ignore-missing SHA256SUMS | grep -c ': OK$') == 2 ]] && rm SHA256SUMS)
+            for a in x86_64 aarch64; do
+              gh attestation verify "$dir/sacdfs-$v-$a-linux.tar.gz" --repo "$GH_REPO" \
+                --signer-workflow "$GH_REPO/.github/workflows/release.yml" --source-ref "refs/tags/$tag" > /dev/null
+              echo "$tag $a: checksum and attestation verified"
+            done
+          }
+          if [[ -n "$PACKAGES_TAG" ]]; then
+            fetch "$PACKAGES_TAG" in
+          else
+            (cd in && sha256sum -c "sacdfs-$VERSION-x86_64-linux.tar.gz.sha256" "sacdfs-$VERSION-aarch64-linux.tar.gz.sha256")
+          fi
+          # The newest final release before this version (0.7.0-rc.1 counts as 0.7.0).
+          base=${VERSION%%-*}
+          prev=$(gh release list --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName' \
+            | sed -n 's/^v\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p' \
+            | while read -r v; do
+                [[ "$v" != "$base" && $(printf '%s\n' "$v" "$base" | sort -V | head -n 1) == "$v" ]] && echo "$v"
+              done | sort -V | tail -n 1)
+          [[ -n "$prev" ]] || { echo "::error::no earlier release"; exit 1; }
+          echo "previous release: $prev"
+          fetch "v$prev" prev-in
+      - name: nfpm ${{ env.NFPM_VERSION }} (checked against its SHA-256)
+        run: |
+          curl -sSfL --proto =https --tlsv1.2 -o "$RUNNER_TEMP/nfpm.tar.gz" \
+            "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "$NFPM_SHA256  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c
+          mkdir -p "$RUNNER_TEMP/nfpm"
+          tar -C "$RUNNER_TEMP/nfpm" -xzf "$RUNNER_TEMP/nfpm.tar.gz" nfpm
+          echo "$RUNNER_TEMP/nfpm" >> "$GITHUB_PATH"
+      - name: Pack
+        run: |
+          nfpm --version | tail -n 3
+          for a in x86_64 aarch64; do
+            packaging/pack-linux.sh "in/sacdfs-$VERSION-$a-linux.tar.gz" pkg
+            packaging/pack-linux.sh "$(ls prev-in/sacdfs-*-"$a"-linux.tar.gz)" prev
+          done
+          cd pkg
+          ls -l
+          [[ $(ls | wc -l) == 4 ]] || { echo "::error::not four packages"; exit 1; }
+          for f in *; do sha256sum "$f" > "$f.sha256"; cat "$f.sha256"; done
+          mkdir ../tarballs && cp ../in/sacdfs-"$VERSION"-*-linux.tar.gz ../tarballs/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: pkg-linux
+          path: pkg/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: pkg-prev
+          path: prev/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: pkg-tarballs
+          path: tarballs/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Each package in a container of each distribution it is for, on its own processor
+  # (packaging/test-packages.sh): install, package verify, systemd-analyze verify, the same
+  # binary and the same mounted files as the archive's, sacdfs-ctl with the package's settings,
+  # removal; then the previous release's package, enabled and with edited settings, upgraded.
+  # Images pinned by digest (multi-arch indexes).
+  packages-test:
+    name: package test (${{ matrix.distro.name }}, ${{ matrix.arch }})
+    needs: packages
+    if: ${{ !cancelled() && needs.packages.result == 'success' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        distro:
+          - {name: UBI 9, fmt: rpm, image: "registry.access.redhat.com/ubi9/ubi@sha256:1e9f0ed9fceafb40878bc1705ff124aa150e3fed873f18c42cdc2dded319e0a8"}
+          - {name: UBI 10, fmt: rpm, image: "registry.access.redhat.com/ubi10/ubi@sha256:73ea54bfbfb586075bd3d45df6483a7f68875233c8cc7cebcf9b2bb42306c308"}
+          - {name: Fedora 44, fmt: rpm, image: "registry.fedoraproject.org/fedora@sha256:98b558564d3510363f0f706a44b1ee9de461b030373d741c5729ae3f24d8cb26"}
+          - {name: Fedora 45, fmt: rpm, image: "registry.fedoraproject.org/fedora@sha256:8430348a73c5a0e607b5de2cf9dd4741d9aa0891bbce3108588298102015f8c6"}
+          - {name: Debian 12, fmt: deb, image: "docker.io/library/debian@sha256:268fb24c39bca92d326dd83ea3abebe4a3f7751c804ffef23bb6d857dd343ff8"}
+          - {name: Debian 13, fmt: deb, image: "docker.io/library/debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6"}
+          - {name: Ubuntu 22.04, fmt: deb, image: "docker.io/library/ubuntu@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde"}
+          - {name: Ubuntu 24.04, fmt: deb, image: "docker.io/library/ubuntu@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8"}
+    env:
+      VERSION: ${{ needs.packages.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+      FMT: ${{ matrix.distro.fmt }}
+      IMAGE: ${{ matrix.distro.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: pkg-*
+          path: ${{ runner.temp }}/a
+      - name: packaging/test-packages.sh in the container
+        run: |
+          a=$RUNNER_TEMP/a
+          [[ $ARCH == x86_64 ]] && deb=amd64 || deb=arm64
+          [[ $FMT == rpm ]] && glob="sacdfs-*.$ARCH.rpm" || glob="sacdfs_*_$deb.deb"
+          mkdir -p "$RUNNER_TEMP/pk" "$RUNNER_TEMP/tar"
+          find "$a/pkg-linux" "$a/pkg-prev" -name "$glob" -exec cp {} "$RUNNER_TEMP/pk/" \;
+          ls -l "$RUNNER_TEMP/pk"
+          tar -C "$RUNNER_TEMP/tar" -xzf "$a/pkg-tarballs/sacdfs-$VERSION-$ARCH-linux.tar.gz"
+          docker run --rm --privileged --device /dev/fuse \
+            -v "$PWD:/src:ro" -v "$RUNNER_TEMP/pk:/pk:ro" -v "$RUNNER_TEMP/tar/sacdfs-$VERSION-$ARCH-linux:/tar:ro" \
+            "$IMAGE" bash /src/packaging/test-packages.sh /pk /tar /src/tests/corpus/images
+
+  # The source RPM for COPR (#460, packaging/make-srpm.sh): the release tag's source (on a
+  # manual run with `packages_tag`, that tag's; on a dry run, this commit's), its crates from
+  # `cargo vendor`, and packaging/sacdfs.spec. Built in UBI 10 with its own cargo.
+  srpm:
+    name: source RPM
+    needs: preflight
+    if: >-
+      !cancelled() && (needs.preflight.result == 'success'
+      || (github.event_name == 'workflow_dispatch' && inputs.packages_tag != ''))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest, as in ci.yml.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+    env:
+      REF: ${{ (inputs.packages_tag && format('refs/tags/{0}', inputs.packages_tag)) || (github.ref_type == 'tag' && github.ref) || github.sha }}
+    steps:
+      - name: Packages
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core cargo rpm-build xz && dnf clean all
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The tags, for the tag's source.
+          fetch-depth: 0
+      - name: The SRPM
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cargo --version
+          packaging/make-srpm.sh "$REF" srpm
+          cd srpm
+          for f in *.src.rpm; do sha256sum "$f" > "$f.sha256"; cat "$f.sha256"; done
+          rpm -qpl ./*.src.rpm
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: srpm
+          path: srpm/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The SRPM rebuilt with each distribution's own Rust, without network (as COPR builds), then
+  # the built package installed and its mount checked against the archive's binary
+  # (packaging/test-srpm.sh). The COPR targets: Fedora's current two, RHEL 9 and 10 (UBI here).
+  srpm-test:
+    name: SRPM rebuild (${{ matrix.distro.name }}, ${{ matrix.arch }})
+    needs: [packages, srpm]
+    if: ${{ !cancelled() && needs.packages.result == 'success' && needs.srpm.result == 'success' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        distro:
+          - {name: UBI 9, image: "registry.access.redhat.com/ubi9/ubi@sha256:1e9f0ed9fceafb40878bc1705ff124aa150e3fed873f18c42cdc2dded319e0a8"}
+          - {name: UBI 10, image: "registry.access.redhat.com/ubi10/ubi@sha256:73ea54bfbfb586075bd3d45df6483a7f68875233c8cc7cebcf9b2bb42306c308"}
+          - {name: Fedora 44, image: "registry.fedoraproject.org/fedora@sha256:98b558564d3510363f0f706a44b1ee9de461b030373d741c5729ae3f24d8cb26"}
+          - {name: Fedora 45, image: "registry.fedoraproject.org/fedora@sha256:8430348a73c5a0e607b5de2cf9dd4741d9aa0891bbce3108588298102015f8c6"}
+    env:
+      VERSION: ${{ needs.packages.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+      IMAGE: ${{ matrix.distro.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: srpm
+          path: ${{ runner.temp }}/srpm
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: pkg-tarballs
+          path: ${{ runner.temp }}/tarballs
+      - name: packaging/test-srpm.sh in the container
+        run: |
+          mkdir -p "$RUNNER_TEMP/tar"
+          tar -C "$RUNNER_TEMP/tar" -xzf "$RUNNER_TEMP/tarballs/sacdfs-$VERSION-$ARCH-linux.tar.gz"
+          srpm=$(cd "$RUNNER_TEMP/srpm" && ls ./*.src.rpm)
+          docker run --rm --privileged --device /dev/fuse \
+            -v "$PWD:/src:ro" -v "$RUNNER_TEMP/srpm:/srpm:ro" -v "$RUNNER_TEMP/tar/sacdfs-$VERSION-$ARCH-linux:/tar:ro" \
+            "$IMAGE" bash /src/packaging/test-srpm.sh "/srpm/${srpm#./}" /tar /src/tests/corpus/images
+
   # The image is built and tested here without any write permission; publishing it (below,
   # on a tag) loads the very image tested.
   image:
@@ -533,7 +815,7 @@ jobs:
   dry-run:
     name: dry run summary
     if: github.ref_type != 'tag'
-    needs: [preflight, binaries, macos, windows, image, installer]
+    needs: [preflight, binaries, macos, windows, image, installer, packages-test, srpm-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -541,6 +823,14 @@ jobs:
           pattern: bin-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: pkg-linux
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: srpm
+          path: dist
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: mac-*
@@ -571,7 +861,7 @@ jobs:
   release:
     name: GitHub release
     if: github.ref_type == 'tag'
-    needs: [preflight, binaries, macos, windows, image, installer]
+    needs: [preflight, binaries, macos, windows, image, installer, packages-test, srpm-test]
     runs-on: ubuntu-latest
     permissions:
       # Creating the release and uploading its assets.
@@ -583,6 +873,7 @@ jobs:
       VERSION: ${{ needs.preflight.outputs.version }}
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       MACOS_RELEASE: ${{ vars.SACDFS_MACOS_RELEASE }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -604,11 +895,19 @@ jobs:
         with:
           name: installer
           path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: pkg-linux
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: srpm
+          path: dist
       - name: Checksums
         run: |
           cd dist
           sha256sum -c ./*.sha256
-          cat ./*.tar.gz.sha256 ./*.zip.sha256 install.sh.sha256 > SHA256SUMS
+          cat ./*.tar.gz.sha256 ./*.zip.sha256 install.sh.sha256 ./*.rpm.sha256 ./*.deb.sha256 > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
         id: attest
@@ -619,13 +918,15 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/install.sh
+            dist/*.rpm
+            dist/*.deb
       # The attestation also goes on the release as <asset>.intoto.jsonl (one bundle covers
       # both), so it can be checked offline; each copy is verified first.
       - name: Provenance bundles
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
-          for f in dist/*.tar.gz dist/*.zip dist/install.sh; do
+          for f in dist/*.tar.gz dist/*.zip dist/install.sh dist/*.rpm dist/*.deb; do
             cp "$BUNDLE" "$f.intoto.jsonl"
             gh attestation verify "$f" --bundle "$f.intoto.jsonl" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
@@ -643,6 +944,13 @@ jobs:
             echo "- \`sacdfs-$VERSION-x86_64-linux.tar.gz\`: generic x86-64, for any x86_64 CPU."
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
             echo "- \`sacdfs-$VERSION-aarch64-linux.tar.gz\`: aarch64 (64-bit ARM)."
+            echo
+            v=${VERSION/-/\~}
+            echo "Linux packages of the binaries above, x86_64 and aarch64 (\`/usr/bin/sacdfs\` and a systemd unit, not enabled; they need fuse3; not signed with a package key: check the \`.sha256\` and the attestation; [packages guide](https://github.com/$GH_REPO/blob/main/docs/install/packages.md)):"
+            echo
+            echo "- \`sacdfs-$v-1.x86_64.rpm\`, \`sacdfs-$v-1.aarch64.rpm\`: Fedora, RHEL 9 and 10."
+            echo "- \`sacdfs_$v-1_amd64.deb\`, \`sacdfs_$v-1_arm64.deb\`: Debian 12 and 13, Ubuntu 22.04 and 24.04."
+            echo "- \`sacdfs-$v-1.src.rpm\`: the source RPM, which rebuilds offline with the distribution's own Rust."
             echo
             echo "Windows (x86_64, Windows 10 or 11): \`sacdfs-$VERSION-x86_64-windows.zip\`, \`sacdfs-win.exe\`, which needs [WinFsp](https://winfsp.dev) 2.1 or later ([Windows guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/windows.md)). It uses WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos, https://github.com/winfsp/winfsp. Not code-signed."
             echo
@@ -670,7 +978,129 @@ jobs:
           [[ "$VERSION" == *-* ]] && pre=(--prerelease)
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
             --title "sacdfs $VERSION" --notes-file release-notes.md \
-            dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.intoto.jsonl dist/SHA256SUMS dist/install.sh
+            dist/*.tar.gz dist/*.zip dist/*.rpm dist/*.deb dist/*.sha256 dist/*.intoto.jsonl dist/SHA256SUMS dist/install.sh
+
+  # Linux packages and the source RPM of an earlier release, added to that tag's existing
+  # release (see the top of this file), after every package and SRPM test above passed. Every
+  # check runs before anything is uploaded.
+  packages-publish:
+    name: publish Linux packages of an earlier release
+    needs: [packages, packages-test, srpm, srpm-test]
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' && inputs.packages_tag != ''
+      && needs.packages.result == 'success' && needs.packages-test.result == 'success'
+      && needs.srpm.result == 'success' && needs.srpm-test.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # One job at a time changes a release's SHA256SUMS.
+    concurrency:
+      group: release-assets-${{ inputs.packages_tag }}
+      cancel-in-progress: false
+    permissions:
+      # Uploading assets and editing the notes of the existing release.
+      contents: write
+      # Build provenance attestations (Sigstore, through the workflow's OIDC token).
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ inputs.packages_tag }}
+      VERSION: ${{ needs.packages.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: The release still has no packages
+        run: |
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo "::error::run this from main"; exit 1; }
+          [[ "$TAG" == "v$VERSION" ]] || { echo "::error::$TAG is not v$VERSION"; exit 1; }
+          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          ! grep -qE '\.(rpm|deb)(\.|$)' <<< "$assets" || { echo "::error::the release already has packages"; exit 1; }
+          # The notes send people to the packages guide: it must describe them.
+          guide=$(gh api "repos/$GH_REPO/contents/docs/install/packages.md?ref=main" -H "Accept: application/vnd.github.raw")
+          grep -qF "sacdfs-$VERSION-1.x86_64.rpm" <<< "$guide" || { echo "::error::docs/install/packages.md on main doesn't describe $VERSION's packages"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: pkg-linux
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: srpm
+          path: dist
+      - name: Checksums, and SHA256SUMS with the packages' lines appended
+        run: |
+          cd dist
+          ls -l
+          v=${VERSION/-/\~}
+          want=$(printf '%s\n' "sacdfs-$v-1."{x86_64,aarch64,src}.rpm{,.sha256} "sacdfs_$v-1_"{amd64,arm64}.deb{,.sha256} | LC_ALL=C sort)
+          [[ "$(ls | LC_ALL=C sort)" == "$want" ]] || { echo "::error::unexpected files"; exit 1; }
+          sha256sum -c ./*.sha256
+          gh release download "$TAG" -p SHA256SUMS -D ../old
+          cp ../old/SHA256SUMS SHA256SUMS
+          cat ./*.rpm.sha256 ./*.deb.sha256 >> SHA256SUMS
+          # The published lines stay byte for byte; only the five new ones follow them.
+          cmp <(head -c "$(stat -c %s ../old/SHA256SUMS)" SHA256SUMS) ../old/SHA256SUMS
+          [[ $(wc -l < SHA256SUMS) == $(( $(wc -l < ../old/SHA256SUMS) + 5 )) ]]
+          sha256sum -c --ignore-missing SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: |
+            dist/*.rpm
+            dist/*.deb
+      - name: Provenance bundles
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          for f in dist/*.rpm dist/*.deb; do
+            cp "$BUNDLE" "$f.intoto.jsonl"
+            gh attestation verify "$f" --bundle "$f.intoto.jsonl" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml"
+          done
+      - name: Add the packages, SHA256SUMS and the notes' package lines to the release
+        run: |
+          # SHA256SUMS unchanged since it was read above (another job may add assets too).
+          gh release download "$TAG" -p SHA256SUMS -D now
+          cmp now/SHA256SUMS old/SHA256SUMS
+          # No --clobber: an asset of the same name already there stops it.
+          gh release upload "$TAG" dist/*.rpm dist/*.deb dist/*.sha256 dist/*.intoto.jsonl
+          gh release upload "$TAG" --clobber dist/SHA256SUMS
+          gh release view "$TAG" --json body --jq .body > notes.md
+          {
+            v=${VERSION/-/\~}
+            echo "Linux packages of the binaries above, x86_64 and aarch64 (\`/usr/bin/sacdfs\` and a systemd unit, not enabled; they need fuse3; not signed with a package key: check the \`.sha256\` and the attestation; [packages guide](https://github.com/$GH_REPO/blob/main/docs/install/packages.md)):"
+            echo
+            echo "- \`sacdfs-$v-1.x86_64.rpm\`, \`sacdfs-$v-1.aarch64.rpm\`: Fedora, RHEL 9 and 10."
+            echo "- \`sacdfs_$v-1_amd64.deb\`, \`sacdfs_$v-1_arm64.deb\`: Debian 12 and 13, Ubuntu 22.04 and 24.04."
+            echo "- \`sacdfs-$v-1.src.rpm\`: the source RPM, which rebuilds offline with the distribution's own Rust."
+            echo
+            echo "The packages were added after the release, from its published archives and its tag's source, by a later run on \`main\` ($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID), which their attestation names."
+            echo
+          } > packages.md
+          if grep -q '^Windows (x86_64' notes.md; then
+            awk 'FNR == NR { m = m $0 "\n"; next } /^Windows \(x86_64/ { printf "%s", m } { print }' \
+              packages.md notes.md > new-notes.md
+            gh release edit "$TAG" --notes-file new-notes.md
+          else
+            echo "::warning::no place for the package lines in the notes; left unchanged"
+          fi
+      - name: The release as published
+        run: |
+          mkdir check && cd check
+          gh release download "$TAG" -p "*.rpm*" -p "*.deb*" -p SHA256SUMS
+          ls -l
+          sha256sum -c ./*.sha256
+          sha256sum -c --ignore-missing SHA256SUMS
+          cmp SHA256SUMS ../dist/SHA256SUMS
+          # A few tries: the API may lag the attestation.
+          for f in ./*.rpm ./*.deb; do
+            for try in 1 2 3 4 5; do
+              gh attestation verify "$f" --repo "$GH_REPO" \
+                --signer-workflow "$GH_REPO/.github/workflows/release.yml" && break
+              [[ $try == 5 ]] && { echo "::error::no attestation verifies $f"; exit 1; }
+              sleep 20
+            done
+          done
 
   # The macOS archives of an earlier release run, added to that tag's existing release (see
   # the top of this file). Every check runs before anything is uploaded.

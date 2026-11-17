@@ -129,6 +129,19 @@ fails after its first upload leaves the release half done, and a new run stops a
 macOS assets": delete the macOS assets it uploaded (`gh release delete-asset`), put back
 `SHA256SUMS` from the run's log if it was replaced, and run it again.
 
+**Linux packages of an earlier release (#460).** Every release run packs and tests the `.rpm`
+and `.deb` packages and the source RPM (`packaging/`). To add them to a release made before
+that: `gh workflow run release.yml -R aclater/sacdfs --ref main -f packages_tag=vX.Y.Z`. The run
+checks the release's x86_64 and aarch64 archives against `SHA256SUMS` and their attestations,
+packs them and the tag's source, runs the package and SRPM tests, then (job
+`packages-publish`) attests the five files, uploads them with their `.sha256` and
+`.intoto.jsonl`, appends their lines to `SHA256SUMS` (the other lines stay byte for byte) and
+adds the package lines to the notes. It builds no binary and leaves the tag and the other
+assets alone. A run that fails after its first upload leaves the release half done, and a new
+run stops at "already has packages": delete the package assets it uploaded
+(`gh release delete-asset`), put back `SHA256SUMS` from the run's log if it was replaced, and
+run it again.
+
 **crates.io (#155).** On a tag of a final version (no hyphen, so not `0.4.0-rc.1`), the
 `crates-publish` job runs after the GitHub release: it asks the crates.io API whether that
 version is there already, and if so logs it and stops; otherwise it publishes with
