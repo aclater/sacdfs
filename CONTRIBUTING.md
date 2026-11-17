@@ -122,7 +122,9 @@ run and that the release has no macOS assets yet, verifies the checksums, attest
 archives, uploads them with their `.sha256` and `.intoto.jsonl`, appends their two lines to
 `SHA256SUMS` (the other lines stay byte for byte) and adds the macOS lines to the notes. It
 builds nothing and leaves the tag and the other assets alone. It needs
-docs/install/macos.md on `main` to describe the archives, since the notes link to it. A run that
+docs/install/macos.md on `main` to describe the archives, since the notes link to it. It runs
+alone in the concurrency group `release-assets-<tag>`, and stops before replacing
+`SHA256SUMS` if the file changed since it read it. A run that
 fails after its first upload leaves the release half done, and a new run stops at "already has
 macOS assets": delete the macOS assets it uploaded (`gh release delete-asset`), put back
 `SHA256SUMS` from the run's log if it was replaced, and run it again.
