@@ -3,8 +3,8 @@
 What sacdfs does not do, and how it behaves at the edges.
 
 - Read-only. Runs on Linux and, since 0.6.5, Windows 10 and 11 x64
-  ([windows.md](install/windows.md)); on macOS only built from source, with no release build yet
-  ([macos.md](install/macos.md)). Other systems read the files over SMB or NFS from a NAS or Linux
+  ([windows.md](install/windows.md)); on macOS since 0.6.5, as a release build mounted
+  through the Mac's own NFS client ([macos.md](install/macos.md)). Other systems read the files over SMB or NFS from a NAS or Linux
   computer that runs sacdfs ([deployment](deployment.md)). [Platforms](../README.md#platforms).
 - DSF and WAV output only: no DSDIFF (DFF), no FLAC, no DoP, no 44.1/48 kHz or 16-bit PCM.
 - New or removed images and sidecar files show up without a remount, within a few seconds
