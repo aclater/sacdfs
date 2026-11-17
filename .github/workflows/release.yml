@@ -14,7 +14,8 @@
 #     and an attestation. Not signed or notarised (docs/install/macos.md). Built and tested on
 #     every run, but published only when the repository variable SACDFS_MACOS_RELEASE is
 #     "true": it stays off until the NFS layer moves from the vendored copy to a maintained
-#     crate (#420);
+#     crate (#420). The archives of an earlier tag's run can be added to its release by hand
+#     (job "macos-publish", below);
 #   - the installer, install.sh (#340), with this version as its default and the SHA-256 of
 #     this release's archives built in (it checks downloads against those), also as an asset
 #     of its own with a .sha256 checksum and an attestation, so that
@@ -41,6 +42,12 @@
 # files, it builds and tests everything and publishes nothing. Every job or step that
 # publishes is guarded by `github.ref_type == 'tag'`, and only a tag push makes that true.
 #
+# macOS archives of an earlier release (job "macos-publish"): run by hand on main with
+# `macos_run` (the tag's release run) and `tag`. It builds nothing: it takes that run's mac-*
+# artifacts, checks their checksums, attests them, adds them with their .sha256 and
+# .intoto.jsonl to the existing release, appends their lines to SHA256SUMS and adds the
+# macOS lines to the notes. The tag and the other assets are not touched.
+#
 # Linux packages of an earlier release (#460): run by hand on main with `packages_tag`. It
 # builds no binary: it packs that release's published x86_64 and aarch64 archives (after
 # checking their checksums and attestations) and its tag's source, runs the same tests, attests
@@ -56,6 +63,14 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      macos_run:
+        description: "Publish only: the tag's release run whose macOS archives go on its release (empty: dry run)"
+        required: false
+        default: ""
+      tag:
+        description: "With macos_run: the release's tag, e.g. v0.6.5"
+        required: false
+        default: ""
       packages_tag:
         description: "Publish only: an existing release's tag (e.g. v0.6.5) to add Linux packages to (empty: dry run)"
         required: false
@@ -94,8 +109,9 @@ jobs:
   # stops the release before anything is built.
   preflight:
     name: version and notes
-    # Not when adding packages to an earlier release: then no binary is built.
-    if: inputs.packages_tag == ''
+    # Not when adding an earlier run's macOS archives or an earlier release's packages:
+    # then nothing is built.
+    if: inputs.macos_run == '' && inputs.packages_tag == ''
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -511,6 +527,7 @@ jobs:
     env:
       PREFLIGHT_VERSION: ${{ needs.preflight.outputs.version }}
       PACKAGES_TAG: ${{ inputs.packages_tag }}
+      MACOS_RUN: ${{ inputs.macos_run }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       NFPM_VERSION: 2.48.0
@@ -524,6 +541,7 @@ jobs:
         run: |
           fail() { echo "::error::$*"; exit 1; }
           if [[ -n "$PACKAGES_TAG" ]]; then
+            [[ -z "$MACOS_RUN" ]] || fail "packages_tag and macos_run go in separate runs"
             [[ "$GITHUB_REF" == refs/heads/main ]] || fail "run this from main"
             [[ "$PACKAGES_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || fail "packages_tag is not a version tag"
             assets=$(gh release view "$PACKAGES_TAG" --json assets --jq '.assets[].name')
@@ -1072,6 +1090,124 @@ jobs:
           cmp SHA256SUMS ../dist/SHA256SUMS
           # A few tries: the API may lag the attestation.
           for f in ./*.rpm ./*.deb; do
+            for try in 1 2 3 4 5; do
+              gh attestation verify "$f" --repo "$GH_REPO" \
+                --signer-workflow "$GH_REPO/.github/workflows/release.yml" && break
+              [[ $try == 5 ]] && { echo "::error::no attestation verifies $f"; exit 1; }
+              sleep 20
+            done
+          done
+
+  # The macOS archives of an earlier release run, added to that tag's existing release (see
+  # the top of this file). Every check runs before anything is uploaded.
+  macos-publish:
+    name: publish macOS archives of a release run
+    if: github.event_name == 'workflow_dispatch' && inputs.macos_run != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # The other run's artifacts.
+      actions: read
+      # Uploading assets and editing the notes of the existing release.
+      contents: write
+      # Build provenance attestations (Sigstore, through the workflow's OIDC token).
+      id-token: write
+      attestations: write
+    env:
+      RUN: ${{ inputs.macos_run }}
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: The run is this tag's successful release run, the release has no macOS assets
+        run: |
+          fail() { echo "::error::$*"; exit 1; }
+          [[ "$GITHUB_REF" == refs/heads/main ]] || fail "run this from main"
+          [[ "$RUN" =~ ^[0-9]+$ ]] || fail "macos_run is not a run id"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || fail "tag is not a version tag"
+          IFS=$'\t' read -r path event branch sha conclusion < <(gh api "repos/$GH_REPO/actions/runs/$RUN" \
+            --jq '[.path, .event, .head_branch, .head_sha, .conclusion] | @tsv')
+          tag_sha=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+          echo "run $RUN: $path, $event, $branch, $sha, $conclusion; $TAG is $tag_sha"
+          [[ "$path" == .github/workflows/release.yml ]] || fail "run $RUN is not a release run"
+          [[ "$event" == push && "$branch" == "$TAG" ]] || fail "run $RUN is not the push of $TAG"
+          [[ "$sha" == "$tag_sha" ]] || fail "run $RUN built $sha, not $TAG ($tag_sha)"
+          [[ "$conclusion" == success ]] || fail "run $RUN did not succeed"
+          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          ! grep -q -- '-macos\.' <<< "$assets" || fail "the release already has macOS assets"
+          grep -qx SHA256SUMS <<< "$assets" || fail "the release has no SHA256SUMS"
+          # The notes send people to the macOS guide: it must describe the archives.
+          guide=$(gh api "repos/$GH_REPO/contents/docs/install/macos.md?ref=main" -H "Accept: application/vnd.github.raw")
+          grep -q -- '-macos\.tar\.gz' <<< "$guide" || fail "docs/install/macos.md on main doesn't describe the archives"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: mac-*
+          path: dist
+          merge-multiple: true
+          run-id: ${{ inputs.macos_run }}
+          github-token: ${{ github.token }}
+      - name: Checksums, and SHA256SUMS with the macOS lines appended
+        run: |
+          cd dist
+          ls -l
+          want=$(printf '%s\n' "sacdfs-$VERSION-"{aarch64,x86_64}-macos.tar.gz{,.sha256} | LC_ALL=C sort)
+          [[ "$(ls | LC_ALL=C sort)" == "$want" ]] || { echo "::error::unexpected files"; exit 1; }
+          sha256sum -c ./*.sha256
+          gh release download "$TAG" -p SHA256SUMS -D ../old
+          cp ../old/SHA256SUMS SHA256SUMS
+          cat "sacdfs-$VERSION-aarch64-macos.tar.gz.sha256" "sacdfs-$VERSION-x86_64-macos.tar.gz.sha256" >> SHA256SUMS
+          # The published lines stay byte for byte; only the two new ones follow them.
+          cmp <(head -c "$(stat -c %s ../old/SHA256SUMS)" SHA256SUMS) ../old/SHA256SUMS
+          [[ $(wc -l < SHA256SUMS) == $(( $(wc -l < ../old/SHA256SUMS) + 2 )) ]]
+          sha256sum -c --ignore-missing SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Provenance bundles
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          for f in dist/*.tar.gz; do
+            cp "$BUNDLE" "$f.intoto.jsonl"
+            gh attestation verify "$f" --bundle "$f.intoto.jsonl" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml"
+          done
+      - name: Add the assets, SHA256SUMS and the notes' macOS lines to the release
+        run: |
+          # No --clobber: an asset of the same name already there stops it.
+          gh release upload "$TAG" dist/*.tar.gz dist/*.tar.gz.sha256 dist/*.intoto.jsonl
+          gh release upload "$TAG" --clobber dist/SHA256SUMS
+          gh release view "$TAG" --json body --jq .body > notes.md
+          {
+            echo "macOS 11 or later, mounted by the Mac's own NFS client with nothing else installed (\`sacdfs-nfs\`; [macOS guide](https://github.com/$GH_REPO/blob/main/docs/install/macos.md)). Not signed or notarised: download with \`curl\`, as the guide shows."
+            echo
+            echo "- \`sacdfs-$VERSION-aarch64-macos.tar.gz\`: Apple Silicon."
+            echo "- \`sacdfs-$VERSION-x86_64-macos.tar.gz\`: Intel."
+            echo
+            echo "The macOS archives were added after the release, from this tag's release run ($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$RUN); their attestation names the later run on \`main\` that published them ($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)."
+            echo
+          } > macos.md
+          if grep -q '^Container image for a NAS' notes.md; then
+            awk 'FNR == NR { m = m $0 "\n"; next } /^Container image for a NAS/ { printf "%s", m } { print }' \
+              macos.md notes.md > new-notes.md
+            gh release edit "$TAG" --notes-file new-notes.md
+          else
+            echo "::warning::no place for the macOS lines in the notes; left unchanged"
+          fi
+      - name: The release as published
+        run: |
+          mkdir check && cd check
+          gh release download "$TAG" -p "*-macos.tar.gz*" -p SHA256SUMS
+          ls -l
+          sha256sum -c ./*.sha256
+          sha256sum -c --ignore-missing SHA256SUMS
+          cmp SHA256SUMS ../dist/SHA256SUMS
+          # A few tries: the API may lag the attestation.
+          for f in ./*.tar.gz; do
             for try in 1 2 3 4 5; do
               gh attestation verify "$f" --repo "$GH_REPO" \
                 --signer-workflow "$GH_REPO/.github/workflows/release.yml" && break

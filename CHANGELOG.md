@@ -7,6 +7,12 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **macOS archives for 0.6.5.** The 0.6.5 release now carries
+  `sacdfs-0.6.5-aarch64-macos.tar.gz` (Apple Silicon) and `sacdfs-0.6.5-x86_64-macos.tar.gz`
+  (Intel), built and tested by its release run, each with a `.sha256` and an attestation, and
+  listed in `SHA256SUMS`. Not signed or notarised. The [macOS guide](docs/install/macos.md) now
+  starts from them, with building from source as the alternative. The release workflow can add
+  an earlier run's macOS archives to its release by hand (CONTRIBUTING.md, "Releasing").
 - **Linux packages (#460).** Each release gets `.rpm` and `.deb` packages for x86_64 and
   aarch64, packed from the release's Linux binaries (not rebuilt): `/usr/bin/sacdfs`,
   `sacdfs-ctl`, the systemd unit (not enabled on install) and the settings file

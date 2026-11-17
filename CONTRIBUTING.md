@@ -113,6 +113,20 @@ never moved.
 8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
    in aclater/sacd (the minor version's summary and release list).
 
+**macOS archives of an earlier release.** Every release run builds and tests both macOS
+archives; the release gets them only when the repository variable `SACDFS_MACOS_RELEASE` is
+`true`. To add them later to a release whose run held them back, while the run's artifacts
+last (7 days): `gh workflow run release.yml -R aclater/sacdfs --ref main -f macos_run=RUN_ID
+-f tag=vX.Y.Z`. The job `macos-publish` checks that the run is the tag's successful release
+run and that the release has no macOS assets yet, verifies the checksums, attests the two
+archives, uploads them with their `.sha256` and `.intoto.jsonl`, appends their two lines to
+`SHA256SUMS` (the other lines stay byte for byte) and adds the macOS lines to the notes. It
+builds nothing and leaves the tag and the other assets alone. It needs
+docs/install/macos.md on `main` to describe the archives, since the notes link to it. A run that
+fails after its first upload leaves the release half done, and a new run stops at "already has
+macOS assets": delete the macOS assets it uploaded (`gh release delete-asset`), put back
+`SHA256SUMS` from the run's log if it was replaced, and run it again.
+
 **Linux packages of an earlier release (#460).** Every release run packs and tests the `.rpm`
 and `.deb` packages and the source RPM (`packaging/`). To add them to a release made before
 that: `gh workflow run release.yml -R aclater/sacdfs --ref main -f packages_tag=vX.Y.Z`. The run
