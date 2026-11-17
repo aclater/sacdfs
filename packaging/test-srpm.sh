@@ -7,7 +7,7 @@ set -euo pipefail
 srpm=$(realpath "$1") tardir=$(cd "$2" && pwd) images=$(cd "$3" && pwd)
 . /etc/os-release
 echo "$PRETTY_NAME, $(uname -m)"
-dnf -y -q --setopt=install_weak_deps=False install rpm-build 'dnf-command(builddep)' findutils util-linux >/dev/null
+dnf -y -q --setopt=install_weak_deps=False install rpm-build 'dnf-command(builddep)' findutils util-linux systemd >/dev/null
 dnf -y -q builddep "$srpm" >/dev/null
 rustc --version
 start=$(date +%s)

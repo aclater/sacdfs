@@ -83,6 +83,7 @@ for f in "$copying" /usr/share/doc/sacdfs/README.md /usr/share/doc/sacdfs/CHANGE
     grep -qx "$f" <<<"$files" || fail "$f not in the package"
 done
 grep -qx "EnvironmentFile=$conf" /usr/lib/systemd/system/sacdfs.service || fail "unit's EnvironmentFile"
+grep -qx "CacheDirectory=sacdfs" /usr/lib/systemd/system/sacdfs.service || fail "unit's CacheDirectory"
 grep -q '^ExecStart=/usr/bin/sacdfs ' /usr/lib/systemd/system/sacdfs.service || fail "unit's ExecStart"
 ! grep -rn /usr/local/bin/sacdfs /usr/bin/sacdfs-ctl /usr/lib/systemd/system/sacdfs.service "$conf" ||
     fail "/usr/local/bin/sacdfs still named"

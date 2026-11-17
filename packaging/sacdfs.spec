@@ -76,6 +76,9 @@ install -Dpm 0644 pkgfiles/sacdfs.conf %{buildroot}%{_sysconfdir}/sysconfig/sacd
 
 %postun
 %systemd_postun_with_restart sacdfs.service
+# The service's seek index cache (CacheDirectory=sacdfs), on erase only.
+[ "$1" -eq 0 ] && rm -rf /var/cache/sacdfs
+:
 
 %files
 %license COPYING
