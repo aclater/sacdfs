@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **macOS archives for 0.6.5.** The 0.6.5 release now carries
+  `sacdfs-0.6.5-aarch64-macos.tar.gz` (Apple Silicon) and `sacdfs-0.6.5-x86_64-macos.tar.gz`
+  (Intel), built and tested by its release run, each with a `.sha256` and an attestation, and
+  listed in `SHA256SUMS`. Not signed or notarised. The [macOS guide](docs/install/macos.md) now
+  starts from them, with building from source as the alternative. The release workflow can add
+  an earlier run's macOS archives to its release by hand (CONTRIBUTING.md, "Releasing").
+
 ### Changed
 - **scarletbook and scarletbook-pcm 0.6.0 (`=0.6.0`).** The interface release before
   scarletbook 1.0, ported by its migration guide. The DSF and WAV files of the test corpus are
