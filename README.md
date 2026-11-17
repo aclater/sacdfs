@@ -10,7 +10,21 @@
 sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
 player or music server. Nothing is extracted: keep the ISOs, delete the extracted copies.
 
+## Platforms
+
+| System | How | Guide |
+|---|---|---|
+| Linux, including NAS systems | Release builds for x86_64, x86_64-v3 and aarch64 (`.tar.gz` and `install.sh`), and a container image. Needs glibc 2.17 or later; kernels older than 4.18 are untested | [install guide](docs/install/README.md) · [binary](docs/install/binary.md) · [container](docs/install/docker-podman.md) |
+| Windows 10 and 11, x64 | Release build since 0.6.5 (`sacdfs-<version>-x86_64-windows.zip`), with [WinFsp](https://winfsp.dev) 2.1 or later; shows the images as a read-only drive letter. Not code-signed. Checked on Windows 11 in a VM | [windows.md](docs/install/windows.md) |
+| macOS | Build from source; no release build yet ([#420](https://github.com/aclater/sacdfs/issues/420)). Mounts through the Mac's own NFS client, with no macFUSE | [macos.md](docs/install/macos.md) |
+
+Any other system, and any Mac or Windows PC, can play the discs from a NAS or Linux computer
+that runs sacdfs, over its SMB or NFS share ([clients](docs/clients.md)).
+
 ## Quick start
+
+The steps below install sacdfs on a NAS or Linux computer; for a Windows PC or a Mac, see
+[Platforms](#platforms).
 
 You need a NAS or Linux computer you can log in to over SSH as an administrator, and the folder
 on it that holds your `.iso` files. The commands use `/volume1/music`, a music folder on a

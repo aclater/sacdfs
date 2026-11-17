@@ -32,8 +32,10 @@ decisions across its repositories, one line each with where they are recorded, a
    missing directory or an I/O error on one file, never as a crash of the mount.
 
 Not goals: writing, DSDIFF (DFF) output, FLAC output (deferred, #10), DoP, the 48 kHz PCM
-family, PS3 network sources, macOS and Windows natively (#22; they read the files over SMB
-or NFS from the [container](deployment.md)). The plan for PCM output, and every decision
+family, PS3 network sources. macOS and Windows were not goals at first and read the files over SMB
+or NFS from the [container](deployment.md); #22 then added native front ends: Windows (WinFsp)
+in releases since 0.6.5, macOS (local NFS) from source until #420
+([the core and its front ends](#the-core-and-its-front-ends-22-piece-a)). The plan for PCM output, and every decision
 behind it, is in #11.
 
 ## Engine
@@ -1806,8 +1808,8 @@ plain `cp` on the Linux client keeps the missing write bit; and Windows and macO
 ## The core and its front ends (#22, piece A)
 
 sacdfs is split in two: a **core** that knows nothing of FUSE, and a **front end** per platform that
-takes requests from the operating system and hands them to the core. Today the only front end is
-Linux FUSE (fuser). The split is the first step of native macOS and Windows support
+takes requests from the operating system and hands them to the core. When the split was made the only
+front end was Linux FUSE (fuser). The split is the first step of native macOS and Windows support
 ([#22](https://github.com/aclater/sacdfs/issues/22)): a WinFsp front end (Windows, piece B) and a
 local NFS front end (macOS, piece C, #420) call the same core, and the core's tests cover all of
 them. *Why split first:* the tree, attributes, reads, caching, PCM, tags and the lookup worker were
