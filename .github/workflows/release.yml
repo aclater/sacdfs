@@ -710,6 +710,9 @@ jobs:
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           ! grep -q -- '-macos\.' <<< "$assets" || fail "the release already has macOS assets"
           grep -qx SHA256SUMS <<< "$assets" || fail "the release has no SHA256SUMS"
+          # The notes send people to the macOS guide: it must describe the archives.
+          guide=$(gh api "repos/$GH_REPO/contents/docs/install/macos.md?ref=main" -H "Accept: application/vnd.github.raw")
+          grep -q -- '-macos\.tar\.gz' <<< "$guide" || fail "docs/install/macos.md on main doesn't describe the archives"
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
@@ -758,6 +761,8 @@ jobs:
             echo
             echo "- \`sacdfs-$VERSION-aarch64-macos.tar.gz\`: Apple Silicon."
             echo "- \`sacdfs-$VERSION-x86_64-macos.tar.gz\`: Intel."
+            echo
+            echo "The macOS archives were added after the release, from this tag's release run ($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$RUN); their attestation names the later run on \`main\` that published them ($GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID)."
             echo
           } > macos.md
           if grep -q '^Container image for a NAS' notes.md; then
