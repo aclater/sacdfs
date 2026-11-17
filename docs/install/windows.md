@@ -4,8 +4,9 @@ This shows your SACD images as a drive letter of DSF and WAV files on a Windows 
 player on that PC can open. About 10 minutes. To play the discs from a NAS instead, install
 sacdfs on the NAS ([install guide](README.md)) and open its share from Windows.
 
-Checked with the 0.6.5-rc.1 release zip, following these steps, on Windows 11 in a VM (x64),
-with WinFsp 2.1. See [Details](#details).
+Checked with the 0.6.5 release zip, following these steps as a standard (non-administrator)
+user, on Windows 11 25H2 and Windows 10 22H2 in VMs (x64), not on physical hardware, with WinFsp
+2.1. See [Details](#details).
 
 ## What you need
 
@@ -26,7 +27,11 @@ administrator": a drive mounted from an administrator window is hidden from Expl
    winget install WinFsp.WinFsp
    ```
 
-   Windows asks to allow the installer to make changes: allow it. Without winget, download
+   The first time, winget asks you to accept the Microsoft Store source terms: type `Y`. Windows
+   then asks to allow the installer to make changes. On an account that isn't an administrator,
+   it asks for an administrator's name and password instead.
+
+   Windows 10 doesn't include winget. There, and on any PC without winget, download
    `winfsp-2.1.25156.msi` from [WinFsp's releases](https://github.com/winfsp/winfsp/releases)
    and open it.
 
@@ -54,9 +59,10 @@ administrator": a drive mounted from an administrator window is hidden from Expl
    ```
 
    `Unblock-File` tells Windows the file is the one you checked, so it doesn't warn about a
-   downloaded program each time (see [Windows's warning](#windowss-warning)). It matters for a
-   zip downloaded with a browser; `curl.exe` doesn't mark its downloads, so after step 2 it
-   changes nothing.
+   downloaded program (see [Windows's warning](#windowss-warning)). After these steps it changes
+   nothing: `curl.exe` doesn't mark its downloads, and `Expand-Archive` doesn't pass a browser
+   download's mark on to the program. It matters if you unpacked a browser-downloaded zip with
+   Explorer (**Extract all**), which does pass the mark on.
 
 5. **Mount your images.** Pick a free drive letter; this uses `S:`.
 
@@ -94,11 +100,14 @@ under their own account, and stop it cleanly.
    Set-ItemProperty $key JobControl 1 -Type DWord
    ```
 
+   If you use a standard (non-administrator) account, the administrator window runs as the
+   administrator, so the first line can't find the program and fails with "Cannot find path".
+   Copy `sacdfs-win.exe` from your own account's `AppData\Local\Programs\sacdfs` folder (under
+   `C:\Users`) to `C:\Program Files` instead, then run the other lines. The first line works as
+   written only when the administrator window runs as the account that did step 4.
+
    `RunAs "."` runs sacdfs-win as the user who starts it; `Security` lets every user of the PC
-   (`BU`) start and stop their own. The first line copies the program from the folder of the
-   account the administrator window runs as; if that's another account than the one you
-   unpacked it with in step 4, copy `sacdfs-win.exe` from that account's
-   `AppData\Local\Programs\sacdfs` folder instead. The program goes under
+   (`BU`) start and stop their own. The program goes under
    `C:\Program Files`, where only administrators can change it, because the launcher may run it
    as SYSTEM.
 
@@ -110,6 +119,11 @@ under their own account, and stop it cleanly.
    ```
 
    *You should see* `OK`, and the drive `S:` in Explorer. No window stays open.
+
+   Give the folder without a backslash at the end: the launcher passes `D:\Music\SACD\` on in a
+   way that sacdfs-win can't read, and you see `OK` but no drive
+   ([#466](https://github.com/aclater/sacdfs/issues/466)). For a whole drive, write `E:\.`
+   (with the dot), not `E:\`. The same applies to the logon task below.
 
 3. **Stop it:**
 
@@ -131,17 +145,18 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 Register-ScheduledTask -TaskName sacdfs -Action $action -Trigger $trigger
 ```
 
-*You should see* the task listed with `State: Ready`. At your next logon the drive comes back by
-itself. Stop it as in step 3 above; remove the task with
+*You should see* a table with the task `sacdfs` and `Ready` under State. At your next logon the
+drive comes back by itself. Stop it as in step 3 above; remove the task with
 `Unregister-ScheduledTask -TaskName sacdfs -Confirm:$false`.
 
 ## For every user of the PC
 
 The launcher can also run sacdfs-win as the SYSTEM account, so that one drive is seen in every
 user's session. SOURCE must then be a folder SYSTEM can read: a local disk, not a mapped network
-drive, and every user of the PC can read the files (`--no-allow-other` limits them to
-administrators). In PowerShell **as administrator**, register it under a second name, without
-`RunAs`:
+drive (`The system cannot find the path specified`) nor a network share that needs a user name
+and password (`Access is denied`), and every user of the PC can read the files
+(`--no-allow-other` limits them to administrators). In PowerShell **as administrator**, register
+it under a second name, without `RunAs`:
 
 ```powershell
 $key = "HKLM:\SOFTWARE\WOW6432Node\WinFsp\Services\sacdfs-all"
@@ -156,6 +171,35 @@ Set-ItemProperty $key JobControl 1 -Type DWord
 *You should see* `OK`. Only administrators may start and stop this one (`BA`); stop it with
 `launchctl-x64.exe stop sacdfs-all music`. sacdfs-win also runs as an ordinary Windows service
 (`sc.exe create`, with SOURCE and the drive letter in its command line).
+
+## Images on a NAS
+
+SOURCE can be a folder on a network share, so the images stay on a NAS and the PC shows them as
+a drive. The examples use a NAS called `nas` with a share `isos` and the user `music`; use yours.
+
+Mount it with the share's path, or with a drive letter mapped to it (`secret` stands for the
+share's password):
+
+```powershell
+& $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe \\nas\isos S:
+```
+
+```powershell
+net use N: \\nas\isos /user:music secret
+& $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe N:\ S:
+```
+
+Both work with the launcher too (`launchctl-x64.exe start sacdfs music \\nas\isos S:`, or `N:`
+without the backslash), except as SYSTEM (see [For every user of the PC](#for-every-user-of-the-pc)). For the logon task, save
+the share's password for your account once, so the task can reach the share at the next logon,
+then use the share's path in the task:
+
+```powershell
+cmdkey /add:nas /user:music /pass:secret
+```
+
+If the NAS restarts while you play, playback can stop (foobar2000 did), as it does with any file
+on a share. The drive works again once the NAS is back.
 
 ## Options
 
@@ -191,10 +235,17 @@ with a line in the log.
 
 ## Windows's warning
 
-The program isn't signed yet. The first time it runs from a download, Windows's SmartScreen may
-show "Windows protected your PC" and Microsoft Defender may scan it. `Unblock-File` in step 4,
-after the checksum matched, stops the warning. If SmartScreen shows anyway, choose **More info**,
-then **Run anyway**.
+The program isn't signed yet. Windows warns only about a program that carries a browser
+download's mark, which the steps above don't leave on it (see step 4):
+
+- Opened from Explorer, SmartScreen shows "Windows protected your PC". Run `Unblock-File` on the
+  program, after the checksum matched; if it still warns, sign out and back in.
+- Started from PowerShell, it runs without that warning. Windows 10 may show "Security scan
+  required" for a few seconds the first time.
+- Started through the shell (`Start-Process`), Windows may show "Open File – Security Warning"
+  instead.
+
+After `Unblock-File`, none of these show.
 
 ## Microsoft Defender and the first open
 
@@ -212,18 +263,46 @@ time.
 - **"cannot mount on S:":** the letter is taken. Pick another.
 - **A folder in your images can't be renamed while mounted:** close the player that reads from
   it; sacdfs-win closes images 10 seconds after their last read.
-- **"Windows protected your PC" from the launcher or a task:** unblock the program
-  (`Unblock-File`, step 4) before copying it.
+- **The launcher says `OK` but no drive appears:** the folder ends with a backslash. Leave it
+  out; for a whole drive write `E:\.` ([#466](https://github.com/aclater/sacdfs/issues/466)).
 - **Something else:** start it with `-v` for more detail, and see
   [reporting a problem](../../CONTRIBUTING.md).
 
+## Remove sacdfs
+
+1. Stop the drive: `& "C:\Program Files (x86)\WinFsp\bin\launchctl-x64.exe" stop sacdfs music`,
+   and, in PowerShell as administrator, `stop sacdfs-all music` the same way if you set that up.
+2. In a normal PowerShell window, remove the logon task, the program and its seek index:
+
+   ```powershell
+   Unregister-ScheduledTask -TaskName sacdfs -Confirm:$false
+   Remove-Item -Recurse $env:LOCALAPPDATA\Programs\sacdfs, $env:LOCALAPPDATA\sacdfs
+   ```
+
+3. In PowerShell **as administrator**, remove the launcher entries, the copied program, the
+   SYSTEM log and the SYSTEM account's seek index:
+
+   ```powershell
+   Remove-Item "HKLM:\SOFTWARE\WOW6432Node\WinFsp\Services\sacdfs", "HKLM:\SOFTWARE\WOW6432Node\WinFsp\Services\sacdfs-all"
+   Remove-Item "C:\Program Files\sacdfs-win.exe", C:\ProgramData\sacdfs.log
+   Remove-Item -Recurse C:\Windows\System32\config\systemprofile\AppData\Local\sacdfs
+   ```
+
+   Leave out what you didn't set up. Remove WinFsp like any other app if nothing else uses it.
+
 ## Details
 
-- **What was checked:** the steps above, the launcher (as a user and as SYSTEM), the logon task
-  and a Windows service on Windows 11 in a VM, Explorer as a normal user (listing, thumbnails of
-  covers, the details pane), plus the checks the `windows` workflow runs on every change: every file of the test
-  corpus byte-identical to the Linux mount, end of file, names in any case, refused writes, the
-  WinFsp notice, and a clean stop on Ctrl+C and Ctrl+Break.
+- **What was checked:** the steps above as a standard user, with the 0.6.5 release zip, on
+  Windows 11 25H2 (build 26200) and Windows 10 22H2 (build 19045) in VMs, not on physical
+  hardware: the launcher (as a user and as SYSTEM), the logon task across a restart, a Windows
+  service (Windows 11), a NAS share as SOURCE (path and mapped drive), hibernating with the drive
+  mounted, the removal steps (Windows 10), Explorer as a normal user (listing, thumbnails of
+  covers, the details pane, large icons), and audio played to the VM's sound device, recorded and
+  compared with the same file played from a local copy (bit-identical in foobar2000). Not run:
+  sleep (S3), because the VMs don't wake from it, with or without sacdfs. Plus the checks the
+  `windows` workflow runs on every change: every file of the test corpus byte-identical to the
+  Linux mount, end of file, names in any case, refused writes, the WinFsp notice, and a clean stop
+  on Ctrl+C and Ctrl+Break.
 - **WinFsp:** sacdfs-win uses WinFsp - Windows File System Proxy, Copyright (C) Bill
   Zissimopoulos, <https://github.com/winfsp/winfsp>, under WinFsp's FLOSS exception.
   `sacdfs-win --version` shows the same notice.
