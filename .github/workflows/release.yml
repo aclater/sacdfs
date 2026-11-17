@@ -1109,6 +1109,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.macos_run != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # One job at a time adds assets to a release, so none overwrites another's SHA256SUMS lines.
+    concurrency:
+      group: release-assets-${{ inputs.tag }}
+      cancel-in-progress: false
     permissions:
       # The other run's artifacts.
       actions: read
@@ -1184,6 +1188,10 @@ jobs:
         run: |
           # No --clobber: an asset of the same name already there stops it.
           gh release upload "$TAG" dist/*.tar.gz dist/*.tar.gz.sha256 dist/*.intoto.jsonl
+          # SHA256SUMS unchanged since it was read above, or nothing replaces it.
+          gh release download "$TAG" -p SHA256SUMS -D now
+          cmp now/SHA256SUMS old/SHA256SUMS \
+            || { echo "::error::SHA256SUMS changed since it was read; repair by hand (CONTRIBUTING.md)"; exit 1; }
           gh release upload "$TAG" --clobber dist/SHA256SUMS
           gh release view "$TAG" --json body --jq .body > notes.md
           {
