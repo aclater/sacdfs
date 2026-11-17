@@ -112,10 +112,13 @@ sacdfs restarts on the new program.
   `/etc/systemd/system/sacdfs.service` and `/etc/default/sacdfs`. The package warns when it
   finds them. `/etc/systemd/system/sacdfs.service` takes precedence over the package's unit:
   remove it and run `sudo systemctl daemon-reload` to use the package's.
+  The installer's `--uninstall` of that route also deletes `/etc/default/sacdfs` (from reading
+  install.sh; not run with the package), which on Debian and Ubuntu is the package's settings
+  file: uninstall an installer setup before installing the package, not after.
 - **Checked** with the 0.6.5 packages built by the release workflow from the 0.6.5 archives:
   install, verify, upgrade from a 0.6.4 package and removal in containers of UBI 9, UBI 10,
   Fedora 44 and 45, Debian 12 and 13, Ubuntu 22.04 and 24.04 (x86_64 and aarch64); and the
   steps above, the service at boot, an upgrade while it runs and removal under systemd on
-  RHEL 10 (10.3 packages, SELinux enforcing) and Debian 13, in VMs. The download and
-  `gh attestation verify` commands were not run against the release before it carried the
-  packages.
+  RHEL 10 (10.3 packages, SELinux enforcing) and Debian 13, in VMs. The download, check and
+  install steps were run against the published 0.6.5 files on UBI 10 and Debian 13 (x86_64),
+  and `gh attestation verify` on all five.
