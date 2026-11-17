@@ -113,6 +113,16 @@ never moved.
 8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
    in aclater/sacd (the minor version's summary and release list).
 
+**macOS archives of an earlier release.** Every release run builds and tests both macOS
+archives; the release gets them only when the repository variable `SACDFS_MACOS_RELEASE` is
+`true`. To add them later to a release whose run held them back, while the run's artifacts
+last (7 days): `gh workflow run release.yml -R aclater/sacdfs --ref main -f macos_run=RUN_ID
+-f tag=vX.Y.Z`. The job `macos-publish` checks that the run is the tag's successful release
+run and that the release has no macOS assets yet, verifies the checksums, attests the two
+archives, uploads them with their `.sha256` and `.intoto.jsonl`, appends their two lines to
+`SHA256SUMS` (the other lines stay byte for byte) and adds the macOS lines to the notes. It
+builds nothing and leaves the tag and the other assets alone.
+
 **crates.io (#155).** On a tag of a final version (no hyphen, so not `0.4.0-rc.1`), the
 `crates-publish` job runs after the GitHub release: it asks the crates.io API whether that
 version is there already, and if so logs it and stops; otherwise it publishes with
