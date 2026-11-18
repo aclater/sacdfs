@@ -1100,7 +1100,10 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   right); UTF-8 with the limit documented (keeps the mojibake). *Trade-off:* a CJK, Cyrillic or
   Greek field is missing from INFO, and on a Windows set to another ANSI code page the
   characters 0x80 to 0xFF show as that code page's; the `id3 ` chunk keeps the full text for
-  every other reader. ASCII fields keep their bytes; the WAV output version moved to 5.
+  every other reader. ASCII fields keep their bytes; the WAV output version moved to 5. *Bytes
+  0x80 to 0x9F:* `›` (U+203A) is 0x9B, which an 8-bit terminal outside UTF-8 mode takes as CSI.
+  Kept, as the code page has it: a WAV file's audio holds every byte value anyway, so a raw dump
+  of one on such a terminal is never safe, and readers decode the field as text.
   *Why INFO from the items, not from the ID3 frames:*
   the library has no INFO writer, and built from one `TagSet` the two cannot disagree. The WAV
   output version moved to 2 with the DSF one (#28): the same 40 files' `id3 ` chunk changed. A chunk with
