@@ -542,7 +542,7 @@ pub fn front_cover(tag: &[u8]) -> Option<Vec<u8>> {
     let syncsafe = |b: &[u8]| b.iter().fold(0usize, |a, &x| (a << 7) | usize::from(x & 0x7F));
     let be = |b: &[u8]| b.iter().fold(0usize, |a, &x| (a << 8) | usize::from(x));
     let end = (10 + syncsafe(&tag[6..10])).min(tag.len());
-    let mut at = 10;
+    let mut at: usize = 10;
     if tag[5] & 0x40 != 0 {
         let ext = tag.get(10..14)?;
         let ext_size = if major == 4 { syncsafe(ext) } else { be(ext).checked_add(4)? };
