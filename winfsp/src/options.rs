@@ -3,6 +3,7 @@
 //! `sacdfs-win`'s command line: the Linux options that mean the same on Windows, with the
 //! same names and defaults, plus the few that only Windows has.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -46,6 +47,96 @@ pub struct Args {
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
+}
+
+/// The program's arguments, with a launcher's quoting undone (#466): WinFsp.Launcher quotes
+/// each argument it passes on, so a folder that ends in a backslash (`D:\Music\`, `E:\`)
+/// arrives as `"D:\Music\" "M:"`, where `\"` reads as an escaped quote and the two
+/// arguments run together into one. A Windows path never holds a `"`, so an argument with one
+/// means this happened: the command line is then split again with backslashes taken literally.
+/// The second value says so, for the log.
+pub fn args() -> (Vec<OsString>, bool) {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    if !quote_inside(&args) {
+        return (args, false);
+    }
+    match raw_command_line() {
+        Some(line) => {
+            let mut again = split_literal(&line);
+            // The program's own name as Windows gave it.
+            if let (Some(first), Some(name)) = (again.first_mut(), args.first()) {
+                first.clone_from(name);
+            }
+            (again, true)
+        }
+        None => (args, false),
+    }
+}
+
+/// Whether an argument after the program's name holds a `"`.
+pub fn quote_inside(args: &[OsString]) -> bool {
+    args.iter().skip(1).any(|a| a.to_string_lossy().contains('"'))
+}
+
+/// A command line split at spaces and tabs outside quotes, each `"` starting or ending a quoted
+/// part and every backslash kept as it is.
+pub fn split_literal(line: &[u16]) -> Vec<OsString> {
+    const QUOTE: u16 = b'"' as u16;
+    const SPACE: u16 = b' ' as u16;
+    const TAB: u16 = b'\t' as u16;
+    let mut out = Vec::new();
+    let mut arg: Vec<u16> = Vec::new();
+    let (mut started, mut quoted) = (false, false);
+    for &c in line {
+        match c {
+            QUOTE => (started, quoted) = (true, !quoted),
+            SPACE | TAB if !quoted => {
+                if started {
+                    out.push(wide_to_os(&std::mem::take(&mut arg)));
+                    started = false;
+                }
+            }
+            _ => {
+                arg.push(c);
+                started = true;
+            }
+        }
+    }
+    if started {
+        out.push(wide_to_os(&arg));
+    }
+    out
+}
+
+#[cfg(windows)]
+fn wide_to_os(w: &[u16]) -> OsString {
+    std::os::windows::ffi::OsStringExt::from_wide(w)
+}
+
+#[cfg(not(windows))]
+fn wide_to_os(w: &[u16]) -> OsString {
+    OsString::from(String::from_utf16_lossy(w))
+}
+
+/// The process's command line as Windows holds it.
+#[cfg(windows)]
+fn raw_command_line() -> Option<Vec<u16>> {
+    use windows::Win32::System::Environment::GetCommandLineW;
+    // SAFETY: GetCommandLineW returns the process's NUL-terminated command line, which lives as
+    // long as the process; it is copied at once.
+    unsafe {
+        let line = GetCommandLineW();
+        if line.is_null() {
+            return None;
+        }
+        Some(line.as_wide().to_vec())
+    }
+}
+
+/// Other systems pass arguments as they are: nothing to undo.
+#[cfg(not(windows))]
+fn raw_command_line() -> Option<Vec<u16>> {
+    None
 }
 
 /// The SID of SYSTEM (LocalSystem), which services and WinFsp.Launcher run as.
@@ -160,6 +251,54 @@ mod tests {
         assert_eq!(MountPoint::parse("Q:\\"), MountPoint::Drive("Q:".into()));
         assert_eq!(MountPoint::parse("C:\\mnt\\sacd"), MountPoint::Folder("C:\\mnt\\sacd".into()));
         assert_eq!(MountPoint::parse("1:"), MountPoint::Folder("1:".into()));
+    }
+
+    fn split(line: &str) -> Vec<String> {
+        let w: Vec<u16> = line.encode_utf16().collect();
+        split_literal(&w).into_iter().map(|a| a.into_string().unwrap()).collect()
+    }
+
+    fn os(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    /// The command lines WinFsp.Launcher makes from `%1 %2` and `%1 %2 --log-file FILE` (#466):
+    /// a SOURCE or MOUNTPOINT ending in a backslash keeps it, and the arguments come apart.
+    #[test]
+    fn launcher_quoting_undone() {
+        let exe = r#""C:\Program Files\sacdfs-win.exe" "#;
+        for (tail, want) in [
+            (r#""D:\Music\SACD\" "M:""#, vec![r"D:\Music\SACD\", "M:"]),
+            (r#""E:\" "S:""#, vec![r"E:\", "S:"]),
+            (r#""E:\" "S:\""#, vec![r"E:\", r"S:\"]),
+            (r#""D:\My Music\" "M:""#, vec![r"D:\My Music\", "M:"]),
+            (
+                r#""D:\Music\" "M:" --log-file C:\ProgramData\sacdfs.log"#,
+                vec![r"D:\Music\", "M:", "--log-file", r"C:\ProgramData\sacdfs.log"],
+            ),
+            (r#""\\nas\isos\" "N:""#, vec![r"\\nas\isos\", "N:"]),
+            (r#""D:\Music" "M:""#, vec![r"D:\Music", "M:"]),
+        ] {
+            let got = split(&format!("{exe}{tail}"));
+            assert_eq!(got[0], r"C:\Program Files\sacdfs-win.exe", "{tail}");
+            assert_eq!(got[1..], want, "{tail}");
+            let a = parse(&got[1..].iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+            assert_eq!(a.source, PathBuf::from(want[0]), "{tail}");
+            assert_eq!(a.mountpoint, want[1], "{tail}");
+        }
+        assert_eq!(split(" a\t\"\"  b "), ["a", "", "b"]);
+    }
+
+    /// What Windows makes of the launcher's line for `D:\Music\` (one argument with a quote
+    /// in it) is spotted; ordinary arguments are left alone.
+    #[test]
+    fn quote_inside_an_argument_is_spotted() {
+        assert!(quote_inside(&os(&["sacdfs-win", "D:\\Music\" M:"])));
+        assert!(quote_inside(&os(&["sacdfs-win", "D:\\Music\" M: --log-file x"])));
+        assert!(!quote_inside(&os(&["sacdfs-win", "D:\\Music\\", "M:"])));
+        assert!(!quote_inside(&os(&["\"C:\\x\".exe", "E:\\.", "S:"])));
+        // The arguments of a process whose command line has no quote inside one are its own.
+        assert!(!args().1);
     }
 
     #[test]

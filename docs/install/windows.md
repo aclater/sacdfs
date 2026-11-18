@@ -120,10 +120,11 @@ under their own account, and stop it cleanly.
 
    *You should see* `OK`, and the drive `S:` in Explorer. No window stays open.
 
-   Give the folder without a backslash at the end: the launcher passes `D:\Music\SACD\` on in a
-   way that sacdfs-win can't read, and you see `OK` but no drive
-   ([#466](https://github.com/aclater/sacdfs/issues/466)). For a whole drive, write `E:\.`
-   (with the dot), not `E:\`. The same applies to the logon task below.
+   A folder with a backslash at the end (`D:\Music\SACD\`) and a whole drive (`E:\`) work
+   from the version after 0.6.5. In 0.6.5 and earlier the launcher passes them on in a way that
+   sacdfs-win can't read, and you see `OK` but no drive
+   ([#466](https://github.com/aclater/sacdfs/issues/466)): there, leave the backslash out, and
+   for a whole drive write `E:\.` (with the dot). The same applies to the logon task below.
 
 3. **Stop it:**
 
@@ -263,8 +264,12 @@ time.
 - **"cannot mount on S:":** the letter is taken. Pick another.
 - **A folder in your images can't be renamed while mounted:** close the player that reads from
   it; sacdfs-win closes images 10 seconds after their last read.
-- **The launcher says `OK` but no drive appears:** the folder ends with a backslash. Leave it
-  out; for a whole drive write `E:\.` ([#466](https://github.com/aclater/sacdfs/issues/466)).
+- **The launcher says `OK` but no drive appears:** sacdfs-win stopped at once, and the
+  launcher keeps no output. To see why, add `--log-file` with a file you can write to the
+  registration's `CommandLine` (as for `sacdfs-all` below, which logs to
+  `C:\ProgramData\sacdfs.log`), start it again and read that file. With 0.6.5 and earlier, a
+  folder ending with a backslash does this: leave it out, and for a whole drive write `E:\.`
+  ([#466](https://github.com/aclater/sacdfs/issues/466)).
 - **Something else:** start it with `-v` for more detail, and see
   [reporting a problem](../../CONTRIBUTING.md).
 
@@ -302,7 +307,10 @@ time.
   sleep (S3), because the VMs don't wake from it, with or without sacdfs. Plus the checks the
   `windows` workflow runs on every change: every file of the test corpus byte-identical to the
   Linux mount, end of file, names in any case, refused writes, the WinFsp notice, and a clean stop
-  on Ctrl+C and Ctrl+Break.
+  on Ctrl+C and Ctrl+Break; and, through the launcher with a `--log-file` after `%1 %2`, a
+  folder ending with a backslash and a drive root (`subst`) as SOURCE, each mounted with every
+  file and stopped (#466). That workflow runs on GitHub's Windows Server runner; the
+  backslash fix has not been run on Windows 10 or 11.
 - **WinFsp:** sacdfs-win uses WinFsp - Windows File System Proxy, Copyright (C) Bill
   Zissimopoulos, <https://github.com/winfsp/winfsp>, under WinFsp's FLOSS exception.
   `sacdfs-win --version` shows the same notice.
