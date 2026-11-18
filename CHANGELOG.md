@@ -23,6 +23,14 @@ All notable changes to sacdfs are recorded here. The format follows
   crates) rebuilds offline with the distribution's own Rust. 0.6.5 gets them as added assets.
 
 ### Changed
+- **scarletbook 0.6.1: faster DST decoding on 32-bit x86.** scarletbook and scarletbook-pcm
+  move to 0.6.1 (`=0.6.1`), whose DST decoder keeps its arithmetic decoder's state in a 32-bit
+  word on 32-bit targets ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.6.1),
+  [scarletbook-rs#369](https://github.com/aclater/scarletbook-rs/issues/369),
+  [scarletbook-rs#370](https://github.com/aclater/scarletbook-rs/pull/370)). An i686 build
+  decodes 6-channel DST in about 0.58 of 0.6.0's time and 2-channel in about 0.58. 64-bit builds
+  keep the 64-bit form, measured unchanged; the corpus files are byte-identical to 0.6.0's, so
+  `DSF_VERSION` and `WAV_VERSION` stay.
 - **scarletbook and scarletbook-pcm 0.6.0 (`=0.6.0`).** The interface release before
   scarletbook 1.0, ported by its migration guide. The DSF and WAV files of the test corpus are
   byte-identical to 0.5.9's, so `DSF_VERSION` and `WAV_VERSION` stay. One output change: a tag
