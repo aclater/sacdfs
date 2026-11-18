@@ -434,6 +434,19 @@ a damaged disc change nothing.
   does not report holes (NFS and SMB shares often do not) reports the whole file as data:
   nothing is found and nothing is hidden. That is a safe fallback, not detection; the zero
   sampling below still applies there, since a hole reads as zeros.
+- *Not looked for on a share where they cannot matter (#451).* An NFS 4.2 client sends each
+  `lseek` to the server, one round trip per area listed (471 for a 416-image library). On an
+  NFS or SMB share the file's size less the space it uses (`st_blocks`, from the client's
+  cached attributes) is the most its holes can be; compression on the server only makes
+  that bound larger. When holes that large would still leave the area's play time within 1
+  frame per sector holding data, they could neither start the zero sampling nor refuse a
+  track, so the area lists exactly as it would with them looked for, and the call is
+  skipped. Every image of the 416-image library above is in that case but one, which uses a
+  third of its length. *Why not on local disks:* there the call costs no round trip, and it also
+  finds space preallocated and never written (`fallocate`), which `st_blocks` counts as
+  used; on a share such an image is caught only by the zero sampling. *Alternatives:*
+  keeping the result in the seek index cache helps only a second listing; skipping the call
+  on every share would lose the holes an NFS 4.2 server does report.
 - *Zero runs* are sampled, which costs reads, and only in an area whose play time claims
   more than 1 frame per audio sector holding data. A real disc's area uses about 0.07
   (plain DSD, 6 channels) to 0.22 (plain DSD stereo) to 0.5 (DST): 1 is twice the densest
@@ -1932,6 +1945,7 @@ Where a system has no equivalent yet, the function documents its fallback and ne
 | `open_regular` (images, `verify`) | `O_NONBLOCK` open, `fstat`, then blocking again | same | open, then the regular-file check |
 | `Dir`, `open_root`, `open_dir_at`, `stat_at`, `open_file_at`, `read_link_at` (sidecars) | `openat` from an `O_PATH` descriptor | a read-only descriptor (no `O_PATH`) | by path, checking each folder for a reparse point; not race-free like `openat` |
 | `next_hole`, `next_data` (sparse areas) | `SEEK_HOLE`, `SEEK_DATA` | same | `FSCTL_QUERY_ALLOCATED_RANGES` |
+| `hole_bound` (holes on a share, #451) | NFS or SMB by `fstatfs` (once per device): size less `st_blocks` | NFS or SMB by `f_fstypename` | none (holes always looked for) |
 | `fs_size` (`statfs` without images) | `statvfs` | same, with a 32-bit `fsblkcnt_t` | `GetDiskFreeSpaceExW`'s total, in 4096-byte blocks |
 | `lower_thread_priority` (lookup worker) | nice 19, idle I/O class | `PRIO_DARWIN_BG` | `THREAD_MODE_BACKGROUND_BEGIN` |
 | `cache_home` (seek index default) | `$XDG_CACHE_HOME`, else `~/.cache` | same | `%LOCALAPPDATA%` |
