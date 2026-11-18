@@ -11,7 +11,7 @@
 use std::sync::atomic::AtomicU64;
 
 use libfuzzer_sys::fuzz_target;
-use sacdfs::verify::container::{Audio, MAX_CHANNELS, MAX_TAG, parse};
+use sacdfs::verify::container::{Audio, Joined, MAX_CHANNELS, MAX_TAG, One, Source, Stream, parse};
 use sacdfs::verify::id3::{self, Losses};
 use sacdfs::verify::pause::{Meter, locate};
 use sacdfs_fuzz::fields;
@@ -56,7 +56,20 @@ fuzz_target!(|data: &[u8]| {
     if let (Some(a), Some(b)) = (a, b) {
         let read = AtomicU64::new(0);
         if let Ok(digest) = b.digest(&mut second, &read) {
-            let _ = locate((&a, &mut first), (&b, &mut second), &digest, &read);
+            let _ = locate(&mut One::new(&a, &mut first), &mut One::new(&b, &mut second), &digest, &read);
+        }
+        // The two joined, as a gapless chain is (#442): the length of both, whatever they hold.
+        let parts: Vec<(Audio, Box<dyn Source + '_>)> =
+            vec![(a.clone(), Box::new(first)), (b.clone(), Box::new(second))];
+        if let Some(mut j) = Joined::new(parts) {
+            let mut len = 0u64;
+            let r = j.canonical_while(&read, &mut |x| {
+                len += x.len() as u64;
+                true
+            });
+            if r.is_ok() {
+                assert_eq!(Some(len), j.canonical_len());
+            }
         }
     }
     // Also the whole input as one file, for a file with the separator byte in it.
