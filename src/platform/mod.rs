@@ -188,6 +188,16 @@ pub fn next_data(file: &File, at: u64) -> io::Result<Option<u64>> {
     imp::next_data(file, at)
 }
 
+/// At most how many bytes of `file` lie in holes, when that is known without asking a file
+/// server (#451): on an NFS or SMB share, the file's size less the space the server says it
+/// uses (`st_blocks`), from the client's cached attributes. Compression on the server only
+/// makes the bound larger. `None` elsewhere: on a local file system `SEEK_HOLE` costs no
+/// round trip and also finds preallocated space that was never written, which `st_blocks`
+/// counts as used; Windows reports no allocation in its metadata.
+pub fn hole_bound(file: &File) -> Option<u64> {
+    imp::hole_bound(file)
+}
+
 /// A folder, open, that names are resolved under one at a time, so that nothing outside it is
 /// reached through a link (the sidecars' confinement to SOURCE). On Unix a descriptor
 /// (`O_PATH` on Linux, read-only on macOS, which has no `O_PATH`); on Windows its path, each

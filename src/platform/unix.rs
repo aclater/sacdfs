@@ -137,6 +137,45 @@ pub fn next_data(file: &File, at: u64) -> io::Result<Option<u64>> {
     }
 }
 
+pub fn hole_bound(file: &File) -> Option<u64> {
+    let m = file.metadata().ok()?;
+    network_share(file, m.dev()).then(|| m.len().saturating_sub(m.blocks().saturating_mul(512)))
+}
+
+/// Whether `file`, on device `dev`, is on an NFS or SMB share: one `fstatfs` per device (on
+/// NFS that is a round trip too), remembered for the process.
+fn network_share(file: &File, dev: u64) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static KNOWN: OnceLock<Mutex<HashMap<u64, bool>>> = OnceLock::new();
+    let known = KNOWN.get_or_init(Mutex::default);
+    if let Some(&net) = known.lock().unwrap_or_else(|e| e.into_inner()).get(&dev) {
+        return net;
+    }
+    let net = is_network(file);
+    known.lock().unwrap_or_else(|e| e.into_inner()).insert(dev, net);
+    net
+}
+
+/// NFS, SMB 1 and CIFS, SMB 2 and 3 (Linux's magic numbers, compared as 32 bits: `f_type` is
+/// 32 bits wide on some targets).
+#[cfg(target_os = "linux")]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::unnecessary_cast)]
+fn is_network(file: &File) -> bool {
+    const NETWORK: [u32; 4] = [0x6969, 0x517b, 0xff53_4d42, 0xfe53_4d42];
+    nix::sys::statfs::fstatfs(file).is_ok_and(|s| NETWORK.contains(&(s.filesystem_type().0 as u32)))
+}
+
+#[cfg(target_os = "macos")]
+fn is_network(file: &File) -> bool {
+    nix::sys::statfs::fstatfs(file).is_ok_and(|s| matches!(s.filesystem_type_name(), "nfs" | "smbfs"))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn is_network(_file: &File) -> bool {
+    false
+}
+
 pub type Dir = OwnedFd;
 
 /// How a folder is opened to walk from: `O_PATH` on Linux, which needs no read permission and

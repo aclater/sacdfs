@@ -174,3 +174,69 @@ fn listed_frames_stay_within_the_area() {
         }
     }
 }
+
+/// The tracks of `area` as listed for `sectors` image sectors: number, and first frame and
+/// frames if shown.
+fn checked(area: &scarletbook::Area, sectors: u64, kept: bool) -> Vec<(u8, Option<(u32, u32)>)> {
+    sacdfs::track_ranges::listed(area, sectors, kept)
+        .into_iter()
+        .map(|l| (l.number, l.track.map(|t| (t.start_frame, t.duration_frames))))
+        .collect()
+}
+
+/// #451: on a share, holes are not looked for when [`sacdfs::area_data::holes_cannot_matter`]
+/// says that holes up to the bound leave the listing as it is. For every corpus area, at the
+/// largest bound it accepts, the listing with that many sectors fewer is the listing with
+/// none fewer; one sector more is not accepted.
+#[test]
+fn holes_within_the_bound_change_no_listing() {
+    use sacdfs::area_data::{SUSPICIOUS_FRAMES_PER_SECTOR, holes_cannot_matter};
+    use scarletbook::audio::audio_sector_range;
+    let tree = Tree::with_options(
+        SourceDir::scan(&corpus().join("images")).unwrap(),
+        Tuning::default(),
+        Output::default(),
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    let mut accepted = 0;
+    for (_, f) in tree.all_files() {
+        if !seen.insert((f.disc.path.clone(), f.area)) {
+            continue;
+        }
+        let toc = f.disc.toc();
+        let (n, stored) = (toc.sectors, toc.sector_format.stored_size());
+        let area = &toc.areas[f.area];
+        let (start, end) = audio_sector_range(area, n);
+        let need = u64::from(area.playtime_frames()).div_ceil(SUSPICIOUS_FRAMES_PER_SECTOR);
+        let Some(most) = (end - start).checked_sub(need) else {
+            assert!(!holes_cannot_matter(area, n, stored, 0), "{:?} {}", f.disc.path, f.area);
+            continue;
+        };
+        assert!(holes_cannot_matter(area, n, stored, most * stored), "{:?} {}", f.disc.path, f.area);
+        assert!(!holes_cannot_matter(area, n, stored, (most + 1) * stored), "{:?} {}", f.disc.path, f.area);
+        for kept in [false, true] {
+            let whole = checked(area, end, kept);
+            for fewer in [most / 2, most] {
+                assert_eq!(checked(area, end - fewer, kept), whole, "{:?} {} -{fewer}", f.disc.path, f.area);
+            }
+        }
+        accepted += 1;
+    }
+    assert!(accepted > 50, "{accepted} areas accepted");
+}
+
+/// The hole-padded images above are not accepted at their hole's size: there, holes are
+/// looked for on a share too.
+#[test]
+fn a_large_hole_is_looked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let image = one_minute_image(dir.path());
+    let size = fs::metadata(&image).unwrap().len();
+    let disc = sacdfs::disc::Disc::open(&image, 0, Tuning::default()).unwrap();
+    let toc = disc.toc();
+    let stereo = toc.areas.iter().find(|a| a.slot == scarletbook::Slot::TwoChannel).unwrap();
+    let stored = toc.sector_format.stored_size();
+    // As padded to 8 MiB with a hole: the hole is at least 8 MiB less the copy's size.
+    let padded = (8 << 20) / stored;
+    assert!(!sacdfs::area_data::holes_cannot_matter(stereo, padded, stored, (8 << 20) - size));
+}
