@@ -7,6 +7,16 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The start of a track is decoded ahead (#481).** When a player starts a track from stopped, its
+  first seconds are decoded in slices on all decoder threads as its reads come in, rather than a
+  read at a time and then in one 2 s batch that held its reads back. This is for the glitches of a
+  cold start on a slow CPU (5 to 7 s of multichannel DSF over SMB on a 32-bit Atom NAS, #456): on
+  slow cores decoding 6-channel DST at twice real time, a player's first second of reads brings
+  twice the audio it did, and its worst read is about a third shorter. Library scans and taggers,
+  which read a file's head and leave, start none. See docs/deployment.md, "Starting playback on a
+  slow CPU".
+- **`--log-file` marks where each session starts (#481).** The log file is still appended to; a
+  line `---- sacdfs VERSION started TIME, pid N ----` now comes first.
 - **`sacdfs tags fetch --acoustid`: a lookup by audio fingerprint for discs nothing else
   identifies (part of #296).** When the barcode or catalogue number, the name and the durations
   find nothing, it fingerprints the first two minutes of each stereo track (10 s or longer) with
@@ -81,6 +91,10 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **Windows: read-ahead survives in the frame cache (#481).** Without the anonymous mappings the
+  cache's pool uses on Linux and macOS, every new frame evicted all cached frames to free slots it
+  could never get, so read-ahead was decoded and thrown away before it was read. Frames now go on
+  the heap there with nothing evicted for them, and the cache still keeps within its size.
 - **`sacdfs verify --resume` no longer reuses rows checked with the other `--pauses` mode (#479).**
   The report has a new last column, `pauses`, with the mode each file was checked with. On resume,
   rows of another mode, and rows of reports from 0.6.5 and earlier (which lack the column), are

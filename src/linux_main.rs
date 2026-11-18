@@ -94,7 +94,10 @@ pub fn main() -> ExitCode {
         // Opened here, before the fork: a bad path fails the command, and the daemon's
         // change to / does not matter.
         match open_log_file(path) {
-            Ok(f) => {
+            Ok(mut f) => {
+                // The file is appended to: a line marks where this session starts (#481). A
+                // failed write is ignored, as the log's own writes are.
+                let _ = sacdfs::errlog::write_session_start(&mut f, "sacdfs");
                 logger.target(env_logger::Target::Pipe(Box::new(f)));
             }
             Err(e) => {

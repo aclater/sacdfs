@@ -42,13 +42,25 @@ fn real_discs_head_reads() {
     let (walked, continued) = walk(&tree);
     assert!(walked > 0 && continued > 0, "{walked} files, {continued} read ahead");
     common::assert_every_image_served(&images, tree.all_files().iter().map(|(_, f)| f.disc.path.clone()));
-    let engine = Engine::new(2, 0).unwrap();
-    for (path, f) in tree.all_files() {
-        let reader = Reader::new(f.clone());
-        let page = 128 << 10;
-        for off in (0..768 << 10).step_by(page as usize) {
-            let (_, ahead) = reader.read(&engine, off, page).unwrap();
-            assert!(ahead.is_none(), "{path:?}: read-ahead after the head read at {off}");
+    // With a cache, as a mount has: nor does the start-of-track decode-ahead (#481) start
+    // within the head; a player's first read past it starts it, on a file long enough.
+    for cache in [0, 32 << 20] {
+        let engine = Engine::new(2, cache).unwrap();
+        for (path, f) in tree.all_files() {
+            let reader = Reader::new(f.clone());
+            let page = 128 << 10;
+            for off in (0..768 << 10).step_by(page as usize) {
+                let (_, ahead) = reader.read(&engine, off, page).unwrap();
+                assert!(ahead.is_none(), "{path:?}: read-ahead after the head read at {off}");
+            }
+            if cache == 0 || f.data_end() < 4 * HEAD_WINDOW {
+                continue;
+            }
+            let player = Reader::new(f.clone());
+            let start = (0..2 * HEAD_WINDOW)
+                .step_by(page as usize)
+                .find(|&off| player.read(&engine, off, page).unwrap().1.is_some_and(|a| a.start));
+            assert_eq!(start, Some(HEAD_WINDOW), "{path:?}: the start-ahead starts past the head");
         }
     }
 }
