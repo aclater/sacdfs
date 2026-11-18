@@ -267,6 +267,12 @@ pub fn next_data(file: &File, at: u64) -> io::Result<Option<u64>> {
     Ok(allocated_after(file, at)?.map(|(start, _)| start.max(at)))
 }
 
+/// *Fallback:* `None`, so that holes are always looked for: the metadata's block count is the
+/// size's.
+pub fn hole_bound(_file: &File) -> Option<u64> {
+    None
+}
+
 /// An open folder: a handle that later opens are made relative to (`NtCreateFile` with a root
 /// directory), so that a folder renamed or replaced by a link after it was opened can't send a
 /// sidecar open elsewhere: the Windows counterpart of `openat`. The path is kept for
