@@ -473,6 +473,14 @@ pub fn lower_thread_priority() -> Vec<(&'static str, io::Error)> {
     Vec::new()
 }
 
+pub fn cpu_seconds() -> f64 {
+    0.0
+}
+
+pub fn stop_on_signals(_stop: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<()> {
+    Ok(())
+}
+
 pub fn process_name(_tid: u32) -> Option<String> {
     None
 }
