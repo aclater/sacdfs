@@ -555,7 +555,8 @@ pub fn front_cover(tag: &[u8]) -> Option<Vec<u8>> {
             break;
         }
         let size = if major == 4 { syncsafe(&h[4..8]) } else { be(&h[4..8]) };
-        let body_end = (at + 10).checked_add(size)?;
+        // A size past the end of memory: no more frames, but keep a cover already found.
+        let Some(body_end) = (at + 10).checked_add(size) else { break };
         let body = tag.get(at + 10..body_end.min(end))?;
         at = body_end;
         let packed = if major == 4 { h[9] & 0x0F != 0 } else { h[9] & 0xE0 != 0 };
