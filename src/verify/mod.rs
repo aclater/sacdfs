@@ -71,7 +71,8 @@ pub struct Args {
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
     /// Keep the rows of an earlier --output report for files whose size and modification
-    /// time are unchanged (all but ERROR rows), and check only the rest.
+    /// time are unchanged (all but ERROR rows, and rows of another --pauses mode), and check
+    /// only the rest.
     #[arg(long, requires = "output")]
     pub resume: bool,
     /// Files checked at once, and DST decoder threads (0: one per CPU).
@@ -818,8 +819,13 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         (Some(p), true) => report::read_earlier(p)?,
         _ => HashMap::new(),
     };
+    // A row checked with the other `--pauses`, or by a version that didn't say which (#479), is
+    // checked again: the mode decides what IDENTICAL means.
+    let mode = report::Pauses::of(args.pauses == "kept");
     let unchanged = |path: &Path, meta: &fs::Metadata, mtime: &str| {
-        earlier.get(path).filter(|r| r.bytes == meta.len() && r.mtime == mtime && r.status != Status::Error)
+        earlier.get(path).filter(|r| {
+            r.bytes == meta.len() && r.mtime == mtime && r.status != Status::Error && r.pauses == Some(mode)
+        })
     };
     // A file of a chain is checked again with the rest when one of them is (#442): an earlier
     // row that a chain could change is kept only if every file in its folder is unchanged.
@@ -897,13 +903,14 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(item) = items.get(i) else { break };
-                        let row = match item.kind {
+                        let mut row = match item.kind {
                             ExtractKind::Dsd => check_caught(item, &ctx, check),
                             ExtractKind::Pcm(what) => {
                                 Row::new(item.path.clone(), item.bytes, item.mtime.clone())
                                     .with(Status::NotComparable, pcm_reason(what))
                             }
                         };
+                        row.pauses = Some(mode);
                         // A row a chain may change waits for the chains (#442).
                         if !matches!(row.status, Status::NoMatch | Status::Different) {
                             let mut w = out.lock().unwrap_or_else(|p| p.into_inner());
@@ -946,6 +953,9 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         &chain::OtherMode::new(&scanned, &root, args.pauses == "kept"),
         workers,
     );
+    for r in &mut rows {
+        r.pauses = Some(mode);
+    }
     let mut out = out.into_inner().unwrap_or_else(|p| p.into_inner());
     for r in rows[..fresh]
         .iter()
@@ -1146,6 +1156,61 @@ mod tests {
         assert!(sum.rows.iter().any(|r| r.status == Status::Error), "{}", sum.render());
         assert_eq!(std::fs::read_to_string(&report_path).unwrap().lines().count(), files.len() + 1);
         assert!(!partial.exists() && !report::previous_path(&report_path).exists());
+    }
+
+    /// Each row records the `--pauses` mode it was checked with, and `--resume` keeps only rows
+    /// of the same mode: a row of the other mode, or of a report from before the column, is
+    /// checked again (#479).
+    #[test]
+    fn resume_checks_again_rows_of_another_pauses_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (lib, files) = library(dir.path());
+        let report_path = dir.path().join("r.tsv");
+        let checked = |a: &Args| {
+            let seen = AtomicUsize::new(0);
+            let sum = run_with(a, &|item, ctx| {
+                seen.fetch_add(1, Ordering::Relaxed);
+                check(item, ctx)
+            })
+            .unwrap();
+            (seen.load(Ordering::Relaxed), sum)
+        };
+        let modes = || -> Vec<Option<report::Pauses>> {
+            report::read(&report_path).unwrap().into_values().map(|r| r.pauses).collect()
+        };
+        let dropped = args(&lib, &report_path, 2);
+        let kept = Args { pauses: "kept".into(), ..args(&lib, &report_path, 2) };
+
+        // Both modes are recorded.
+        for (a, m) in [(&kept, report::Pauses::Kept), (&dropped, report::Pauses::Dropped)] {
+            let (n, sum) = checked(a);
+            assert_eq!(n, files.len());
+            assert!(sum.rows.iter().all(|r| r.pauses == Some(m)));
+            assert_eq!(modes(), vec![Some(m); files.len()]);
+        }
+
+        // Same mode: nothing checked again.
+        let dropped = Args { resume: true, ..dropped };
+        assert_eq!(checked(&dropped).0, 0);
+
+        // The other mode: every row checked again, and the report says so.
+        let kept = Args { resume: true, ..kept };
+        let (n, sum) = checked(&kept);
+        assert_eq!(n, files.len());
+        assert_eq!(sum.rows.len(), files.len());
+        assert_eq!(modes(), vec![Some(report::Pauses::Kept); files.len()]);
+        assert_eq!(checked(&kept).0, 0);
+
+        // A report from before the column (0.6.5): still read, its rows checked again.
+        let text = std::fs::read_to_string(&report_path).unwrap();
+        let old: String = text.lines().map(|l| l.rsplit_once('\t').unwrap().0.to_owned() + "\n").collect();
+        assert!(old.lines().skip(1).all(|l| l.split('\t').count() == 12));
+        std::fs::write(&report_path, &old).unwrap();
+        let rows = report::read(&report_path).unwrap();
+        assert_eq!(rows.len(), files.len(), "an old report's rows are read");
+        assert!(rows.values().all(|r| r.pauses.is_none()));
+        assert_eq!(checked(&dropped).0, files.len());
+        assert_eq!(modes(), vec![Some(report::Pauses::Dropped); files.len()]);
     }
 
     #[test]
