@@ -23,6 +23,12 @@ All notable changes to sacdfs are recorded here. The format follows
   crates) rebuilds offline with the distribution's own Rust. 0.6.5 gets them as added assets.
 
 ### Changed
+- **Format characters escaped and kept out of names (#448).** `sacdfs-nfs`, `sacdfs tags` and
+  `sacdfs verify` log through the same escaping logger as the mount. Terminal output and
+  `verify` reports now escape format characters (bidi controls such as U+202E, zero-width
+  characters) and U+2028/U+2029 as they did control characters. Track file names leave format
+  characters out and make U+2028/U+2029 `_`, so a title can't make a name read in another order;
+  a track whose title holds one gets a new name once. Tags are unchanged.
 - **scarletbook 0.6.1: faster DST decoding on 32-bit x86.** scarletbook and scarletbook-pcm
   move to 0.6.1 (`=0.6.1`), whose DST decoder keeps its arithmetic decoder's state in a 32-bit
   word on 32-bit targets ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.6.1),
