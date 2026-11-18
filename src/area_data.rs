@@ -14,11 +14,22 @@
 //! such sectors count as missing, as a truncated image's do. Only gaps of at least
 //! [`MIN_GAP_BYTES`] count: a few zero sectors on a damaged disc change nothing.
 //!
-//! - **Holes** are found with `lseek` `SEEK_HOLE`/`SEEK_DATA`, which costs no reads and
-//!   is always done. A file system that does not report holes (NFS and SMB shares often
-//!   do not, and some local ones) reports the whole file as data: nothing is found and
-//!   nothing is hidden. That is a safe fallback, not detection; the zero sampling below
-//!   still applies there, since a hole reads as zeros.
+//! - **Holes** are found with `lseek` `SEEK_HOLE`/`SEEK_DATA`, which costs no reads. A file
+//!   system that does not report holes (NFS and SMB shares often do not, and some local
+//!   ones) reports the whole file as data: nothing is found and nothing is hidden. That is a
+//!   safe fallback, not detection; the zero sampling below still applies there, since a
+//!   hole reads as zeros.
+//! - **Not looked for on a share when they cannot matter** (#451). On NFS 4.2 each `lseek`
+//!   is a round trip to the server, once per area listed. On an NFS or SMB share the
+//!   file's size less the space it uses bounds its holes ([`crate::platform::hole_bound`],
+//!   from cached attributes). When holes that large would leave the area's play time
+//!   within [`SUSPICIOUS_FRAMES_PER_SECTOR`] frame per sector holding data, they could
+//!   neither start the zero sampling nor refuse a track (whose frames end within the play
+//!   time, below the capacity rule's 7 a sector), so the area lists exactly as it would
+//!   with them looked for, and no `lseek` is made ([`holes_cannot_matter`]). An intact real
+//!   disc is always in that case, even on a compressed file system. Space allocated but
+//!   never written (a preallocated file) counts as used there, so on a share such an image
+//!   is caught only by the zero sampling; on a local disk `SEEK_HOLE` still finds it.
 //! - **Zero runs** are sampled, which costs reads, and only in an area whose play time
 //!   claims more than [`SUSPICIOUS_FRAMES_PER_SECTOR`] frame per sector holding data. A
 //!   real disc's area uses about 0.22 (plain DSD stereo, less with more channels) to 0.5
@@ -70,7 +81,13 @@ pub fn data_sectors(disc: &Disc, area: &Area) -> u64 {
             return n;
         }
     };
-    let gaps = gap_sectors(&file, toc.sector_format.stored_size(), area, n);
+    let stored = toc.sector_format.stored_size();
+    if crate::platform::hole_bound(&file).is_some_and(|b| holes_cannot_matter(area, n, stored, b)) {
+        // What the search below gives with no gaps.
+        let (start, end) = audio_sector_range(area, n);
+        return end.max(start);
+    }
+    let gaps = gap_sectors(&file, stored, area, n);
     if gaps > 0 {
         log::debug!(
             "{}: {} area: {gaps} audio sectors hold no data (holes or zero runs)",
@@ -82,6 +99,21 @@ pub fn data_sectors(disc: &Disc, area: &Area) -> u64 {
     // The area's existing sectors become [start, end - gaps): `audio_sector_range` ends
     // at the smaller of the area's end and the image's count.
     (end - gaps.min(end - start)).max(start)
+}
+
+/// Whether holes of at most `bound` bytes in an image of `n` sectors of `stored` bytes each
+/// leave the result of the track check of `area` as it is without them: the area's play time
+/// stays within [`SUSPICIOUS_FRAMES_PER_SECTOR`] frame per audio sector left, so no zero
+/// sampling starts and every track (its frames end within the play time) fits the capacity
+/// of the sectors left.
+pub fn holes_cannot_matter(area: &Area, n: u64, stored: u64, bound: u64) -> bool {
+    const _: () = assert!(SUSPICIOUS_FRAMES_PER_SECTOR <= scarletbook::audio::FRAMES_PER_SECTOR);
+    let (start, end) = audio_sector_range(area, n);
+    if end <= start || stored == 0 {
+        return true;
+    }
+    let left = (end - start).saturating_sub(bound.div_ceil(stored));
+    u64::from(area.playtime_frames()) <= left.saturating_mul(SUSPICIOUS_FRAMES_PER_SECTOR)
 }
 
 /// The audio sectors of `area` that lie in a long hole or a long zero run of `file`, an

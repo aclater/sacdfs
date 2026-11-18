@@ -434,6 +434,19 @@ a damaged disc change nothing.
   does not report holes (NFS and SMB shares often do not) reports the whole file as data:
   nothing is found and nothing is hidden. That is a safe fallback, not detection; the zero
   sampling below still applies there, since a hole reads as zeros.
+- *Not looked for on a share where they cannot matter (#451).* An NFS 4.2 client sends each
+  `lseek` to the server, one round trip per area listed (471 for a 416-image library). On an
+  NFS or SMB share the file's size less the space it uses (`st_blocks`, from the client's
+  cached attributes) is the most its holes can be; compression on the server only makes
+  that bound larger. When holes that large would still leave the area's play time within 1
+  frame per sector holding data, they could neither start the zero sampling nor refuse a
+  track, so the area lists exactly as it would with them looked for, and the call is
+  skipped. Every image of the 416-image library above is in that case but one, which uses a
+  third of its length. *Why not on local disks:* there the call costs no round trip, and it also
+  finds space preallocated and never written (`fallocate`), which `st_blocks` counts as
+  used; on a share such an image is caught only by the zero sampling. *Alternatives:*
+  keeping the result in the seek index cache helps only a second listing; skipping the call
+  on every share would lose the holes an NFS 4.2 server does report.
 - *Zero runs* are sampled, which costs reads, and only in an area whose play time claims
   more than 1 frame per audio sector holding data. A real disc's area uses about 0.07
   (plain DSD, 6 channels) to 0.22 (plain DSD stereo) to 0.5 (DST): 1 is twice the densest
@@ -1023,7 +1036,7 @@ from 539 lines to 144, all of it the options below).
   writer gets the set, line breaks kept in the comments only. *Why:* scarletbook (0.6.0) keeps
   control characters in a TOC's strings (C0, DEL and C1 in ISRCs and catalogue numbers, DEL
   and C1 in free text), and sacdfs filters what it serves itself: file names
-  (`names::sanitize`), WAV INFO, log lines and reports (escaped), lookup queries
+  (`names::title_name`), WAV INFO, log lines and reports (escaped), lookup queries
   (percent-encoded). The writer is also set to remove them (W9); with sacdfs's filter first it
   finds none, so the bytes are the same, but for a tags file's track or disc number or date
   holding one: read without it, where the writer, checking the raw value, dropped the number
@@ -1944,6 +1957,7 @@ Where a system has no equivalent yet, the function documents its fallback and ne
 | `open_regular` (images, `verify`) | `O_NONBLOCK` open, `fstat`, then blocking again | same | open, then the regular-file check |
 | `Dir`, `open_root`, `open_dir_at`, `stat_at`, `open_file_at`, `read_link_at` (sidecars) | `openat` from an `O_PATH` descriptor | a read-only descriptor (no `O_PATH`) | by path, checking each folder for a reparse point; not race-free like `openat` |
 | `next_hole`, `next_data` (sparse areas) | `SEEK_HOLE`, `SEEK_DATA` | same | `FSCTL_QUERY_ALLOCATED_RANGES` |
+| `hole_bound` (holes on a share, #451) | NFS or SMB by `fstatfs` (once per device): size less `st_blocks` | NFS or SMB by `f_fstypename` | none (holes always looked for) |
 | `fs_size` (`statfs` without images) | `statvfs` | same, with a 32-bit `fsblkcnt_t` | `GetDiskFreeSpaceExW`'s total, in 4096-byte blocks |
 | `lower_thread_priority` (lookup worker) | nice 19, idle I/O class | `PRIO_DARWIN_BG` | `THREAD_MODE_BACKGROUND_BEGIN` |
 | `cache_home` (seek index default) | `$XDG_CACHE_HOME`, else `~/.cache` | same | `%LOCALAPPDATA%` |
@@ -2191,9 +2205,23 @@ everything:
   bidi control showed a line in another order than its bytes. *Why at the logger, not at each of
   the hundred or so log calls:* the names also arrive inside `io::Error` and scarletbook's
   errors, which the calls don't build, and lines added later are covered too. The line format
-  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are, and the
-  names on the mount don't change: whether file names should drop format characters is a
-  separate question (#392). `sacdfs verify` and `sacdfs tags` keep their own loggers.
+  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are.
+- **The same everywhere disc text can be shown
+  ([#448](https://github.com/aclater/sacdfs/issues/448)).** `sacdfs-nfs`, `sacdfs tags` and
+  `sacdfs verify` install the same logger, so no binary logs raw controls, even where no disc
+  string reaches a log line today. Their other terminal output (`safe_file::printable`,
+  `one_line`, `shown`) and the rows of a `verify` report escape the same characters, the
+  report as bytes (`\xNN`) that `--resume` reads back. Track file names leave format
+  characters out and make U+2028/U+2029 `_` (`names::title_name`). *Why leave out, not `_`:*
+  the characters are invisible, so a name without them reads as the title did, while `_` would
+  show where a Latin-1 disc had a soft hyphen. *Why names at all:* a bidi override in a title
+  could make `01 - x\u{202E}vaw.exe.dsf` show in a file manager as ending in another
+  extension. *Why not tags:* a tag is shown as a field, not as a name with an extension, and it
+  stays what the disc holds, as extractors write it, so that `verify` and `tags import` still
+  compare equal; WAV INFO leaves them out as part of its Windows-1252 text (#444). *Trade-off:*
+  a track whose title has one gets a new name once, which a player sees as a removal and an
+  addition. Of SACD's character sets only ISO 8859-1 holds one (the soft hyphen), so this is
+  rare outside crafted discs.
 - **A hung image's reads are capped once they have failed
   ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
   free the thread, which stays blocked until the source answers, so each retry by a client took

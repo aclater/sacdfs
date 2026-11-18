@@ -23,6 +23,12 @@ All notable changes to sacdfs are recorded here. The format follows
   crates) rebuilds offline with the distribution's own Rust. 0.6.5 gets them as added assets.
 
 ### Changed
+- **Format characters escaped and kept out of names (#448).** `sacdfs-nfs`, `sacdfs tags` and
+  `sacdfs verify` log through the same escaping logger as the mount. Terminal output and
+  `verify` reports now escape format characters (bidi controls such as U+202E, zero-width
+  characters) and U+2028/U+2029 as they did control characters. Track file names leave format
+  characters out and make U+2028/U+2029 `_`, so a title can't make a name read in another order;
+  a track whose title holds one gets a new name once. Tags are unchanged.
 - **WAV `INFO` tags in Windows-1252 (#444).** Windows Explorer and Windows Media Player read a
   WAV file's `LIST`/`INFO` chunk in the ANSI code page, so the UTF-8 text written before showed
   accented and CJK titles as mojibake. INFO text is now Windows-1252; a field with characters
@@ -59,6 +65,11 @@ All notable changes to sacdfs are recorded here. The format follows
   new album each time, and fails if the watchdog doesn't fail a stalled read
   ([development](docs/development.md#the-soak)). Build it with
   `cargo build --release --bins --example stallfs`.
+- **The first listing of a library on an NFS share is as fast as 0.6.4's again (#451).** The
+  hole check of #402 made one `lseek` per disc area, an NFS round trip each. On an NFS or SMB
+  share it is now skipped where the file's allocated size shows that no hole could change the
+  area's listing, which is every intact disc; listings are unchanged. 416 images over NFS:
+  0.6.4 1.00 s, 0.6.5 1.40 s, now 1.02 s, with 471 SEEK calls down to 1.
 - **WAV INFO fields have no control characters.** A disc whose text holds U+007F or C1
   characters (or a tags file with any control character) got them in INAM, IART and IPRD,
   while the WAV file's ID3 tag left them out. INFO now leaves them out too. Other discs are
