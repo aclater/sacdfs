@@ -80,6 +80,11 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **No overflow on 32-bit builds in cover art reading (#457).** An ID3v2.3 tag whose extended
+  header or frame claims a size near 4 GiB made `tags import` panic on 32-bit targets (or, without
+  overflow checks, wrap and possibly loop) while reading its cover. Such a tag now has no cover
+  past that point. Released builds are 64-bit and were not
+  affected.
 - **The archive's systemd unit keeps a seek index cache (#465).** `sacdfs.service` (install.sh's
   systemd route) ran without `HOME`, so sacdfs logged "no seek index cache" and seeks after a
   restart searched from scratch. The unit now sets `XDG_CACHE_HOME=/var/cache` and
