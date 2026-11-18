@@ -696,6 +696,17 @@ mod tests {
             tag.extend_from_slice(&[0; 22]);
             assert_eq!(front_cover(&tag), None, "frame size {size:#x}");
         }
+        // A cover found before such a frame is kept.
+        let jpg = b"\xFF\xD8\xFFdata";
+        let mut body = b"\0image/jpeg\0\x00\0".to_vec();
+        body.extend_from_slice(jpg);
+        let mut tag = b"ID3\x03\x00\x00\x00\x00\x00\x40APIC".to_vec();
+        tag.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        tag.extend_from_slice(&[0, 0]);
+        tag.extend_from_slice(&body);
+        tag.extend_from_slice(b"TIT2\xFF\xFF\xFF\xFF\x00\x00");
+        tag.resize(10 + 0x40, 0);
+        assert_eq!(front_cover(&tag), Some(jpg.to_vec()));
     }
 
     /// Tags files and covers are written through a new temporary file: a link at the old
