@@ -49,7 +49,8 @@ All notable changes to sacdfs are recorded here. The format follows
   `verify` reports now escape format characters (bidi controls such as U+202E, zero-width
   characters) and U+2028/U+2029 as they did control characters. Track file names leave format
   characters out and make U+2028/U+2029 `_`, so a title can't make a name read in another order;
-  a track whose title holds one gets a new name once. Tags are unchanged.
+  a track whose title holds one gets a new name once. Tags are unchanged. sacdfs-win's own
+  error lines (a failed mount, `--log-file`) are escaped the same way.
 - **WAV `INFO` tags in Windows-1252 (#444).** Windows Explorer and Windows Media Player read a
   WAV file's `LIST`/`INFO` chunk in the ANSI code page, so the UTF-8 text written before showed
   accented and CJK titles as mojibake. INFO text is now Windows-1252; a field with characters

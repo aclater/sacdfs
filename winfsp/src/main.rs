@@ -46,14 +46,18 @@ fn main() -> ExitCode {
                 logger.target(env_logger::Target::Pipe(Box::new(f)));
             }
             Err(e) => {
-                eprintln!("sacdfs-win: --log-file {}: {e}", path.display());
+                eprintln!(
+                    "sacdfs-win: --log-file {}: {}",
+                    sacdfs::safe_file::shown(path),
+                    sacdfs::safe_file::printable(&e.to_string())
+                );
                 return ExitCode::FAILURE;
             }
         }
     }
     // Names from SOURCE in the log are escaped where lines are written, as on Linux.
     if let Err(e) = sacdfs::printable::install(logger.build()) {
-        eprintln!("sacdfs-win: {e}");
+        eprintln!("sacdfs-win: {}", sacdfs::safe_file::printable(&e.to_string()));
     }
     if requoted {
         log::warn!(
@@ -66,7 +70,8 @@ fn main() -> ExitCode {
     match mount(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("sacdfs-win: {e}");
+            // The error can hold names from SOURCE (#448).
+            eprintln!("sacdfs-win: {}", sacdfs::safe_file::printable(&e));
             ExitCode::FAILURE
         }
     }
