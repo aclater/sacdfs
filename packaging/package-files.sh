@@ -34,6 +34,14 @@ sub "$out/sacdfs.service" "ExecStart=/usr/local/bin/sacdfs " "ExecStart=/usr/bin
 sub "$out/sacdfs-ctl" 'BIN=${SACDFS_BIN:-/usr/local/bin/sacdfs}' 'BIN=${SACDFS_BIN:-/usr/bin/sacdfs}'
 sub "$out/sacdfs.conf" "#SACDFS_BIN=/usr/local/bin/sacdfs" "#SACDFS_BIN=/usr/bin/sacdfs"
 sub "$out/sacdfs.conf" "Copy to /etc/default/sacdfs and change the paths." "Change the paths, then: systemctl enable --now sacdfs."
+# The seek index cache: the unit sets it since #465. Archives of 0.6.5 and earlier (the upgrade
+# test's previous release, a manual run's packages_tag) get the same lines here.
+if ! grep -qx "CacheDirectory=sacdfs" "$out/sacdfs.service"; then
+    sub "$out/sacdfs.service" "EnvironmentFile=/etc/default/sacdfs$nl" "EnvironmentFile=/etc/default/sacdfs
+Environment=XDG_CACHE_HOME=/var/cache
+CacheDirectory=sacdfs
+"
+fi
 if [[ $fmt == rpm ]]; then
     sub "$out/sacdfs.service" "# Settings: /etc/default/sacdfs" "# Settings: $conf"
     sub "$out/sacdfs.service" "EnvironmentFile=/etc/default/sacdfs" "EnvironmentFile=$conf"
