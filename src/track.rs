@@ -2075,7 +2075,21 @@ mod tests {
                 Format::Dsf => engine.cached(&f.disc, f.area, t0, t1),
                 Format::Wav => engine.cached_pcm(&f.disc, f.area, t0, t1),
             };
-            assert!(cached.is_some(), "{format:?}: decoded ahead");
+            if cached.is_none() {
+                let missing: Vec<u32> = (2..done)
+                    .filter(|&k| {
+                        let t = f.start_frame + k;
+                        match format {
+                            Format::Dsf => engine.cached(&f.disc, f.area, t, t + 1).is_none(),
+                            Format::Wav => engine.cached_pcm(&f.disc, f.area, t, t + 1).is_none(),
+                        }
+                    })
+                    .collect();
+                let again = reader.decoded(&engine, 2, done, false).map(|v| v.len());
+                panic!(
+                    "{format:?}: not decoded ahead: {missing:?} of 2..{done}; decoding them now: {again:?}"
+                );
+            }
             // The read-ahead goes on from where it got.
             let next =
                 reader.plan_read_ahead(&engine, HEAD_WINDOW + (128 << 10), HEAD_WINDOW + (256 << 10), 2, 3);
