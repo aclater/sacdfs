@@ -8,7 +8,7 @@
 //! fmt  <40>   WAVE_FORMAT_EXTENSIBLE, 24-bit PCM, channel mask
 //! JUNK <size> zeros: the audio starts at 256 KiB or later and ends on a 4 KiB page boundary
 //! data <size> interleaved 24-bit little-endian samples, frame after frame
-//! LIST <size> INFO INAM IART IPRD ITRK ICRD IGNR      (if the track has any of them)
+//! LIST <size> INFO INAM IART IPRD ITRK ICRD IGNR      (those that fit Windows-1252, if any)
 //! id3  <size> the ID3v2.4 tag of the DSF file          (if the track has any text)
 //! ```
 //!
@@ -215,24 +215,75 @@ const INFO: [(&[u8; 4], TagItem); 6] = [
     (b"IGNR", TagItem::Genre),
 ];
 
+/// The characters Windows-1252 puts at 0x80 to 0x9F (0x81, 0x8D, 0x8F, 0x90 and 0x9D hold none).
+/// The other bytes are the Unicode code points U+0000 to U+007F and U+00A0 to U+00FF.
+const CP1252_HIGH: [(char, u8); 27] = [
+    ('\u{20AC}', 0x80),
+    ('\u{201A}', 0x82),
+    ('\u{0192}', 0x83),
+    ('\u{201E}', 0x84),
+    ('\u{2026}', 0x85),
+    ('\u{2020}', 0x86),
+    ('\u{2021}', 0x87),
+    ('\u{02C6}', 0x88),
+    ('\u{2030}', 0x89),
+    ('\u{0160}', 0x8A),
+    ('\u{2039}', 0x8B),
+    ('\u{0152}', 0x8C),
+    ('\u{017D}', 0x8E),
+    ('\u{2018}', 0x91),
+    ('\u{2019}', 0x92),
+    ('\u{201C}', 0x93),
+    ('\u{201D}', 0x94),
+    ('\u{2022}', 0x95),
+    ('\u{2013}', 0x96),
+    ('\u{2014}', 0x97),
+    ('\u{02DC}', 0x98),
+    ('\u{2122}', 0x99),
+    ('\u{0161}', 0x9A),
+    ('\u{203A}', 0x9B),
+    ('\u{0153}', 0x9C),
+    ('\u{017E}', 0x9E),
+    ('\u{0178}', 0x9F),
+];
+
+/// `text` in Windows-1252, or `None` if a character has no byte there (#444).
+fn cp1252(text: &str) -> Option<Vec<u8>> {
+    text.chars()
+        .map(|c| match u32::from(c) {
+            n @ (0..=0x7F | 0xA0..=0xFF) => Some(n as u8),
+            _ => CP1252_HIGH.iter().find(|&&(h, _)| h == c).map(|&(_, b)| b),
+        })
+        .collect()
+}
+
 /// The trailer of a file with the tag items `set`: a `LIST`/`INFO` chunk with INAM, IART,
 /// IPRD, ITRK, ICRD and IGNR from the first value of the track title, performer, album, track
-/// number, date and genre (UTF-8, without control characters, NUL-terminated), then an `id3 ` chunk holding `id3`, the
-/// DSF file's ID3v2.4 tag of the same items. *Why both from one `TagSet`:* they cannot
-/// disagree.
+/// number, date and genre (Windows-1252, without control or format characters,
+/// NUL-terminated), then an `id3 ` chunk holding `id3`, the DSF file's ID3v2.4 tag of the same
+/// items. *Why both from one `TagSet`:* they cannot disagree.
+///
+/// A field with a character Windows-1252 lacks (CJK, Cyrillic, Greek ...) is left out (#444).
+/// *Why Windows-1252:* INFO declares no encoding, and Windows Explorer and Windows Media Player
+/// read it in the ANSI code page (1252 in Western Europe and the Americas), so UTF-8 showed as
+/// mojibake. Latin-1 readers agree with it outside 0x80 to 0x9F. *Why leave a field out:* no
+/// field is better than mojibake, and the `id3 ` chunk still has the full text. ASCII fields
+/// are the same bytes as before.
 pub fn trailer(set: &TagSet, id3: &[u8]) -> Trailer {
     let mut info = b"INFO".to_vec();
     for (field, item) in INFO {
         let Some(text) = set.get(item).first() else { continue };
         // As the ID3 writer does (no replacement): no control character, so that the two agree
         // and a NUL ends no field early. The disc's free text has none below U+0020, but may
-        // have U+007F and C1; a tags file may have any.
-        let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+        // have U+007F and C1; a tags file may have any. Format characters (bidi controls,
+        // zero-width characters, the soft hyphen) are invisible and mostly not in Windows-1252.
+        let clean: String =
+            text.chars().filter(|&c| !c.is_control() && !crate::printable::is_format(c)).collect();
         let clean = clean.trim();
         if clean.is_empty() {
             continue;
         }
-        let mut body = clean.as_bytes().to_vec();
+        let Some(mut body) = cp1252(clean) else { continue };
         body.push(0);
         chunk(&mut info, field, &body);
     }
@@ -578,5 +629,40 @@ mod tests {
         assert_eq!(u32_at(b, 4) as usize, b.len() - 8);
         assert!(!b.contains(&0x1b) && !b.contains(&0x7f));
         assert!(!b.windows(2).any(|w| w[0] == 0xC2 && (0x80..=0x9F).contains(&w[1])));
+    }
+
+    /// INFO text is Windows-1252, which Windows reads it in (#444): Latin-1 letters and the
+    /// characters at 0x80 to 0x9F become one byte each; a field with a character outside it
+    /// is left out, the others stay.
+    #[test]
+    fn trailer_info_is_windows_1252() {
+        let mut t = TagSet::new();
+        t.set(TagItem::TrackTitle, "Code seven Latin-1 \u{e9}\u{e8}");
+        t.set(TagItem::Performer, "\u{65e5}\u{672c}\u{8a9e}");
+        t.set(TagItem::Album, "\u{20ac}\u{2019}\u{0178}\u{00ff}\u{200b}");
+        t.set(TagItem::Genre, "Caf\u{e9} \u{0410}");
+        let tr = trailer(&t, &[]);
+        let b = &tr.bytes;
+        assert_eq!(&b[12..16], b"INAM");
+        assert_eq!(u32_at(b, 16), 22);
+        assert_eq!(&b[20..42], b"Code seven Latin-1 \xe9\xe8\0");
+        // IART (CJK) and IGNR (Cyrillic) are left out; the zero-width space is dropped.
+        assert_eq!(&b[42..46], b"IPRD");
+        assert_eq!(u32_at(b, 46), 5);
+        assert_eq!(&b[50..56], b"\x80\x92\x9f\xff\0\0");
+        assert_eq!(u32_at(b, 4) as usize, b.len() - 8);
+        assert_eq!(b.len(), 56);
+        // Every mapped character is outside the ranges that map to themselves, and no two share
+        // a byte.
+        for (i, &(c, byte)) in CP1252_HIGH.iter().enumerate() {
+            assert!(u32::from(c) > 0xFF, "{c:?}");
+            assert!((0x80..=0x9F).contains(&byte));
+            assert!(![0x81, 0x8D, 0x8F, 0x90, 0x9D].contains(&byte));
+            assert!(CP1252_HIGH[..i].iter().all(|&(_, b)| b != byte));
+            assert_eq!(cp1252(&c.to_string()), Some(vec![byte]));
+        }
+        assert_eq!(cp1252("\u{81}"), None);
+        assert_eq!(cp1252("\u{100}"), None);
+        assert_eq!(cp1252("abc"), Some(b"abc".to_vec()));
     }
 }

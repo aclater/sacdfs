@@ -324,6 +324,25 @@ fn u16_at(b: &[u8], at: usize) -> u16 {
     u16::from_le_bytes(b[at..at + 2].try_into().unwrap())
 }
 
+/// Decodes Windows-1252, the encoding of WAV `INFO` text (#444); panics on the five bytes it
+/// leaves undefined.
+pub fn from_cp1252(bytes: &[u8]) -> String {
+    const HIGH: &str = "\u{20AC}?\u{201A}\u{0192}\u{201E}\u{2026}\u{2020}\u{2021}\u{02C6}\u{2030}\u{0160}\u{2039}\u{0152}?\u{017D}??\u{2018}\u{2019}\u{201C}\u{201D}\u{2022}\u{2013}\u{2014}\u{02DC}\u{2122}\u{0161}\u{203A}\u{0153}?\u{017E}\u{0178}";
+    let high: Vec<char> = HIGH.chars().collect();
+    assert_eq!(high.len(), 32);
+    bytes
+        .iter()
+        .map(|&b| match b {
+            0x80..=0x9F => {
+                let c = high[usize::from(b - 0x80)];
+                assert_ne!(c, '?', "byte {b:#x} is undefined in Windows-1252");
+                c
+            }
+            b => char::from(b),
+        })
+        .collect()
+}
+
 /// Parses and checks a whole WAV file: RIFF or RF64, `WAVE_FORMAT_EXTENSIBLE` 24-bit PCM,
 /// sizes that add up exactly to the file length.
 pub fn parse_wav(file: &[u8]) -> Wav {
@@ -400,7 +419,7 @@ pub fn parse_wav(file: &[u8]) -> Wav {
                     let n = u32_at(file, p + 4) as usize;
                     let text = &file[p + 8..p + 8 + n];
                     assert_eq!(text.last(), Some(&0), "INFO strings end in NUL");
-                    w.info.push((fid, String::from_utf8(text[..n - 1].to_vec()).unwrap()));
+                    w.info.push((fid, from_cp1252(&text[..n - 1])));
                     p += 8 + n + n % 2;
                 }
                 assert_eq!(p, end);

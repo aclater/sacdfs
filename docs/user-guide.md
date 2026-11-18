@@ -217,7 +217,10 @@ arranger (TIPL), messages (COMM), date (TDRC), ISRC (TSRC), genres (TCON), publi
 and copyright (TCOP, the year first, as ID3v2.4 asks). Album fields fall back to the disc's
 text. The WAV files hold it in an `id3 ` chunk (read by FFmpeg, TagLib, mutagen, foobar2000 and
 mp3tag), plus a `LIST`/`INFO` chunk (title, artist, album, track number, date, genre) for
-software that reads only that. Both come after the audio. sacdfs 0.2 changed the TCOP of discs
+software that reads only that, such as Windows Explorer and Windows Media Player. INFO text is
+Windows-1252, the code page Windows reads it in, so accented Latin text shows correctly; a field
+with characters outside it (Japanese, Chinese, Korean, Cyrillic, Greek ...) is left out of INFO
+and is only in the `id3 ` chunk. Both come after the audio. sacdfs 0.2 changed the TCOP of discs
 with a copyright text, so those files show a new modification time once.
 
 **Multichannel copies have their own album name.** The album tag of the files in a disc's
