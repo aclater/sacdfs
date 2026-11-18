@@ -532,7 +532,8 @@ fn extract_tag(path: &Path) -> Result<Option<Vec<u8>>, String> {
 
 /// The picture of an ID3v2.3 or v2.4 tag's `APIC` frame, the front cover (type 3) if there
 /// is one, else the first; JPEG or PNG only. Frames compressed, encrypted or unsynchronised
-/// are skipped.
+/// are skipped. Offsets use checked arithmetic, so that a size near 2^32 can't overflow a 32-bit
+/// `usize` (#457): such a tag has no cover.
 pub fn front_cover(tag: &[u8]) -> Option<Vec<u8>> {
     if tag.len() < 10 || &tag[0..3] != b"ID3" || !(3..=4).contains(&tag[3]) || tag[5] & 0x80 != 0 {
         return None;
@@ -544,17 +545,19 @@ pub fn front_cover(tag: &[u8]) -> Option<Vec<u8>> {
     let mut at = 10;
     if tag[5] & 0x40 != 0 {
         let ext = tag.get(10..14)?;
-        at += if major == 4 { syncsafe(ext) } else { be(ext) + 4 };
+        let ext_size = if major == 4 { syncsafe(ext) } else { be(ext).checked_add(4)? };
+        at = at.checked_add(ext_size)?;
     }
     let mut found: Option<Vec<u8>> = None;
-    while at + 10 <= end {
+    while end.saturating_sub(at) >= 10 {
         let h = &tag[at..at + 10];
         if h[0] == 0 {
             break;
         }
         let size = if major == 4 { syncsafe(&h[4..8]) } else { be(&h[4..8]) };
-        let body = tag.get(at + 10..(at + 10).checked_add(size)?.min(end))?;
-        at += 10 + size;
+        let body_end = (at + 10).checked_add(size)?;
+        let body = tag.get(at + 10..body_end.min(end))?;
+        at = body_end;
         let packed = if major == 4 { h[9] & 0x0F != 0 } else { h[9] & 0xE0 != 0 };
         if &h[0..4] != b"APIC" || packed {
             continue;
@@ -674,6 +677,24 @@ mod tests {
             assert_eq!(front_cover(&tag), Some(jpg.clone()), "v2.{major}");
         }
         assert_eq!(front_cover(b"ID3\x04\0\0\0\0\0\0"), None);
+    }
+
+    /// Sizes near 2^32 in an ID3v2.3 extended header or frame header mean no cover, never an
+    /// overflow, on 32-bit targets too (#457).
+    #[test]
+    fn front_cover_of_the_largest_sizes() {
+        for ext in [0xFFFF_FFFFu32, 0xFFFF_FFFC, 0xFFFF_FFF0] {
+            let mut tag = b"ID3\x03\x00\x40\x00\x00\x00\x10".to_vec();
+            tag.extend_from_slice(&ext.to_be_bytes());
+            tag.extend_from_slice(b"APIC\x00\x00\x00\x02\x00\x00\x00a");
+            assert_eq!(front_cover(&tag), None, "extended header {ext:#x}");
+        }
+        for size in [0xFFFF_FFFFu32, 0xFFFF_FFF6, 0xFFFF_FFF5] {
+            let mut tag = b"ID3\x03\x00\x00\x00\x00\x00\x20APIC".to_vec();
+            tag.extend_from_slice(&size.to_be_bytes());
+            tag.extend_from_slice(&[0; 22]);
+            assert_eq!(front_cover(&tag), None, "frame size {size:#x}");
+        }
     }
 
     /// Tags files and covers are written through a new temporary file: a link at the old

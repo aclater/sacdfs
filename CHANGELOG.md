@@ -46,6 +46,10 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **No overflow on 32-bit builds in cover art reading (#457).** An ID3v2.3 tag whose extended
+  header or frame claims a size near 4 GiB made `tags import` panic on 32-bit targets, while
+  reading its cover. Such a tag now has no cover. Released builds are 64-bit and were not
+  affected.
 - **WAV INFO fields have no control characters.** A disc whose text holds U+007F or C1
   characters (or a tags file with any control character) got them in INAM, IART and IPRD,
   while the WAV file's ID3 tag left them out. INFO now leaves them out too. Other discs are
