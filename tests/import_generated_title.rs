@@ -25,7 +25,7 @@ fn import_leaves_out_a_generated_title() {
     let dir = tempfile::tempdir().unwrap();
     let lib = dir.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
-    std::os::unix::fs::symlink(common::corpus().join("images/no-text.iso"), lib.join("disc.iso")).unwrap();
+    common::link(common::corpus().join("images/no-text.iso"), lib.join("disc.iso")).unwrap();
     let t = Tree::with_options(SourceDir::scan(&lib).unwrap(), Default::default(), Output::default());
     let by_number = |n| -> Arc<TrackFile> {
         t.all_files()

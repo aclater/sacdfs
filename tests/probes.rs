@@ -7,6 +7,8 @@
 //! prints each one), unless `SACDFS_FUSE_TESTS=1` is set (as CI does), which makes a missing
 //! FUSE a failure.
 
+// The Linux FUSE mount, or calls only Linux has; other systems run the core's tests (#419, #420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;
@@ -166,8 +168,35 @@ fn probes_are_answered_once() {
             }
         });
     }
+    // POSIX ACLs, which NFS-Ganesha reads for every file it serves: "no ACL" (ENODATA), from
+    // the kernel. "Not supported" (EOPNOTSUPP, kernels before 6.2 without FUSE_POSIX_ACL)
+    // failed every NFS listing (#439).
+    // getxattr(2) itself: getfattr is not everywhere, and std has no call for it.
+    #[allow(unsafe_code)]
+    fn acl(p: &Path, name: &str) -> Option<i32> {
+        let path = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).unwrap();
+        let name = std::ffi::CString::new(name).unwrap();
+        let mut buf = [0u8; 256];
+        // SAFETY: both strings are NUL-terminated and buf is writable for its length.
+        let r = unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+        if r < 0 { std::io::Error::last_os_error().raw_os_error() } else { Some(0) }
+    }
+    mount.requests("GETXATTR", || {
+        for _ in 0..2 {
+            assert_eq!(acl(&area, "system.posix_acl_access"), Some(libc::ENODATA), "folder: access ACL");
+            assert_eq!(acl(&area, "system.posix_acl_default"), Some(libc::ENODATA), "folder: default ACL");
+            for p in &files {
+                assert_eq!(
+                    acl(p, "system.posix_acl_access"),
+                    Some(libc::ENODATA),
+                    "{}: access ACL",
+                    p.display()
+                );
+            }
+        }
+    });
     let getxattr = mount.count("GETXATTR") - before;
-    assert!(getxattr <= 1, "{getxattr} GETXATTR in all (ls -l twice, getfattr -n on every file)");
+    assert!(getxattr <= 1, "{getxattr} GETXATTR in all (ls -l twice, getfattr -n and ACLs of every file)");
     if have_getfattr {
         // A dump lists nothing and prints no error.
         let out = Command::new("getfattr").arg("-d").arg(&files[0]).output().unwrap();

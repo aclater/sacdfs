@@ -39,7 +39,7 @@ fn the_title_changes_and_the_name_stays() {
     let lib = d.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
     let image = common::corpus().join("images/no-text.iso");
-    std::os::unix::fs::symlink(&image, lib.join("disc.iso")).unwrap();
+    common::link(&image, lib.join("disc.iso")).unwrap();
 
     let disc = Disc::open(&image, 0, Tuning::default()).unwrap();
     let tracks: Vec<_> = disc

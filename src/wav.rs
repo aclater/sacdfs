@@ -91,27 +91,36 @@ pub mod speaker {
 /// samples need no reordering (a WAV file's channels must follow the mask bits).
 ///
 /// Any other combination of channel count and configuration ([`Unspecified`]) has no
-/// defined layout and keeps the mask of its channel count ([`count_mask`]).
+/// defined layout and keeps the mask of its channel count ([`count_mask`]). So does a layout
+/// with a speaker this code doesn't know (scarletbook's `Speaker` may gain variants): a mask
+/// without that speaker's bit would hold fewer bits than the file has channels.
 ///
 /// [`Unspecified`]: LoudspeakerLayout::Unspecified
 pub fn channel_mask(layout: LoudspeakerLayout) -> u32 {
     match layout {
         LoudspeakerLayout::Unspecified { channels, .. } => count_mask(channels),
-        defined => defined.speakers().unwrap_or(&[]).iter().fold(0, |m, s| m | speaker_bit(*s)),
+        defined => {
+            let speakers = defined.speakers().unwrap_or(&[]);
+            speakers
+                .iter()
+                .try_fold(0, |m, s| speaker_bit(*s).map(|b| m | b))
+                .unwrap_or_else(|| count_mask(u8::try_from(speakers.len()).unwrap_or(0)))
+        }
     }
 }
 
-/// The mask bit of a speaker.
-fn speaker_bit(s: Speaker) -> u32 {
+/// The mask bit of a speaker, or `None` for one this code doesn't know.
+fn speaker_bit(s: Speaker) -> Option<u32> {
     use speaker::*;
-    match s {
+    Some(match s {
         Speaker::FrontLeft => FL,
         Speaker::FrontRight => FR,
         Speaker::Centre => FC,
         Speaker::LowFrequencyEffects => LFE,
         Speaker::SurroundLeft => BL,
         Speaker::SurroundRight => BR,
-    }
+        _ => return None,
+    })
 }
 
 /// The channel mask for a channel count, for areas without a defined loudspeaker layout:
@@ -208,14 +217,17 @@ const INFO: [(&[u8; 4], TagItem); 6] = [
 
 /// The trailer of a file with the tag items `set`: a `LIST`/`INFO` chunk with INAM, IART,
 /// IPRD, ITRK, ICRD and IGNR from the first value of the track title, performer, album, track
-/// number, date and genre (UTF-8, NUL-terminated), then an `id3 ` chunk holding `id3`, the
+/// number, date and genre (UTF-8, without control characters, NUL-terminated), then an `id3 ` chunk holding `id3`, the
 /// DSF file's ID3v2.4 tag of the same items. *Why both from one `TagSet`:* they cannot
 /// disagree.
 pub fn trailer(set: &TagSet, id3: &[u8]) -> Trailer {
     let mut info = b"INFO".to_vec();
     for (field, item) in INFO {
         let Some(text) = set.get(item).first() else { continue };
-        let clean: String = text.chars().filter(|&c| c != '\0').collect();
+        // As the ID3 writer does (no replacement): no control character, so that the two agree
+        // and a NUL ends no field early. The disc's free text has none below U+0020, but may
+        // have U+007F and C1; a tags file may have any.
+        let clean: String = text.chars().filter(|c| !c.is_control()).collect();
         let clean = clean.trim();
         if clean.is_empty() {
             continue;
@@ -473,7 +485,7 @@ mod tests {
         for l in [LoudspeakerLayout::Stereo, LoudspeakerLayout::ThreeTwo, LoudspeakerLayout::FivePointOne] {
             // The decoded-frame order of the speakers is the order of their mask bits, which
             // is the order a WAV file's channels must have: no reordering needed.
-            let bits: Vec<u32> = l.speakers().unwrap().iter().map(|s| speaker_bit(*s)).collect();
+            let bits: Vec<u32> = l.speakers().unwrap().iter().map(|s| speaker_bit(*s).unwrap()).collect();
             assert!(bits.windows(2).all(|w| w[0] < w[1]), "{l:?}: {bits:x?}");
         }
         // Without a defined layout, the mask of the channel count, whatever the
@@ -546,5 +558,25 @@ mod tests {
         assert_eq!(&tr.bytes[0..4], b"id3 ");
         // Nothing at all: no trailer.
         assert_eq!(trailer(&TagSet::new(), &[]), Trailer::default());
+    }
+
+    /// Control characters (C0 with NUL, DEL, C1) are left out of every INFO field, as the
+    /// ID3 writer leaves them out of its frames; a field of only those is not written.
+    #[test]
+    fn trailer_has_no_control_characters() {
+        let mut t = TagSet::new();
+        t.set(TagItem::TrackTitle, "A\0b\x1b[2J\x7fc\u{85}\u{9b}d\n");
+        t.set(TagItem::Performer, "\0\x7f\u{9f}");
+        t.set(TagItem::Album, "Alb\u{80}um");
+        let tr = trailer(&t, &[]);
+        let b = &tr.bytes;
+        assert_eq!(&b[12..16], b"INAM");
+        assert_eq!(u32_at(b, 16), 8);
+        assert_eq!(&b[20..28], b"Ab[2Jcd\0");
+        assert_eq!(&b[28..32], b"IPRD");
+        assert_eq!(&b[36..42], b"Album\0");
+        assert_eq!(u32_at(b, 4) as usize, b.len() - 8);
+        assert!(!b.contains(&0x1b) && !b.contains(&0x7f));
+        assert!(!b.windows(2).any(|w| w[0] == 0xC2 && (0x80..=0x9F).contains(&w[1])));
     }
 }

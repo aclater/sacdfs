@@ -997,7 +997,7 @@ impl Engine {
                             if matches!(content, FrameContent::Dst(_)) {
                                 chunk_end = d1;
                             }
-                            jobs.push(TrackFrame { number: n, content });
+                            jobs.push(TrackFrame::new(n, content));
                         }
                         Err(e) => {
                             *cursor = None;
@@ -1108,7 +1108,7 @@ impl Engine {
                     spare = self.cache.buffers(len, left.clamp(1, BUFFERS_AT_ONCE));
                 }
                 left -= 1;
-                let job = TrackFrame { number: t, content };
+                let job = TrackFrame::new(t, content);
                 let buf = spare.pop();
                 if !matches!(job.content, FrameContent::Dst(_)) {
                     add(vec![decode(job, channels, buf)]);
@@ -1231,7 +1231,7 @@ fn decode_group(
                 stored.push(bytes);
                 bufs.push(buf.filter(|b| b.len() == len).unwrap_or_else(|| FrameBuf::heap(len)));
             }
-            content => out.push(decode(TrackFrame { number: job.number, content }, channels, buf)),
+            content => out.push(decode(TrackFrame::new(job.number, content), channels, buf)),
         }
     }
     let frames: Vec<&[u8]> = stored.iter().map(Vec::as_slice).collect();
@@ -1368,7 +1368,7 @@ mod tests {
     #[test]
     fn a_group_decodes_every_kind_of_position() {
         let len = 2 * FRAME_BYTES_PER_CHANNEL;
-        let job = |number, content| (TrackFrame { number, content }, None);
+        let job = |number, content| (TrackFrame::new(number, content), None);
         let mut got = decode_group(
             vec![
                 job(1, FrameContent::Dst(vec![0xff; 16])),
@@ -1438,6 +1438,8 @@ mod tests {
 
     /// Frames of the pool: the mapping stays within the cap, slots are reused once their
     /// frames are evicted and dropped, and an empty slab makes room for another length.
+    // Slabs are mapped and unmapped on Unix only.
+    #[cfg(unix)]
     #[test]
     fn an_idle_cache_gives_its_memory_back() {
         let c = FrameCache::new(4 << 20);
@@ -1505,6 +1507,8 @@ mod tests {
         CONVERTERS.lock().unwrap().retain(|(id, _, _)| *id != e.id);
     }
 
+    // Slabs are mapped and unmapped on Unix only.
+    #[cfg(unix)]
     #[test]
     fn pooled_frames_stay_within_the_cap() {
         let cap = 4 << 20;

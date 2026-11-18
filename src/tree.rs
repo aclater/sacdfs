@@ -31,14 +31,12 @@ use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, TryLockError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use rayon::prelude::*;
-use scarletbook::audio::check_track;
 use scarletbook::{MASTER_TOC_LSN, SectorFormat, Slot};
 
 use crate::disc::{Disc, Tuning};
@@ -502,7 +500,6 @@ thread_local! {
 /// that cannot be read now counts as a candidate: opening it later reports why. An answer is kept
 /// while the image's size and time stay the same ([`LOOKED_AT`]).
 fn may_be_sacd(path: &Path) -> bool {
-    use std::os::unix::fs::FileExt;
     let Ok(meta) = fs::metadata(path) else { return true };
     let (len, mtime) = (meta.len(), meta.modified().ok());
     let with_map = |f: &mut dyn FnMut(&mut Looks)| {
@@ -517,7 +514,7 @@ fn may_be_sacd(path: &Path) -> bool {
     }
     #[cfg(test)]
     PROBES.with(|c| c.set(c.get() + 1));
-    let Ok(file) = fs::File::open(path) else { return true };
+    let Ok(file) = crate::disc::open_image(path) else { return true };
     let mut sig = [0u8; 8];
     let mut answer = false;
     for format in SectorFormat::DETECTION_ORDER {
@@ -525,7 +522,7 @@ fn may_be_sacd(path: &Path) -> bool {
         if at + 8 > len {
             continue;
         }
-        match file.read_exact_at(&mut sig, at) {
+        match crate::platform::read_exact_at(&file, &mut sig, at) {
             Ok(()) if &sig == b"SACDMTOC" => {
                 answer = true;
                 break;
@@ -689,7 +686,36 @@ struct Listing {
     /// Whether an open of the directory has told the kernel it may cache this listing (#205):
     /// from the next open on, it may keep what it cached.
     kept: bool,
+    /// An image of it failed to open for a passing reason ([`Tree::passing`]): when the
+    /// listing is made again. Until then it is served as it is, never kept by the kernel.
+    /// *Why it is kept at all:* what it read of the source and which entries it made are what
+    /// the next listing compares with, as for any listing replaced.
+    retry: Option<Retry>,
 }
+
+/// When a listing that left out an image for a passing reason is made again, and how many
+/// such listings came in a row.
+#[derive(Debug, Clone, Copy)]
+struct Retry {
+    at: Instant,
+    n: u32,
+}
+
+/// The wait before a listing that left out an image for a passing reason is made again, after
+/// `n` such listings in a row: 1 s, doubling up to [`RETRY_MAX`]. *Why a wait:* an image on a
+/// failing disk or share can take seconds to fail, and its folder would otherwise be listed
+/// again at every listing and lookup.
+fn retry_after(n: u32) -> Duration {
+    Duration::from_secs(1u64 << n.saturating_sub(1).min(16)).min(RETRY_MAX)
+}
+
+/// The longest wait of [`retry_after`].
+const RETRY_MAX: Duration = Duration::from_secs(60);
+
+/// Opens of an image failing with `EIO` in a row at which `EIO` is no longer taken as
+/// passing for it: it is left out like an image refused for its content, until its file
+/// changes or the mount restarts.
+pub const EIO_TRIES: u32 = 3;
 
 #[derive(Debug)]
 enum Snapshot {
@@ -732,6 +758,8 @@ struct Cx {
     tags: Option<(String, crate::tags::FileState)>,
     /// A closed image could not be opened again: the listing is not kept (#237).
     unreadable: bool,
+    /// An image was left out for a passing reason: the listing is made again later.
+    retry: bool,
 }
 
 /// The folder art of the directory (or chain of directories) of an image: the image files
@@ -876,7 +904,7 @@ pub struct Tree {
     /// Seconds added to the WAV files' mtime for the PCM options (issue #64).
     wav_mtime_offset: u64,
     /// SOURCE, opened when a sidecar is first looked at.
-    root_fd: OnceLock<Option<OwnedFd>>,
+    root_fd: OnceLock<Option<sidecar::Root>>,
     /// MOUNTPOINT relative to SOURCE, when it is inside it: no sidecar is served from there.
     exclude: Option<PathBuf>,
     /// Whether directories are re-read when their source changes (#101).
@@ -900,6 +928,9 @@ pub struct Tree {
     refusing: AtomicBool,
     /// The images held, with no bound: nothing.
     held: Mutex<Held>,
+    /// Images whose opens failed with `EIO`, by path: how many times in a row, and the image
+    /// file's mtime then ([`Tree::passing`]).
+    eio_failures: Mutex<HashMap<PathBuf, (u32, Option<SystemTime>)>>,
     /// Images let go of since the persistent seek index last let go of its own.
     released: AtomicUsize,
     /// Moves on when a folder's art file is found changed or gone behind a listing's back
@@ -1005,6 +1036,7 @@ impl Tree {
             budget_now: AtomicUsize::new(usize::MAX),
             refusing: AtomicBool::new(false),
             held: Mutex::new(Held::default()),
+            eio_failures: Mutex::new(HashMap::new()),
             released: AtomicUsize::new(0),
             art_epoch: AtomicU64::new(0),
             art_told: Mutex::new(HashMap::new()),
@@ -1252,7 +1284,7 @@ impl Tree {
     }
 
     /// SOURCE's directory, opened on first use.
-    fn root_fd(&self) -> Option<&OwnedFd> {
+    fn root_fd(&self) -> Option<&sidecar::Root> {
         self.root_fd
             .get_or_init(|| match sidecar::open_root(self.source()) {
                 Ok(fd) => Some(fd),
@@ -1267,7 +1299,7 @@ impl Tree {
     /// Opens a sidecar file for reading. `ESTALE` if its source file changed (size or mtime)
     /// since it was listed: its attributes, already shown, would no longer match its bytes.
     pub fn open_sidecar(&self, f: &SidecarFile) -> io::Result<fs::File> {
-        let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(libc::EIO))?;
+        let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(crate::platform::IO_ERROR))?;
         let (file, now) = match sidecar::open_file(root, &f.target) {
             Ok(opened) => opened,
             Err(e) => {
@@ -1279,7 +1311,7 @@ impl Tree {
         };
         if now.size != f.meta.size || now.mtime != f.meta.mtime {
             self.art_changed();
-            return Err(io::Error::from_raw_os_error(libc::ESTALE));
+            return Err(crate::platform::stale());
         }
         Ok(file)
     }
@@ -1502,8 +1534,11 @@ impl Tree {
         let Some(node) = node else { return Some(false) };
         let Node::Dir(dir) = &*node else { return Some(false) };
         if !wait {
-            let listed = dir.children.lock().unwrap_or_else(|p| p.into_inner()).is_some();
-            if !listed || (self.watching && live(dir)) {
+            let (listed, retry) = match dir.children.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+                Some(l) => (true, l.retry.is_some()),
+                None => (false, false),
+            };
+            if !listed || retry || (self.watching && live(dir)) {
                 return None;
             }
         } else if self.children(ino).is_none() {
@@ -1513,7 +1548,16 @@ impl Tree {
             return Some(false);
         }
         let mut guard = dir.children.lock().unwrap_or_else(|p| p.into_inner());
-        Some(guard.as_mut().is_some_and(|l| std::mem::replace(&mut l.kept, true)))
+        // A listing that left out an image for a passing reason is never kept by the kernel.
+        Some(guard.as_mut().is_some_and(|l| std::mem::replace(&mut l.kept, true) && l.retry.is_none()))
+    }
+
+    /// Whether directory `ino`'s listing left out an image for a passing reason, and is made
+    /// again later: a name missing from it is not known to be missing.
+    pub fn retrying(&self, ino: u64) -> bool {
+        let Some(node) = self.loaded(ino) else { return false };
+        let Node::Dir(dir) = &*node else { return false };
+        dir.children.lock().unwrap_or_else(|p| p.into_inner()).as_ref().is_some_and(|l| l.retry.is_some())
     }
 
     /// Makes the next open of directory `ino` drop what the kernel cached of its listing: a
@@ -1544,7 +1588,8 @@ impl Tree {
         }
         let mut prev = guard.take();
         if let Some(l) = prev.as_mut() {
-            if !self.stale(dir, l) {
+            let retry_due = l.retry.is_some_and(|r| Instant::now() >= r.at);
+            if !retry_due && !self.stale(dir, l) {
                 let entries = l.entries.clone();
                 *guard = prev;
                 return Some(entries);
@@ -1557,6 +1602,7 @@ impl Tree {
             return old;
         }
         let mut cx = Cx::default();
+        let retries = prev.as_ref().and_then(|l| l.retry).map_or(0, |r| r.n);
         let entries = Arc::new(self.load(dir, ino, prev.as_deref(), &mut cx));
         if dir.gone.load(Ordering::Acquire) {
             // Removed while it was being listed: what the listing made is freed here, as
@@ -1591,6 +1637,11 @@ impl Tree {
             served: self.dir_mtime(dir),
             tags: cx.tags,
             kept: false,
+            // A listing that leaves out nothing for a passing reason starts the waits again.
+            retry: cx.retry.then(|| {
+                let n = retries + 1;
+                Retry { at: Instant::now() + retry_after(n), n }
+            }),
         }));
         drop(guard);
         self.keep_to_budget();
@@ -1735,6 +1786,48 @@ impl Tree {
         l.checked = Instant::now();
         l.served = served;
         l.watch.iter().any(|(p, m)| mtime_of(p) != *m)
+    }
+
+    /// Whether image `path`'s open failing with `e` is a passing condition: its folder is then
+    /// listed again later ([`retry_after`]). Running out of descriptors or memory always is;
+    /// `EIO` is until it has happened [`EIO_TRIES`] times in a row, and then no longer until
+    /// the image file changes, so that an image on a failing disk is left out like a damaged one.
+    fn passing(&self, path: &Path, e: &scarletbook::Error) -> bool {
+        if !crate::disc::transient(e) {
+            return false;
+        }
+        let eio =
+            matches!(e, scarletbook::Error::Io(io) if io.raw_os_error() == Some(crate::platform::IO_ERROR));
+        let tries = if eio {
+            let mtime = mtime_of(path);
+            let mut m = self.eio_failures.lock().unwrap_or_else(|p| p.into_inner());
+            let f = m.entry(path.to_owned()).or_insert((0, mtime));
+            if f.1 != mtime {
+                *f = (0, mtime);
+            }
+            f.0 += 1;
+            f.0
+        } else {
+            0
+        };
+        let p = path.display();
+        if tries >= EIO_TRIES {
+            log::info!("{p}: not shown: {e} ({tries} opens in a row): not tried again until it changes");
+            return false;
+        }
+        crate::errlog::failed(
+            &format!("image {p}"),
+            format_args!("{p}: not shown for now: {e}: tried again at a later listing"),
+        );
+        true
+    }
+
+    /// Notes that image `path` opened: its `EIO` failures in a row, if any, are forgotten.
+    fn opened_ok(&self, path: &Path) {
+        let mut m = self.eio_failures.lock().unwrap_or_else(|p| p.into_inner());
+        if !m.is_empty() {
+            m.remove(path);
+        }
     }
 
     /// Whether node `ino` exists already.
@@ -2092,15 +2185,22 @@ impl Tree {
                 let new: Vec<&PathBuf> =
                     src.images.iter().filter(|p| !self.exists(self.ids.image(p))).collect();
                 // Under a bound, a few at a time: one directory can hold more images than the
-                // bound allows open (#237).
-                let batch = if self.bounded() { OPEN_BATCH } else { new.len().max(1) };
+                // bound allows open (#237). Never more at a time than image files may be kept
+                // open, so that a first listing of a large folder stays within the descriptors
+                // set aside for images.
+                let files = crate::handles::global().max_open();
+                let batch = if self.bounded() { OPEN_BATCH } else { new.len().max(1) }.min(files);
                 for images in new.chunks(batch) {
-                    let opened: Vec<(&PathBuf, Disc)> = images
+                    let opened: Vec<Result<(&PathBuf, Disc), ()>> = images
                         .par_iter()
                         .filter_map(|&p| {
                             let id = self.disc_id();
                             match Disc::open(p, id, self.tuning) {
-                                Ok(d) => Some((p, d)),
+                                Ok(d) => {
+                                    self.opened_ok(p);
+                                    Some(Ok((p, d)))
+                                }
+                                Err(e) if self.passing(p, &e) => Some(Err(())),
                                 Err(e) => {
                                     log::info!("{}: not shown: {e}", p.display());
                                     None
@@ -2108,7 +2208,8 @@ impl Tree {
                             }
                         })
                         .collect();
-                    for (path, disc) in opened {
+                    cx.retry |= opened.iter().any(Result::is_err);
+                    for (path, disc) in opened.into_iter().flatten() {
                         let ino = self.ids.image(path);
                         self.opened(&disc);
                         let mtime = disc.mtime;
@@ -2249,6 +2350,7 @@ impl Tree {
                             // Listed exactly as the image's own directory would be, then the
                             // sidecars of the chain.
                             Ok(disc) => {
+                                self.opened_ok(image);
                                 self.opened(&disc);
                                 let mtime = dir.mtime;
                                 let art = self.art_of(chain.chain_dirs(), &sidecars);
@@ -2264,6 +2366,7 @@ impl Tree {
                                 }
                                 cx.head = out.len();
                             }
+                            Err(e) if self.passing(image, &e) => cx.retry = true,
                             Err(e) => log::info!("{}: not shown: {e}", image.display()),
                         }
                     }
@@ -2278,29 +2381,19 @@ impl Tree {
                 });
                 let mut seen = std::collections::HashSet::new();
                 let mut held = 0;
-                for track in &area.tracks {
-                    if let Err(e) = check_track(area, track, disc.toc().sectors) {
-                        log::info!(
-                            "{}: {} track {}: not shown: {e}",
-                            disc.path.display(),
-                            area.slot,
-                            track.number
-                        );
-                        continue;
-                    }
+                // Each track's frames as listed (pause included when kept), checked against
+                // the area's sectors that hold data (crate::track_ranges, crate::area_data).
+                let sectors = crate::area_data::data_sectors(disc, area);
+                for listed in crate::track_ranges::listed(area, sectors, self.output.pauses_kept) {
+                    listed.log(&disc.path, area.slot);
+                    let Some(track) = &listed.track else { continue };
                     // The files of one track are listed together and get the same name
                     // but for the extension (and the same de-duplication suffix, since
                     // they are made unique in the same order).
                     for format in self.output.formats() {
                         let spf = self.output.samples_per_frame;
-                        let Some(file) = TrackFile::with_pauses(
-                            disc.clone(),
-                            *i,
-                            track,
-                            format,
-                            spf,
-                            self.output.pauses_kept,
-                        ) else {
+                        let Some(file) = TrackFile::with_pauses(disc.clone(), *i, track, format, spf, false)
+                        else {
                             continue;
                         };
                         let name =
@@ -2390,7 +2483,7 @@ impl Tree {
                 };
                 match node {
                     Ok(n) => Some(n),
-                    Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                    Err(e) if crate::platform::is_cross_device(&e) => {
                         log::warn!(
                             "{}: link not followed: it points outside SOURCE or into the mount",
                             sc.path.display()
@@ -2489,13 +2582,26 @@ mod tests {
     /// Builds a source tree in a temporary directory: each path ending in `.iso` is a link
     /// to a corpus image, one with another extension an ordinary file holding its path,
     /// anything else a directory.
+    /// Puts an image at `dst`: a link on Unix, a copy elsewhere (a link on Windows needs a
+    /// privilege).
+    fn link_image(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(src, dst)
+        }
+        #[cfg(not(unix))]
+        {
+            fs::copy(src, dst).map(drop)
+        }
+    }
+
     fn source(paths: &[&str]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for p in paths {
             let path = dir.path().join(p);
             if p.ends_with(".iso") {
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::os::unix::fs::symlink(corpus_image(), &path).unwrap();
+                link_image(corpus_image(), &path).unwrap();
             } else if Path::new(p).extension().is_some() {
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
                 fs::write(&path, p.as_bytes()).unwrap();
@@ -2727,6 +2833,7 @@ mod tests {
         assert!(tree.held_images() <= MIN_HELD + 1, "{}", tree.held_images());
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_image_gone_while_closed_is_gone() {
         let dir = library(24);
@@ -2748,7 +2855,7 @@ mod tests {
         // Its folder not yet read again: the image can't be opened, and that is not kept.
         assert!(tree.children(ino).is_none());
         // Written back: the same directory, listed.
-        std::os::unix::fs::symlink(&target, &iso).unwrap();
+        link_image(&target, &iso).unwrap();
         assert!(!tree.children(ino).unwrap().is_empty());
         // Removed for good: its folder, read again, no longer shows it.
         fs::remove_file(&iso).unwrap();
@@ -3181,13 +3288,12 @@ mod tests {
         // A change elsewhere in the folder makes the folder be read again.
         let artist = dir.path().join("Artist");
         fs::write(artist.join("Other/cover.jpg"), b"art").unwrap();
-        fs::File::open(artist.join("Other"))
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() + Duration::from_secs(20))
-            .unwrap();
-        fs::File::open(&artist)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() + Duration::from_secs(30))
+        crate::platform::set_modified(
+            &artist.join("Other"),
+            std::time::SystemTime::now() + Duration::from_secs(20),
+        )
+        .unwrap();
+        crate::platform::set_modified(&artist, std::time::SystemTime::now() + Duration::from_secs(30))
             .unwrap();
         assert_eq!(names(&t, "Artist"), ["Other"]);
         assert_eq!(names(&t, "Artist/Other"), ["y", "cover.jpg"]);
@@ -3342,7 +3448,7 @@ mod tests {
         let ino = t.resolve(Path::new("Artist/folder.jpg")).unwrap();
         fs::write(dir.path().join("Artist/folder.jpg"), b"a new and longer cover").unwrap();
         let err = t.open_sidecar(&before).unwrap_err();
-        assert_eq!(err.raw_os_error(), Some(libc::ESTALE));
+        assert!(crate::platform::is_stale(&err), "{err}");
         // The next mount shows the new file under the same number, in a new generation.
         let t2 = tree_sc(dir.path(), false);
         assert_eq!(t2.resolve(Path::new("Artist/folder.jpg")), Some(ino));
@@ -3351,6 +3457,7 @@ mod tests {
         assert_eq!(read_sidecar(&t2, "Artist/folder.jpg"), b"a new and longer cover");
     }
 
+    #[cfg(unix)]
     #[test]
     fn links_are_followed_only_inside_source() {
         use std::os::unix::fs::symlink;
@@ -3513,7 +3620,7 @@ mod tests {
         fs::write(album.join("Scans/s1.png"), b"s1").unwrap();
         // The directory's modification time may not have moved on a coarse clock.
         let now = std::time::SystemTime::now() + Duration::from_secs(5);
-        fs::File::open(&album).unwrap().set_modified(now).unwrap();
+        crate::platform::set_modified(&album, now).unwrap();
         assert_eq!(names(&t, "Artist/Album"), ["x", "Artwork", "Scans", "back.jpg", "folder.jpg"]);
         assert_eq!(read_sidecar(&t, "Artist/Album/back.jpg"), b"back");
         assert_eq!(read_sidecar(&t, "Artist/Album/Scans/s1.png"), b"s1");
@@ -3521,7 +3628,10 @@ mod tests {
         // open file still reads.
         assert_eq!(ino_of(&t, "Artist/Album/folder.jpg"), folder);
         for (p, ino) in &before {
-            if p != "Artist/Album/cover.PNG" && !p.starts_with("Artist/Album/x/") {
+            // As paths: Windows lists them with `\`.
+            if Path::new(p) != Path::new("Artist/Album/cover.PNG")
+                && !Path::new(p).starts_with("Artist/Album/x")
+            {
                 assert_eq!(t.resolve(Path::new(p)), Some(*ino), "{p}");
             }
         }
@@ -3537,12 +3647,12 @@ mod tests {
         );
         // A sidecar folder is re-read too.
         fs::write(album.join("Artwork/extra.jpg"), b"extra").unwrap();
-        fs::File::open(album.join("Artwork")).unwrap().set_modified(now).unwrap();
+        crate::platform::set_modified(&album.join("Artwork"), now).unwrap();
         assert_eq!(names(&t, "Artist/Album/Artwork"), ["Booklet", "extra.jpg", "front.jpg", "info.pdf"]);
         // A replaced file gets new attributes under the same number.
         let ino = ino_of(&t, "Artist/Album/folder.jpg");
         fs::write(album.join("folder.jpg"), b"a longer picture").unwrap();
-        fs::File::open(&album).unwrap().set_modified(now + Duration::from_secs(5)).unwrap();
+        crate::platform::set_modified(&album, now + Duration::from_secs(5)).unwrap();
         names(&t, "Artist/Album");
         assert_eq!(ino_of(&t, "Artist/Album/folder.jpg"), ino);
         assert_eq!(read_sidecar(&t, "Artist/Album/folder.jpg"), b"a longer picture");
@@ -3557,12 +3667,12 @@ mod tests {
         // A new album, a second image in a known one, and an image in a folder that was
         // there (empty) at the first listing.
         fs::create_dir_all(dir.path().join("Artist/B")).unwrap();
-        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/B/y.iso")).unwrap();
-        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/A/z.iso")).unwrap();
-        std::os::unix::fs::symlink(corpus_image(), dir.path().join("Artist/Empty/sub/w.iso")).unwrap();
+        link_image(corpus_image(), dir.path().join("Artist/B/y.iso")).unwrap();
+        link_image(corpus_image(), dir.path().join("Artist/A/z.iso")).unwrap();
+        link_image(corpus_image(), dir.path().join("Artist/Empty/sub/w.iso")).unwrap();
         let now = std::time::SystemTime::now() + Duration::from_secs(5);
         for d in ["Artist", "Artist/A", "Artist/Empty"] {
-            fs::File::open(dir.path().join(d)).unwrap().set_modified(now).unwrap();
+            crate::platform::set_modified(&dir.path().join(d), now).unwrap();
         }
         assert_eq!(names(&t, "Artist"), ["A", "B", "Empty"]);
         assert_eq!(names(&t, "Artist/A"), ["x", "z"]);
@@ -3571,10 +3681,7 @@ mod tests {
         assert_eq!(names(&t, "Artist/Empty/sub"), ["w"]);
         // Removed: not found any more, though the number still resolves.
         fs::remove_file(dir.path().join("Artist/A/z.iso")).unwrap();
-        fs::File::open(dir.path().join("Artist/A"))
-            .unwrap()
-            .set_modified(now + Duration::from_secs(5))
-            .unwrap();
+        crate::platform::set_modified(&dir.path().join("Artist/A"), now + Duration::from_secs(5)).unwrap();
         assert_eq!(names(&t, "Artist/A"), ["x"]);
         assert!(t.get(a).is_some());
     }
@@ -3585,10 +3692,11 @@ mod tests {
         let t = tree_sc(dir.path(), false);
         let first = names(&t, "Artist/Album");
         fs::write(dir.path().join("Artist/Album/new.jpg"), b"n").unwrap();
-        fs::File::open(dir.path().join("Artist/Album"))
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() + Duration::from_secs(9))
-            .unwrap();
+        crate::platform::set_modified(
+            &dir.path().join("Artist/Album"),
+            std::time::SystemTime::now() + Duration::from_secs(9),
+        )
+        .unwrap();
         assert_eq!(names(&t, "Artist/Album"), first);
         assert!(!t.is_live(ino_of(&t, "Artist/Album")));
     }
@@ -3602,7 +3710,7 @@ mod tests {
         fs::write(dir.path().join("Artist/Album/Rip/back.png"), b"b").unwrap();
         let now = std::time::SystemTime::now() + Duration::from_secs(5);
         for d in ["Artist/Album", "Artist/Album/Rip"] {
-            fs::File::open(dir.path().join(d)).unwrap().set_modified(now).unwrap();
+            crate::platform::set_modified(&dir.path().join(d), now).unwrap();
         }
         assert_eq!(
             names(&t, "Artist/Album"),
@@ -3617,7 +3725,7 @@ mod tests {
 
     /// Sets the modification time of `path` (a file or directory).
     fn set_mtime(path: &Path, t: SystemTime) {
-        fs::File::open(path).unwrap().set_modified(t).unwrap();
+        crate::platform::set_modified(path, t).unwrap();
     }
 
     /// A source tree `Artist/Album/disc.iso` (a copy of a corpus image) with every
@@ -3680,7 +3788,7 @@ mod tests {
         let dir = old_tree(old);
         let newer = old + Duration::from_secs(10_000_000);
         let album = dir.path().join("Artist/Album");
-        fs::File::open(&album).unwrap().set_modified(newer).unwrap();
+        crate::platform::set_modified(&album, newer).unwrap();
         let t = watching(dir.path(), "default", false);
         for p in ["", "Artist", "Artist/Album"] {
             let shown = t.mtime(&t.get(t.resolve(Path::new(p)).unwrap()).unwrap());
@@ -3765,6 +3873,12 @@ mod tests {
             let dir = old_tree(old);
             fs::create_dir(dir.path().join("Artist/Album/Artwork")).unwrap();
             fs::write(dir.path().join("Artist/Album/Artwork/back.png"), b"b").unwrap();
+            // The folders the writes below change are scanned with an old time: the writes then
+            // move it to now whatever the clock's granularity. Left at the creation's own time,
+            // a write in the same clock tick (about 16 ms on Windows) went unseen.
+            for p in ["Artist/Album/Artwork", "Artist/Album"] {
+                set_mtime(&dir.path().join(p), old);
+            }
             let t = watching(dir.path(), "default", flatten);
             assert!(t.resolve(Path::new("Artist/Album")).is_some());
             fs::write(dir.path().join("Artist/Album/new.m3u8"), b"#EXTM3U\n").unwrap();

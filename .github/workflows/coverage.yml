@@ -59,7 +59,7 @@ jobs:
           SACDFS_FUSE_TESTS: "1"
         run: |
           # A subshell: pipefail would also apply to the `find | head` below (SIGPIPE).
-          (set -o pipefail; cargo llvm-cov --locked --no-report 2>&1 | tee "$RUNNER_TEMP/test-output.txt")
+          (set -o pipefail; cargo llvm-cov --locked --features nfs --no-report 2>&1 | tee "$RUNNER_TEMP/test-output.txt")
           # #127: a process killed while writing its profile leaves a truncated .profraw, and
           # one bad file fails the whole merge. Drop unreadable profiles, with a warning.
           llvm_profdata=$(find "$(rustc --print sysroot)" -name llvm-profdata -type f | head -n1)

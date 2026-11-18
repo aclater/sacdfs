@@ -2,7 +2,7 @@
 
 sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that clients read over SMB or NFS. On TrueNAS SCALE it runs as a custom app, pasted in as a short text file (YAML). About 10 minutes.
 
-**Not tested on 0.6.0** (no TrueNAS system was available for this release; nothing below was run on 0.6.0, so every step is *(untested)* on 0.6.0). The same steps were validated on TrueNAS SCALE 25.10 with the 0.4.0 image: see [Details](#what-was-checked).
+Checked on 0.6.3 on TrueNAS SCALE 25.10.8, in a VM, through the API call behind "Install via YAML" rather than the web screens: see [Details](#what-was-checked).
 
 ## What you need
 
@@ -19,7 +19,7 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.6.3
+       image: ghcr.io/aclater/sacdfs:0.6.5
        restart: unless-stopped
        devices:
          - /dev/fuse
@@ -74,11 +74,13 @@ Open the app's Logs. *You should see* the number of image files, `mounted`, the 
 
 ### What was checked
 
-Validated on TrueNAS SCALE 25.10 as a custom app installed from the YAML above (through the API call behind "Install via YAML"), with the published **0.4.0** image, on a library of 414 images. The app was running within 10 seconds and the logs showed what the check above lists. The share listed over SMB on 10445, and a DSF file (starting `DSD `) and a WAV file (starting `RIFF`) read in full. A stop took 2.1 s, a start 1.2 s, and the share answered 1.6 s after the start returned. NFS on 12049 was validated with 0.4.0-rc.2 (a Linux client mounted it and read stereo and multichannel files); with 0.4.0 only a successful NFS RPC to the port was checked, because the host used for that run cannot mount NFS. Screen names may differ between releases. Not run again for 0.5.0 or 0.6.0; the YAML above names the 0.6.0 image, which was not run on TrueNAS.
+**On 0.6.3:** TrueNAS SCALE 25.10.8 in a VM, not on a TrueNAS appliance. The YAML of step 3, with the 0.6.3 image, an images dataset holding three conformance-corpus images and `NFS_CLIENTS: "*"`, installed as a custom app through the API call behind "Install via YAML" (the web screens were not clicked through). The app was **Running** 22 s after the call, image pull included. The logs showed `3 image files`, `mounted`, the SMB share with its user and `NFS SERVER INITIALIZED`. Over SMB on 10445 all 28 DSF and WAV files were identical to a reference; over NFS on 12049 too, read with a user-space NFSv4 client (libnfs) in a container, not a kernel mount. A stop took 2.5 s, a start 1.5 s, and the share answered 0.6 s after the start. After a restart of TrueNAS the app came back by itself; SMB answered 72 s after the restart began, with the same 28 files over SMB and NFS. Not run on 0.6.3: the web screens, a Windows or macOS client, a kernel NFS mount, an update of the app.
+
+**Earlier:** Validated on TrueNAS SCALE 25.10 as a custom app installed from the YAML above (through the API call behind "Install via YAML"), with the published **0.4.0** image, on a library of 414 images. The app was running within 10 seconds and the logs showed what the check above lists. The share listed over SMB on 10445, and a DSF file (starting `DSD `) and a WAV file (starting `RIFF`) read in full. A stop took 2.1 s, a start 1.2 s, and the share answered 1.6 s after the start returned. NFS on 12049 was validated with 0.4.0-rc.2 (a Linux client mounted it and read stereo and multichannel files); with 0.4.0 only a successful NFS RPC to the port was checked, because the host used for that run cannot mount NFS. Screen names may differ between releases. Not run for 0.5.0 to 0.6.2.
 
 ### Options and reasons
 
-- **Settings:** `sacdfs-cache` keeps the seek index across updates (a few MB). The default cache (`SACDFS_CACHE_MB`: 32 MiB, or 16 under a memory limit up to 512 MiB) suits a NAS; leave it out. `NFS_CLIENTS` takes one address (`192.0.2.15`), a network (`192.0.2.0/24`), a comma-separated list of them, or `*`. For Roon or MPD add `SACDFS_FORMATS: dsf` (see your server's guide). Every setting: [deployment guide](../deployment.md#truenas-scale).
+- **Settings:** `sacdfs-cache` keeps the seek index across updates (a few MB). The default cache (`SACDFS_CACHE_MB`: 32 MiB, or 16 under a memory limit below 256 MiB) suits a NAS; leave it out. `NFS_CLIENTS` takes one address (`192.0.2.15`), a network (`192.0.2.0/24`), a comma-separated list of them, or `*`. For Roon or MPD add `SACDFS_FORMATS: dsf` (see your server's guide). Every setting: [deployment guide](../deployment.md#truenas-scale).
 - **Catalog app:** a TrueNAS apps-catalog definition exists but isn't listed yet and can't be installed until it is: [store-apps.md](store-apps.md#truenas-the-catalog-app).
 - **Players on the same NAS, without SMB:** a player installed as a custom app (Navidrome, Jellyfin, ...) can read sacdfs's mount directly: give sacdfs a dataset of its own (for example `pool/apps/sacdfs-mnt`) bound over `/srv` with `rshared`, and bind it into the player with `ro,rslave`; the library is then `/music/sacd`. Validated on TrueNAS SCALE 25.10.7 with the 0.4.1 image, as one app with Navidrome and as two apps, through restarts, updates and a crash of sacdfs. The YAML, what happens on a restart and what to avoid (catalog apps can't set `rslave`) are in the [deployment guide](../deployment.md#players-on-the-same-host-no-smb-hop). Not validated in this form: a host-path dataset for the cache and an alias address for port 445. Roon on the same NAS: [roon.md](roon.md).
 

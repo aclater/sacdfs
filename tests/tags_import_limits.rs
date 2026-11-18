@@ -108,7 +108,7 @@ fn import_leaves_a_full_tags_file_and_bounds_its_list() {
     let lib = dir.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
     let iso = format!("{TAGGED}.iso");
-    std::os::unix::fs::symlink(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    common::link(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
     let ext = dir.path().join("ext");
     let big = "b".repeat(MAX_VALUE_BYTES + 1);
     let many = MAX_LISTED + 8;
@@ -153,7 +153,7 @@ fn import_keeps_only_what_the_mount_serves() {
     let lib = dir.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
     let iso = format!("{TAGGED}.iso");
-    std::os::unix::fs::symlink(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    common::link(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
 
     // Extracts of the stereo DSF tracks, as a tagger would leave them: each with a genre, a
     // value of its own and a 1.2 MiB cover; track 1 with a 3 MiB text field as well, and
@@ -264,4 +264,27 @@ fn import_keeps_only_what_the_mount_serves() {
     common::unmount_retrying(&mp);
     let _ = child.wait();
     r.unwrap();
+}
+
+/// A value too large whose TXXX description holds a line end and escape sequences: its
+/// "not kept" line shows them escaped, and makes no line of its own.
+#[test]
+fn not_kept_names_are_escaped() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = dir.path().join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    let iso = format!("{TAGGED}.iso");
+    common::link(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    let ext = dir.path().join("ext");
+    let big = "b".repeat(MAX_VALUE_BYTES + 1);
+    write_extracts(&lib, &ext, |_, i, tag| {
+        if i == 0 {
+            txxx(tag, "Notes\nFORGED line\x1b]0;t\x07\x1b[2J", &big);
+        }
+    });
+    let (code, say) = import(&lib, &ext, &dir.path().join("tags"));
+    assert_eq!(code, Some(2), "{say}");
+    assert!(!say.lines().any(|l| l.starts_with("FORGED")), "{say}");
+    assert!(!say.chars().any(|c| c.is_control() && c != '\n'), "{say:?}");
+    assert!(say.contains("TXXX:Notes\\x0aFORGED line\\x1b]0;t\\x07\\x1b[2J"), "{say}");
 }

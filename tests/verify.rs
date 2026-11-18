@@ -12,7 +12,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
 
 use sacdfs::disc::Tuning;
@@ -141,11 +141,8 @@ fn setup(dir: &Path) -> (PathBuf, PathBuf, BTreeMap<String, Status>) {
     let ext = dir.join("ext");
     for (folder, image) in [("a", "dsd-stereo-mch-2048"), ("b", "dst-stereo-5ch-2054")] {
         fs::create_dir_all(lib.join(folder)).unwrap();
-        std::os::unix::fs::symlink(
-            corpus.join(format!("{image}.iso")),
-            lib.join(folder).join(format!("{image}.iso")),
-        )
-        .unwrap();
+        common::link(corpus.join(format!("{image}.iso")), lib.join(folder).join(format!("{image}.iso")))
+            .unwrap();
     }
     let files = served(&lib);
     let pick = |prefix: &str, n: usize| {
@@ -316,8 +313,7 @@ fn separate_tree_without_map_finds_nothing() {
 fn copies(dir: &Path, n: usize) -> PathBuf {
     let lib = dir.join("lib");
     fs::create_dir_all(&lib).unwrap();
-    std::os::unix::fs::symlink(common::corpus().join("images/dsd-stereo-mch-2048.iso"), lib.join("x.iso"))
-        .unwrap();
+    common::link(common::corpus().join("images/dsd-stereo-mch-2048.iso"), lib.join("x.iso")).unwrap();
     let files = served(&lib);
     for (i, (_, _, bytes)) in files.iter().enumerate() {
         fs::write(lib.join(format!("t{i}.dsf")), bytes).unwrap();
@@ -328,6 +324,7 @@ fn copies(dir: &Path, n: usize) -> PathBuf {
     lib
 }
 
+#[cfg(unix)]
 fn run_verify(lib: &Path, report: &Path, extra: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_sacdfs"))
         .args(["verify", "-q", "--threads", "1", "-o"])
@@ -340,6 +337,7 @@ fn run_verify(lib: &Path, report: &Path, extra: &[&str]) -> std::process::Output
 
 /// `sacdfs verify` killed with SIGKILL once its partial report has rows, or `None` if it
 /// finished first.
+#[cfg(unix)]
 fn killed_verify(lib: &Path, report: &Path, extra: &[&str]) -> Option<()> {
     use std::os::unix::process::ExitStatusExt;
     let partial = PathBuf::from(format!("{}.partial", report.display()));
@@ -349,7 +347,7 @@ fn killed_verify(lib: &Path, report: &Path, extra: &[&str]) -> Option<()> {
         .arg(report)
         .args(extra)
         .arg(lib)
-        .stderr(Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap();
     while fs::read_to_string(&partial).map_or(0, |t| t.lines().count()) < 3 {
@@ -366,6 +364,7 @@ fn killed_verify(lib: &Path, report: &Path, extra: &[&str]) -> Option<()> {
 
 /// #196: killed runs leave nothing that reads as finished, and resuming ends with what a run
 /// that was never killed writes, from a stopped run's rows and from a finished report.
+#[cfg(unix)]
 #[test]
 fn kill_and_resume() {
     let dir = tempfile::tempdir().unwrap();
@@ -481,6 +480,8 @@ fn a_file_that_panicked_is_not_a_clean_run() {
 
 /// #196: a report to a pipe is a stream: every row comes through, and only the exit status says
 /// how it went. Standard output too.
+// A pipe through /dev/stdout: Unix.
+#[cfg(unix)]
 #[test]
 fn report_to_a_pipe() {
     let dir = tempfile::tempdir().unwrap();
@@ -510,6 +511,7 @@ fn report_to_a_pipe() {
 
 /// #202: `-o` naming a descriptor is a stream whatever it is redirected to, a regular file too:
 /// finished, with every row, adding to what the file held, and with nothing left beside it.
+#[cfg(unix)]
 #[test]
 fn report_to_a_descriptor_redirected_to_a_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -539,12 +541,12 @@ fn report_to_a_descriptor_redirected_to_a_file() {
     // Standard output, also through a link of the user's, and with --resume.
     let link = dir.path().join("link");
     std::os::unix::fs::symlink("/dev/stdout", &link).unwrap();
-    for (o, resume) in [
-        ("/dev/stdout", false),
-        ("/dev/stdout", true),
-        ("/proc/self/fd/1", false),
-        (link.to_str().unwrap(), false),
-    ] {
+    let mut cases = vec![("/dev/stdout", false), ("/dev/stdout", true), (link.to_str().unwrap(), false)];
+    // /proc: Linux only.
+    if cfg!(target_os = "linux") {
+        cases.push(("/proc/self/fd/1", false));
+    }
+    for (o, resume) in cases {
         let mut c = verify(o);
         if resume {
             c.arg("--resume");
@@ -650,7 +652,7 @@ fn image_in_a_subfolder_is_found() {
     let link = |rel: &str| {
         let d = lib.join(rel);
         fs::create_dir_all(&d).unwrap();
-        std::os::unix::fs::symlink(&corpus, d.join("disc.iso")).unwrap();
+        common::link(&corpus, d.join("disc.iso")).unwrap();
     };
     link("near/Album (SACD ISO)");
     link("deep/Disc 1/ISO");
@@ -658,14 +660,17 @@ fn image_in_a_subfolder_is_found() {
     let files = served(&lib);
     let (_, _, bytes) = files
         .iter()
-        .find(|(p, _, _)| p.starts_with("near") && p.to_string_lossy().contains("/Stereo/"))
+        .find(|(p, _, _)| p.starts_with("near") && common::slash(p).contains("/Stereo/"))
         .unwrap();
     for folder in ["near", "deep", "toodeep"] {
         fs::write(lib.join(folder).join("01 - track.dsf"), bytes).unwrap();
     }
     let s = run(&args(&lib, vec![lib.clone()], Vec::new(), None)).unwrap();
-    let by =
-        |folder: &str| s.rows.iter().find(|r| r.path == lib.join(folder).join("01 - track.dsf")).unwrap();
+    // The report's paths are canonical (macOS's /var is /private/var; Windows's are \\?\).
+    let canonical = lib.canonicalize().unwrap();
+    let by = |folder: &str| {
+        s.rows.iter().find(|r| r.path == canonical.join(folder).join("01 - track.dsf")).unwrap()
+    };
     assert_eq!(by("near").status, Status::Identical, "{}", by("near").reason);
     assert_eq!(by("deep").status, Status::Identical, "{}", by("deep").reason);
     assert_eq!(by("toodeep").status, Status::NoMatch);
@@ -678,7 +683,7 @@ fn pause_kept_extracts() {
     let dir = tempfile::tempdir().unwrap();
     let lib = dir.path().join("lib");
     fs::create_dir_all(lib.join("a")).unwrap();
-    std::os::unix::fs::symlink(
+    common::link(
         common::corpus().join("images").join("dsd-stereo-mch-2048.iso"),
         lib.join("a").join("dsd-stereo-mch-2048.iso"),
     )

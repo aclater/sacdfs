@@ -8,10 +8,14 @@
 mod common;
 
 use std::path::Path;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::Weak;
 use std::time::Duration;
 
-use sacdfs::disc::{Disc, Tuning};
+#[cfg(unix)]
+use sacdfs::disc::Disc;
+use sacdfs::disc::Tuning;
 use sacdfs::engine::Engine;
 use sacdfs::sidecar::Sidecars;
 use sacdfs::track::Reader;
@@ -46,6 +50,7 @@ fn change(tree: &Tree, what: &str, f: impl FnOnce(), shown: impl Fn(&Tree) -> bo
 
 /// Lists everything, as a scanner does (opens the images and makes their files), and
 /// returns the discs listed.
+#[cfg(unix)]
 fn scan(tree: &Tree) -> Vec<Weak<Disc>> {
     let mut discs: Vec<Weak<Disc>> = Vec::new();
     for (_, f) in tree.all_files() {
@@ -57,10 +62,13 @@ fn scan(tree: &Tree) -> Vec<Weak<Disc>> {
     discs
 }
 
+#[cfg(unix)]
 fn alive(discs: &[Weak<Disc>]) -> usize {
     discs.iter().filter(|d| d.strong_count() > 0).count()
 }
 
+// Windows refuses to rename a folder while an image in it is open.
+#[cfg(unix)]
 #[test]
 fn removed_and_renamed_images_are_freed() {
     let dir = tempfile::tempdir().unwrap();
@@ -68,7 +76,7 @@ fn removed_and_renamed_images_are_freed() {
     let img = common::corpus().join(IMAGE);
     // One album that stays, so that the tree is not empty.
     std::fs::create_dir(lib.join("kept")).unwrap();
-    std::os::unix::fs::symlink(&img, lib.join("kept/disc.iso")).unwrap();
+    common::link(&img, lib.join("kept/disc.iso")).unwrap();
     let tree = watching(&lib);
     let kept = scan(&tree);
     let _ = tree.children(ROOT);
@@ -85,7 +93,7 @@ fn removed_and_renamed_images_are_freed() {
             "the new album",
             || {
                 std::fs::create_dir(&album).unwrap();
-                std::os::unix::fs::symlink(&img, album.join("disc.iso")).unwrap();
+                common::link(&img, album.join("disc.iso")).unwrap();
             },
             at(format!("{name}/disc/Stereo")),
         );
@@ -137,7 +145,7 @@ fn an_open_file_reads_on_after_its_image_is_removed() {
     let dir = tempfile::tempdir().unwrap();
     let lib = dir.path().canonicalize().unwrap();
     std::fs::create_dir(lib.join("album")).unwrap();
-    std::os::unix::fs::symlink(common::corpus().join(IMAGE), lib.join("album/disc.iso")).unwrap();
+    common::link(common::corpus().join(IMAGE), lib.join("album/disc.iso")).unwrap();
     let tree = watching(&lib);
     let (path, file) = tree.all_files().into_iter().next().unwrap();
     let ino = tree.resolve(&path).unwrap();

@@ -5,22 +5,30 @@
 //! retrying its reads through a long hang (#241).
 //!
 //! The stall is real: an image is reached through a symbolic link outside SOURCE, which is
-//! pointed at a FIFO once sacdfs is running. Opening a FIFO for reading blocks until a
-//! writer comes, just as an open or a read on a hung share blocks in the kernel. The
-//! directories of SOURCE do not change, so sacdfs does not notice and re-read them.
+//! pointed once sacdfs is running at a file on a small FUSE filesystem of the test's own
+//! ([`Stall`]) that answers its attributes but leaves every open unanswered, just as an open
+//! on a hung share blocks in the kernel. The directories of SOURCE do not change, so sacdfs
+//! does not notice and re-read them. *Why not a FIFO, as before:* sacdfs opens images with
+//! `O_NONBLOCK` and refuses anything but a regular file, so a FIFO no longer blocks it.
 //!
 //! Needs `/dev/fuse` and `fusermount3`, like `tests/mount.rs`.
 
+// The Linux FUSE mount, or calls only Linux has; other systems run the core's tests (#419, #420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;
 
-use std::fs::OpenOptions;
-use std::os::unix::fs::OpenOptionsExt;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant, SystemTime};
+
+use fuser::{
+    BackgroundSession, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo,
+    MountOption, OpenFlags, ReplyAttr, ReplyEntry, ReplyOpen, Request, Session,
+};
 
 /// The request timeout the mount is given.
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -109,12 +117,117 @@ fn timed<T: Send + 'static>(
     rx.recv_timeout(within).ok()
 }
 
-/// Points `link` at a new FIFO: from then on, opening the image through it blocks.
-fn stall(link: &Path, fifo: &Path) {
-    assert!(Command::new("mkfifo").arg(fifo).status().unwrap().success());
-    let tmp = link.with_extension("tmp");
-    std::os::unix::fs::symlink(fifo, &tmp).unwrap();
-    std::fs::rename(&tmp, link).unwrap();
+/// The opens [`StallFs`] leaves unanswered, and whether it was released.
+#[derive(Default)]
+struct Stalled {
+    opens: Vec<ReplyOpen>,
+    released: bool,
+}
+
+/// A filesystem of one regular file, `stall`, whose opens are not answered until
+/// [`Stall::release`]; afterwards they fail with `EIO`.
+struct StallFs(Arc<Mutex<Stalled>>);
+
+const STALL_INO: INodeNo = INodeNo(2);
+
+fn stall_attr(ino: INodeNo) -> FileAttr {
+    let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    let dir = ino == INodeNo::ROOT;
+    FileAttr {
+        ino,
+        size: if dir { 0 } else { 64 << 20 },
+        blocks: 0,
+        atime: t,
+        mtime: t,
+        ctime: t,
+        crtime: t,
+        kind: if dir { FileType::Directory } else { FileType::RegularFile },
+        perm: if dir { 0o555 } else { 0o444 },
+        nlink: if dir { 2 } else { 1 },
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        blksize: 4096,
+        flags: 0,
+    }
+}
+
+impl Filesystem for StallFs {
+    fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
+        if parent == INodeNo::ROOT && name == "stall" {
+            reply.entry(&Duration::ZERO, &stall_attr(STALL_INO), Generation(0));
+        } else {
+            reply.error(Errno::ENOENT);
+        }
+    }
+
+    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
+        reply.attr(&Duration::ZERO, &stall_attr(ino));
+    }
+
+    fn open(&self, _req: &Request, _ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+        let mut s = self.0.lock().unwrap();
+        if s.released {
+            reply.error(Errno::EIO);
+        } else {
+            s.opens.push(reply);
+        }
+    }
+}
+
+/// A mounted [`StallFs`].
+struct Stall {
+    state: Arc<Mutex<Stalled>>,
+    session: Option<BackgroundSession>,
+    dir: tempfile::TempDir,
+}
+
+impl Stall {
+    fn new() -> Stall {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(Mutex::new(Stalled::default()));
+        let mut config = Config::default();
+        config.mount_options = vec![MountOption::RO, MountOption::FSName("sacdfs-stall-test".to_owned())];
+        let session = Session::new(StallFs(state.clone()), dir.path(), &config).unwrap().spawn().unwrap();
+        let s = Stall { state, session: Some(session), dir };
+        let start = Instant::now();
+        while !s.file().is_file() {
+            assert!(start.elapsed() < Duration::from_secs(30), "timed out waiting for the stall mount");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        s
+    }
+
+    /// The file whose opens block.
+    fn file(&self) -> PathBuf {
+        self.dir.path().join("stall")
+    }
+
+    /// Points `link` at the file: from then on, opening the image through it blocks.
+    fn stall(&self, link: &Path) {
+        let tmp = link.with_extension("tmp");
+        std::os::unix::fs::symlink(self.file(), &tmp).unwrap();
+        std::fs::rename(&tmp, link).unwrap();
+    }
+
+    /// Lets whatever is blocked opening the file go on (failing with `EIO`).
+    fn release(&self) {
+        let opens = {
+            let mut s = self.state.lock().unwrap();
+            s.released = true;
+            std::mem::take(&mut s.opens)
+        };
+        for o in opens {
+            o.error(Errno::EIO);
+        }
+    }
+}
+
+impl Drop for Stall {
+    fn drop(&mut self) {
+        self.release();
+        drop(self.session.take());
+    }
 }
 
 /// The files with extension `ext` below `dir`, sorted.
@@ -133,12 +246,6 @@ fn files_below(dir: &Path, ext: &str) -> Vec<PathBuf> {
     }
     found.sort();
     found
-}
-
-/// Lets whatever is blocked opening `fifo` go on (and then read its end).
-fn release(fifo: &Path) {
-    // O_RDWR on a FIFO never blocks on Linux; the blocked reader's open then returns.
-    let _w = OpenOptions::new().read(true).write(true).custom_flags(libc::O_NONBLOCK).open(fifo);
 }
 
 #[test]
@@ -166,8 +273,8 @@ fn a_stalled_image_fails_its_requests_and_holds_up_no_other() {
     let listed = first_dsf(&mnt.join("Listed"));
 
     // 1. A listing that opens a stalled image (#63) fails within the timeout...
-    let fifo_unlisted = base.path().join("unlisted.fifo");
-    stall(&links.join("Unlisted.iso"), &fifo_unlisted);
+    let stall = Stall::new();
+    stall.stall(&links.join("Unlisted.iso"));
     let dir = mnt.join("Unlisted");
     let listing = timed(TIMEOUT + SLACK + Duration::from_secs(5), move || {
         std::fs::read_dir(&dir).and_then(|d| d.collect::<Result<Vec<_>, _>>()).map(|v| v.len())
@@ -189,8 +296,7 @@ fn a_stalled_image_fails_its_requests_and_holds_up_no_other() {
     // 3. A read of a file whose image stalls after it was opened (#72) fails within the
     // timeout too. The image is opened again once its handle is checked against its path
     // (at most once a second), which is what then blocks.
-    let fifo_listed = base.path().join("listed.fifo");
-    stall(&links.join("Listed.iso"), &fifo_listed);
+    stall.stall(&links.join("Listed.iso"));
     std::thread::sleep(Duration::from_millis(1500));
     let file = first_dsf(&mnt.join("Listed"));
     let file = file.parent().unwrap().read_dir().unwrap().map(|e| e.unwrap().path()).max().unwrap_or(file);
@@ -215,8 +321,7 @@ fn a_stalled_image_fails_its_requests_and_holds_up_no_other() {
     assert!(seen > 0);
     assert!(start.elapsed() < TIMEOUT + SLACK, "the other image waited: {:?}", start.elapsed());
 
-    release(&fifo_unlisted);
-    release(&fifo_listed);
+    stall.release();
     drop(m);
 }
 
@@ -246,8 +351,8 @@ fn stalled_wav_reads_hold_no_decoder_thread() {
     let other_wav = files_below(&m.path.join("Other"), "wav");
     assert!(stalled.len() >= 2 && !other_dsf.is_empty() && !other_wav.is_empty());
 
-    let fifo = base.path().join("stalled.fifo");
-    stall(&links.join("Stalled.iso"), &fifo);
+    let stall = Stall::new();
+    stall.stall(&links.join("Stalled.iso"));
     // The image's open handle is checked against its path at most once a second.
     std::thread::sleep(Duration::from_millis(1500));
 
@@ -274,7 +379,7 @@ fn stalled_wav_reads_hold_no_decoder_thread() {
     }
     assert!(start.elapsed() < TIMEOUT, "the other image waited: {:?}", start.elapsed());
 
-    release(&fifo);
+    stall.release();
     for t in wedged {
         t.join().unwrap();
     }
@@ -337,8 +442,8 @@ fn retrying_clients_of_a_stalled_image_leave_threads_to_the_others() {
     let open: Vec<_> =
         (0..CLIENTS).map(|i| std::fs::File::open(&stalled[i % stalled.len()]).unwrap()).collect();
 
-    let fifo = base.path().join("stalled.fifo");
-    stall(&links.join("Stalled.iso"), &fifo);
+    let stall = Stall::new();
+    stall.stall(&links.join("Stalled.iso"));
     // The image's open handle is checked against its path at most once a second.
     std::thread::sleep(Duration::from_millis(1500));
 
@@ -403,7 +508,7 @@ fn retrying_clients_of_a_stalled_image_leave_threads_to_the_others() {
     assert!(start.elapsed() < TIMEOUT, "the other image waited: {:?}", start.elapsed());
 
     stop.store(true, Ordering::Relaxed);
-    release(&fifo);
+    stall.release();
     for c in clients {
         c.join().unwrap();
     }

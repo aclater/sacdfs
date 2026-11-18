@@ -65,7 +65,7 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   default) is one per CPU. On a machine that has other work to do, fewer threads keep sacdfs
   from crowding it out while a file is read quickly (`cp`); a player reading in real time
   needs a small part of one core.
-- `--cache-mb N` (default 32, or 16 under a memory limit up to 512 MiB) bounds the cache of decoded DSD frames and converted PCM
+- `--cache-mb N` (default 32, or 16 under a memory limit below 256 MiB) bounds the cache of decoded DSD frames and converted PCM
   frames, which DSF and WAV reads share. It is sacdfs's main use of memory, whatever the
   number of open files: about 45 to 70 MiB in all with the default during scans and straight
   reads of a small library, and about 11 MiB once a small library has been idle for 60 s, when
@@ -78,6 +78,18 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   listed and between reads, so that a seek does not have to open it again (a round trip or two
   on a network share). The least recently used image is closed when the limit is reached, and
   any image unused for 5 minutes is closed.
+- Open files in all: at start sacdfs raises its own limit on open files to the most the system
+  allows it (the hard limit, `ulimit -Hn`), and warns in the log if that is below 4096; `-v`
+  logs the limit and how it is shared out. Image files kept open (`--max-open-images`) are
+  held to half of the limit less 128, with a warning. Open sidecar files (cover art, a
+  booklet) are bounded by what is left: the limit, less the image files and 128, between 8
+  and 4096. An open past that bound fails with "too many open files" for the program that
+  asked, and a rate-limited warning in the log, so open sidecars never take the files the
+  images need. An image that fails to open for a passing reason (too many open files, short
+  of memory, an I/O error) is left out of its folder only for a while: the folder is listed
+  again a second after, then after waits that double up to a minute while it keeps failing.
+  An image that fails with an I/O error three times in a row (a failing disk, say) is left
+  out like a damaged one, until its file changes or sacdfs restarts.
 - `--request-timeout SECS` (default 30, `0` for none): a request (a read, a lookup, a
   listing) that has waited this long for the source, because a share or disk stopped
   answering, fails with an I/O error and a warning in the log, instead of hanging the program
@@ -249,6 +261,32 @@ with no network and nothing stored:
   space](#times-sizes-and-free-space)). Moving the image to another folder can change what it's
   called; to keep a name for good, put it in a tags file. The audio is unaffected.
 
+**Upgrading from 0.4.0 with beets-pysacd.** sacdfs 0.4.1 names a track without a title
+`NN - Track NN.dsf`; 0.4.0 named it `NN.dsf`. Albums that beets-pysacd 0.2.0 or 0.2.1 catalogued
+on a 0.4.0 mount (`sacd-migrate --catalogue --mount`) still point at the old names, and running
+`beet update` after the upgrade removes their items, along with any fields you set on them.
+
+1. Before upgrading, back up your beets `library.db`.
+2. Upgrade sacdfs and mount it again. Do not run `beet update` yet.
+3. Install [beets-pysacd 0.2.2](https://pypi.org/project/beets-pysacd/0.2.2/) or later.
+4. See which items would move, then move them. With the mount from the
+   [quick start](#quick-start), where `~/sacd` is the mount and `~/music/sacd-images` the
+   images folder you gave sacdfs:
+
+   ```sh
+   beet sacd-migrate --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
+   beet sacd-migrate --apply --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
+   ```
+
+   `--mount` is where sacdfs is mounted, `--source` is the images folder or image sacdfs was
+   given, and the last argument is the images to check (one or more images or folders). Add
+   `--flatten` to both lines if your mount uses it.
+
+Items keep their ids, added dates and other fields; nothing on the mount is changed. If
+`beet update` has already removed them, restore the backup and then run step 4; cataloguing
+again restores the albums but not fields set by hand. *(Tested on a simulated mount, not on a
+real one.)*
+
 Plex shows the suffix only with "Prefer local metadata" on in the library's settings; by
 default it uses the matched release's title for both copies (see the deployment guide,
 "Multichannel copies and music servers").
@@ -303,6 +341,9 @@ The mount stays read-only; the files are edited out of band.
   so players that skip unchanged folders (Roon) find the edit on their next scan. Edits made
   while sacdfs is stopped show after the mount the same way (sacdfs keeps which disc each image
   is in its cache directory). With a single image as SOURCE, remount after editing.
+- **Files open during an edit:** a file a player has open when its tags change fails with an
+  I/O error at its next read once anything looks it up or lists its folder again, because the kernel drops the
+  old version of the file. Opening it again reads the new one.
 
 Each file holds its own copy of a cover. Under a [memory limit](deployment.md#under-a-memory-limit), that
 means few images stay listed, and going through the library takes longer. A disc listed again reads its
@@ -755,7 +796,7 @@ are decoded, so a library is read about once.
 | `ERROR` | The file is truncated, broken or unreadable, or sacdfs could not read its track. | Keep it until you know why. |
 | `NOT-COMPARABLE` | FLAC or WAV. A CD-layer rip isn't in the SACD image at all, and a PCM conversion of the SACD layer made by another converter never matches sacdfs's WAV bit for bit. | Your call: sacdfs's WAV replaces it only if you prefer it. |
 
-**Pauses and silence.** Extracts made with the pauses kept (`sacd_extract -p`, `pysacd-extract -b`)
+**Pauses and silence.** Extracts made with the pauses kept (`sacd_extract -b`, `pysacd-extract -b`)
 hold the track plus the pause audio before or after it, and older extractors drop the last frame
 of a disc or side. verify looks for the served track inside such an extract (or the extract
 inside the served track) and measures the audio outside the common part, per region. A region is
@@ -767,10 +808,15 @@ above -60.2 dB). A person decides about those. Up to 60 s of difference in lengt
 considered; sacdfs does not serve pauses, so deleting an `IDENTICAL-PAUSE` extract drops its
 silence. The summary counts these files in the reclaimable space.
 
+**Gapless chains.** Extracts written as one chain without padding (`sacd_extract -z`) are not
+recognised yet. Each file but the last ends on a whole DSF block and carries the rest of its track into the
+next file, so verify reports them `NO-MATCH` or `DIFFERENT`. Keep them
+([#442](https://github.com/aclater/sacdfs/issues/442)).
+
 **What a deletion would lose.** The `loses` column lists what the extract's tags hold that
 sacdfs's own tag for the track doesn't: `musicbrainz` (MusicBrainz IDs), `art` (embedded
 pictures), `replaygain`, and `other=` with the frame names (a changed title shows up as
-`TIT2`, a genre as `TCON`). sacdfs's tags come from the disc's text only, so anything a
+`TIT2`, a genre as `TCON`; at most 32 names of up to 128 characters, then `+N more`). sacdfs's tags come from the disc's text only, so anything a
 tagger added is listed here. The same information written another way doesn't count: an
 ID3v2.3 date (`TYER` and `TDAT`, day and month in either order) that sacdfs's `TDRC` holds, a disc number of `1/1` (sacdfs
 leaves it out for a single disc), a track number with the total (`3/12`) where sacdfs has `3` and 12 is the area's track count, a `PERFORMER` that is sacdfs's artist, empty frames. The
@@ -779,9 +825,9 @@ summary counts the IDENTICAL files that lose each kind.
 **The report** is tab-separated, one row per file, with a header row: `status`, `path`,
 `bytes`, `mtime`, `image`, `area`, `track`, `channels`, `samples`, `sha256` (of the
 compared audio), `loses` and `reason`. Tabs, newlines and backslashes in fields are
-escaped (`\t`, `\n`, `\\`), as are bytes of a path that aren't UTF-8 (`\xNN`). The summary
-goes to standard error: counts and bytes by status, the reclaimable bytes (the IDENTICAL
-files), and the tags they carry.
+escaped (`\t`, `\n`, `\\`), as are other control characters and bytes of a path that
+aren't UTF-8 (`\xNN`). The summary goes to standard error: counts and bytes by status, the
+reclaimable bytes (the IDENTICAL files), and the tags they carry.
 
 **Exit status:** 0 when every DSF and DFF file is IDENTICAL, 2 when any is not, 1 when the
 check couldn't run or didn't finish.
@@ -807,7 +853,8 @@ A run that fails before it starts writing (a bad path, for example) leaves `FILE
 run without `--resume` starts `FILE.partial` afresh. With no `-o`, or with `-o` naming a descriptor
 (`/dev/stdout`, `/dev/stderr`, `/dev/fd/N`, even if it is redirected to a regular file) or a named
 pipe, the rows are written as they are made, after whatever is there, and only the exit status
-says whether the run finished; `--resume` has nothing to read there.
+says whether the run finished; `--resume` has nothing to read there. A symbolic link to a pipe or
+a device counts as a file: it is replaced by the report.
 
 Examples:
 

@@ -95,13 +95,52 @@ never moved.
    heading links to its changes. Merge it once its checks pass.
 5. **Tag** the merge commit on `main`: `git tag -a vX.Y.Z -m "sacdfs X.Y.Z" && git push origin vX.Y.Z`.
    The workflow stops before building anything if the tag isn't `v` plus Cargo.toml's
-   version, or CHANGELOG.md has no section for it.
+   version, if CHANGELOG.md has no section for it, or if the tagged commit is on neither `main`
+   nor a `release/*` branch (`.github/scripts/check-tag-reachable.sh`). A patch release cut
+   from an earlier tag instead of `main` is pushed as a branch `release/X.Y.Z` first and tagged
+   there.
 6. **After:** the release has both archives with `.sha256`, `.intoto.jsonl` and
    `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
-   `gh attestation verify`. A version with a hyphen (`0.2.0-rc.1`) is marked as a
-   pre-release and doesn't move `:latest`.
-7. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
+   `gh attestation verify`; the workflow's last image step has verified the image index, each
+   architecture's image by its digest and each `-<arch>` tag (#379). A version with a hyphen
+   (`0.2.0-rc.1`) is marked as a pre-release and doesn't move `:latest`.
+7. **Install instructions:** point them at the new version in a docs pull request: the guides
+   in `docs/install/`, `deploy/nas-compose.yaml`, the Unraid template
+   (`deploy/unraid/sacdfs.xml`, `<Repository>`) and the TrueNAS catalog app
+   (`deploy/truenas/sacdfs/ix_values.yaml`, `images.image.tag`, and `app_version` in
+   `app.yaml`; then the catalog's `generate_metadata.py` raises `version` by one patch step,
+   as [store-apps.md](docs/install/store-apps.md#checked-with-the-stores-own-tooling) describes).
+8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
    in aclater/sacd (the minor version's summary and release list).
+
+**macOS archives of an earlier release.** Every release run builds and tests both macOS
+archives; the release gets them only when the repository variable `SACDFS_MACOS_RELEASE` is
+`true`. To add them later to a release whose run held them back, while the run's artifacts
+last (7 days): `gh workflow run release.yml -R aclater/sacdfs --ref main -f macos_run=RUN_ID
+-f tag=vX.Y.Z`. The job `macos-publish` checks that the run is the tag's successful release
+run and that the release has no macOS assets yet, verifies the checksums, attests the two
+archives, uploads them with their `.sha256` and `.intoto.jsonl`, appends their two lines to
+`SHA256SUMS` (the other lines stay byte for byte) and adds the macOS lines to the notes. It
+builds nothing and leaves the tag and the other assets alone. It needs
+docs/install/macos.md on `main` to describe the archives, since the notes link to it. It runs
+alone in the concurrency group `release-assets-<tag>`, and stops before replacing
+`SHA256SUMS` if the file changed since it read it. A run that
+fails after its first upload leaves the release half done, and a new run stops at "already has
+macOS assets": delete the macOS assets it uploaded (`gh release delete-asset`), put back
+`SHA256SUMS` from the run's log if it was replaced, and run it again.
+
+**Linux packages of an earlier release (#460).** Every release run packs and tests the `.rpm`
+and `.deb` packages and the source RPM (`packaging/`). To add them to a release made before
+that: `gh workflow run release.yml -R aclater/sacdfs --ref main -f packages_tag=vX.Y.Z`. The run
+checks the release's x86_64 and aarch64 archives against `SHA256SUMS` and their attestations,
+packs them and the tag's source, runs the package and SRPM tests, then (job
+`packages-publish`) attests the five files, uploads them with their `.sha256` and
+`.intoto.jsonl`, appends their lines to `SHA256SUMS` (the other lines stay byte for byte) and
+adds the package lines to the notes. It builds no binary and leaves the tag and the other
+assets alone. A run that fails after its first upload leaves the release half done, and a new
+run stops at "already has packages": delete the package assets it uploaded
+(`gh release delete-asset`), put back `SHA256SUMS` from the run's log if it was replaced, and
+run it again.
 
 **crates.io (#155).** On a tag of a final version (no hyphen, so not `0.4.0-rc.1`), the
 `crates-publish` job runs after the GitHub release: it asks the crates.io API whether that

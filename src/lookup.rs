@@ -34,6 +34,7 @@ use scarletbook::{Slot, Toc};
 use crate::disc::{Disc, Tuning};
 use crate::dsf::{self, MC_ALBUM_SUFFIX};
 use crate::fallback;
+use crate::safe_file;
 use crate::tags::{self, Fields, ITEMS, TagsFile};
 use crate::tags_cli::{self, AreaFields};
 
@@ -792,7 +793,7 @@ pub fn fetch_with<T: Transport>(
             Ok(()) => failed_in_a_row = 0,
             Err(Failure::Network(e)) => {
                 failed_in_a_row += 1;
-                say(format!("{}: nothing written: {e}", image.display()));
+                say(format!("{}: nothing written: {e}", safe_file::shown(image)));
                 if retrying {
                     sum.failed += 1;
                 } else {
@@ -807,11 +808,11 @@ pub fn fetch_with<T: Transport>(
             Err(Failure::Stop(e)) => {
                 sum.failed += 1;
                 stopped = true;
-                say(format!("{}: nothing written: {e}", image.display()));
+                say(format!("{}: nothing written: {e}", safe_file::shown(image)));
             }
             Err(Failure::Local(e)) => {
                 sum.failed += 1;
-                say(format!("{}: nothing written: {e}", image.display()));
+                say(format!("{}: nothing written: {e}", safe_file::shown(image)));
             }
         }
     }
@@ -853,7 +854,7 @@ fn fetch_one<T: Transport>(
     // Before anything is asked: a tags file that can't be merged into can't be written.
     let existing = read_tags(&path).map_err(Failure::Local)?;
     let mut facts = DiscFacts::new(toc, image);
-    let shown = image.display();
+    let shown = safe_file::shown(image);
 
     // Once per disc: an area that didn't fit the release its sibling matched gets no second try by
     // a weaker way, which could give one disc two albums.
@@ -941,7 +942,7 @@ fn fetch_one<T: Transport>(
     if options.dry_run {
         say(format!(
             "{shown}: dry run: {added} keys would be added to {}:\n{}",
-            path.display(),
+            safe_file::shown(&path),
             planned.to_text()
         ));
         return Ok(());
@@ -953,16 +954,16 @@ fn fetch_one<T: Transport>(
     // The file must read back as what was meant: if not, it would be ignored by the mount.
     let text = merged.to_text();
     TagsFile::parse(&text).map_err(|e| Failure::Local(format!("the merged tags file doesn't parse: {e}")))?;
-    fs::create_dir_all(dir).map_err(|e| Failure::Local(format!("{}: {e}", dir.display())))?;
+    fs::create_dir_all(dir).map_err(|e| Failure::Local(format!("{}: {e}", safe_file::shown(dir))))?;
     {
         let _writing = WRITING.lock().unwrap_or_else(|p| p.into_inner());
         if STOPPING.load(Ordering::Relaxed) {
             return Err(Failure::Local("the mount is stopping".to_owned()));
         }
         tags_cli::write_atomic(&path, text.as_bytes())
-            .map_err(|e| Failure::Local(format!("{}: {e}", path.display())))?;
+            .map_err(|e| Failure::Local(format!("{}: {e}", safe_file::shown(&path))))?;
     }
-    say(format!("{shown}: {added} keys added to {}", path.display()));
+    say(format!("{shown}: {added} keys added to {}", safe_file::shown(&path)));
     sum.written += 1;
     sum.keys += added;
     Ok(())
@@ -1047,10 +1048,12 @@ fn advice_for(reason: &str, options: Options) -> Option<&'static str> {
 
 /// The tags file at `path`, if there is one.
 fn read_tags(path: &Path) -> Result<Option<TagsFile>, String> {
-    match fs::read_to_string(path) {
-        Ok(text) => TagsFile::parse(&text).map(Some).map_err(|e| format!("{}: {e}", path.display())),
+    match safe_file::read_text(path, safe_file::MAX_TAGS_TEXT) {
+        Ok((text, _)) => {
+            TagsFile::parse(&text).map(Some).map_err(|e| format!("{}: {e}", safe_file::shown(path)))
+        }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{}: {e}", path.display())),
+        Err(e) => Err(format!("{}: {e}", safe_file::shown(path))),
     }
 }
 
@@ -1379,5 +1382,20 @@ mod tests {
             assert_eq!(format_rank(format, false), stereo, "{format}, stereo");
             assert_eq!(format_rank(format, true), multichannel, "{format}, multichannel");
         }
+    }
+
+    /// A tags file that is a symbolic link is not read.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_tags_file_is_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim.toml");
+        std::fs::write(&victim, "[album]\ngenre = \"Jazz\"\n").unwrap();
+        use super::read_tags;
+        assert!(matches!(read_tags(&victim), Ok(Some(_))));
+        let path = dir.path().join("0123.toml");
+        std::os::unix::fs::symlink(&victim, &path).unwrap();
+        assert!(read_tags(&path).is_err());
+        assert!(matches!(read_tags(&dir.path().join("none.toml")), Ok(None)));
     }
 }

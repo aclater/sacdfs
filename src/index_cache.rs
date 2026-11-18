@@ -19,9 +19,8 @@
 //!   discs whose saved form changed) and atomically (a temporary file, then a rename). The
 //!   directory is bounded in size; the least recently used files are removed first.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -75,8 +74,8 @@ impl ImageKey {
         Ok(ImageKey::from_parts(
             canonical.as_os_str().as_encoded_bytes(),
             meta.len(),
-            meta.mtime(),
-            meta.mtime_nsec(),
+            crate::platform::mtime(meta).0,
+            crate::platform::mtime(meta).1,
         ))
     }
 
@@ -261,13 +260,10 @@ pub fn global() -> Option<&'static Arc<IndexCache>> {
     GLOBAL.get()
 }
 
-/// The default cache directory: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`.
+/// The default cache directory: `$XDG_CACHE_HOME/sacdfs`, else `~/.cache/sacdfs`
+/// (`%LOCALAPPDATA%\sacdfs` on Windows).
 pub fn default_dir() -> Option<PathBuf> {
-    let abs = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
-    std::env::var_os("XDG_CACHE_HOME")
-        .and_then(abs)
-        .or_else(|| std::env::var_os("HOME").and_then(abs).map(|h| h.join(".cache")))
-        .map(|d| d.join("sacdfs"))
+    crate::platform::cache_home().map(|d| d.join("sacdfs"))
 }
 
 impl IndexCache {
@@ -366,9 +362,7 @@ impl IndexCache {
                 d.touched = true;
             } else if !d.touched {
                 // Used in this mount: keep it from being evicted first.
-                if let Ok(f) = File::open(&path) {
-                    let _ = f.set_modified(SystemTime::now());
-                }
+                let _ = crate::platform::set_modified(&path, SystemTime::now());
                 d.touched = true;
             }
             // A dropped disc saved (or with nothing to save) is let go of.
@@ -427,7 +421,7 @@ impl IndexCache {
         let bytes = encode(key, shapes, areas);
         if !self.dir.is_dir() {
             fs::create_dir_all(&self.dir)?;
-            fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))?;
+            crate::platform::make_private_dir(&self.dir)?;
         }
         let name = key.file_name();
         static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -437,12 +431,7 @@ impl IndexCache {
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         let result = (|| {
-            let mut f = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(&tmp)?;
+            let mut f = crate::safe_file::create_new(&tmp, 0o600)?;
             f.write_all(&bytes)?;
             drop(f);
             fs::rename(&tmp, self.dir.join(&name))
@@ -500,7 +489,12 @@ impl IndexCache {
 /// The contents of a regular file of at most [`MAX_FILE`] bytes, not following a
 /// symbolic link.
 fn read_bounded(path: &Path) -> io::Result<Vec<u8>> {
-    let f = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)?;
+    use crate::platform::OpenFlags;
+    let f = crate::platform::set_open_flags(
+        OpenOptions::new().read(true),
+        OpenFlags::NO_FOLLOW | OpenFlags::NON_BLOCK,
+    )
+    .open(path)?;
     let meta = f.metadata()?;
     if !meta.is_file() || meta.len() > MAX_FILE {
         return Err(io::Error::other("not an index file"));
@@ -616,8 +610,10 @@ mod tests {
         assert!(!cache.dir().exists(), "made only when written to");
         assert_eq!(cache.load(&key(), &shapes()), None);
         cache.store(&key(), &shapes(), &areas()).unwrap();
+        #[cfg(unix)]
         assert_eq!(
-            fs::metadata(cache.dir()).unwrap().permissions().mode() & 0o777,
+            std::os::unix::fs::PermissionsExt::mode(&fs::metadata(cache.dir()).unwrap().permissions())
+                & 0o777,
             0o700,
             "private directory"
         );
@@ -634,9 +630,11 @@ mod tests {
         for i in 0..10u8 {
             let k = ImageKey::from_parts(&[b'x', i], 1, 2, 3);
             cache.store(&k, &shapes(), &areas()).unwrap();
-            let f = File::open(cache.dir().join(k.file_name())).unwrap();
-            f.set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u64::from(i) + 10))
-                .unwrap();
+            crate::platform::set_modified(
+                &cache.dir().join(k.file_name()),
+                SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u64::from(i) + 10),
+            )
+            .unwrap();
         }
         cache.trim().unwrap();
         let total: u64 =
@@ -647,6 +645,7 @@ mod tests {
         assert_eq!(cache.load(&ImageKey::from_parts(&[b'x', 0], 1, 2, 3), &shapes()), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlinks_and_oversized_files_are_not_read() {
         let dir = tempfile::tempdir().unwrap();
@@ -656,7 +655,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, dir.path().join(key().file_name())).unwrap();
         assert_eq!(cache.load(&key(), &shapes()), None);
         fs::remove_file(dir.path().join(key().file_name())).unwrap();
-        let f = File::create(dir.path().join(key().file_name())).unwrap();
+        let f = fs::File::create(dir.path().join(key().file_name())).unwrap();
         f.set_len(MAX_FILE + 1).unwrap();
         assert_eq!(cache.load(&key(), &shapes()), None);
     }

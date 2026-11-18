@@ -26,7 +26,7 @@ fn the_seek_index_cache_lets_go_of_removed_images() {
     let lib = dir.path().canonicalize().unwrap();
     let img = common::corpus().join("images/dst-stereo-5ch-2054.iso");
     std::fs::create_dir(lib.join("kept")).unwrap();
-    std::os::unix::fs::symlink(&img, lib.join("kept/disc.iso")).unwrap();
+    common::link(&img, lib.join("kept/disc.iso")).unwrap();
     let tree = Tree::with_options(SourceDir::scan(&lib).unwrap(), Tuning::default(), Output::dsf_only())
         .watching(&Sidecars::none())
         .with_refresh(Duration::ZERO);

@@ -19,6 +19,7 @@ use scarletbook::Slot;
 
 use crate::disc::{Disc, Tuning};
 use crate::lookup;
+use crate::safe_file::{self, shown};
 use crate::tags::{self, ART, Fields, Key, TagsFile};
 use crate::track::TrackFile;
 use crate::verify::{self, container, id3};
@@ -115,7 +116,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     let r = match cli.cmd {
         Cmd::Key { tags, images } => key(tags.as_deref(), &images),
         Cmd::Import { tags, verify } => import(&tags, verify).map(|s| {
-            eprint!("{}", s.render());
+            eprint!("{}", safe_file::printable(&s.render()));
             s.all_handled()
         }),
         Cmd::Fetch {
@@ -156,9 +157,9 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
             };
             let mut client = lookup::Client::new(lookup::Http::new());
             let s = lookup::fetch_with(&tags, &images, options, &mut client, session.as_mut(), |line| {
-                println!("{line}")
+                println!("{}", safe_file::printable(&line));
             });
-            eprint!("{}", s.render());
+            eprint!("{}", safe_file::printable(&s.render()));
             if let Some(a) = &session {
                 let c = a.counters;
                 eprintln!(
@@ -179,7 +180,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(2),
         Err(e) => {
-            eprintln!("sacdfs tags: {e}");
+            eprintln!("sacdfs tags: {}", safe_file::printable(&e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -219,12 +220,8 @@ fn acoustid_session(
     }
     lookup::worker::lower_priority();
     let stop = Arc::new(AtomicBool::new(false));
-    for sig in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
-        // The first stops at the next second of audio or the next disc; a second ends the run now.
-        signal_hook::flag::register_conditional_shutdown(sig, 130, stop.clone())
-            .map_err(|e| e.to_string())?;
-        signal_hook::flag::register(sig, stop.clone()).map_err(|e| e.to_string())?;
-    }
+    // The first stops at the next second of audio or the next disc; a second ends the run now.
+    crate::platform::stop_on_signals(&stop).map_err(|e| e.to_string())?;
     let mut config = lookup::acoustid::Config::new(key, fpcalc);
     config.budget = budget;
     if let Some(m) = max_load {
@@ -237,15 +234,15 @@ fn acoustid_session(
 fn key(dir: Option<&Path>, images: &[PathBuf]) -> io::Result<bool> {
     for image in images {
         let disc = Disc::open(image, 0, Tuning::default())
-            .map_err(|e| io::Error::other(format!("{}: {e}", image.display())))?;
+            .map_err(|e| io::Error::other(format!("{}: {e}", shown(image))))?;
         let key = tags::disc_key(disc.toc());
         match dir {
             Some(d) => {
                 let p = d.join(format!("{key}.toml"));
                 let state = if p.exists() { "exists" } else { "none" };
-                println!("{key}\t{}\t{state}\t{}", p.display(), image.display());
+                println!("{key}\t{}\t{state}\t{}", shown(&p), shown(image));
             }
-            None => println!("{key}\t{}", image.display()),
+            None => println!("{key}\t{}", shown(image)),
         }
     }
     Ok(true)
@@ -289,14 +286,20 @@ impl ImportSummary {
             self.files, self.written, self.created, self.keys, self.pictures
         );
         if !self.skipped.is_empty() {
-            let k: Vec<&str> = self.skipped.iter().map(String::as_str).collect();
+            // Each key escaped by itself (a TXXX description can hold any character), and at
+            // most 32 of them.
+            let mut k: Vec<String> =
+                self.skipped.iter().take(32).map(|k| safe_file::one_line(k).into_owned()).collect();
+            if self.skipped.len() > 32 {
+                k.push(format!("+{} more", self.skipped.len() - 32));
+            }
             s.push_str(&format!("not kept (frames the tag layer cannot write): {}\n", k.join(", ")));
         }
         for f in &self.failed {
             s.push_str(&format!("failed: {f}\n"));
         }
         if self.not_imported > 0 {
-            let report = self.report.as_deref().map_or(String::new(), |p| format!("; see {}", p.display()));
+            let report = self.report.as_deref().map_or(String::new(), |p| format!("; see {}", shown(p)));
             s.push_str(&format!(
                 "not imported: {} extracts that verify did not match or could not check{report}\n",
                 self.not_imported
@@ -401,7 +404,7 @@ pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
     };
     for (image, rows) in by_image {
         if let Err(e) = import_disc(&dir, &image, &rows, &mut sum) {
-            sum.failed.push(format!("{}: {e}", image.display()));
+            sum.failed.push(format!("{}: {e}", shown(&image)));
         }
     }
     Ok(sum)
@@ -429,7 +432,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
             // No tag: nothing to keep.
             Ok(None) => continue,
             Err(e) => {
-                sum.failed.push(format!("{}: {e}", row.path.display()));
+                sum.failed.push(format!("{}: {e}", shown(&row.path)));
                 continue;
             }
         };
@@ -452,8 +455,8 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
                         if !fits {
                             sum.not_kept.push(format!(
                                 "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
-                                row.path.display(),
-                                image.display(),
+                                shown(&row.path),
+                                shown(image),
                                 p.len() >> 10,
                                 tags::MAX_ART_BYTES >> 10
                             ));
@@ -475,9 +478,10 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
                                 fields.insert(name.to_owned(), f.value.clone());
                             }
                             Err(why) => sum.not_kept.push(format!(
-                                "{} (disc {}): {name}, {why}",
-                                row.path.display(),
-                                image.display()
+                                "{} (disc {}): {}, {why}",
+                                shown(&row.path),
+                                shown(image),
+                                safe_file::one_line(name)
                             )),
                         }
                     }
@@ -537,12 +541,12 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         return Ok(());
     }
     let path = dir.join(format!("{key}.toml"));
-    let existing = match fs::read_to_string(&path) {
-        Ok(text) => {
-            Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", path.display())))?)
+    let existing = match safe_file::read_text(&path, safe_file::MAX_TAGS_TEXT) {
+        Ok((text, _)) => {
+            Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", shown(&path))))?)
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e),
+        Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", shown(&path)))),
     };
     let created = existing.is_none();
     let mut merged = existing.unwrap_or_default();
@@ -554,8 +558,8 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         sum.not_kept.truncate(listed);
         sum.not_kept.push(format!(
             "disc {}: its tags file {} would be {} KiB, over the {} KiB import writes; nothing added",
-            image.display(),
-            path.display(),
+            shown(image),
+            shown(&path),
             t.len() >> 10,
             MAX_FILE_BYTES >> 10
         ));
@@ -617,11 +621,10 @@ pub(crate) fn merge(into: &mut TagsFile, from: &TagsFile) -> usize {
         + tracks(&mut into.multichannel.track, &from.multichannel.track)
 }
 
-/// Writes `bytes` to `path` through a temporary file in the same directory, renamed over it.
+/// Writes `bytes` to `path` through a new temporary file in the same directory, renamed over it
+/// ([`safe_file::write_atomic`]).
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("tmp~");
-    fs::write(&tmp, bytes)?;
-    fs::rename(&tmp, path)
+    safe_file::write_atomic(path, bytes, safe_file::MODE)
 }
 
 /// The ID3 tag of an extract, read only.
@@ -777,5 +780,53 @@ mod tests {
             assert_eq!(front_cover(&tag), Some(jpg.clone()), "v2.{major}");
         }
         assert_eq!(front_cover(b"ID3\x04\0\0\0\0\0\0"), None);
+    }
+
+    /// Tags files and covers are written through a new temporary file: a link at the old
+    /// temporary name, or at a name made of the process ID and a counter, is never written
+    /// through.
+    #[cfg(unix)]
+    #[test]
+    fn writes_through_no_link() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        fs::write(&victim, b"precious").unwrap();
+        for name in ["0123.toml", "0123.jpg"] {
+            let path = dir.path().join(name);
+            let _ = symlink(&victim, path.with_extension("tmp~"));
+            for n in 0..64 {
+                let guess = dir.path().join(format!(".{name}.{}.{n}.tmp", std::process::id()));
+                symlink(&victim, guess).unwrap();
+            }
+            write_atomic(&path, b"new").unwrap();
+            write_atomic(&path, b"newer").unwrap();
+            assert_eq!(fs::read(&path).unwrap(), b"newer");
+        }
+        assert_eq!(fs::read(&victim).unwrap(), b"precious");
+        // A tags file that is a link is not read.
+        let toml = dir.path().join("4567.toml");
+        fs::write(&victim, "[album]\ngenre = \"Jazz\"\n").unwrap();
+        symlink(&victim, &toml).unwrap();
+        assert!(safe_file::read_text(&toml, safe_file::MAX_TAGS_TEXT).is_err());
+    }
+
+    /// Keys import could not keep are escaped one by one in its summary.
+    #[test]
+    fn summary_keys_are_escaped() {
+        let keys = ["TXXX:\x1b]0;title\x07\x1b[2J", "TXXX:a\nUNSUPPORTED (1): forged"];
+        let sum = ImportSummary {
+            skipped: keys.iter().map(|k| (*k).to_owned()).collect(),
+            ..ImportSummary::default()
+        };
+        let out = sum.render();
+        assert!(!out.chars().any(|c| c.is_control() && c != '\n'), "{out:?}");
+        assert!(!out.lines().any(|l| l.starts_with("UNSUPPORTED")), "{out}");
+        assert!(out.contains("\\x1b]0;title\\x07\\x1b[2J") && out.contains("a\\x0aUNSUPPORTED"), "{out}");
+        let many = ImportSummary {
+            skipped: (0..100).map(|i| format!("K{i:03}")).collect(),
+            ..ImportSummary::default()
+        };
+        assert!(many.render().contains("+68 more"));
     }
 }

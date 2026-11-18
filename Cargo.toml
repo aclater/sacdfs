@@ -1,6 +1,6 @@
 [package]
 name = "sacdfs"
-version = "0.6.3"
+version = "0.6.5"
 edition = "2024"
 rust-version = "1.85"
 description = "Read-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand"
@@ -23,22 +23,15 @@ include = [
 [dependencies]
 # The engine: SACD parsing, demultiplexing and DST decoding, from crates.io, pinned exactly
 # (published from the release tag).
-scarletbook = "=0.5.9"
+scarletbook = "=0.6.1"
 # The DSD-to-PCM converter behind the WAV files (#84), from the same release as the engine.
-scarletbook-pcm = "=0.5.9"
-# Pure-Rust FUSE: no libfuse needed, mounts through fusermount3.
-fuser = { version = "0.18", default-features = false }
+scarletbook-pcm = "=0.6.1"
 clap = { version = "4.5", features = ["derive"] }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 libc = "0.2"
 log = "0.4"
 lru = "0.19"
-# statvfs of SOURCE for statfs (#62), without `unsafe` in sacdfs. Already in the graph
-# through fuser, with the same feature.
-# getrusage, for the CPU seconds `tags fetch --acoustid` reports (#296): the same crate.
-nix = { version = "0.31", default-features = false, features = ["fs", "resource"] }
 rayon = "1.10"
-signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 # Names and checksums of the persistent seek index's files.
 sha2 = "0.11"
 # The tags files (#81): TOML, read and written through serde.
@@ -48,6 +41,30 @@ toml = { version = "1.1", default-features = false, features = ["parse", "displa
 # roots, so that the release's binary depends on no system TLS library or CA store.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 serde_json = "1"
+# The NFS front end (#420, feature `nfs`): the protocol layer vendored from nfsserve 0.11.0 in
+# src/nfs/proto (BSD-3-Clause) needs these.
+tokio = { version = "1", optional = true, default-features = false, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "signal", "macros"] }
+async-trait = { version = "0.1", optional = true }
+byteorder = { version = "1.4", optional = true }
+num-derive = { version = "0.4", optional = true }
+num-traits = { version = "0.2", optional = true }
+
+# Unix: the platform layer's calls (src/platform/unix.rs).
+[target.'cfg(unix)'.dependencies]
+# statvfs of SOURCE for statfs (#62), `openat` for sidecars, without `unsafe` in sacdfs.
+# Already in the graph through fuser, with the same feature.
+nix = { version = "0.31", default-features = false, features = ["fs", "resource"] }
+signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
+
+# Linux: the FUSE front end (src/fuse.rs, src/linux_main.rs). fuser on macOS needs libfuse at
+# build time and supports neither FUSE-T nor FSKit (#420); Windows has WinFsp (#419).
+[target.'cfg(target_os = "linux")'.dependencies]
+# Pure-Rust FUSE: no libfuse needed, mounts through fusermount3.
+fuser = { version = "0.18", default-features = false }
+
+# Windows: the platform layer's calls (src/platform/windows.rs). Already in the graph.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
 
 [dev-dependencies]
 # The converter benchmark (benches/pcm.rs); no plots, no rayon.
@@ -56,6 +73,19 @@ dhat = "0.3"
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 tempfile = "3"
+
+[features]
+# `sacdfs-nfs` and `sacdfs::nfs`, the NFS front end (#420): macOS's, and NFS clients' without FUSE.
+nfs = ["dep:tokio", "dep:async-trait", "dep:byteorder", "dep:num-derive", "dep:num-traits"]
+
+[[bin]]
+name = "sacdfs"
+path = "src/main.rs"
+
+[[bin]]
+name = "sacdfs-nfs"
+path = "src/bin/sacdfs_nfs.rs"
+required-features = ["nfs"]
 
 [[bench]]
 name = "pcm"

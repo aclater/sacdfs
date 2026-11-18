@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
-use std::os::unix::fs::FileExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -180,7 +179,15 @@ enum Open {
     /// A track file, read through the engine.
     Track(Arc<Reader>),
     /// A sidecar file: its source file, open, and its node.
-    Sidecar(Arc<std::fs::File>, Arc<SidecarFile>),
+    Sidecar(Arc<SidecarOpen>, Arc<SidecarFile>),
+}
+
+/// A sidecar's source file, open, with its place under the bound on open sidecar files
+/// ([`super::sidecar_slots`]), given back with the file.
+#[derive(Debug)]
+struct SidecarOpen {
+    file: std::fs::File,
+    _slot: super::sidecar_slots::Slot,
 }
 
 impl Open {
@@ -199,7 +206,7 @@ fn read_plain(file: &std::fs::File, offset: u64, size: u32) -> io::Result<Vec<u8
     let mut buf = vec![0u8; size as usize];
     let mut got = 0;
     while got < buf.len() {
-        match file.read_at(&mut buf[got..], offset + got as u64) {
+        match crate::platform::read_at(file, &mut buf[got..], offset + got as u64) {
             Ok(0) => break,
             Ok(n) => got += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -371,7 +378,7 @@ impl Volume {
                 let pending = self.watchdog.watch(What::new("sidecar read", Ino(ino)), reply);
                 self.requests.spawn(move || {
                     pending.running();
-                    let r = read_plain(&file, offset, size);
+                    let r = read_plain(&file.file, offset, size);
                     let Some(reply) = pending.take() else { return };
                     match r {
                         Ok(data) => reply.data(&data),
@@ -649,7 +656,8 @@ impl Shared {
                 // Art in an area is checked against its source, and asked about again each time (#235).
                 let (ino, art) = self.tree.lookup_art(parent, name);
                 volatile = art;
-                negative = self.tree.children(parent).is_some();
+                // Not if the listing left out an image for now: it may be there at the next.
+                negative = self.tree.children(parent).is_some() && !self.tree.retrying(parent);
                 ino
             }
         };
@@ -734,29 +742,44 @@ impl Shared {
             return Err(Error::NoMemory);
         }
         let open = match &*node {
-            Node::File(file) => Open::Track(Arc::new(Reader::opened_by(file.clone(), network_server(pid)))),
-            Node::Sidecar(s) => match self.tree.open_sidecar(s) {
-                Ok(f) => Open::Sidecar(Arc::new(f), s.clone()),
-                Err(e) => {
-                    let gone = e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(libc::ESTALE);
-                    if gone {
-                        // A cover removed or replaced: the client asks again (#235).
-                        log::info!("sidecar {}: open: {e}", s.target.display());
-                    } else {
-                        let target = s.target.display();
-                        crate::errlog::failed(
-                            &format!("sidecar {target}"),
-                            format_args!("sidecar {target} (inode {ino}): open: {e}"),
-                        );
+            Node::File(file) => Open::Track(Arc::new(Reader::opened_by(file.clone(), pid, network_server))),
+            Node::Sidecar(s) => {
+                // Bounded, so that sidecars held open never take the descriptors images need:
+                // past the bound, this client's open fails, and no other request.
+                let Some(slot) = super::sidecar_slots::global().take() else {
+                    let cap = super::sidecar_slots::global().cap();
+                    crate::errlog::failed(
+                        "sidecar open bound",
+                        format_args!(
+                            "sidecar {} (inode {ino}): open refused, {cap} sidecar files are open already: EMFILE",
+                            s.target.display()
+                        ),
+                    );
+                    return Err(Error::Os(crate::platform::TOO_MANY_OPEN_FILES));
+                };
+                match self.tree.open_sidecar(s) {
+                    Ok(file) => Open::Sidecar(Arc::new(SidecarOpen { file, _slot: slot }), s.clone()),
+                    Err(e) => {
+                        let gone = e.kind() == io::ErrorKind::NotFound || crate::platform::is_stale(&e);
+                        if gone {
+                            // A cover removed or replaced: the client asks again (#235).
+                            log::info!("sidecar {}: open: {e}", s.target.display());
+                        } else {
+                            let target = s.target.display();
+                            crate::errlog::failed(
+                                &format!("sidecar {target}"),
+                                format_args!("sidecar {target} (inode {ino}): open: {e}"),
+                            );
+                        }
+                        // Gone since the client was told of it (#235): it asks again, then.
+                        let missing = e.raw_os_error().is_some() && e.kind() == io::ErrorKind::NotFound;
+                        if missing && self.tree.art_told_lately(ino) {
+                            return Err(Error::Stale);
+                        }
+                        return Err(e.raw_os_error().map_or(Error::Io, Error::Os));
                     }
-                    // Gone since the client was told of it (#235): it asks again, then.
-                    let missing = e.raw_os_error().is_some() && e.kind() == io::ErrorKind::NotFound;
-                    if missing && self.tree.art_told_lately(ino) {
-                        return Err(Error::Stale);
-                    }
-                    return Err(e.raw_os_error().map_or(Error::Io, Error::Os));
                 }
-            },
+            }
             Node::Dir(_) => return Err(Error::IsDir),
         };
         let fh = self.next_fh.fetch_add(1, Ordering::Relaxed);
@@ -830,17 +853,13 @@ impl std::fmt::Display for Ino {
 /// (`NETWORK_REORDER` in `track.rs`):* NFS-Ganesha's reads can reach sacdfs in order, so
 /// copies behind it went undetected. *Why the thread group's name:* FUSE gives the calling
 /// thread, and NFS-Ganesha's workers have names of their own. 0, or a process in another PID
-/// namespace, is unknown: the order of the reads still tells.
+/// namespace, is unknown: the order of the reads still tells, as it does wherever
+/// [`crate::platform::process_name`] knows no names.
 fn network_server(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    let tgid = std::fs::read_to_string(format!("/proc/{pid}/status"))
-        .ok()
-        .and_then(|s| s.lines().find_map(|l| l.strip_prefix("Tgid:").map(|v| v.trim().to_owned())));
-    let Some(tgid) = tgid else { return false };
-    let Ok(comm) = std::fs::read_to_string(format!("/proc/{tgid}/comm")) else { return false };
-    is_network_server(comm.trim_end())
+    crate::platform::process_name(pid).is_some_and(|comm| is_network_server(&comm))
 }
 
 /// Whether a process named `comm` is a network file server's ([`network_server`]). Samba 4.18
@@ -868,6 +887,8 @@ mod network_tests {
     /// By name only: a local program named like a file server counts as one. Its reader is then
     /// treated as behind a network client: it lets an earlier player go first until it pauses
     /// or reads far ahead, and its audio is the same.
+    // Process names come from /proc: Linux only (platform::process_name).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_local_process_named_smbd_counts_as_a_file_server() {
         let dir = tempfile::tempdir().unwrap();

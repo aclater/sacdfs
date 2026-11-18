@@ -18,7 +18,6 @@
 
 use std::fs::File;
 use std::io;
-use std::os::unix::fs::FileExt;
 
 use sha2::{Digest, Sha256};
 
@@ -64,19 +63,9 @@ impl FileSource {
     /// is refused instead of holding the caller forever. Blocking reads are restored once
     /// the descriptor is known to be a regular file.
     pub fn open(path: &std::path::Path) -> io::Result<FileSource> {
-        use nix::fcntl::{FcntlArg, OFlag, fcntl};
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
-            .open(path)?;
-        let meta = file.metadata()?;
-        if !meta.is_file() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
-        }
-        let flags = OFlag::from_bits_truncate(fcntl(&file, FcntlArg::F_GETFL)?);
-        fcntl(&file, FcntlArg::F_SETFL(flags - OFlag::O_NONBLOCK))?;
-        Ok(FileSource { file, len: meta.len() })
+        let file = crate::platform::open_regular(path)?;
+        let len = file.metadata()?.len();
+        Ok(FileSource { file, len })
     }
 }
 
@@ -85,7 +74,7 @@ impl Source for FileSource {
         self.len
     }
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
-        self.file.read_exact_at(buf, offset)
+        crate::platform::read_exact_at(&self.file, buf, offset)
     }
 }
 
@@ -809,6 +798,7 @@ mod tests {
 
     /// A FIFO in place of a track file is refused at once: opening it must not wait for a
     /// writer.
+    #[cfg(unix)]
     #[test]
     fn open_refuses_fifo_without_blocking() {
         let dir = tempfile::tempdir().unwrap();

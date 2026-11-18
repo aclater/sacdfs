@@ -35,6 +35,31 @@ use scarletbook::{
 use crate::handles::Stamp;
 use crate::index_cache::{AreaShape, ImageKey, IndexCache};
 
+/// Opens the image file at `path` for reading. *Why not `File::open`:* the path (or the link
+/// it is) can be replaced between the scan and this open, and an open of a FIFO for reading
+/// blocks until a writer comes, holding a worker for good. So it opens with `O_NONBLOCK`,
+/// refuses anything but a regular file (`fstat`), and then clears `O_NONBLOCK` again (it means
+/// nothing to a regular file on a local filesystem, but goes to the server of a FUSE source):
+/// [`crate::platform::open_regular`].
+pub fn open_image(path: &Path) -> io::Result<File> {
+    crate::platform::open_regular(path)
+}
+
+/// Whether `e`, an image's open failing, is a passing condition of the process or the system
+/// (out of file descriptors or memory, an I/O error) rather than the image's own content: the
+/// image is not left out of its folder for good, its folder is listed again later.
+pub fn transient(e: &scarletbook::Error) -> bool {
+    match e {
+        scarletbook::Error::Io(e) => transient_io(e),
+        _ => false,
+    }
+}
+
+/// [`transient`] for an I/O error.
+pub fn transient_io(e: &io::Error) -> bool {
+    crate::platform::is_transient(e)
+}
+
 /// Bytes of DSF audio a seek is assumed to need first (a common read size of players and
 /// of the kernel for a random read): a located cursor's range covers its frames, so that
 /// the library sizes the first read to them.
@@ -167,12 +192,13 @@ impl Source {
 
     /// Opens the image again; refused if its length changed since its TOC was read.
     fn open(&self) -> io::Result<(File, Stamp)> {
-        let file = File::open(&self.inner.path)?;
+        let file = open_image(&self.inner.path)?;
         let meta = file.metadata()?;
         if meta.len() != self.inner.len {
             return Err(io::Error::other("image file changed size since it was mounted"));
         }
-        Ok((file, Stamp::of(&meta)))
+        let stamp = Stamp::of(&file, &meta);
+        Ok((file, stamp))
     }
 }
 
@@ -260,14 +286,15 @@ impl Disc {
         tuning: Tuning,
         cache: Option<&IndexCache>,
     ) -> Result<Disc, scarletbook::Error> {
-        let file = File::open(path)?;
+        let file = open_image(path)?;
         let meta = file.metadata()?;
         let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         // The TOC is read through the handle that is kept for the audio reads, so that
         // the first audio read does not open the image again (a round trip or two on a
         // network share, #26).
         let handle = crate::handles::next_key();
-        crate::handles::global().insert(handle, file, Stamp::of(&meta));
+        let stamp = Stamp::of(&file, &meta);
+        crate::handles::global().insert(handle, file, stamp);
         let source = Source::new(handle, path, meta.len());
         let mut lib = match scarletbook::Disc::open(ReadAtReader::new(source.clone())) {
             Ok(d) => d,
@@ -330,7 +357,7 @@ impl Disc {
             let built = bytes.as_ref().map(|b| AreaIndex::from_bytes(area, sectors, b, INLINE_BUDGET));
             let set = built.is_some_and(|r| {
                 r.and_then(|idx| {
-                    let n = idx.hints();
+                    let n = idx.hint_count();
                     lib.set_seek_index(st.slot, idx).map(|()| loaded_hints[i] = n)
                 })
                 .inspect_err(|e| log::debug!("{}: saved seek index not used: {e}", path.display()))
@@ -427,7 +454,7 @@ impl Disc {
 
     /// The seek hints the area's index holds.
     pub fn seek_hints(&self, area: usize) -> usize {
-        self.areas.get(area).and_then(|st| self.lib.seek_index(st.slot)).map_or(0, |i| i.hints())
+        self.areas.get(area).and_then(|st| self.lib.seek_index(st.slot)).map_or(0, |i| i.hint_count())
     }
 
     /// The seek hints of the area loaded from the persistent seek index.
@@ -438,6 +465,14 @@ impl Disc {
     /// Cursors that started reading provisionally so far, and those that read exactly.
     pub fn readings(&self) -> (u64, u64) {
         (self.readings[0].load(Ordering::Relaxed), self.readings[1].load(Ordering::Relaxed))
+    }
+
+    /// The image file, from the cache of open files (opened again if it was closed), for
+    /// a look at where its data is ([`crate::area_data`]). Its file position is shared:
+    /// only positioned reads and `lseek` for holes and data are used on it.
+    pub(crate) fn file(&self) -> io::Result<crate::handles::SharedFile> {
+        let s = &self.source;
+        crate::handles::global().get(s.inner.key, &s.inner.path, || s.open())
     }
 }
 
@@ -511,7 +546,11 @@ impl Cursor {
                 self.changed.store(true, Ordering::Relaxed);
                 self.lib.continue_range_frames(prev, self.slot, self.next_t, end)
             }
-            None => self.lib.range_frames_cursor(self.slot, self.next_t, end),
+            None => self.lib.frames_cursor(
+                self.slot,
+                scarletbook::FrameSpan::Range(self.next_t, end),
+                scarletbook::CursorOptions::new(),
+            ),
         };
         match next {
             Ok(c) => self.cursor = Some(c),
@@ -593,7 +632,7 @@ fn log_unspecified_layouts(path: &Path, toc: &Toc) {
         .areas
         .iter()
         .filter_map(|a| match a.loudspeaker_layout() {
-            scarletbook::LoudspeakerLayout::Unspecified { channels, config } => {
+            scarletbook::LoudspeakerLayout::Unspecified { channels, config, .. } => {
                 Some(format!("{:?} area (channel count {channels}, configuration {config:#04x})", a.slot))
             }
             _ => None,

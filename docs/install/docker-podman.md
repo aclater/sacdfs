@@ -41,7 +41,7 @@ Podman (SMB only); step 4 was not. See [Details](#details).
      -v sacdfs-cache:/cache \
      --health-cmd /usr/local/bin/healthcheck.sh --health-interval 30s \
      --health-timeout 10s --health-start-period 300s --health-retries 3 \
-     ghcr.io/aclater/sacdfs:0.6.3
+     ghcr.io/aclater/sacdfs:0.6.5
    ```
 
    Docker:
@@ -56,7 +56,7 @@ Podman (SMB only); step 4 was not. See [Details](#details).
      -p 445:445 -p 2049:2049 \
      -v /srv/music:/images:ro \
      -v sacdfs-cache:/cache \
-     ghcr.io/aclater/sacdfs:0.6.3
+     ghcr.io/aclater/sacdfs:0.6.5
    ```
 
    *You should see* a long hexadecimal ID. On Debian or Ubuntu, write `--security-opt apparmor=unconfined`

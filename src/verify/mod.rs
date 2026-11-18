@@ -103,11 +103,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).try_init();
     match run(&args) {
         Ok(summary) => {
-            eprint!("{}", summary.render());
+            eprint!("{}", crate::safe_file::printable(&summary.render()));
             if summary.all_identical() { ExitCode::SUCCESS } else { ExitCode::from(2) }
         }
         Err(e) => {
-            eprintln!("sacdfs verify: {e}");
+            eprintln!("sacdfs verify: {}", crate::safe_file::printable(&e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -238,39 +238,6 @@ fn mtime_text(m: &fs::Metadata) -> String {
     }
 }
 
-/// The mount points of sacdfs mounts.
-fn sacdfs_mounts() -> Vec<PathBuf> {
-    let info = fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
-    info.lines()
-        .filter_map(|l| {
-            let mp = l.split(' ').nth(4)?;
-            let mut tail = l.split(" - ").nth(1)?.split(' ');
-            let (fstype, source) = (tail.next()?, tail.next()?);
-            let ours = fstype == "fuse.sacdfs" || (fstype.starts_with("fuse") && source == "sacdfs");
-            ours.then(|| PathBuf::from(unescape_octal(mp)))
-        })
-        .collect()
-}
-
-/// Undoes mountinfo's octal escapes (`\040` for a space).
-fn unescape_octal(s: &str) -> OsString {
-    use std::os::unix::ffi::OsStringExt;
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'\\' && i + 3 < b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
-            let v = b[i + 1..i + 4].iter().fold(0u32, |a, &c| a * 8 + u32::from(c - b'0'));
-            out.push((v & 0xFF) as u8);
-            i += 4;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    OsString::from_vec(out)
-}
-
 /// Every extract under `root`, sorted by path.
 /// Files that are not audio (folder art, playlists, sidecars of every kind) are counted in
 /// `ignored`, not listed.
@@ -293,7 +260,7 @@ fn walk(
         let entries = match fs::read_dir(&dir) {
             Ok(e) => e,
             Err(e) => {
-                log::warn!("{}: {e}", dir.display());
+                log::warn!("{}: {e}", crate::safe_file::shown(&dir));
                 continue;
             }
         };
@@ -729,7 +696,12 @@ impl Summary {
             let mut keys: Vec<(&str, usize)> = keys.into_iter().collect();
             keys.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
             if !keys.is_empty() {
-                let top: Vec<String> = keys.iter().take(8).map(|(k, n)| format!("{k} ({n})")).collect();
+                // Each key on its own line's terms: a key (a TXXX description) can hold any character.
+                let top: Vec<String> = keys
+                    .iter()
+                    .take(8)
+                    .map(|(k, n)| format!("{} ({n})", crate::safe_file::one_line(k)))
+                    .collect();
                 s.push_str(&format!("  other tags, most common: {}\n", top.join(", ")));
             }
         }
@@ -788,7 +760,7 @@ fn check_caught(item: &Item, ctx: &Ctx<'_>, check: &(dyn Fn(&Item, &Ctx<'_>) -> 
 fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io::Result<Summary> {
     let with = |e: io::Error, p: &Path| io::Error::new(e.kind(), format!("{}: {e}", p.display()));
     let source = args.source.canonicalize().map_err(|e| with(e, &args.source))?;
-    let mounts = sacdfs_mounts();
+    let mounts = crate::platform::sacdfs_mounts();
     let roots: Vec<PathBuf> = if args.extracts.is_empty() {
         vec![source.clone()]
     } else {
@@ -989,7 +961,10 @@ mod tests {
         let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/images");
         let lib = dir.join("lib");
         std::fs::create_dir_all(&lib).unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(corpus.join("dsd-stereo-mch-2048.iso"), lib.join("x.iso")).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(corpus.join("dsd-stereo-mch-2048.iso"), lib.join("x.iso")).unwrap();
         let tree = Tree::with_options(
             SourceDir::scan(&lib).unwrap(),
             Tuning::default(),
@@ -1030,7 +1005,8 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let (lib, files) = library(dir.path());
             let report_path = dir.path().join("r.tsv");
-            let bad = files[0].clone();
+            // Canonical, as the run's paths are (macOS's /var is /private/var).
+            let bad = files[0].canonicalize().unwrap();
             let a = args(&lib, &report_path, threads);
             let sum = run_with(&a, &|item, ctx| {
                 assert!(item.path != bad, "the injected bug");
@@ -1143,14 +1119,23 @@ mod tests {
     }
 
     #[test]
-    fn mountinfo_escapes() {
-        assert_eq!(unescape_octal(r"/a\040b"), OsString::from("/a b"));
-        assert_eq!(unescape_octal(r"/a\04"), OsString::from(r"/a\04"));
-    }
-
-    #[test]
     fn numbers_from_names() {
         assert_eq!(leading_number(Path::new("/x/07 - a.dsf")), Some(7));
         assert_eq!(leading_number(Path::new("/x/a.dsf")), None);
+    }
+
+    /// Frame keys in the summary (a TXXX description) are escaped one by one: no control
+    /// character reaches the terminal, and no key makes a line of its own.
+    #[test]
+    fn summary_keys_are_escaped() {
+        let keys = ["TXXX:\x1b]0;title\x07\x1b[2J", "TXXX:a\nUNSUPPORTED (1): forged"];
+        let mut row = Row::new("/a.dsf".into(), 1, "1.5".into()).with(Status::Identical, String::new());
+        for k in keys {
+            row.loses.add(k);
+        }
+        let out = Summary { rows: vec![row], ignored: 0 }.render();
+        assert!(!out.chars().any(|c| c.is_control() && c != '\n'), "{out:?}");
+        assert!(!out.lines().any(|l| l.starts_with("UNSUPPORTED")), "{out}");
+        assert!(out.contains("\\x1b]0;title\\x07\\x1b[2J") && out.contains("a\\x0aUNSUPPORTED"), "{out}");
     }
 }

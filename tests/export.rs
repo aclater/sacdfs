@@ -9,6 +9,8 @@
 //! container with `--cap-add DAC_READ_SEARCH` where sacdfs mounts in the container's own user
 //! namespace); without it they are skipped, unless `SACDFS_EXPORT_TESTS=1` is set.
 
+// The Linux FUSE mount, or calls only Linux has; other systems run the core's tests (#419, #420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 // name_to_handle_at and open_by_handle_at have no safe wrapper.
 #![allow(unsafe_code)]

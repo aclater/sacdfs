@@ -30,7 +30,6 @@
 
 use std::fs::{File, Metadata};
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -62,9 +61,19 @@ pub struct Stamp {
 }
 
 impl Stamp {
-    /// The stamp of a file's metadata.
-    pub fn of(m: &Metadata) -> Stamp {
-        Stamp { dev: m.dev(), ino: m.ino(), len: m.len(), mtime: (m.mtime(), m.mtime_nsec()) }
+    /// The stamp of open `file`, whose metadata is `m`.
+    pub fn of(file: &File, m: &Metadata) -> Stamp {
+        Stamp::with_id(m, crate::platform::file_id(file, m))
+    }
+
+    /// The stamp of the file at `path` now.
+    pub fn at(path: &Path) -> io::Result<Stamp> {
+        let (m, id) = crate::platform::file_id_at(path)?;
+        Ok(Stamp::with_id(&m, id))
+    }
+
+    fn with_id(m: &Metadata, (dev, ino): (u64, u64)) -> Stamp {
+        Stamp { dev, ino, len: m.len(), mtime: crate::platform::mtime(m) }
     }
 }
 
@@ -112,6 +121,11 @@ impl Handles {
         self.trim(&mut g);
     }
 
+    /// The most handles kept open.
+    pub fn max_open(&self) -> usize {
+        self.max.load(Ordering::Relaxed)
+    }
+
     /// Changes how often a handle is checked against its path (tests use zero).
     pub fn set_revalidate_every(&self, every: Duration) {
         self.revalidate_ms.store(every.as_millis() as u64, Ordering::Relaxed);
@@ -156,8 +170,8 @@ impl Handles {
             if !check {
                 return Ok(file);
             }
-            let same = match std::fs::metadata(path) {
-                Ok(m) => Stamp::of(&m) == stamp,
+            let same = match Stamp::at(path) {
+                Ok(s) => s == stamp,
                 // Removed from SOURCE (or its link): the open handle still reads the file it
                 // was, so the files still open on it keep reading until released (#153).
                 Err(e) => e.kind() == io::ErrorKind::NotFound,
@@ -268,14 +282,14 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(&vec![0u8; len]).unwrap();
         f.flush().unwrap();
-        let s = Stamp::of(&f.as_file().metadata().unwrap());
+        let s = Stamp::of(f.as_file(), &f.as_file().metadata().unwrap());
         (f, s)
     }
 
     fn opener(path: &Path) -> impl FnOnce() -> io::Result<(File, Stamp)> + '_ {
         move || {
             let f = File::open(path)?;
-            let s = Stamp::of(&f.metadata()?);
+            let s = Stamp::of(&f, &f.metadata()?);
             Ok((f, s))
         }
     }

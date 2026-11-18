@@ -32,8 +32,10 @@ decisions across its repositories, one line each with where they are recorded, a
    missing directory or an I/O error on one file, never as a crash of the mount.
 
 Not goals: writing, DSDIFF (DFF) output, FLAC output (deferred, #10), DoP, the 48 kHz PCM
-family, PS3 network sources, macOS and Windows natively (#22; they read the files over SMB
-or NFS from the [container](deployment.md)). The plan for PCM output, and every decision
+family, PS3 network sources. macOS and Windows were not goals at first and read the files over SMB
+or NFS from the [container](deployment.md); #22 then added native front ends: Windows (WinFsp)
+in releases since 0.6.5, macOS (local NFS) from source until #420
+([the core and its front ends](#the-core-and-its-front-ends-22-piece-a)). The plan for PCM output, and every decision
 behind it, is in #11.
 
 ## Engine
@@ -46,7 +48,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.5.9, from crates.io (`=0.5.9`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.6.1, from crates.io (`=0.6.1`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -62,6 +64,16 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   fix (`AreaIndex::from_bytes` refuses a form of saved index the library never writes) and no
   speed change; *why:* the pin follows the newest release that passes the gates; bytes unchanged,
   gated as above. 0.5.9 (after 0.4.1): faster DST decoding and a rewrite of the DSF partial-row code; *why:* same rule; bytes unchanged, gated as above; *trade-off:* a DSF read on damaged media can now fail because of a bad neighbouring position (library notes).
+  0.6.0: the interface release before scarletbook 1.0 (non-exhaustive types, renamed entry points,
+  `Cutoff::Standard`), ported by its migration guide; *why:* same rule; bytes unchanged on the
+  corpus, gated as above. Its TOC text keeps control characters, which sacdfs filters itself
+  ([DSF files](#dsf-files), "Control characters"). One output change: a tag scarletbook
+  builds may now be up to `MAX_TAG_BYTES` long, where 0.5.9 refused the last 10 bytes before it
+  (no footer, no padding, as sacdfs writes it); a tags file whose tag lands there is applied
+  instead of left out, and those files move by their tag stamp, not by an output version.
+  0.6.1: a 32-bit arithmetic decoder for DST on 32-bit targets (scarletbook-rs#369), no API
+  change; *why:* same rule, and it nearly halves i686 DST decoding time; bytes unchanged, gated
+  as above, with 64-bit decoding measured unchanged.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -213,7 +225,7 @@ the 2,000 that earlier versions documented as working there. The rest of the lim
 taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
 is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
 
-**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB. *Decision:* the coordinator
+**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB (below 256 MiB since #271, below). *Decision:* the coordinator
 set the rule after #230's fix: with the fix, 8 no longer buys a player's safety, so the default is 16 if
 16 holds the player (real time, under 1 s behind) and a scan alone stays within 5 % of 32, otherwise 32
 everywhere. Measured on P-cores of a mobile Core i9, a fresh container per run, 3 runs each, a 6-channel
@@ -232,6 +244,16 @@ it needed then: without the fix, a player held real time at 8 and fell to 0.34 t
 *Trade-off:* beside a player, four scanners on 4 cores read 12 % less between them at 16 than at 32
 (71.5 against 81.3 MB/s). Limits above 512 MiB keep 32; they weren't measured. Threads at one per 64 MiB, at least 2: each costs about 3.7 MiB. With no limit, these
 defaults don't change.
+
+**Revised: 16 only below 256 MiB** (#271). The scans above were local. Through Samba and the Linux
+kernel SMB client, whose concurrent reads arrive out of order, the same rule fails at both limits:
+a whole-file WAV copy alone was 15 % slower at 16 than at 32, and four copies beside a player 18 %;
+on 2 slow cores at 256 MiB beside four copies, the player's worst read was 3.4 s at 16 against
+1.0 s at 32, with 23 % more CPU, because frames were evicted before they were read (3 runs each,
+the player harness of #357). So, by the rule, 32 from 256 MiB up. *Trade-off:* about 16 MiB more
+resident (45 against 62 MiB peak in the 256 MiB runs), which the memory watch gives back above
+85 % of the limit. *Not measured:* limits below 256 MiB, which keep 16, and large libraries at
+256 MiB with the larger cache.
 
 **What real clients and tags files added.** Three costs lay outside the budget, and running under real
 NFS clients and `--tags` found them.
@@ -339,7 +361,9 @@ MOUNT/
   as before; its folder shows up with its sidecars only.
 - An image directory whose name collides with a source subdirectory gets ` (2)`. A track
   that fails scarletbook's `check_track` (empty, too many channels, or past the area's
-  capacity) is left out. Names are cut to fit 255 bytes.
+  capacity, counting only sectors that hold data) is left out, and tracks whose frames
+  overlap are shortened or left out ([Track sizes](#track-sizes)). Names are cut to fit 255
+  bytes.
 - `Stereo` and `Multichannel` appear only for areas the disc has.
 - File names come from the track text (title), with `/`, NUL and control characters
   replaced; a track without a title is `NN - Track NN.dsf` ([#185](#discs-without-text-185)).
@@ -360,6 +384,77 @@ MOUNT/
 layer of a hybrid disc is not in SACD images at all, because SACD rippers read only the
 high-density layer; CD rips are ordinary files outside sacdfs. The disc's hybrid flag is not
 shown either: no consumer needs it, and it would add a tag no player uses.
+
+### Track sizes
+
+A track's file size (#402) comes from its frames in the area TOC (start and duration, which the
+library clamps to the area's play time), so a listing reads no audio. On a damaged,
+truncated or padded image those can claim far more than the image holds, or several tracks
+can cover the same frames. Before an area's files are made (`sacdfs::track_ranges`, with
+`sacdfs::area_data` for the sector count), in this order:
+
+1. **The track check.** Each track goes through scarletbook's `check_track`, which refuses
+   a track whose end frame is past what the area's audio sectors in the image can hold, 7
+   frames a sector (specification 4, 4.8). The sector count it is given leaves out the
+   area's sectors that hold no data (below), so they count as missing, as a truncated
+   image's do. A refused track is left out, logged at info as "…: not shown: …".
+2. **Overlaps.** Of the tracks left, taken by start frame, one that runs into the next
+   track to start ends where that one starts ("shown to frame N: runs into track M"), and
+   one that starts where a lower-numbered track starts is left out ("not shown: starts
+   where track M starts"). *Why by start:* the starts are what a player seeks to; a
+   duration that runs past the next start is the part of the TOC that is wrong. *Why after
+   the check:* this step only shortens or leaves out tracks the check passed, so it never
+   shows a file the check alone would not, and a refused track does not cut another short.
+3. **Pauses (`--pauses kept`).** A track is served with its pause only where that range
+   passes the same check and overlaps no other listed track (in track order); otherwise
+   without it ("shown without its pause"). On a normal disc the ranges with pause only
+   touch, so every track keeps its pause, as before.
+
+The listed tracks of an area then share no frame and all end within its play time and
+capacity, so their total stays within one area's worth; a debug assertion and
+`tests/listing_bounds.rs` hold that on the whole corpus. A normal disc's tracks fit and do
+not overlap, and list exactly as before: the corpus lists the same files, with the same
+hashes, but for two images with overlapping tracks (`track-starts-overlap`,
+`track-duration-max`, recorded in `tests/common/mod.rs`) and, with pauses kept, two whose ranges
+with pause overlapped another track or ran past the image's data (`track-starts-reversed`;
+`area-playtime-max`, whose last track was a 16 GB WAV file and no DSF file, and is now
+served without its pause in both). pysacd-extract 0.5.0 writes those overlapping tracks in
+full, as sacdfs 0.6.3 listed them.
+
+**Sectors that hold no data.** An image can be long enough for its TOC while holding no
+audio over much of an area: a hole (a sparse region of the file) or a long run of zero
+bytes. Its tracks would pass the check at their TOC sizes, gigabytes each from a few
+megabytes of data. Reads of such a file stay cheap (missing frames are filled), but the
+sizes are far beyond the data. Only gaps of at least 1 MiB count, so a few zero sectors on
+a damaged disc change nothing.
+
+- *Holes* are found with `lseek` `SEEK_HOLE`/`SEEK_DATA` over the area's audio sectors
+  (whole stored sectors of 2048, 2054 or 2064 bytes), on every listing: no reads, one call
+  on a file without holes, at most 4096 boundaries followed per area. A file system that
+  does not report holes (NFS and SMB shares often do not) reports the whole file as data:
+  nothing is found and nothing is hidden. That is a safe fallback, not detection; the zero
+  sampling below still applies there, since a hole reads as zeros.
+- *Zero runs* are sampled, which costs reads, and only in an area whose play time claims
+  more than 1 frame per audio sector holding data. A real disc's area uses about 0.07
+  (plain DSD, 6 channels) to 0.22 (plain DSD stereo) to 0.5 (DST): 1 is twice the densest
+  real use, so a real disc is never sampled. The sectors are cut into at most 32 equal
+  segments of at least 1 MiB, and a segment whose first and last stored sectors are both
+  all zero bytes counts as a zero run: at most 64 reads of one sector per area. *Why zero
+  bytes:* plain DSD silence is the byte 0x69 and every DST frame has a header, so a long
+  all-zero run is not audio.
+- *Why this cannot hide a real disc's track:* at 7 frames a sector the capacity is about 14
+  to 30 times what a real disc's tracks use, so a real disc would have to lose nearly all
+  of an area to a gap before one of its tracks was refused, and then its frames are not in
+  the image anyway.
+- *What is left:* an image padded with written zeros (not a hole) to more sectors than its
+  play time's frames is not sampled, so its tracks list at their TOC sizes: DSF files at
+  most about 4.6 times the image's size for stereo (a 9408-byte frame per 2048-byte
+  sector), 13.8 times for 6 channels, and WAV files at 176.4 kHz about 1.5 times that. A
+  hole of any size is found where the file system reports it.
+- *Cost (harrison, `performance` profile, warm cache, 30 runs):* the whole corpus lists in
+  5.7 ms before and after. A 4 GiB image on btrfs with zstd compression (128 KiB extents)
+  takes 0.8 ms to list against 0.1 ms, nearly all of it the one `SEEK_HOLE` call walking
+  the extents; a 400 MB image with written zeros, which is sampled, 0.2 ms against 0.1 ms.
 
 ### Flattening (`--flatten`)
 
@@ -924,6 +1019,15 @@ from 539 lines to 144, all of it the options below).
   else the disc text (*why:* a set's discs share the album title, so players group them as one
   album; the library's default takes the disc's first), and no TPOS for a one-disc set
   ("1/1" says nothing).
+- **Control characters** (`tags::without_controls`): removed from every tag item before the
+  writer gets the set, line breaks kept in the comments only. *Why:* scarletbook (0.6.0) keeps
+  control characters in a TOC's strings (C0, DEL and C1 in ISRCs and catalogue numbers, DEL
+  and C1 in free text), and sacdfs filters what it serves itself: file names
+  (`names::sanitize`), WAV INFO, log lines and reports (escaped), lookup queries
+  (percent-encoded). The writer is also set to remove them (W9); with sacdfs's filter first it
+  finds none, so the bytes are the same, but for a tags file's track or disc number or date
+  holding one: read without it, where the writer, checking the raw value, dropped the number
+  and the year in TCOP.
 - **What changed against 0.1** (all 93 real-disc files compared, header and tag): 53 are
   byte-identical; the other 40 differ only in TCOP, which the library writes as ID3v2.4 asks:
   the date's year, a space, then the copyright (a stored "Label 2007" becomes "2007 Label
@@ -987,7 +1091,8 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   in an `id3 ` chunk (FFmpeg, TagLib, mutagen, foobar2000 and mp3tag read it), and a
   `LIST`/`INFO` chunk for software that reads only that: INAM (title), IART (performer), IPRD
   (album), ITRK (the track number), ICRD (date), IGNR (the first genre), the first value of the
-  same tag items, UTF-8 and NUL-terminated. *Why INFO from the items, not from the ID3 frames:*
+  same tag items, UTF-8 and NUL-terminated, without control characters (C0, DEL, C1), as the
+  ID3 writer leaves them out. *Why INFO from the items, not from the ID3 frames:*
   the library has no INFO writer, and built from one `TagSet` the two cannot disagree. The WAV
   output version moved to 2 with the DSF one (#28): the same 40 files' `id3 ` chunk changed. A chunk with
   nothing to hold is left out. *Why after the audio:* so that the header, and with it the
@@ -1048,6 +1153,9 @@ speaker of each channel in decoded-frame order (`Area::channel_speakers`):
   usable default, and a file is always shown. sacdfs logs it at Info once per disc, when the
   image is opened, naming the areas and their stored fields, so that a surprising mask can be
   traced to the disc.
+- **A speaker sacdfs doesn't know** (scarletbook's `Speaker` may gain variants from 0.6.0) gives
+  the WAV mask of the channel count too. *Why:* a mask without that speaker's bit would have
+  fewer bits than the file has channels.
 
 ## Reading a range of a DSF file
 
@@ -1338,13 +1446,31 @@ decoding them twice.
   its first reads waited behind about 600 frames of the copies' work (0.4 to 0.9 s on 4 cores,
   on every release). *Trade-off:* a reader's first half second beside a player decodes on
   demand, in pieces.
+- **A reader is judged a player on evidence (#362).** A reader that reads no faster than a
+  player counts as one only once it has read 4 MiB, or has read for as long as 4 MiB takes at
+  1.5 times the file's byte rate (0.9 s for a 6-channel WAV file, 2.6 s for a stereo one, 4 s
+  for a stereo DSF file); until then it is not yet judged, as in its first 0.5 s. The time
+  counts from its first read of audio, so a player that seeks is judged again at once. *Why:*
+  with the small window of the previous point, copies starting beside a player on a busy server
+  read about as fast as the player in their first half second (1.1 to 2.1 times playing time,
+  the player 1.3 with its client's read-ahead; NFS, four 6-channel copies on 2 slow cores). Each
+  then counted as a player with a 2 s window until it reached 4 MiB, a fraction of a second
+  later, and the player beside four of them waited up to 0.4 s, 0.6 to 0.8 s after they
+  started, in every run. *Alternatives:* judging them players with the small window until they
+  have shown their pace (measured the same within the spread); no small window for readers not
+  yet judged (the stall stayed). *Trade-off:* a player that starts while another plays reads
+  ahead 16 frames for up to 4 s instead of 0.5 s, unless its client reads 4 MiB sooner (the
+  kernel SMB client fetches its first 4 to 8 MiB at once), and it lets no copy wait for it until
+  then.
 - **The pace behind a network client (#271).** A jump, for the pace, is a read more than
   64 MiB from the furthest byte read so far, and the pace counts the bytes read since, but no
   further than the reader got. A reader one of whose reads has landed more than 2 MiB behind
   the furthest byte read is behind a network client, and so is one whose file a network file
   server's process opened (#362: Samba's `smbd`, `ganesha.nfsd`, the kernel's `nfsd` or `ksmbd`,
   told by the name of the request's thread group; NFS-Ganesha's reads can arrive in order, and a
-  local program with one of those names counts too). Such a reader reads for throughput once
+  local program with one of those names counts too). The name is looked up once the reader has
+  read 4 MiB, the first time it matters: looked up at every open, its two reads of `/proc` cost about 25
+  microseconds per open and made a scan of short files 10 % slower (#403). Such a reader reads for throughput once
   it is also 32 MiB ahead of playing time. Until then it is *unsure*: it plays if no player has
   been reading since before it, and otherwise reads for throughput, letting that player go
   first. *Why 64 MiB:* Samba serves the Linux kernel client's 4 MiB reads concurrently, so a
@@ -1394,7 +1520,8 @@ decoding them twice.
   counts as a player until it jumps; and a copy that starts within 5 s of a player pausing
   without closing its file lets that player go first if it comes back. Copies served by an NFS
   server whose reads reach sacdfs in order were not seen as behind a network client until #362,
-  which tells them by the server's process; one in another PID namespace still isn't.
+  which tells them by the server's process. A server in a PID namespace that sacdfs can't see
+  still isn't: see [the file server's process](#the-file-servers-process-362).
 - **What counts as sequential:** a read of audio that starts at most 1 MiB after, or 8 MiB
   before, the furthest byte read so far (the kernel sends its read-ahead requests
   concurrently, slightly out of order). Reads of the header or tags never start read-ahead.
@@ -1460,6 +1587,30 @@ bytes, or ruled out:
   the image's. It also needs root. Sidecar files could use it, but they aren't what's slow.
 - *Splice:* fuser 0.18 replies by `writev` and has no way to reply from a pipe, and the kernel would
   copy into the page cache anyway. Not measured.
+
+### The file server's process (#362)
+
+A file opened by a network file server's process is behind a network client from its first read
+(above). FUSE gives the process of each request as a number in the PID namespace of the process
+that mounted it, and 0 for a process outside that namespace. So:
+
+- **sacdfs on the host, the server in a container** (Samba in a container sharing the host's
+  mount): the server's processes are visible from the host, the number resolves, and its reader
+  counts as behind a network client. Checked with Samba 4.24 in a Fedora 44 container and the
+  Linux 7.2 kernel SMB client.
+- **sacdfs in a container, the server outside it** (another container, or the host): the number is
+  0 for the server and for any other reader outside sacdfs's container alike, such as a player on
+  the NAS reading through the shared `/srv` mount. Checked with sacdfs in one container and Samba
+  in another, and a reader on the host.
+- **The container image**, sacdfs with its own Samba and NFS-Ganesha: one namespace, so the
+  number resolves.
+
+**Decision:** a reader whose process is 0 is judged by the order of its reads, as before #362.
+*Why not count it as behind a network client:* a local player outside the container would be too,
+and then it would read for throughput beside an earlier player until its reads paused, and a
+local scanner would need to get 32 MiB ahead of playing time first. *Trade-off:* copies served by
+an NFS server outside sacdfs's container, whose reads arrive in order, count as players by their
+pace, as on 0.6.3.
 
 ## Kernel caching
 
@@ -1597,6 +1748,28 @@ Two kinds of probe are answered so that the kernel stops asking (#61):
     it advertising or forwarding xattrs for an FSAL_VFS export (its export options cover ACLs
     and security labels only), and dropping NFSv4.2 would break the documented `vers=4.2`
     mount.
+  - *POSIX ACLs (#439):* sacdfs asks for `FUSE_POSIX_ACL` at `init`, so the kernel answers
+    `system.posix_acl_access` and `system.posix_acl_default` with `ENODATA` ("no ACL"), on
+    6.1 as on current kernels. NFS-Ganesha's FSAL_VFS, built with POSIX ACL support as in the
+    image, reads the access ACL, and a directory's default ACL, of every object whose
+    attributes it fetches, through libacl, which turns `ENODATA` into an ACL made from the mode but fails on
+    `EOPNOTSUPP`. Ganesha then fails the request with `NFS4ERR_NOTSUPP`: "Unknown error 524"
+    on the first listing. Without `FUSE_POSIX_ACL`, kernels before 6.2 send these names to
+    the daemon like any other, so once `ENOSYS` is remembered they get `EOPNOTSUPP`; from
+    6.2 on, the kernel answers them itself with `ENODATA` when the mount is in the host's
+    user namespace (rootful containers), which is why Fedora and TrueNAS SCALE hosts worked
+    and Debian 12 (6.1) did not. With `FUSE_POSIX_ACL` the kernel answers `ENODATA` itself
+    on both, after the one `GETXATTR` whose `ENOSYS` it remembers. It also makes the kernel
+    check permissions from the modes (`default_permissions`, which the mount already sets)
+    and consult the ACL it has cached, which is "none".
+    - *Why not `ENODATA` for the ACL names only:* the kernel would have to keep asking, so
+      `getxattr` could never answer `ENOSYS`; every name Samba asks for on each open would
+      reach sacdfs again, as on 0.4.0-rc.4 above.
+    - *Kernels before 4.9* have no `FUSE_POSIX_ACL` (sacdfs logs that it isn't offered) and
+      still answer `EOPNOTSUPP`, so the container's NFS export would still fail there
+      (untested: the NAS systems on such kernels in the test VMs run no container runtime).
+    - *Why not a Ganesha setting:* FSAL_VFS reads the ACL whatever the request asks for, and
+      `Disable_ACL` is not read on that path in 9.16's source.
   - *Known limit:* a named lookup over NFS (`getfattr -n user.x`) still gets
     `NFS4ERR_NOTSUPP` and prints "Unknown error 524"; locally it says "Operation not
     supported". `ls -l`, `getfattr -d` and file reads over NFS print no error.
@@ -1638,10 +1811,10 @@ plain `cp` on the Linux client keeps the missing write bit; and Windows and macO
 ## The core and its front ends (#22, piece A)
 
 sacdfs is split in two: a **core** that knows nothing of FUSE, and a **front end** per platform that
-takes requests from the operating system and hands them to the core. Today the only front end is
-Linux FUSE (fuser). The split is the first step of native macOS and Windows support
+takes requests from the operating system and hands them to the core. When the split was made the only
+front end was Linux FUSE (fuser). The split is the first step of native macOS and Windows support
 ([#22](https://github.com/aclater/sacdfs/issues/22)): a WinFsp front end (Windows, piece B) and a
-FUSE-T or macFUSE front end (macOS, piece C) call the same core, and the core's tests cover all of
+local NFS front end (macOS, piece C, #420) call the same core, and the core's tests cover all of
 them. *Why split first:* the tree, attributes, reads, caching, PCM, tags and the lookup worker were
 never Linux-specific, but the code that answers requests mixed them with fuser's types, so a second
 front end would have copied it. *No behaviour change:* the Linux mount answers every request as
@@ -1736,25 +1909,158 @@ pitfall in #22.
 - **Owners.** `Attr` carries the uid and gid given at construction; WinFsp maps them to its
   own security descriptor.
 
-### What the core still needs from Linux
+### The platform layer (#419, #420)
 
-The core is built and tested on Linux only so far. These calls are Unix- or Linux-only and stay
-as they are in piece A, because changing them would change behaviour on Linux; pieces B and C put
-each behind a small platform layer, with the Linux branch unchanged:
+What differs between operating systems is in one module, `sacdfs::platform`. The rest of the
+core calls its functions and has no `cfg` of its own for them. Each function means the same on
+every system:
 
-- confined opening of sidecar files under SOURCE: `openat` with `O_PATH`, `readlinkat`
-  (`sidecar`); `O_PATH` is Linux-only, so macOS needs its own branch too;
-- reading a sidecar at an offset, `read_at` (`vfs`), and the image files' device and inode numbers
-  (`handles`);
-- the seek index's file modes and `O_NOFOLLOW` (`index_cache`);
-- path bytes for keys (`OsStrExt` in `ident`, `tags`, `fallback`);
-- the lookup worker's idle CPU and I/O priority (`setpriority`, `ioprio_set`, `lookup::worker`);
-- the memory limit from cgroups (`memory`), absent elsewhere;
-- `mallopt` and `malloc_trim` (`engine`, glibc only, already off elsewhere);
-- `sacdfs verify` (`FileExt`, `OsStrExt`).
+- `platform/mod.rs` declares the API;
+- `platform/unix.rs` is the Linux code the core called before, unchanged, with macOS's few
+  differences inside it;
+- `platform/windows.rs` is Windows's.
 
-The split's pull requests: this note, then the moves, each "Part of #22". They change the
-structure of the read path, so the release that includes them runs the full gate and a soak.
+Where a system has no equivalent yet, the function documents its fallback and never panics.
+
+| Function | Linux (unchanged) | macOS | Windows |
+|---|---|---|---|
+| `read_at`, `read_exact_at` | `pread` (`FileExt`) | same | `seek_read`: every read names its offset |
+| `mtime`, `file_id`, `file_id_at` | `stat`'s times, `st_dev` and `st_ino` | same | `modified()`; the volume serial number and file index (`GetFileInformationByHandle`) |
+| `stale`, `cross_device` and their tests | `ESTALE`, `EXDEV` | same | a marked `io::Error`, `CrossesDevices` |
+| `os_from_bytes` (path bytes from `as_encoded_bytes`) | the bytes | same | UTF-8 |
+| `set_open_flags` (`NO_FOLLOW`, `NON_BLOCK`, `NO_CTTY`), `set_create_mode`, `make_private_dir` | `O_NOFOLLOW`, `O_NONBLOCK`, `O_NOCTTY`, modes | same | `FILE_FLAG_OPEN_REPARSE_POINT`; no modes (the profile's access list) |
+| `open_regular` (images, `verify`) | `O_NONBLOCK` open, `fstat`, then blocking again | same | open, then the regular-file check |
+| `Dir`, `open_root`, `open_dir_at`, `stat_at`, `open_file_at`, `read_link_at` (sidecars) | `openat` from an `O_PATH` descriptor | a read-only descriptor (no `O_PATH`) | by path, checking each folder for a reparse point; not race-free like `openat` |
+| `next_hole`, `next_data` (sparse areas) | `SEEK_HOLE`, `SEEK_DATA` | same | `FSCTL_QUERY_ALLOCATED_RANGES` |
+| `fs_size` (`statfs` without images) | `statvfs` | same, with a 32-bit `fsblkcnt_t` | `GetDiskFreeSpaceExW`'s total, in 4096-byte blocks |
+| `lower_thread_priority` (lookup worker) | nice 19, idle I/O class | `PRIO_DARWIN_BG` | `THREAD_MODE_BACKGROUND_BEGIN` |
+| `cache_home` (seek index default) | `$XDG_CACHE_HOME`, else `~/.cache` | same | `%LOCALAPPDATA%` |
+| `is_transient`, `TOO_MANY_OPEN_FILES` | `EMFILE`, `ENFILE`, `ENOMEM`, `EIO`, `EAGAIN`, `EINTR`; `EMFILE` | same | the Win32 equivalents; `ERROR_TOO_MANY_OPEN_FILES` |
+| `writable` (`--musicbrainz`'s tags folder) | `access(W_OK)` | same | the folder isn't read-only |
+| `sacdfs_mounts` (`verify` refuses extracts on a mount) | FUSE mounts named `sacdfs` in `/proc/self/mountinfo` | none found yet | none found yet |
+| `fd_dir` (`verify --report /dev/stdout`) | `/proc/PID/fd` | `/dev/fd` | none: a report path is always a file |
+| `process_name` (network-server pacing, #362) | `/proc/PID/status` and `comm` | none: the read order alone tells | none: the read order alone tells |
+
+- **What stays a fallback on Windows:** confined sidecar opens go by path. `NtCreateFile`
+  relative to a folder handle, with `FILE_FLAG_OPEN_REPARSE_POINT`, would make them race-free
+  like `openat` (#419).
+- **Dependencies:**
+  - `nix` and `signal-hook` are Unix-only.
+  - `fuser` is Linux-only. On macOS it needs libfuse at build time, and it supports neither
+    FUSE-T nor FSKit.
+  - `sacdfs::fuse` is built on Linux only.
+- **The binary:** the Linux mount is in `src/linux_main.rs`. `main.rs` runs `sacdfs verify`
+  and `sacdfs tags` on every system, and mounts only on Linux.
+- **Tests:** tests that mount through FUSE, count descriptors in `/proc` or send Unix signals
+  are Linux-only. Tests that need links, modes, FIFOs or names that aren't UTF-8 are Unix-only.
+  Elsewhere, the tests' libraries copy images instead of linking them.
+
+**Options and start-up shared by the front ends (`sacdfs::serve`).** The options that shape the
+files and their limits are two `clap::Args` structs:
+
+- `serve::Options`: formats, pauses, the `--pcm-*` options, tags and lookups, flatten,
+  sidecars, threads and memory;
+- `serve::Limits`: the seek index, open images and the request timeout.
+
+Every front end flattens both into its own command, so the option names, defaults and help text
+are the same everywhere. The Linux `--help` is byte-identical to before.
+
+The steps from options to a `Volume` are library functions, called in this order:
+
+1. `Options::check`;
+2. `Limits::index_cache_dir`;
+3. `Options::scan` and `Options::sizing`;
+4. `open_index_cache`;
+5. `build`, which gives the tree and the engine;
+6. `start_background` and `Background::stop`.
+
+*Why steps and not one call:* a front end puts its own steps between them. The Linux mount checks
+its mount point before the scan, and it becomes a daemon after the scan but before any thread
+exists, so `build`, which starts threads, comes after the fork.
+
+*Why one module:* the spikes put the same `cfg` pairs in a dozen files. With one module, each
+system's differences can be read and reviewed in one place, and the Linux code is visibly the
+code that was there before. *Alternative:* a crate per platform; with this little code, a module
+is enough.
+
+## The NFS front end (#420)
+
+macOS has no FUSE layer in sacdfs. `sacdfs-nfs` (feature `nfs`, `src/nfs/`) serves the
+[`Volume`](#the-core-and-its-front-ends-22-piece-a) over NFSv3, and the system's own NFS client
+mounts it: on macOS as the user, with nothing to install and no security setting changed. Linux
+can use it too, for NFS clients without FUSE. *Why not FUSE-T, macFUSE or FSKit:* the comparison
+is in #420. FUSE-T is itself an NFS server on loopback, closed source and licensed per use;
+macFUSE needs a kernel extension or GUI approval; FSKit needs an app extension, signing and GUI
+approval.
+
+- **The protocol layer is vendored from nfsserve 0.11.0** (`src/nfs/proto`, BSD-3-Clause, its
+  licence beside it). nfsserve answers FSSTAT with a fixed 1 TiB and builds file handles from
+  the server's start time, so every handle went stale on a restart; neither has a hook.
+  *Alternatives:* our own read-only NFSv3 server (about 1,500 lines of new XDR and RPC parsing,
+  all new attack surface for any local user), or a fork as a git dependency (crates.io refuses a
+  crate with one). The vendored copy is changed where marked `sacdfs:` (the list is in
+  `src/nfs/proto/mod.rs`): handles and FSSTAT from the file system, a credential check, bounded
+  records, decoding that never allocates from a declared length, bounded calls in flight and
+  connections, and READDIR from its cookie. The copy is temporary: sacdfs is not to maintain an
+  NFS server of its own, and moves to a maintained crate once these changes are upstream there.
+  Only two files face the server crate: `src/nfs/mod.rs` (the file system it calls) and
+  `src/nfs/serve.rs` (its listener); handles, the command line and the mount don't. The
+  decoder is fuzzed (`fuzz/fuzz_targets/nfs_rpc.rs`).
+- **File handles** are 25 bytes: a version, a volume ID (a hash of SOURCE's canonical path),
+  the inode number and its generation ([File identity](#file-identity-and-nfs-export)). The
+  same SOURCE gives the same handles on every run, so a mount survives a server restart, open
+  files included. A handle is checked through the open file, the tree's node, or a lookup of
+  `.` in its inode number, which finds a number not made yet in this run, as for the kernel's
+  NFS export. A changed generation or another SOURCE's volume ID answers `NFS3ERR_STALE`.
+- **Who is answered.** Calls whose AUTH_SYS uid is the server's user, or root; others get
+  AUTH_ERROR, and AUTH_NONE is refused (anyone may ping). A local program can claim any uid, so
+  this guards against mistakes, such as another user mounting the port, and is not a security
+  boundary: **any local user can read the served files**, as with `--allow-other` on Linux.
+  `--allow-other` answers every uid, as clients on other computers need; it is the default as
+  root, as for `sacdfs` ([Other users](#other-users-on-by-default-as-root)), and
+  `--no-allow-other` turns it off.
+- **Listening:** 127.0.0.1 by default; `--listen` takes another address, with a warning. The
+  default port is 20000 plus the user ID modulo 10000: one per user of a Mac, below the
+  ephemeral port ranges, and the same on every run, so that a restarted server is found by the
+  old mount. Root's is 1007.
+- **A mount left behind** (the server killed with SIGKILL, or an unmount that failed) points
+  at a port nothing answers on, and whoever listens there next answers for it. So the mount is
+  always `ro,nosuid,nodev,noexec` after the user's `-o` (which may not say `rw`, `suid`, `dev`
+  or `exec`), and root's port is below 1024, where no other user can listen. Every way out of
+  the server unmounts, and a failed unmount is an error. As root, a mount point under a folder
+  another user can write is refused, and the path is unmounted only while it is still this
+  mount (its device number). `mount` and `umount` run by absolute path with a fixed
+  environment, each with a time limit.
+- **Bounds against one client holding the server:** 16 calls in flight per connection, 128 in
+  all, 2 replies queued; a reply not taken within 30 s closes the connection, as does a first
+  call not sent within 10 s or 5 minutes of silence; 64 connections at once; listings are cut
+  to 1 MiB and 1024 entries a call; 1024 files open for NFS reads, the least recently read
+  closed first.
+- **Opens:** NFS has no open or close. A file is opened in the core on its first read and
+  closed after 60 s without one.
+- **Mount options on macOS:** `vers=3,tcp,port=P,mountport=P` (no port mapper or lock manager),
+  `rdonly`, `nfc` (lookups in NFD find the NFC names), `locallocks` (locks are the client's, so
+  software that locks what it reads still can), `hard,intr,deadtimeout=60` (a read waits
+  while the server restarts; a server gone for good fails reads after about a minute and macOS
+  unmounts the folder itself, which also ends a mount left behind; `soft` failed every read
+  after 6 to 8 s on macOS 27.2, whatever `timeo` and `retrans` said), `rsize=1048576` and
+  `rdirplus`. On Linux: `soft,timeo=10,retrans=30`.
+- **Signing and notarisation: the owner's decision, nothing bought.** The release archives hold
+  binaries signed ad hoc by the linker (which Apple Silicon needs to run them) and nothing more.
+  The options:
+  - *As now:* free. Files fetched with `curl` aren't marked by macOS and run; a browser
+    download needs `xattr -d com.apple.quarantine` first (the guide says so).
+  - *Developer ID signing and notarisation:* an Apple Developer Program membership (99 USD a
+    year; the account's name is what macOS shows users). The release job would import the
+    certificate into a temporary keychain, sign with the hardened runtime and a timestamp, and
+    send each archive to `notarytool` with an App Store Connect API key, all three kept as
+    repository secrets. A bare binary can't carry the notarisation ticket (only an app, a
+    disk image or an installer package can), so Gatekeeper checks it online on first run;
+    a `.pkg` installer would carry it.
+  - *Homebrew:* a formula in a tap of this project's, building from source or fetching the
+    archive. Homebrew's downloads aren't marked, so nothing needs signing; whether
+    homebrew-core or homebrew-cask would take it is their reviewers' call. `nobrowse` is not set by default, so the mount shows
+  in the Finder; `-o nobrowse` hides it.
 
 ## Concurrency
 
@@ -2331,7 +2637,9 @@ MusicBrainz IDs on 26.
   suffix (#97 hook): the user named it.
 - **Reading:** a tags file is read when a track file is made, that is when its area is first
   listed, and kept while its mtime and size are unchanged. A file that does not parse (unknown
-  key or section) is ignored with a warning, so a typo never changes the served files.
+  key or section) is ignored with a warning, so a typo never changes the served files. The
+  warning gives the line and column, not the text there. Files over 4 MiB, links and anything
+  but a regular file are not read.
 - **Live reload (owner requirement: pruning scanners such as Roon must see tag edits).** On a
   directory SOURCE (a watching tree, #101), adding, editing or removing a tags file changes the
   affected files' tags, size, mtime and generation and moves the mtime of the image's folder,
@@ -2343,7 +2651,16 @@ MusicBrainz IDs on 26.
   folders, which now key their mtime on that path, move with their ancestors. An area listed
   again re-makes its track files; one whose tag changed replaces its node under the same
   number (`Tree::renew`), and a file whose tag is the same keeps its node, so open files and
-  caches stay as they are (an open handle keeps the file it opened). The mtime of a bump is
+  caches stay as they are. A file open while its tag changes fails its next read, and its
+  close, with `EIO` once the kernel sees the new generation, through any lookup or listing of it
+  by any client (#339). The kernel takes a known number with a new generation for a new file and
+  marks the old inode bad (`fuse_iget` in `fs/fuse/inode.c`, "nodeid was reused"). It fails the
+  old descriptor itself, with no request to sacdfs, so sacdfs logs nothing. Reopening reads the
+  new file. *Alternatives, not taken:* keeping the generation would leave NFS handles and the
+  open file's page cache mixing old and new bytes; keeping the old node while a handle is open
+  and renewing it at release would show the edit later and need a second bump; a FUSE node ID
+  apart from the inode number is not possible through fuser, which uses one for both. The
+  mtime of a bump is
   the tags file's when it moved forward (a remount shows the same), else the time now (a
   removal, or an older time put back), so that the folders always move.
   *Why the image's path, not the disc key:* scanners walk folders, and the image's path is

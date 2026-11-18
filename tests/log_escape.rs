@@ -4,6 +4,8 @@
 //! with a newline, an escape sequence or a bidi control can't split, recolour or reorder a line
 //! of the log. Needs `/dev/fuse` and `fusermount3`, like `tests/mount.rs`.
 
+// The Linux FUSE mount, or calls only Linux has; other systems run the core's tests (#419, #420).
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;

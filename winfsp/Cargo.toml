@@ -1,0 +1,65 @@
+[package]
+name = "sacdfs-win"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+# The front end's own code is GPL-3.0-or-later, as sacdfs; it links the winfsp crate, which is
+# GPL-3.0-only, so the Windows binary as a whole is under GPL-3.0 (see README.md).
+license = "GPL-3.0-or-later"
+description = "sacdfs's Windows front end on WinFsp: SACD disc images as DSF and WAV files"
+repository = "https://github.com/aclater/sacdfs"
+publish = false
+
+# Not a member of sacdfs's package: its own lock file and build, so that the Linux build and
+# the crates.io package are unchanged.
+[workspace]
+
+[[bin]]
+name = "sacdfs-win"
+path = "src/main.rs"
+
+[dependencies]
+sacdfs = { path = ".." }
+clap = { version = "4.5", features = ["derive"] }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+libc = "0.2"
+log = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+# GPL-3.0(-only), compatible with GPL-3.0-or-later. Loads winfsp-x64.dll lazily (delayload), so
+# the binary starts without WinFsp and can say that it is missing. `notify` for change
+# notification. Not its `system` feature: that reads the registry in the build script, so it
+# only builds on Windows; the front end finds WinFsp's install folder itself (`load_winfsp`).
+winfsp = { version = "=0.13.2", default-features = false, features = ["delayload", "notify"] }
+# The bindings winfsp is built on, for the open's response (DisableCache), at winfsp's version.
+winfsp-sys = { version = "=0.12.1", default-features = false }
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }
+
+[build-dependencies]
+winfsp = { version = "=0.13.2", default-features = false, features = ["delayload"] }
+
+[lints.rust]
+missing_debug_implementations = "allow"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+[profile.release]
+overflow-checks = true
+
+[profile.release.package.scarletbook]
+codegen-units = 1
+
+[profile.test]
+opt-level = 2

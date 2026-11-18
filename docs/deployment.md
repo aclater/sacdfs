@@ -24,7 +24,9 @@ sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)
 
 sacdfs also runs **locally**, on the Linux machine that holds the images, as in the
 [user guide's quick start](user-guide.md#quick-start): a cold seek returns in about 2 ms, a
-WAV seek in under 3 ms. How
+WAV seek in under 3 ms. On a Windows PC it runs as `sacdfs-win`
+([windows.md](install/windows.md)), and on a Mac as `sacdfs-nfs`
+([macos.md](install/macos.md)); see [Platforms](../README.md#platforms). How
 fast each way is, against the project's targets: [performance.md](performance.md).
 
 This guide covers the first: the container image in this repository (`Containerfile`), how
@@ -269,7 +271,7 @@ All settings are environment variables.
 | `SACDFS_LOOKUP_NAME` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-name` (also search by album and artist) |
 | `SACDFS_LOOKUP_DURATIONS` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-durations` (also ask by the tracks' start times) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
-| `SACDFS_CACHE_MB` | (32, or 16 under a limit up to 512 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
+| `SACDFS_CACHE_MB` | (32, or 16 under a limit below 256 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
 | `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
 | `SACDFS_THREADS` | (one per CPU, at most one per 64 MiB of a limit) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
@@ -296,7 +298,7 @@ which is all a read-only share needs.
 
 ### Memory
 
-The default cache of 32 MiB (`SACDFS_CACHE_MB`, `--cache-mb`, since #150) suits a NAS, and is 16 MiB under a memory limit up to 512 MiB ([Under a memory limit](#under-a-memory-limit)). The cache holds
+The default cache of 32 MiB (`SACDFS_CACHE_MB`, `--cache-mb`, since #150) suits a NAS, and is 16 MiB under a memory limit below 256 MiB ([Under a memory limit](#under-a-memory-limit)). The cache holds
 decoded frames so that a client re-reading the same part of a file does not decode it again;
 players read ahead, so a small cache costs little. 32 MiB is the smallest size that reads,
 seeks and scans within 5 % of a 256 MiB cache ([performance](performance.md#cache-size-150));
@@ -361,13 +363,18 @@ limit, none of this applies.
 
 | What | With a limit |
 |---|---|
-| Cache of frames (`--cache-mb`) | 16 MiB up to 512 MiB, else 32 |
+| Cache of frames (`--cache-mb`) | 16 MiB below 256 MiB, else 32 |
 | Decoder threads (`--threads`) | one per CPU, at most one per 64 MiB of the limit, and at least 2 |
 | Memory for what listed images hold (`--listing-mb`) | 3/8 of the limit, at least 8 MiB |
 | Memory watch | see below |
 | NFS-Ganesha's cache of entries, in the container | what an eighth of the limit holds at about 2 KiB each: 16,384 entries at 256 MiB, against its default of 100,000. From about 1.5 GiB, its default |
 
-An option you set yourself always wins.
+An option you set yourself always wins. *Why 32 MiB from 256 MiB up (#271):* through the Linux
+kernel SMB client, 16 MiB made whole-file WAV copies 12 to 31 % slower than 32 at limits of 256
+and 512 MiB, and a player beside four copies on 2 slow cores stalled longer
+([performance](performance.md#one-reader-over-smb-by-release-and-the-cache-under-a-memory-limit-271-2026-11-14)).
+The larger cache takes about 16 MiB more, which the memory watch below gives back above 85 % of
+the limit. Below 256 MiB, 16 MiB was kept; it wasn't measured there.
 
 **Listings.** A listed image holds its TOC and text, and for each of its files a header, tag and
 node: about 56 KiB per image with DSF and WAV shown. Past the budget, the images not used lately
@@ -609,8 +616,10 @@ The 0.4.1 container passes `--cache-mb 32` unless `SACDFS_CACHE_MB` is set, so i
 these limits. At 8 MiB the player holds real time too, but scans run 18 to 28 % slower than at 32 (on
 0.4.1-rc.3 they ran at 15.2 and 23.9 MB/s).
 
-**The default under a memory limit up to 512 MiB is 16 MiB.** It holds the player as 32 does, and a
-scan alone runs as fast, in about 16 MiB less. Measured on the same machine's P-cores (2 cores: one
+**From 0.5.0 to 0.6.4 the default under a memory limit up to 512 MiB was 16 MiB**, and since then it
+is 16 MiB only below 256 MiB ([design](design.md#memory-a-budget-for-listings-237);
+over SMB, 16 made copies 12 to 31 % slower and a player beside them stall longer). Locally it held the player as 32 does, and a
+scan alone ran as fast, in about 16 MiB less. Measured on the same machine's P-cores (2 cores: one
 physical core with its SMT sibling; 4 cores: two), client on other cores, same method, 3 runs each:
 
 | Scanners | Cores, memory | Cache 16 MiB | Cache 32 MiB |
@@ -796,7 +805,7 @@ The names of screens and fields may differ between releases.
    - The images' dataset is mounted read-only (`:ro`); sacdfs never writes to it.
    - The cache directory is a dataset or directory of its own (create it first); it holds
      the seek index, a few MB for a large library.
-   - `SACDFS_CACHE_MB` is left out: the default, 32 MiB (16 under a memory limit up to 512 MiB, [Under a memory limit](#under-a-memory-limit)), keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
+   - `SACDFS_CACHE_MB` is left out: the default, 32 MiB (16 under a memory limit below 256 MiB, [Under a memory limit](#under-a-memory-limit)), keeps a scan that reads only the ends of files under 50 MiB of memory on a small library (the bench discs), and whole-file reads up to about 100 MiB at about 400 images; more images take more ([Memory](#memory), [Small NAS: sizing](#small-nas-sizing)).
    - `SACDFS_THREADS` limits how many cores sacdfs may use for decoding while a client
      reads, if the NAS has other work to do.
 4. **Check it.** The app's logs show sacdfs's image count, then `mounted`, then Samba and
@@ -1176,7 +1185,11 @@ about a seventh of the CPU, copies of WAV files ran at 101 to 109 MB/s instead o
 player's reads were unchanged. `cache=none` cuts a scan further (99 KB per file), but then every
 read waits a round trip. If every client is Linux, the share can do it for all of them instead:
 `SMB_EXTRA_GLOBAL=smb2 max read = 262144` (same scan figures). Measured on 0.6.2 with a Linux 6.19 client
-([performance](performance.md#client-settings-on-a-nas-062)).
+([performance](performance.md#client-settings-on-a-nas-062)), and again on 0.6.3 and main with a Linux
+7.2 client, with the same result. An importer that reads 1 MiB at a time itself (beets) gains less from
+`rsize=262144`: about half the bytes and CPU instead of a seventh. Windows needs no setting: its shell reads about 261 KB of each WAV file
+for tags, and the share setting only made its copies a little slower, so the container leaves it off
+([performance](performance.md#client-read-ahead-by-client-and-release-063-main)). macOS was not measured.
 
 File managers open `smb://nas/sacd` directly.
 
@@ -1226,6 +1239,30 @@ see [Players on the same host](#players-on-the-same-host-no-smb-hop).
   other macOS versions). Walking 13,547 entries took the same time (17 s); a second walk is no
   longer served from the cache (5 s with it). Not run: Finder, NFS, other macOS releases
   (#308).
+- **A player beside copies over SMB can wait for seconds; mount over NFS for that (#378).** The
+  macOS SMB client reads ahead in growing windows (8, 16, 32 MiB and more) and keeps about 32
+  reads of 1 MiB in flight on the one connection. When copies run beside a player, it sends the
+  copies' reads first and the read the player waits for last, and sometimes asks again for data
+  it had already read ahead. The server answers each read in the order it arrives, so the player
+  waits behind everything already asked for. The wait grows as the server's or network's
+  throughput falls. No Samba setting tried helped: fewer SMB credits made it worse. Measured on
+  macOS 27.2 in a VM on Apple hardware, against the Samba and NFS-Ganesha of the 0.6.3 image
+  sharing plain 1.3 GB WAV files without sacdfs (sacdfs's test discs are too short for this), with
+  a reader at the 6-channel 176.4 kHz rate (64 KiB reads) beside four `cat` copies of other
+  files, 3 to 5 runs per cell:
+
+  | Server and client | Copies, wall | Reads over 100 ms per run | Worst read |
+  |---|---|---|---|
+  | SMB, full speed (about 230 MB/s) | 23 s | 3 to 9 | 0.67 to 0.88 s |
+  | SMB, limited to 600 Mbit/s | 79 s | 7 to 12 | 2.3 to 2.9 s |
+  | NFS 4.0, full speed | 23 s | 0 | 9 to 10 ms |
+  | NFS 4.0, limited to 600 Mbit/s | 78 s | 0 | 31 to 55 ms |
+  | Linux 7.2 SMB client on the server's host, limited to 600 Mbit/s | 78 s | 1 | 0.61 to 0.62 s |
+
+  Use the NFS mount above for a player on a Mac that also copies from the share; copies take
+  the same time over both. Over NFS and over SMB, all 914 WAV and DSF files of the test corpus
+  read from sacdfs byte for byte as the server reads them. Not run: macOS 15, a physical Mac,
+  Finder copies, player apps.
 - **After a restart of the container** an SMB mount on macOS drops and has to be mounted again: see
   [SMB and restarts](#smb-and-restarts).
 
@@ -1446,6 +1483,38 @@ was added, 58 s later (the Linux default and leases-on rows twice, the rest once
 The cost of leases off, from #312, re-counted for #325 in the same Windows VM (thumbnail pass over the
 196 files, requests to sacdfs, two runs each): 2,082 and 2,103 with leases off, 495 and 481 with leases
 on.
+
+**Re-checked on main (2026-11-15).** The same Samba 4.24.7 (0.6.3 ships it too), on a larger tree: 40 images with
+their art (1,640 files in 145 folders), the container on two cores. Linux: the kernel client of Fedora 44
+(kernel 7.2.15) on the same host. Windows: Windows 11 Pro 25H2 in a VM on the same host (not on the
+vendor's hardware). A new album folder was added to an artist folder; "every second" lists that folder
+each second for up to 150 s, "once after 60 s" lists it once, 60 s after the addition, having left it alone:
+
+| New image shows (main) | Linux kernel client, every second | Linux, once after 60 s | Windows 11, every second | Windows, once after 60 s |
+|---|---|---|---|---|
+| Leases off (default) | 2.0 s | yes | 8.1 s | yes |
+| Leases on | not within 150 s | yes | not within 150 s | no |
+| Leases on, a plain folder (not sacdfs), `kernel change notify = no` | not within 150 s | yes | not within 150 s | no |
+| Leases on, a plain folder, `kernel change notify = yes` | not within 150 s | yes | not within 150 s | no |
+
+So nothing changed since 0.6.0: with leases, a client that keeps using a folder keeps its old listing, for
+an ordinary folder as much as for sacdfs. The Linux client drops an unused folder's lease after about 30 s
+and then lists it afresh; Windows didn't.
+
+What leases off costs now is much less than on 0.6.0: Windows no longer reopened the folder for each file
+(whether that is the newer Windows build or the larger tree wasn't determined). Explorer's thumbnail call on all 1,640 files,
+requests to sacdfs counted with the request log on:
+
+| Windows 11, requests to sacdfs | 0.6.3, leases off | main, leases off | main, leases on |
+|---|---|---|---|
+| Listing (`Get-ChildItem -Recurse`, 1,784 entries) | 957 | 956 | 811 |
+| Thumbnail pass | 4,889 | 4,984 | 4,414 |
+
+Timed without the request log (under a benchmark lock, main, four pairs of runs: two on the tree before its
+art was added, 1,488 files, and two on 1,640), the thumbnail pass took 25.8, 28.4, 26.7 and 27.0 s with leases
+off and 25.4, 25.5, 26.9 and 26.9 s with leases on. Leases off
+costs about 13 % more requests and 0 to 10 % in time, and leases on costs new images for as long as a
+client keeps the folder. The container keeps leases off.
 
 **If you run your own Samba** on a sacdfs mount instead of the container, put the container's settings in
 `smb.conf`. In `[global]`:

@@ -43,7 +43,6 @@
 //! lacks (#185) counts as one output version on (`file_version`).
 
 use std::collections::{HashMap, HashSet};
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -246,7 +245,7 @@ impl Ids {
         // (domain, relative path, parent item index or None for the root)
         let mut items: Vec<(Domain, Vec<u8>, Option<usize>)> = Vec::new();
         let base = root.path.clone();
-        let rel = |p: &Path| p.strip_prefix(&base).unwrap_or(p).as_os_str().as_bytes().to_vec();
+        let rel = |p: &Path| p.strip_prefix(&base).unwrap_or(p).as_os_str().as_encoded_bytes().to_vec();
         let mut stack: Vec<(&SourceDir, Option<usize>)> = vec![(root, None)];
         let mut sidecars: Vec<(&[Sidecar], Option<usize>)> = Vec::new();
         while let Some((dir, me)) = stack.pop() {
@@ -317,7 +316,7 @@ impl Ids {
     }
 
     fn of(&self, domain: Domain, path: &Path) -> u64 {
-        let rel = path.strip_prefix(&self.root).unwrap_or(path).as_os_str().as_bytes();
+        let rel = path.strip_prefix(&self.root).unwrap_or(path).as_os_str().as_encoded_bytes();
         if !self.fallback.is_empty() {
             if let Some(&k) = self.fallback.get(&(domain, rel.to_vec())) {
                 return k;
@@ -328,7 +327,7 @@ impl Ids {
 
     #[cfg(test)]
     fn of_with(&self, domain: Domain, path: &Path, key: impl Fn(Domain, &[u8], u32) -> u64) -> u64 {
-        let rel = path.strip_prefix(&self.root).unwrap_or(path).as_os_str().as_bytes();
+        let rel = path.strip_prefix(&self.root).unwrap_or(path).as_os_str().as_encoded_bytes();
         self.fallback.get(&(domain, rel.to_vec())).copied().unwrap_or_else(|| key(domain, rel, 0))
     }
 

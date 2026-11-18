@@ -418,6 +418,39 @@ pub fn parse_wav(file: &[u8]) -> Wav {
     w
 }
 
+/// `path` with `/` between its parts on every system, as the tests compare it.
+pub fn slash(path: &Path) -> String {
+    path.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+}
+
+/// Writes all of `buf` at `offset` of `file`, on every system.
+pub fn write_all_at(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::FileExt::write_all_at(file, buf, offset)
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::Seek;
+        let mut f = file;
+        f.seek(std::io::SeekFrom::Start(offset))?;
+        f.write_all(buf)
+    }
+}
+
+/// Puts image `src` at `dst` for a test's SOURCE: a symbolic link on Unix, a copy elsewhere
+/// (a link on Windows needs a privilege).
+pub fn link(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(src, dst)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::copy(src, dst).map(drop)
+    }
+}
+
 /// Stops a spawned `sacdfs` with SIGTERM and waits (up to 10 s) for it to exit, killing it
 /// only as a last resort. A SIGKILL while the process is writing its coverage profile at exit
 /// leaves a truncated `.profraw` and fails the coverage job (#127).
@@ -432,4 +465,65 @@ pub fn stop_gracefully(child: &mut std::process::Child) {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// Tracks that sacdfs lists differently from the manifest, on purpose: tracks whose frames
+/// overlap are listed so that no two share a frame (`sacdfs::track_ranges`; docs/design.md,
+/// "Track sizes"). Per case, slot and track number: `None` when the track is not shown (it
+/// starts where an earlier track starts), or its first and end frame with the case and track
+/// of the manifest that has exactly those frames, whose audio hashes it must match.
+#[allow(clippy::type_complexity)]
+pub const DEPARTURES: &[(&str, &str, u32, Option<(u64, u64, &str, u32)>)] = &[
+    // Three tracks over the whole area: the first is kept, the others lie inside it.
+    ("track-starts-overlap", "2ch", 2, None),
+    ("track-starts-overlap", "2ch", 3, None),
+    // Every duration clamped to the play time: each track ends where the next one starts.
+    ("track-duration-max", "2ch", 1, Some((0, 4, "track-lsn-reversed", 1))),
+    ("track-duration-max", "2ch", 2, Some((4, 8, "track-lsn-reversed", 2))),
+];
+
+/// The manifest's expected audio of track `n` of `slot` in case `id`.
+fn reference_track(id: &str, slot: &str, n: u32) -> Value {
+    let case = cases().into_iter().find(|c| c["id"] == id).unwrap();
+    let area = case["expected"]["audio"].as_array().unwrap().iter().find(|a| a["area"] == slot).unwrap();
+    area["tracks"].as_array().unwrap().iter().find(|t| t["number"] == n).unwrap().clone()
+}
+
+/// The tracks sacdfs lists for a case, by area directory and number, with the manifest's
+/// expected audio: the manifest's "ok" tracks, with the [`DEPARTURES`] applied.
+pub fn listed_tracks(case: &Value) -> std::collections::BTreeMap<(String, u32), Value> {
+    let id = case["id"].as_str().unwrap();
+    let mut want = std::collections::BTreeMap::new();
+    for area in case["expected"]["audio"].as_array().unwrap() {
+        let dir = area_dir(area["area"].as_str().unwrap()).to_owned();
+        for t in area["tracks"].as_array().unwrap() {
+            if t["outcome"] == "ok" {
+                want.insert((dir.clone(), t["number"].as_u64().unwrap() as u32), t.clone());
+            }
+        }
+    }
+    for &(case_id, slot, n, listed) in DEPARTURES {
+        if case_id != id {
+            continue;
+        }
+        let key = (area_dir(slot).to_owned(), n);
+        match listed {
+            None => {
+                assert!(
+                    want.remove(&key).is_some(),
+                    "{id}: departure for a track the manifest does not show"
+                );
+            }
+            Some((first, end, same_case, same_n)) => {
+                let mut t = reference_track(same_case, slot, same_n);
+                assert_eq!((t["first_frame"].as_u64(), t["end_frame"].as_u64()), (Some(first), Some(end)));
+                t["number"] = n.into();
+                assert!(
+                    want.insert(key, t).is_some(),
+                    "{id}: departure for a track the manifest does not show"
+                );
+            }
+        }
+    }
+    want
 }

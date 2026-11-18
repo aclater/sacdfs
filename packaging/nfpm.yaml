@@ -1,0 +1,99 @@
+# The .rpm and .deb of a release (#460), packed by packaging/pack-linux.sh from a release
+# tarball's files, which it stages in the current folder first. Not for building: the
+# binary is the release run's, as tested and attested.
+name: sacdfs
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+release: 1
+section: utils
+priority: optional
+maintainer: aclater <105859+aclater@users.noreply.github.com>
+vendor: aclater
+homepage: https://github.com/aclater/sacdfs
+license: GPL-3.0-or-later
+description: |-
+  Read-only FUSE filesystem that shows SACD disc images as DSF files
+  sacdfs mounts a folder of SACD disc images (ISO) and shows each disc's tracks as DSF and
+  WAV files, decoded on demand. It writes nothing to the images.
+depends:
+  - fuse3
+contents:
+  - src: ./sacdfs
+    dst: /usr/bin/sacdfs
+    file_info: {mode: 0755}
+  - src: ./rpm/sacdfs-ctl
+    dst: /usr/bin/sacdfs-ctl
+    file_info: {mode: 0755}
+    packager: rpm
+  - src: ./deb/sacdfs-ctl
+    dst: /usr/bin/sacdfs-ctl
+    file_info: {mode: 0755}
+    packager: deb
+  - src: ./rpm/sacdfs.service
+    dst: /usr/lib/systemd/system/sacdfs.service
+    file_info: {mode: 0644}
+    packager: rpm
+  - src: ./deb/sacdfs.service
+    dst: /usr/lib/systemd/system/sacdfs.service
+    file_info: {mode: 0644}
+    packager: deb
+  # The settings, kept on upgrade once changed (rpm: a new default lands as .rpmnew).
+  - src: ./rpm/sacdfs.conf
+    dst: /etc/sysconfig/sacdfs
+    type: config|noreplace
+    file_info: {mode: 0644}
+    packager: rpm
+  - src: ./deb/sacdfs.conf
+    dst: /etc/default/sacdfs
+    type: config
+    file_info: {mode: 0644}
+    packager: deb
+  # rpm removes only folders the package owns; dpkg removes empty ones itself.
+  - dst: /usr/share/doc/sacdfs
+    type: dir
+    file_info: {mode: 0755}
+    packager: rpm
+  - dst: /usr/share/licenses/sacdfs
+    type: dir
+    file_info: {mode: 0755}
+    packager: rpm
+  - src: ./COPYING
+    dst: /usr/share/licenses/sacdfs/COPYING
+    type: license
+    file_info: {mode: 0644}
+    packager: rpm
+  - src: ./COPYING
+    dst: /usr/share/doc/sacdfs/COPYING
+    file_info: {mode: 0644}
+    packager: deb
+  - src: ./README.md
+    dst: /usr/share/doc/sacdfs/README.md
+    type: doc
+    file_info: {mode: 0644}
+    packager: rpm
+  - src: ./CHANGELOG.md
+    dst: /usr/share/doc/sacdfs/CHANGELOG.md
+    type: doc
+    file_info: {mode: 0644}
+    packager: rpm
+  # nfpm leaves type "doc" out of a .deb: plain files there.
+  - src: ./README.md
+    dst: /usr/share/doc/sacdfs/README.md
+    file_info: {mode: 0644}
+    packager: deb
+  - src: ./CHANGELOG.md
+    dst: /usr/share/doc/sacdfs/CHANGELOG.md
+    file_info: {mode: 0644}
+    packager: deb
+scripts:
+  postinstall: ./scripts/postinstall.sh
+  preremove: ./scripts/preremove.sh
+  postremove: ./scripts/postremove.sh
+rpm:
+  group: Applications/File
+  summary: Read-only FUSE filesystem that shows SACD disc images as DSF files
+  compression: xz
+deb:
+  compression: xz

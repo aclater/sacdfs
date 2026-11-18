@@ -162,8 +162,7 @@ fn now_secs() -> u64 {
 }
 
 fn path_hash(p: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_bytes())[..16])
+    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_encoded_bytes())[..16])
 }
 
 fn stamp(image: &Path) -> Option<(u64, u64)> {
@@ -352,7 +351,7 @@ impl Session {
             if self.stopped() {
                 return true;
             }
-            let load = load_average().unwrap_or(0.0);
+            let load = crate::platform::load_average().unwrap_or(0.0);
             if load <= max {
                 return false;
             }
@@ -558,19 +557,7 @@ pub fn required_hits(answered: usize) -> usize {
 
 /// CPU seconds of this process and the programs it ran (`fpcalc`) that ended.
 pub fn cpu_seconds() -> f64 {
-    use nix::sys::resource::{UsageWho, getrusage};
-    let secs = |who| {
-        getrusage(who).map_or(0.0, |u| {
-            let (a, b) = (u.user_time(), u.system_time());
-            a.tv_sec() as f64 + b.tv_sec() as f64 + (a.tv_usec() + b.tv_usec()) as f64 / 1e6
-        })
-    };
-    secs(UsageWho::RUSAGE_SELF) + secs(UsageWho::RUSAGE_CHILDREN)
-}
-
-/// The 1-minute load average.
-fn load_average() -> Option<f64> {
-    fs::read_to_string("/proc/loadavg").ok()?.split_whitespace().next()?.parse().ok()
+    crate::platform::cpu_seconds()
 }
 
 #[cfg(test)]

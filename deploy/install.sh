@@ -20,6 +20,11 @@
 trap 'printf "install.sh: the script ended before its last line: the download was cut short, and nothing was changed. Download it again.\n" >&2; exit 1' EXIT
 
 DEFAULT_VERSION=0.6.0 # set to the release's version when the release packs this file
+# The SHA-256 of this release's archives, one "<sha256>  <file>" line each, written in when
+# the release workflow packs this file (.github/scripts/stamp-installer.sh) after building
+# them; this file itself is attested. Empty here and in the copy inside each archive.
+RELEASE_SHA256='
+'
 REPO=aclater/sacdfs
 # Where releases are downloaded from: GitHub, or a mirror with the same layout
 # (<url>/download/v<version>/<file>), as the CI test uses.
@@ -42,8 +47,10 @@ the release binary with systemd or the NAS's own start-at-boot hook. Run it as r
   --share-name NAME    SMB share and NFS export name (container), or the name of the
                        folder the DSF and WAV files appear in (binary); default sacd
   --mount DIR          binary routes: the folder to mount on (default: VOLUME/NAME)
-  --prefix DIR         where sacdfs's own files go on a NAS (default: VOLUME/sacdfs;
-                       /opt/sacdfs for a container on plain Linux)
+  --prefix DIR         where sacdfs's own files go (default: VOLUME/sacdfs; on QNAP
+                       VOLUME/.sacdfs, outside the shared folders; /opt/sacdfs on
+                       plain Linux). It and every folder above it must be owned by
+                       root and not writable by other users
   --method auto|compose|systemd|ctl
                        how to run sacdfs (default auto)
   --platform NAME      skip detection: synology qnap asustor terramaster ugreen readynas
@@ -96,13 +103,147 @@ detect_platform() {
 
 # The data volume the images are on, for sacdfs's own files and the folder to mount on, as
 # the guides use it: /volume1 (Synology, ASUSTOR, UGREEN), /Volume1 (TerraMaster), /data
-# (ReadyNAS), a QNAP shared folder (/share/CACHEDEV1_DATA/Multimedia).
+# (ReadyNAS), /share/CACHEDEV1_DATA (QNAP). The volume's top folder, never a shared folder:
+# root runs sacdfs's files at every start, so no other user may be able to change them.
 volume_of() {
     case $PLATFORM in
-        qnap) printf '%s\n' "$1" | cut -d/ -f1-4 ;;
+        qnap) printf '%s\n' "$1" | cut -d/ -f1-3 ;;
         linux | openmediavault) echo ;;
         *) printf '%s\n' "$1" | cut -d/ -f1-2 ;;
     esac
+}
+
+# path_ok VALUE: VALUE has only letters, digits, spaces, / . _ - + , @ = & ( ) [ ] and
+# non-ASCII (UTF-8) characters: nothing that a shell, a settings file or YAML reads as syntax.
+path_ok() {
+    [ -n "$1" ] && [ "$(printf '%s#' "$1" | LC_ALL=C tr -d 'A-Za-z0-9/._+,@=&() \133\135\200-\377-')" = '#' ]
+}
+check_name() { # OPTION VALUE
+    path_ok "$2" ||
+        die "$1 $2: sacdfs takes folder names with letters, digits, spaces and . _ - + , @ = & ( ) [ ] only (and letters beyond ASCII). Rename the folder, or choose another one. Nothing was changed."
+}
+
+# --- Who can change the files root runs. The same two functions are in sacdfs-ctl.
+
+# entry_unsafe PATH: why a user other than root could change PATH (one entry; a symbolic link
+# itself, not what it points to), printed with the fix, status 0; status 1 when only root can.
+# With _eu_nosticky=1, a folder with the sticky bit counts as writable by others too.
+entry_unsafe() {
+    _eu_l=$(LC_ALL=C ls -ldn "$1" 2>/dev/null) || {
+        echo "can't be read"
+        return 0
+    }
+    set -f
+    # shellcheck disable=SC2086 # split into the ls fields on purpose
+    set -- "$1" $_eu_l
+    set +f
+    if [ "$4" != 0 ]; then
+        echo "is owned by user $4, not root (fix: chown 0 '$1', or use another folder)"
+        return 0
+    fi
+    case $2 in l*) return 1 ;; esac
+    case $2 in
+        ?????w* | ????????w*)
+            case ${_eu_nosticky:-}$2 in d????????[tT]*) ;; *)
+                # Debian (ReadyNAS OS, OpenMediaVault) makes /usr/local root:staff 2775 by
+                # policy. /usr/local and /usr/local/bin only, accepted only while the group "staff" has no members at all (none
+                # listed, and no user with it as primary group), so only root can write.
+                case $1:$2 in /usr/local:d???????-* | /usr/local/bin:d???????-*)
+                    _eu_g=$({ getent group staff 2>/dev/null || grep '^staff:' /etc/group 2>/dev/null; } | head -n 1)
+                    _eu_gid=${_eu_g#*:*:}
+                    _eu_gid=${_eu_gid%%:*}
+                    if [ -n "$_eu_g" ] && [ "$_eu_gid" = "$5" ]; then
+                        _eu_m=${_eu_g##*:}
+                        _eu_p=$({ getent passwd 2>/dev/null || cat /etc/passwd 2>/dev/null; } |
+                            awk -F: -v g="$5" '$4 == g { printf "%s%s", s, $1; s = "," }')
+                        [ -z "$_eu_m$_eu_p" ] && return 1
+                        echo "can be written by the group staff ($2), which has members: ${_eu_m}${_eu_m:+${_eu_p:+,}}${_eu_p} (fix: remove them from staff, or chmod g-w '$1')"
+                        return 0
+                    fi
+                    ;;
+                esac
+                echo "can be written by its group or by other users ($2) (fix: chmod go-w '$1', or use another folder)"
+                return 0
+                ;;
+            esac
+            ;;
+    esac
+    case $2 in ??????????+*)
+        echo "has an access control list ($2), which may let other users write to it (fix: setfacl -b '$1', or use another folder)"
+        return 0
+        ;;
+    esac
+    return 1
+}
+
+# path_unsafe PATH: walks PATH from / down, through symbolic links, and prints the first
+# folder, link or file on the way that a user other than root could change or replace, with
+# why; status 1 when there is none. A part that doesn't exist yet is fine unless the folder
+# it would be made in can be written by other users (with the sticky bit, as /tmp).
+path_unsafe() {
+    if _pu_r=$(entry_unsafe /); then
+        echo "/ $_pu_r"
+        return 0
+    fi
+    _pu_todo=${1#/} _pu_cur='' _pu_n=0
+    while [ -n "$_pu_todo" ]; do
+        _pu_part=${_pu_todo%%/*}
+        case $_pu_todo in */*) _pu_todo=${_pu_todo#*/} ;; *) _pu_todo= ;; esac
+        case $_pu_part in
+            '' | .) continue ;;
+            ..)
+                _pu_cur=${_pu_cur%/*}
+                continue
+                ;;
+        esac
+        _pu_next=$_pu_cur/$_pu_part
+        if [ -L "$_pu_next" ]; then
+            if _pu_r=$(entry_unsafe "$_pu_next"); then
+                echo "$_pu_next $_pu_r"
+                return 0
+            fi
+            _pu_n=$((_pu_n + 1))
+            _pu_t=$(readlink "$_pu_next") && [ "$_pu_n" -le 40 ] || {
+                echo "$_pu_next is a symbolic link that can't be followed"
+                return 0
+            }
+            case $_pu_t in /*) _pu_cur= ;; esac
+            _pu_todo=${_pu_t#/}${_pu_todo:+/$_pu_todo}
+            continue
+        fi
+        if [ ! -e "$_pu_next" ]; then
+            # Not there yet, so root will make it: not in a folder (sticky, or the walk would
+            # have stopped) where another user could make it first.
+            _eu_nosticky=1
+            entry_unsafe "${_pu_cur:-/}" >/dev/null
+            _pu_w=$?
+            _eu_nosticky=
+            if [ "$_pu_w" = 0 ]; then
+                echo "$_pu_next doesn't exist yet, and other users can write to ${_pu_cur:-/}, so they could make it first (fix: make it as root first, mkdir -m 0755 '$_pu_next', or use another folder)"
+                return 0
+            fi
+            return 1
+        fi
+        if _pu_r=$(entry_unsafe "$_pu_next"); then
+            echo "$_pu_next $_pu_r"
+            return 0
+        fi
+        _pu_cur=$_pu_next
+    done
+    return 1
+}
+
+# secure_files WHAT PATH...: stop, before anything is written, if a user other than root could
+# change or replace one of these folders or files, or a folder above them.
+secure_files() {
+    what=$1
+    shift
+    for p in "$@"; do
+        if why=$(path_unsafe "$p"); then
+            die "$why.
+That would let another user change $what, which root runs at every start. Nothing was changed. Fix that folder as shown, or give a --prefix whose folders only root can change. See $DOCS/README.md#where-the-files-go"
+        fi
+    done
 }
 
 glibc_version() {
@@ -377,7 +518,14 @@ remove() {
 }
 
 # rmdir_empty DIR: remove a folder this script made, only if empty and not mounted.
-mounted() { awk -v d="$1" '$2 == d { f = 1 } END { exit !f }' /proc/mounts; }
+# mounted DIR: something is mounted on DIR (/proc/mounts writes a space as \040, a tab as
+# \011, a backslash as \134).
+mounted() {
+    MNT=$1 awk '{
+        x = $2; gsub(/\\040/, " ", x); gsub(/\\011/, "\t", x); gsub(/\\012/, "\n", x); gsub(/\\134/, "\\", x)
+        if (x == ENVIRON["MNT"]) f = 1
+    } END { exit !f }' /proc/mounts
+}
 rmdir_empty() {
     [ -d "$1" ] || return 0
     mounted "$1" && return 0
@@ -389,7 +537,12 @@ rmdir_empty() {
 
 fetch() {
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --retry 3 -o "$2" "$1"
+        # HTTPS only (no redirect to plain HTTP), TLS 1.2 or later; a plain-HTTP mirror given
+        # in SACDFS_RELEASES_URL only with checksums built in (see get_archive).
+        case $1 in
+            https:*) curl -fsSL --retry 3 --proto '=https' --tlsv1.2 -o "$2" "$1" ;;
+            *) curl -fsSL --retry 3 -o "$2" "$1" ;;
+        esac
     elif command -v wget >/dev/null 2>&1; then
         # BusyBox's wget may be built without HTTPS: then it says so, and this fails.
         wget -q -O "$2" "$1"
@@ -397,13 +550,34 @@ fetch() {
         die "neither curl nor wget is here to download $1: install one, or download the release archive yourself and give it with --archive"
     fi
 }
+
+# builtin_sha FILE: the SHA-256 of a release archive, built into this script by the release
+# workflow, for this script's own version only.
+builtin_sha() {
+    printf '%s\n' "$RELEASE_SHA256" | awk -v f="$1" '$2 == f && $1 ~ /^[0-9a-f]+$/ && length($1) == 64 { print $1; exit }'
+}
+# sha_of FILE: its SHA-256.
+sha_of() { sha256sum <"$1" | cut -d' ' -f1; }
+# tls_checked: the downloader here checks the server's certificate (curl, or GNU Wget; not
+# BusyBox's wget, which doesn't).
+tls_checked() {
+    command -v curl >/dev/null 2>&1 && return 0
+    wget --version 2>/dev/null | grep -q 'GNU Wget'
+}
+
 get_archive() {
     [ -n "$PKGDIR" ] && return 0
     v=${VERSION:-$DEFAULT_VERSION}
     pkg=sacdfs-$v-$ARCH-linux
     if [ -n "$ARCHIVE" ]; then
         [ -f "$ARCHIVE" ] || die "--archive $ARCHIVE: no such file"
-        if [ -f "$ARCHIVE.sha256" ]; then
+        want=
+        [ "$v" = "$DEFAULT_VERSION" ] && want=$(builtin_sha "$(basename "$ARCHIVE")")
+        if [ -n "$want" ]; then
+            [ "$(sha_of "$ARCHIVE")" = "$want" ] ||
+                die "$ARCHIVE doesn't match the checksum built into this install.sh: it isn't the published $(basename "$ARCHIVE"). Nothing was changed."
+            say "  checksum OK (built in): $ARCHIVE"
+        elif [ -f "$ARCHIVE.sha256" ]; then
             (cd "$(dirname "$ARCHIVE")" && sha256sum -c "$(basename "$ARCHIVE").sha256" >/dev/null) ||
                 die "$ARCHIVE doesn't match $ARCHIVE.sha256"
             say "  checksum OK: $ARCHIVE"
@@ -416,12 +590,28 @@ get_archive() {
         [ -n "$pkg" ] || die "$ARCHIVE is not a sacdfs release archive"
     else
         url=$RELEASES/download/v$v/$pkg.tar.gz
+        want=
+        [ "$v" = "$DEFAULT_VERSION" ] && want=$(builtin_sha "$pkg.tar.gz")
+        if [ -z "$want" ]; then
+            # No checksum built in (another --version, or a copy of install.sh not from a
+            # release): only the .sha256 from the same server, so only over HTTPS with a
+            # certificate check.
+            case $url in https:*) ;; *) die "$url isn't HTTPS, and this install.sh has no checksum built in for $pkg.tar.gz: nothing was changed" ;; esac
+            tls_checked || die "this install.sh has no checksum built in for $pkg.tar.gz, and BusyBox's wget doesn't check the server's certificate. Nothing was changed. Use the install.sh of release $v (its checksums are built in), install curl, or download the archive on a computer and give it with --archive."
+            warn "this install.sh has no checksum built in for $pkg.tar.gz (only its own release's are): checking it against the .sha256 from the same server only"
+        fi
         say "  downloading $url (to a temporary folder)"
         fetch "$url" "$TMP/$pkg.tar.gz" || die "download failed: $url (without curl, BusyBox's wget needs HTTPS support; or use --archive)"
-        fetch "$url.sha256" "$TMP/$pkg.tar.gz.sha256" || die "download failed: $url.sha256"
-        (cd "$TMP" && sha256sum -c "$pkg.tar.gz.sha256" >/dev/null) ||
-            die "the download doesn't match its checksum; try again later"
-        say "  checksum OK: $pkg.tar.gz"
+        if [ -n "$want" ]; then
+            [ "$(sha_of "$TMP/$pkg.tar.gz")" = "$want" ] ||
+                die "the download doesn't match the checksum built into this install.sh: nothing was changed. Try again later; if it persists, something between here and $RELEASES changes it."
+            say "  checksum OK (built in): $pkg.tar.gz"
+        else
+            fetch "$url.sha256" "$TMP/$pkg.tar.gz.sha256" || die "download failed: $url.sha256"
+            (cd "$TMP" && sha256sum -c "$pkg.tar.gz.sha256" >/dev/null) ||
+                die "the download doesn't match its checksum; try again later"
+            say "  checksum OK: $pkg.tar.gz"
+        fi
         tar -C "$TMP" -xzf "$TMP/$pkg.tar.gz" || die "cannot unpack $pkg.tar.gz"
     fi
     PKGDIR=$TMP/$pkg
@@ -477,8 +667,9 @@ host_address() {
 
 # port_open PORT: true when something answers on the port here (if a tool can tell).
 port_open() {
-    if command -v nc >/dev/null 2>&1; then
-        nc -z -w 3 127.0.0.1 "$1" 2>/dev/null
+    # BusyBox nc (ASUSTOR) has no -z: then the listening sockets decide.
+    if command -v nc >/dev/null 2>&1 && nc -z -w 3 127.0.0.1 "$1" 2>/dev/null; then
+        return 0
     elif [ -r /proc/net/tcp ]; then
         hex=$(printf '%04X' "$1")
         cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v p=":$hex" '$2 ~ p"$" && $4 == "0A" { f = 1 } END { exit !f }'
@@ -505,11 +696,14 @@ install_compose() {
     esac
     selinux=0
     if [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce)" = 1 ]; then selinux=1; fi
-    # The images line and three settings, in deploy/nas-compose.yaml's own layout.
+    # The images line and three settings, in deploy/nas-compose.yaml's own layout. The
+    # images line is a YAML single-quoted string (' doubled), so that # and the like stay
+    # part of the folder's name.
     awk -v iso="$ISO_DIR" -v name="$SHARE_NAME" -v smb="$smb" -v nfs="$nfs" '
         /^ *- \/volume1\/music:\/images:ro/ {
             ind = $0; sub(/-.*/, "", ind)
-            print ind "- " iso ":/images:ro"; n++; next
+            v = iso ":/images:ro"; gsub(/\047/, "\047\047", v)
+            print ind "- \047" v "\047"; n++; next
         }
         { print }
         /^ *SACDFS_FLATTEN:/ {
@@ -529,12 +723,16 @@ install_compose() {
     fi
     changed=0
     put "$TMP/compose.yaml" "$COMPOSE_FILE" 0644 && changed=1
+    # A Compose file of an earlier install in a folder other users may change: the container
+    # is made again from this one (same project), and the old file removed.
+    [ -n "$OLD_PREFIXES" ] && changed=1
     running=$($ENGINE inspect -f '{{.State.Running}}' sacdfs 2>/dev/null)
     if [ "$changed" = 1 ] || [ "$running" != true ]; then
         run $COMPOSE -p sacdfs -f "$COMPOSE_FILE" up -d || die "'$COMPOSE up' failed; see '$ENGINE logs sacdfs'"
     else
         say "  the container runs with this file already"
     fi
+    remove_old
     [ "$DRY" = 1 ] && return 0
     say "  waiting for the container to be healthy (up to 5 minutes for a large library)"
     i=0
@@ -563,14 +761,24 @@ install_compose() {
 }
 
 uninstall_compose() {
-    [ -f "$COMPOSE_FILE" ] || return 0
-    say "Removing the container route: $COMPOSE_FILE"
-    if [ -n "$COMPOSE" ]; then
+    old=
+    while IFS= read -r d; do
+        [ -n "$d" ] && [ -f "$d/compose.yaml" ] && old=$d
+    done <<EOF
+$OLD_PREFIXES
+EOF
+    [ -f "$COMPOSE_FILE" ] || [ -n "$old" ] || return 0
+    say "Removing the container route: ${old:+$old/compose.yaml }$([ -f "$COMPOSE_FILE" ] && echo "$COMPOSE_FILE")"
+    if [ -z "$COMPOSE" ]; then
+        warn "no Compose answers here: stop the container 'sacdfs' yourself"
+    elif [ -f "$COMPOSE_FILE" ]; then
         run $COMPOSE -p sacdfs -f "$COMPOSE_FILE" down || warn "'$COMPOSE down' failed"
     else
-        warn "no Compose answers here: stop the container 'sacdfs' yourself"
+        # Only an old file, in a folder other users may change: not read; the project by name.
+        run $COMPOSE -p sacdfs down || warn "'$COMPOSE -p sacdfs down' failed: stop the container 'sacdfs' yourself"
     fi
     remove "$COMPOSE_FILE"
+    [ -z "$old" ] || remove_files "$old"
     say "  (the index cache volume sacdfs_sacdfs-cache is kept; '$ENGINE volume rm sacdfs_sacdfs-cache' removes it)"
 }
 
@@ -579,15 +787,15 @@ uninstall_compose() {
 
 write_conf() {
     {
-        say "# Written by install.sh (sacdfs). Plain NAME=value lines: systemd reads this file too."
-        say "SACDFS_IMAGES=$ISO_DIR"
-        say "SACDFS_MOUNT=$MOUNT"
+        say "# Written by install.sh (sacdfs). NAME='value' lines, read by sacdfs-ctl and systemd;"
+        say "# never run as shell code."
+        say "SACDFS_IMAGES=$(quote "$ISO_DIR")"
+        say "SACDFS_MOUNT=$(quote "$MOUNT")"
         if [ "$METHOD" = ctl ]; then
-            say "SACDFS_BIN=$BIN"
-            say "SACDFS_OPTIONS=\"--index-cache $PREFIX/cache\""
+            say "SACDFS_BIN=$(quote "$BIN")"
+            say "SACDFS_INDEX_CACHE=$(quote "$PREFIX/cache")"
         fi
     } >"$TMP/sacdfs.conf"
-    case $ISO_DIR$MOUNT in *[\ \"\$\`\\]*) die "paths with spaces, quotes, \$ or \\ can't go in the settings file" ;; esac
     put "$TMP/sacdfs.conf" "$CONF" 0644
 }
 
@@ -652,14 +860,20 @@ hook_install() {
     case $PLATFORM in
         synology)
             for t in $SYNO_TASKS; do
-                if esynoscheduler --list 2>/dev/null | grep -q "\"$t\""; then
-                    say "  Task Scheduler task $t: already there"
-                    continue
-                fi
                 case $t in *start) ev=bootup op=start ;; *) ev=shutdown op=stop ;; esac
+                cmd="SACDFS_CONF=$(quote "$CONF") $(quote "$CTL") $op"
+                if esynoscheduler --list 2>/dev/null | grep -q "\"$t\""; then
+                    # A task of an earlier install, which may run sacdfs-ctl from elsewhere:
+                    # replaced unless it runs this one.
+                    if syno_task_cmd "$t" | grep -qxF "$cmd"; then
+                        say "  Task Scheduler task $t: already there"
+                        continue
+                    fi
+                    run esynoscheduler --delete task_name="$t" || die "esynoscheduler --delete $t failed"
+                fi
                 [ -d /usr/syno/etc/esynoscheduler ] || run mkdir -p /usr/syno/etc/esynoscheduler
                 run esynoscheduler --create task_name="$t" event="$ev" enable=true owner='{"0":"root"}' \
-                    operation_type=script operation="SACDFS_CONF=$CONF $CTL $op" || die "esynoscheduler failed"
+                    operation_type=script operation="$cmd" || die "esynoscheduler failed"
             done
             ;;
         asustor)
@@ -667,9 +881,9 @@ hook_install() {
             {
                 say "#!/bin/sh"
                 say "# sacdfs (install.sh): ADM runs S* with start at boot and K* with stop at shut-down."
-                say "export SACDFS_CONF=$CONF"
+                say "export SACDFS_CONF=$(quote "$CONF")"
                 say "case \$1 in"
-                say "    start | stop | restart | status) exec $CTL \"\$1\" ;;"
+                say "    start | stop | restart | status) exec $(quote "$CTL") \"\$1\" ;;"
                 say "esac"
             } >"$TMP/S99sacdfs"
             put "$TMP/S99sacdfs" "$d/S99sacdfs" 0755
@@ -692,7 +906,7 @@ hook_install() {
             ;;
         *)
             warn "$NAME has no start-at-boot hook this script knows: sacdfs runs now, but won't come back after a restart."
-            warn "Start it at boot with: SACDFS_CONF=$CONF $CTL start"
+            warn "Start it at boot with: SACDFS_CONF=$(quote "$CONF") $(quote "$CTL") start"
             ;;
     esac
 }
@@ -712,7 +926,7 @@ hook_remove() {
             # "Run user defined processes": off again only if this script switched it on and
             # autorun.sh holds nothing else to run (#353).
             if [ "$(getcfg Misc Autorun -f /etc/config/uLinux.conf 2>/dev/null)" = TRUE ]; then
-                if [ ! -f "$AUTORUN_MARK" ]; then
+                if [ ! -f "$AUTORUN_MARK" ] && [ -z "$AUTORUN_SWITCHED" ]; then
                     say "  run user defined processes: left on (this installer didn't switch it on)"
                 elif grep -v '^[[:space:]]*#' "$TMP/autorun.sh" | grep -q '[^[:space:]]'; then
                     say "  run user defined processes: left on (autorun.sh runs other things too)"
@@ -724,7 +938,8 @@ hook_remove() {
             ;;
     esac
 }
-qnap_autorun() {
+# qnap_cfg_open: QNAP's boot flash config partition, mounted on /tmp/config (if it isn't).
+qnap_cfg_open() {
     cfg=/tmp/config
     if ! mounted "$cfg"; then
         dev=$(/sbin/hal_app --get_boot_pd port_id=0 2>/dev/null)
@@ -733,6 +948,15 @@ qnap_autorun() {
         mount "${dev}6" -t ext2 "$cfg" || die "can't mount ${dev}6 on $cfg"
         QNAP_CFG_MOUNTED=$cfg
     fi
+}
+qnap_cfg_close() {
+    if [ -n "$QNAP_CFG_MOUNTED" ]; then
+        umount "$QNAP_CFG_MOUNTED" 2>/dev/null
+        QNAP_CFG_MOUNTED=
+    fi
+}
+qnap_autorun() {
+    qnap_cfg_open
     f=$cfg/autorun.sh
     if [ -f "$f" ]; then
         awk -v b="$BEGIN_MARK" -v e="$END_MARK" '$0 == b { s = 1 } !s { print } $0 == e { s = 0 }' "$f" >"$TMP/autorun.sh"
@@ -744,18 +968,191 @@ qnap_autorun() {
 $BEGIN_MARK
 # autorun.sh runs before the data volume is mounted: wait for it, then start sacdfs.
 (
+  conf=$(quote "$CONF")
+  ctl=$(quote "$CTL")
   i=0
-  while [ ! -x $CTL ] && [ \$i -lt 120 ]; do sleep 5; i=\$((i + 1)); done
-  SACDFS_CONF=$CONF $CTL start
+  while [ ! -x "\$ctl" ] && [ \$i -lt 120 ]; do sleep 5; i=\$((i + 1)); done
+  SACDFS_CONF=\$conf "\$ctl" start
 ) > /tmp/sacdfs-autorun.log 2>&1 &
 $END_MARK
 EOF
     fi
     if [ "$1" = remove ] && [ ! -f "$f" ]; then :; else put "$TMP/autorun.sh" "$f" 0755; fi
-    if [ -n "$QNAP_CFG_MOUNTED" ]; then
-        umount "$QNAP_CFG_MOUNTED" 2>/dev/null
-        QNAP_CFG_MOUNTED=
+    qnap_cfg_close
+}
+
+# unquote: a value as this script writes it ('...', with '\'' for ') or as older ones did
+# (bare), from stdin.
+unquote() {
+    sed -n "1{s/^'\\(.*\\)'\$/\\1/;s/'\\\\''/'/g;p;}"
+}
+
+# syno_task_cmd TASK: the command a Task Scheduler task runs. esynoscheduler --list prints
+# JSON with sorted keys, so each task's "operation" comes before its "task_name".
+syno_task_cmd() {
+    esynoscheduler --list 2>/dev/null | awk -v t="$1" '
+        /"operation" *:/ { op = $0; sub(/^[^:]*: *"/, "", op); sub(/",? *$/, "", op) }
+        /"task_name" *:/ {
+            n = $0; sub(/^[^:]*: *"/, "", n); sub(/",? *$/, "", n)
+            if (n == t) {
+                gsub(/\\\//, "/", op); gsub(/\\"/, "\"", op); gsub(/\\\\/, "\\", op)
+                print op; exit
+            }
+        }'
+}
+
+# hook_conf: the settings file the NAS's start-at-boot hook names now (from an earlier
+# install), or nothing.
+hook_conf() {
+    case $PLATFORM in
+        asustor)
+            sed -n 's/^export SACDFS_CONF=//p' /usr/local/etc/init.d/S99sacdfs 2>/dev/null | unquote
+            ;;
+        synology)
+            command -v esynoscheduler >/dev/null 2>&1 || return 0
+            syno_task_cmd sacdfs-start |
+                sed -n "s/^SACDFS_CONF=\('[^']*'\) .* start\$/\1/p; t; s/^SACDFS_CONF=\([^ ']*\) .* start\$/\1/p" | unquote
+            ;;
+        qnap)
+            [ "$(id -u)" = 0 ] || return 0
+            [ -x /sbin/hal_app ] || mounted /tmp/config || return 0
+            qnap_cfg_open
+            awk -v b="$BEGIN_MARK" -v e="$END_MARK" '$0 == b { s = 1 } s { print } $0 == e { s = 0 }' "$cfg/autorun.sh" 2>/dev/null |
+                sed -n 's/^ *conf=//p; s/^ *SACDFS_CONF=\([^ $]*\) .*/\1/p' | unquote
+            qnap_cfg_close
+            ;;
+    esac
+}
+
+# old_prefixes: folders an earlier install.sh put sacdfs-ctl and its settings in, other than
+# PREFIX, that still hold them: the QNAP default up to 0.6.3 (a sacdfs folder inside the
+# images' shared folder), the one the start-at-boot hook names, and the running sacdfs's.
+# One per line.
+old_prefixes() {
+    {
+        # One per line, each with a letter for where it came from (n: a name; p: the kernel).
+        if [ "$PLATFORM" = qnap ]; then
+            printf 'n%s/sacdfs\n' "$(printf '%s\n' "$ISO_DIR" | cut -d/ -f1-4)"
+        fi
+        c=$(hook_conf)
+        [ -n "$c" ] && printf 'n%s\n' "$(dirname "$c")"
+        # The folder of the sacdfs that sacdfs-ctl started (its pid file), on any system.
+        p=$(cat /var/run/sacdfs.pid 2>/dev/null)
+        case $p in '' | *[!0-9]*) ;; *)
+            case $(cat "/proc/$p/comm" 2>/dev/null) in sacdfs*)
+                e=$(readlink "/proc/$p/exe" 2>/dev/null) && printf 'p%s\n' "$(dirname "$e")"
+                ;;
+            esac
+            ;;
+        esac
+    } | while IFS= read -r d; do
+        d=${d#?}
+        case $d in /?*) ;; *) continue ;; esac
+        d=${d%/}
+        [ -d "$d" ] || continue
+        # Files are removed from there: never through a link, which could point anywhere. (The
+        # kernel's path is canonical, so an honest one passes; a part swapped since fails.)
+        real_folder "$d" || continue
+        [ "$d" != "$PREFIX" ] || continue
+        for f in sacdfs-ctl sacdfs.conf compose.yaml; do
+            if [ -e "$d/$f" ]; then
+                printf '%s\n' "$d"
+                break
+            fi
+        done
+    done | awk '!seen[$0]++'
+}
+
+# real_folder DIR: DIR is a folder and no part of its path is a symbolic link; otherwise a
+# warning naming it, and status 1. Used before removing anything from a folder that other
+# users may have been able to change.
+real_folder() {
+    if [ -L "$1" ] || [ "$(cd -P "$1" 2>/dev/null && pwd -P)" != "$1" ]; then
+        warn "$1 is, or is reached through, a symbolic link: nothing there was stopped or removed. Check what it points to, and remove sacdfs's files from there yourself if they are yours."
+        return 1
     fi
+}
+
+# stop_old DIR: stop a sacdfs started from DIR, a folder other users may be able to change,
+# without running anything from there: SIGTERM to the pid in the pid file, as sacdfs-ctl
+# stop does, and wait. Never kill -9.
+stop_old() {
+    pf=/var/run/sacdfs.pid
+    p=$(cat "$pf" 2>/dev/null)
+    case $p in '' | *[!0-9]*) return 0 ;; esac
+    [ -d "/proc/$p" ] || return 0
+    case $(cat "/proc/$p/comm" 2>/dev/null) in sacdfs*) ;; *) return 0 ;; esac
+    CHANGED=1
+    if [ "$DRY" = 1 ]; then
+        say "  would stop sacdfs (pid $p), started from $1"
+        return 0
+    fi
+    say "  stopping sacdfs (pid $p), started from $1"
+    kill -s TERM "$p"
+    i=0
+    while [ -d "/proc/$p" ] && [ "$i" -lt 45 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    [ -d "/proc/$p" ] && die "sacdfs (pid $p) didn't stop within 45 s (a file on it is probably still open): close it, then run this again"
+    rm -f "$pf"
+}
+
+# remove_files DIR: remove what this script puts in DIR, from inside DIR, so that a folder
+# renamed or replaced by a link meanwhile can't send the removal elsewhere.
+remove_files() {
+    d=$1
+    n=0
+    for f in sacdfs sacdfs-ctl sacdfs.conf compose.yaml qnap-autorun-switched-on cache; do
+        [ -e "$d/$f" ] || [ -L "$d/$f" ] && n=$((n + 1))
+    done
+    [ "$n" -gt 0 ] || return 0
+    CHANGED=1
+    if [ "$DRY" = 1 ]; then
+        say "  would remove sacdfs's files and index cache from $d"
+        return 0
+    fi
+    if (
+        cd -P "$d" 2>/dev/null && [ "$(pwd -P)" = "$d" ] || exit 1
+        rm -f sacdfs sacdfs-ctl sacdfs.conf compose.yaml qnap-autorun-switched-on
+        rm -rf cache
+    ); then
+        say "  removed sacdfs's files and index cache from $d"
+    else
+        warn "$d changed while this script ran: its sacdfs files were left there"
+    fi
+    rmdir_empty "$d"
+}
+
+# move_old: after the files are in PREFIX and the hook runs them from there, stop a sacdfs
+# started from an old folder and remove the files there (see old_prefixes).
+move_old() {
+    [ -n "$OLD_PREFIXES" ] || return 0
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        warn "sacdfs's files were in $d, which other users may be able to change; they move to $PREFIX"
+        # QNAP's mark that this script switched "Run user defined processes" on moves too.
+        if [ -f "$d/qnap-autorun-switched-on" ] && [ ! -f "$AUTORUN_MARK" ]; then
+            say "# Written by install.sh (sacdfs): it switched on QNAP's \"Run user defined processes\"; --uninstall switches it off." >"$TMP/autorun-mark"
+            put "$TMP/autorun-mark" "$AUTORUN_MARK" 0644
+        fi
+        stop_old "$d"
+    done <<EOF
+$OLD_PREFIXES
+EOF
+}
+remove_old() {
+    [ -n "$OLD_PREFIXES" ] || return 0
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        remove_files "$d"
+        # QNAP's old default folder to mount on, inside the shared folder, if it is empty.
+        if [ "$PLATFORM" = qnap ] && [ "$(dirname "$d")/$SHARE_NAME" != "$MOUNT" ]; then
+            rmdir_empty "$(dirname "$d")/$SHARE_NAME"
+        fi
+    done <<EOF
+$OLD_PREFIXES
+EOF
 }
 
 install_ctl() {
@@ -769,33 +1166,54 @@ install_ctl() {
     write_conf && changed=1
     [ -d "$PREFIX/cache" ] || run mkdir -p "$PREFIX/cache"
     [ -d "$MOUNT" ] || run mkdir -p "$MOUNT"
+    # An earlier install in a folder other users may change: stopped without running its files.
+    move_old
     hook_install
     if [ -x "$CTL" ] && [ -f "$CONF" ] && ctl status >/dev/null 2>&1; then
         if [ "$changed" = 1 ]; then runctl restart || die "sacdfs-ctl restart failed"; else say "  sacdfs is running with these files already"; fi
     else
         runctl start || die "sacdfs didn't start; see ${SACDFS_LOG:-/var/log/sacdfs.log}"
     fi
+    remove_old
     [ "$DRY" = 1 ] || say "  $("$BIN" --version), $(ctl status)"
     check_mount
-    say "Stop it with: SACDFS_CONF=$CONF $CTL stop (never kill -9)."
+    say "Stop it with: SACDFS_CONF=$(quote "$CONF") $(quote "$CTL") stop (never kill -9)."
 }
 
+# uninstall_ctl: the sacdfs-ctl route, from PREFIX and from any folder an earlier
+# install.sh used (old_prefixes).
 uninstall_ctl() {
+    found=0 mark=0
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        d=${d%/}
+        [ -e "$d" ] || [ -L "$d" ] || continue
+        real_folder "$d" || continue
+        CTL=$d/sacdfs-ctl CONF=$d/sacdfs.conf
+        [ -f "$CONF" ] || [ -f "$CTL" ] || [ -f "$d/sacdfs" ] || continue
+        found=1
+        [ -f "$d/qnap-autorun-switched-on" ] && mark=1
+        say "Removing the sacdfs-ctl route: $d"
+        # Its own sacdfs-ctl stops it only where no other user can have changed it.
+        if [ -x "$CTL" ] && [ -f "$CONF" ] && [ "$(id -u)" = 0 ] &&
+            ! path_unsafe "$CTL" >/dev/null && ! path_unsafe "$CONF" >/dev/null; then
+            st=0
+            ctl status >/dev/null 2>&1 || st=$?
+            [ "$st" != 3 ] && runctl stop
+        else
+            stop_old "$d"
+        fi
+        remove_files "$d"
+        if [ "$PLATFORM" = qnap ] && [ "$d" != "$PREFIX" ]; then rmdir_empty "$(dirname "$d")/$SHARE_NAME"; fi
+    done <<EOF
+$PREFIX
+$OLD_PREFIXES
+EOF
+    [ "$found" = 1 ] || return 0
     CTL=$PREFIX/sacdfs-ctl CONF=$PREFIX/sacdfs.conf
-    [ -f "$CONF" ] || [ -f "$CTL" ] || return 0
-    say "Removing the sacdfs-ctl route: $PREFIX"
-    if [ -x "$CTL" ] && [ -f "$CONF" ]; then
-        st=0
-        ctl status >/dev/null 2>&1 || st=$?
-        [ "$st" != 3 ] && runctl stop
-    fi
+    # hook_remove asks whether this script switched QNAP's autorun on (the mark, now removed).
+    [ "$mark" = 1 ] && AUTORUN_SWITCHED=1
     hook_remove
-    remove "$PREFIX/sacdfs" "$CTL" "$CONF"
-    # sacdfs's own index cache (rebuilt at the next start), made by this script.
-    if [ -d "$PREFIX/cache" ]; then
-        CHANGED=1
-        if [ "$DRY" = 1 ]; then say "  would remove the index cache: $PREFIX/cache"; else rm -rf "$PREFIX/cache" && say "  removed the index cache: $PREFIX/cache"; fi
-    fi
 }
 
 # ---------------------------------------------------------------------------------------
@@ -859,6 +1277,8 @@ parse_args() {
 main() {
     # The whole script arrived (see the trap at the top).
     trap - EXIT
+    # Folders and files made here are root's alone, whatever umask the login has.
+    umask 022
     # SELF: this script's file, when it runs from one; empty when it is piped into sh.
     SELF='' SRC=''
     case $0 in */install.sh | install.sh) [ -f "$0" ] && SELF=$0 ;; esac
@@ -869,6 +1289,11 @@ main() {
         [ -f "$here/sacdfs-ctl" ] && SRC=$here
     fi
     parse_args "$@"
+    # Folder names go into a settings file, start-at-boot scripts and YAML that root reads:
+    # checked against a list of safe characters before anything else happens.
+    [ -z "$ISO_DIR" ] || check_name --iso-dir "$ISO_DIR"
+    [ -z "$MOUNT" ] || check_name --mount "$MOUNT"
+    [ -z "$PREFIX" ] || check_name --prefix "$PREFIX"
     # sacdfs is Linux only. Stop on anything else before downloading or changing a thing (on
     # macOS the Linux binary was downloaded, then failed its check with a glibc hint).
     os=$(uname -s)
@@ -912,7 +1337,7 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
             say "TrueNAS runs sacdfs as a custom app from its own Apps screen; this script doesn't"
             say "install behind it. Apps, Discover Apps, Custom App, Install via YAML, then follow:"
             say "  $DOCS/truenas-scale.md"
-            say "(The app's YAML is deploy/truenas/sacdfs in the repository.)"
+            say "(The YAML to paste is in that guide, step 3.)"
             exit 0
             ;;
         unraid)
@@ -957,6 +1382,7 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
     [ -d "$ISO_DIR" ] || die "--iso-dir $ISO_DIR is not a folder"
     ISO_DIR=$(cd -P "$ISO_DIR" && pwd -P) || die "cannot enter $ISO_DIR"
     [ "$ISO_DIR" != / ] || die "--iso-dir can't be /"
+    check_name "--iso-dir (the folder it leads to)" "$ISO_DIR"
     VOLUME=$(volume_of "$ISO_DIR")
 
     # ---------------------------------------------------------------------------------------
@@ -996,11 +1422,14 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
     fi
 
     # The paths.
+    # sacdfs's own files: on the data volume (kept across firmware updates), in its top
+    # folder, which only root can change; on QNAP in a hidden folder there, next to QNAP's own
+    # .qpkg, as the shared folders are that volume's other folders. Never in a shared folder.
     if [ -z "$PREFIX" ]; then
-        if [ -n "$VOLUME" ]; then
+        if [ "$PLATFORM" = qnap ] && [ -n "$VOLUME" ]; then
+            PREFIX=$VOLUME/.sacdfs
+        elif [ -n "$VOLUME" ]; then
             PREFIX=$VOLUME/sacdfs
-        elif [ "$METHOD" = compose ]; then
-            PREFIX=/opt/sacdfs
         else
             PREFIX=/opt/sacdfs
         fi
@@ -1010,8 +1439,9 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
     fi
     case $PREFIX in /*) PREFIX=${PREFIX%/} ;; *) die "--prefix must be an absolute path" ;; esac
     case $MOUNT in /*) MOUNT=${MOUNT%/} ;; *) die "--mount must be an absolute path" ;; esac
-    if [ "$METHOD" = compose ]; then OWN="$PREFIX"; else OWN="$PREFIX $MOUNT"; fi
-    for p in $OWN; do
+    # (Each path on its own: folder names may hold spaces.)
+    for p in "$PREFIX" "$MOUNT"; do
+        [ "$p" != "$MOUNT" ] || [ "$METHOD" != compose ] || continue
         if inside "$p" "$ISO_DIR"; then
             die "$p is inside --iso-dir $ISO_DIR, and nothing may be written there: give --prefix and --mount outside it"
         fi
@@ -1025,13 +1455,48 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
         BIN=$PREFIX/sacdfs CONF=$PREFIX/sacdfs.conf CTL=$PREFIX/sacdfs-ctl
     fi
     COMPOSE_FILE=$PREFIX/compose.yaml
+    check_name --prefix "$PREFIX"
+    check_name --mount "$MOUNT"
+
+    # QNAP's autorun.sh lives on the boot flash's config partition. Only the block between the
+    # two marker lines is ours; whatever else the file holds stays.
+    BEGIN_MARK="# sacdfs install.sh: begin"
+    END_MARK="# sacdfs install.sh: end"
+    # There when this script switched autorun on (see hook_install).
+    AUTORUN_MARK=$PREFIX/qnap-autorun-switched-on
+    AUTORUN_SWITCHED=
+    QNAP_CFG_MOUNTED=
+    # An earlier install in another folder (QNAP's shared folder up to 0.6.3): moved here.
+    OLD_PREFIXES=
+    [ "$METHOD" = systemd ] || OLD_PREFIXES=$(old_prefixes)
+
+    # Root runs sacdfs's files at every start: no other user may be able to change them, or
+    # the folders they are in, or swap the folder to mount on for a link. Checked before
+    # anything is written.
+    if [ "$UNINSTALL" = 0 ]; then
+        case $METHOD in
+            compose) secure_files "the Compose file" "$COMPOSE_FILE" ;;
+            systemd) secure_files "sacdfs and its settings" "$BIN" "$CONF" "$UNIT" ;;
+            ctl) secure_files "sacdfs, sacdfs-ctl and their settings" "$BIN" "$CTL" "$CONF" "$PREFIX/cache" ;;
+        esac
+        if [ "$METHOD" != compose ]; then
+            [ ! -L "$MOUNT" ] || die "the folder to mount on, $MOUNT, is a symbolic link: give the folder itself with --mount. Nothing was changed."
+            [ ! -e "$MOUNT" ] || [ -d "$MOUNT" ] || die "the folder to mount on, $MOUNT, is not a folder. Nothing was changed."
+            # An existing folder: only the folders above it matter (it may be a share). A new
+            # one: also not made where other users could make it first.
+            if [ -e "$MOUNT" ]; then mchk=$(dirname "$MOUNT"); else mchk=$MOUNT; fi
+            if why=$(path_unsafe "$mchk"); then
+                die "$why.
+Another user could then put a link in place of the folder to mount on, $MOUNT, and have root mount sacdfs over any folder. Nothing was changed. Fix that folder as shown, or give a --mount in a folder only root can change, such as the volume's top folder, and share it with $NAME's own file sharing. See $DOCS/README.md#where-the-files-go"
+            fi
+        fi
+    fi
 
     # ---------------------------------------------------------------------------------------
     # Doing things, or saying what would be done.
 
     CHANGED=0
     TMP=
-    QNAP_CFG_MOUNTED=
     trap cleanup EXIT
     trap 'exit 130' INT TERM HUP
     TMP=$(mktemp -d 2>/dev/null || mktemp -d -t sacdfs-install.XXXXXX) || die "mktemp failed"
@@ -1043,6 +1508,11 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
         TMP=
         base=${VOLUME:-$(dirname "$PREFIX")}
         [ -d "$base" ] || die "/tmp doesn't allow running programs, and $base doesn't exist"
+        # Root runs the downloaded binary from there to try it.
+        if why=$(path_unsafe "$base"); then
+            die "$why.
+/tmp doesn't allow running programs here, so the downloaded binary would be tried from $base, which another user could change. Nothing was changed. Fix that folder as shown, or let /tmp run programs."
+        fi
         TMP=$(mktemp -d "$base/.sacdfs-install.XXXXXX") || die "mktemp in $base failed"
     fi
     rm -f "$TMP/x"
@@ -1055,13 +1525,6 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
 
     SYNO_TASKS="sacdfs-start sacdfs-stop"
 
-    # QNAP's autorun.sh lives on the boot flash's config partition. Only the block between the
-    # two marker lines is ours; whatever else the file holds stays.
-    BEGIN_MARK="# sacdfs install.sh: begin"
-    END_MARK="# sacdfs install.sh: end"
-    # There when this script switched autorun on (see hook_install).
-    AUTORUN_MARK=$PREFIX/qnap-autorun-switched-on
-
     # ---------------------------------------------------------------------------------------
 
     if [ "$UNINSTALL" = 1 ]; then
@@ -1070,6 +1533,9 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
         uninstall_ctl
         rmdir_empty "$MOUNT"
         rmdir_empty "$PREFIX"
+        while IFS= read -r d; do [ -z "$d" ] || rmdir_empty "$d"; done <<EOF
+$OLD_PREFIXES
+EOF
         if [ "$CHANGED" = 0 ]; then say "Nothing of sacdfs's to remove here."; fi
         say "Your images in $ISO_DIR were not touched."
         exit 0

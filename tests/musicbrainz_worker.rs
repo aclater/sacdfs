@@ -161,7 +161,7 @@ fn serving_never_waits_for_the_worker() {
     let d = tempfile::tempdir().unwrap();
     let lib = d.path().join("lib");
     fs::create_dir_all(&lib).unwrap();
-    std::os::unix::fs::symlink(image("no-text"), lib.join("disc.iso")).unwrap();
+    common::link(image("no-text"), lib.join("disc.iso")).unwrap();
     let tagsdir = d.path().join("tags");
     fs::create_dir_all(&tagsdir).unwrap();
     tags::install(Some(Store::new(&tagsdir)));

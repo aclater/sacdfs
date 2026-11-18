@@ -905,6 +905,31 @@ container's own SMB and NFS servers.
   of a 6-channel DST file waited about 6 hours while sacdfs used no CPU. It was not reproduced
   in 6 more reads of the same area or in the player rounds.
 
+### SMB listing cost per entry, by client and release (#205, 0.6.3, main)
+
+The report behind #205 was about 16 FUSE requests per entry for one SMB listing, from the macOS 15
+client; macOS 27 sent about 9 times fewer
+([issue](https://github.com/aclater/sacdfs/issues/205)). Re-counted on 0.6.3 and main (2026-11-15) with
+sacdfs's request log (`RUST_LOG=fuser::request=debug`): the published 0.6.3 image and an image built from
+main, in a rootless Podman container, 40 images with their art (1,784 entries: 144 folders and 1,640 files,
+1,488 of them DSF and WAV), a fresh container per version. Linux:
+the kernel SMB 3.1.1 client of Fedora 44 (kernel 7.2.15) on the same host. Windows: Windows 11 Pro 25H2 in
+a VM on the same host (not on the vendor's hardware), `Get-ChildItem -Recurse` on the mapped drive, right
+after mapping it. One run each; the two releases differ by at most 6 requests.
+
+| Requests to sacdfs | 0.6.3 | main | Per entry (main) |
+|---|---|---|---|
+| Linux, `ls -lR`, first | 1,179 | 1,173 | 0.66 |
+| Linux, `ls -lR` again after 30 s | 923 | 923 | 0.52 |
+| Linux, `find` | 701 | 701 | 0.39 |
+| Linux, `stat` of every file (a rescan) | 699 | 699 | 0.39 |
+| Windows 11, listing | 957 | 956 | 0.54 |
+
+What is left is per folder or on purpose: one `OPENDIR` and `RELEASEDIR` per folder (Samba opens each
+folder it lists), a `LOOKUP` of each folder that is re-read when its source changes (its entry is kept 2 s,
+so a new image shows), and a `LOOKUP` and `GETATTR` per art file (#235). No client measured here comes near
+one request per entry, so the 16 of the report are the macOS 15 client's own.
+
 ## 0.4.1-rc.1 against 0.4.0 (release test, 2026-11-05)
 
 The release binaries (generic build), each read through a fresh mount with `--no-index-cache` and
@@ -1105,6 +1130,67 @@ Percentages against 0.4.1. Measured on main before the core split (#22) with thi
 change was then rebased with no conflict in `src/track.rs`. Audio bytes were not compared in
 these runs: the change only decides when frames are decoded ahead, not what they hold.
 
+### One reader over SMB by release, and the cache under a memory limit (#271, 2026-11-14)
+
+The same one-reader copy, measured again for 0.4.1 to main. It was still 10 to 12 % slower than
+0.4.1 for a 6-channel area, on every release since 0.6.2. **The cause is not the pace.** The
+container is limited to 512 MiB here, and under a limit of 512 MiB or less sacdfs's cache of
+frames is 16 MiB by default ([deployment](deployment.md#under-a-memory-limit)), where the 0.4.1
+container always passed `--cache-mb 32`. With the same cache, current releases are faster than
+0.4.1. So the default is now 32 MiB from a 256 MiB limit up (below).
+
+**How measured:** a laptop with a Ryzen AI 9 HX 370 on mains, `performance` profile. The sacdfs
+container was pinned to the 4 Zen 5 cores with 512 MiB, and `cat` to a Zen 5c core. The Linux 7.2
+kernel SMB 3.1.1 client mounted the container's share over loopback. One `cat` of every file of
+one area of a DST disc (3,186 MB of stereo WAV, 9,550 MB of 6-channel WAV) to `/dev/null`; a
+fresh container per run, the image dropped from the page cache, builds alternating with the
+order rotated. 0.4.1, 0.6.2 and 0.6.3 are the published images; main (622b4ed) and the #362
+change built from the repository's Containerfile. Seconds, median (range), 5 runs each:
+
+| One reader, kernel SMB | 0.4.1 | 0.6.2 | 0.6.3 | main | #362 change |
+|---|---|---|---|---|---|
+| Stereo WAV | 21.01 (20.15-21.02) | 21.71 (21.51-22.43), +3.3 % | 21.67 (21.47-22.01), +3.1 % | 21.57 (21.05-21.75), +2.7 % | 21.32 (21.11-21.58), +1.5 % |
+| 6-channel WAV | 65.85 (64.61-66.26) | 72.15 (71.41-74.51), +9.6 % | 74.09 (71.62-74.43), +12.5 % | 72.68 (71.87-73.35), +10.4 % | 73.22 (72.13-73.51), +11.2 % |
+| Stereo DSF | 18.11 (17.90-18.25) | 18.25 (17.78-18.57), +0.8 % | 18.40 (18.33-18.46), +1.6 % | 18.31 (17.95-18.70), +1.1 % | 18.38 (17.84-18.60), +1.5 % |
+| 6-channel DSF | 53.12 (52.45-53.28) | 54.75 (54.11-55.17), +3.1 % | 55.36 (53.99-55.59), +4.2 % | 54.30 (53.32-55.66), +2.2 % | 55.18 (54.68-55.86), +3.9 % |
+
+**The cache** (`SACDFS_CACHE_MB`), WAV, 4 runs each, same rig:
+
+| Build and cache | Stereo WAV, s | 6-channel WAV, s | Against 0.4.1 |
+|---|---|---|---|
+| 0.4.1, 32 MiB (its container's setting) | 21.02 (20.21-21.20) | 65.91 (65.85-66.17) | |
+| 0.4.1, 16 MiB | 24.65 (23.73-25.52) | 76.41 (75.53-78.14) | +17 % / +16 % |
+| 0.6.3, 16 MiB (its default here) | 21.59 (21.35-21.79) | 72.84 (71.10-73.42) | +2.8 % / +10.5 % |
+| 0.6.3, 32 MiB | 18.91 (18.77-19.01) | 62.16 (61.81-62.76) | **-10.0 % / -5.7 %** |
+| main, 16 MiB | 21.39 (21.28-21.60) | 72.97 (72.48-73.79) | +1.8 % / +10.7 % |
+| main, 32 MiB | 18.80 (18.68-19.02) | 62.62 (62.22-63.08) | **-10.6 % / -5.0 %** |
+
+- **The pace is fixed:** an instrumented main build switched each reader between playing and
+  reading for throughput once per file (11 readers for 14 files of the stereo area), where 0.6.0
+  switched 3,291 times in one area. The 0.4.1 binary in main's image and main's binary in
+  0.4.1's image were each as fast as 0.4.1 or faster (one to two clean runs each, 6-channel WAV), so the
+  binaries are not the difference: the settings the container passes are.
+- **The default changes (#271):** 32 MiB from a 256 MiB limit up, 16 only below. The rule set for
+  the default after #230 was 16 if it holds the player and a scan alone stays within 5 % of 32,
+  otherwise 32 ([design](design.md#memory-a-budget-for-listings-237)); it was measured locally,
+  and over SMB the second condition fails. Measured on main, a Linux test host with an Intel Core
+  i9-13900H (the #357 harness: server on 2 or 4 efficiency cores, 256 or 512 MiB, 6-channel WAV
+  player at real time, copies of 6-channel WAV tracks through the kernel SMB client), 3 runs
+  each, 16 MiB (main's default there) against `SACDFS_CACHE_MB=32`:
+
+  | Cell | Player worst read, ms, max (median): 16 / 32 MiB | Copies, s: 16 / 32 MiB | sacdfs CPU, s | Peak resident, MiB |
+  |---|---|---|---|---|
+  | 1 copy alone, 4 cores, 512 MiB | | 17.65 / **15.37** (-12.9 %) | 58 / 50 | 39 / 55 |
+  | 1 copy beside a player, 4 cores, 512 MiB | 33 (32) / 31 (31) | 24.18 / **18.46** (-23.7 %) | 73 / 62 | 41 / 56 |
+  | 4 copies beside a player, 4 cores, 512 MiB | 33 (32) / 31 (31) | 110.77 / **93.63** (-15.5 %) | 415 / 352 | 52 / 67 |
+  | 2 players and 4 copies, 4 cores, 512 MiB: second player | 75 (62) / 77 (62) | 115.91 / **103.45** (-10.8 %) | 434 / 387 | 53 / 67 |
+  | 4 copies beside a player, 2 slow cores, 256 MiB (#357) | 3,445 (2,839) / **993 (54)** | 233.39 / **190.95** (-18.2 %) | 456 / 372 | 45 / 62 |
+
+- **DSF over SMB**, which #271 had left open: within 2 % of 0.4.1 for stereo and 2 to 4 % for
+  6 channels, on every release; not measured with a 32 MiB cache.
+- **Not measured here:** limits below 256 MiB or none, NFS, macOS and Windows clients (Windows:
+  [test plan](test-plan.md)), and a physical Mac.
+
 ## A player beside copies on a slow server (#357)
 
 **What happened.** In the 0.6.2-rc.1 gate, with the server pinned to 2 efficiency cores, a
@@ -1285,6 +1371,103 @@ Player: worst read, ms, max (median); copies: seconds until all end, median (ran
 - **Audio:** every DSF and WAV file of the test corpus and a 6-channel DST disc (970 files,
   20 GB) read through 0.6.3's code and the change's has the same SHA-256.
 
+### Opening files: the file server's process (#403)
+
+The change above first looked up the process of every open of a track file, two reads of
+`/proc`. That cost about 25 microseconds per open (21.6 and 24.9 microseconds per open and
+close on 0.6.3, 45.3 and 55.2 with the lookup; 5 files opened 200 times, 7 repeats), and the CI
+benchmark's plain-DSD workload, which mounts a small image 150 times and reads its short DSF
+files, was about 10 % slower than on 0.6.3. Now the process is looked up once a reader has read
+4 MiB, which is when it first matters ([design](design.md#read-ahead)), so a file read only in
+part, or a short one, never pays for it.
+
+**How measured:** `scripts/bench_compare.py` with `scripts/bench_workload.py` (the CI benchmark's
+workloads), on a Linux test host with an Intel Core i9-13900H, pinned to its P-cores, builds
+alternating, medians (range) of 15 rounds, seconds:
+
+| plain-dsd, base against head | Base | Head | Head / base |
+|---|---|---|---|
+| 0.6.3 against main (lookup at every open) | 0.173 (0.168-0.293) | 0.190 (0.185-0.334) | **1.102** |
+| 0.6.3 against this change | 0.172 (0.168-0.176) | 0.172 (0.168-0.179) | 0.996 |
+| main against this change | 0.179 (0.176-0.187) | 0.166 (0.162-0.169) | 0.924 |
+
+Bisected (9 rounds each, against 0.6.3): the step came with the lookup (1.08 to 1.10); the I/O
+error logging of #371 was level (1.01). The DST workloads showed no gap (dst-stereo 1.02 on main).
+
+## A player beside copies starting on a busy server (#362)
+
+**What was left after #381.** Over NFS, four copies beside a player on 2 slow cores no longer
+counted as players for their whole run, but the player's worst read was higher than on 0.6.3.
+Instrumented runs showed why: it came 0.6 to 0.8 s after the copies started, in every run. A
+reader not yet judged reads ahead 16 frames beside a player (#363), so on this busy server the
+copies had read only 1.7 to 3.4 MiB after 0.5 s, 1.1 to 2.1 times playing time, as the player
+had (1.3 times, with its client's read-ahead). At 0.5 s each counted as a player, with a 2 s
+window, until it reached 4 MiB a fraction of a second later; the player waited behind four
+such windows. That is not the file-server detection: a build without it showed the same stall.
+
+**The change** ([design](design.md#read-ahead)): a reader slower than a player counts as one only
+once it has read 4 MiB, or for as long as 4 MiB takes at 1.5 times the file's byte rate (0.9 s
+for a 6-channel WAV file, 4 s for a stereo DSF file), counted from its first read, so a player
+that seeks is judged again at once.
+
+**Screening** (NFS cell below, 4 runs each, worst read max (median)): main 420 (227); without the
+small window for readers not yet judged, 252 (235); copies judged players with the small window
+until they have shown their pace, 176 (131); this change, 173 (146), with no stall in the copies'
+first seconds in any run. 0.6.3: 389 (295).
+
+**How measured:** the #357 and #363 harness on a Linux test host with an Intel Core i9-13900H:
+the sacdfs container pinned to 2 (256 MiB) or 4 (512 MiB) efficiency cores, or 2 performance
+cores; a 6-channel WAV player (128 KiB reads at real time) and `cat` copies of four other
+6-channel WAV tracks of a DST disc starting 1 s after it, through the Linux kernel SMB 3.1.1 or
+NFS 4.2 client over loopback; a fresh container per run, the images dropped from the page cache,
+builds alternating with the order rotated each round. 0.6.2 and 0.6.3 are the published images,
+main (622b4ed) and this change built from the repository's Containerfile. Player: worst read,
+ms, max (median), and reads over 100 ms per run; copies: seconds until all end, median (range).
+
+| Cell | Runs | 0.6.2 | 0.6.3 | main | This change |
+|---|---|---|---|---|---|
+| **NFS, 4 copies, 2 slow cores: worst read** | 8 / 7 / 6 / 6 | 524 (361) | 404 (340) | 369 (310) | **161 (140)** |
+| reads over 100 ms per run | | 104-588 | 6-572 | 5-8 | 0-4 |
+| copies, s | | 144.1 (134.8-251.6) | 131.8 (130.1-247.4) | 130.5 (129.9-131.5) | 130.6 (130.2-131.0) |
+| **SMB, 2 players + 4 copies, 4 cores: second player** | 4 each | 1,591 (974) | 1,933 (1,208) | 2,498 (753) | **142 (136)** |
+| first player | | 32 (32) | 1,042 (32) | 305 (33) | 190 (32) |
+| copies, s | | 113.7 | 114.9 | 117.1 | 113.9 |
+| SMB, 2 players, 2 slow cores, no copies: second / first player | 3 each | 68 / 59 | 223 / 59 | 38 / 56 | 40 / 56 |
+| **SMB, 4 copies, 2 slow cores (#357): worst read** | 4 / 4 / 16 / 16 | 11,471 (10,112) | 3,771 (2,981) | 4,059 (1,314) | 4,922 (1,475) |
+| reads over 100 ms per run | | 35-55 | 2-5 | 1-7 | 0-11 |
+| copies, s; sacdfs CPU, s | | 308.0; 606 | 232.7; 454 | 235.5; 460 | 235.0; 459 |
+| SMB, 4 copies, 2 performance cores: worst read; copies, s | 2-3 each | 34; 118.3 | 33; 119.5 | 37; 119.5 | 30; 120.0 |
+| SMB, 1 copy, 2 slow cores: worst read; copies, s | 3 each | 58; 44.1 | 63; 42.9 | 55; 43.8 | 54; 42.3 |
+| SMB, 4 copies, 4 cores: worst read, max (median); copies, s | 3 / 3 / 9 / 9 | 32 (31); 108.3 | 33 (32); 108.3 | 32 (31); 111.1 | **1,139 (31), flagged**; 110.1 |
+| SMB, 1 copy, 4 cores: worst read; copies, s | 3 each | 33; 23.7 | 31; 24.2 | 30; 23.3 | 32; 23.5 |
+| SMB, 1 copy alone, 2 slow cores, s | 3 each | 31.9 | 30.9 | 31.7 | 31.5 |
+| SMB, 1 copy alone, 4 cores, s | 3 / 3 / 9 / 9 | 17.7 | 17.4 | 17.4 | 17.5 |
+| Tag scan, SMB, 4 cores (186 files): wall, s; sacdfs CPU, s | 3 each | 6.88; 21.4 | 6.85; 21.3 | 6.85; 21.3 | 6.86; 21.3 |
+
+- **NFS:** no stall in the copies' first seconds in any run of the change. 0.6.3's copies counted
+  as players in 2 of 7 runs (copies 145 and 247 s, 181 and 572 slow reads), 0.6.2's in 4 of 8;
+  main's and the change's in none.
+- **The second player over SMB** gained most: the copies starting with it no longer count as
+  players at 0.5 s either.
+- **#357's cell** is level: the medians and spreads overlap, copies and CPU are the same, and
+  every stall over 100 ms in both builds came 6.9 s or more after the copies started, when all
+  readers have long been judged and the change does nothing.
+- **Flagged: 4 copies beside a player on 4 cores.** The change had one stall per run in 2 of 9
+  runs (652 ms at 20 s, 1,139 ms at 5 s), main none in 9. 16 more runs with instrumented builds
+  of both, alternating: the change 1 of 8 (698 ms at 6.9 s), main's rules 1 of 8 (481 ms at
+  51.8 s); 3 of 17 against 1 of 17 in all, which these counts can't tell apart. In the traced stall
+  of the change every reader had long been judged (the copies unsure and letting the player go
+  first, the player a player), as in main's, so the rule this change adds was not acting. Single
+  stalls of this kind, seconds into a run, show on every build in the cells above.
+- **Two players over NFS** were checked as well (0.6.3 / main / an earlier build of the change
+  with the same rule, worst read of the second player, max): with no copies on 2 slow cores,
+  137 / 17 / 18 ms (3 runs each); with four copies on 4 cores, 224 / 27 / 36 ms (3, 3 and 2
+  runs; first player 167 / 68 / 20). An NFS player's client never paused for 500 ms in these traces (it
+  was idle 33 % of the time, in gaps under 50 ms), so the #357 rule never counted it as a player
+  by its pauses, and it did not need to.
+- **Audio:** every DSF and WAV file of the test images and the test corpus (550 of each) read
+  through main and through this change with #403's has the same SHA-256.
+
 ## A player's import over SMB (#266)
 
 A player's library scan reads each file's header and tags. Through a Linux kernel SMB mount, the
@@ -1399,6 +1582,124 @@ container CPU from its cgroup; a fresh container per run; 2 or 3 runs):
   44 ms). Measured only; not
   part of any release.
 
+### Client read-ahead by client and release (0.6.3, main)
+
+The open questions from the run above, re-measured on 0.6.3 and main (#266, 2026-11-15): a
+Windows client, whether the share setting costs Windows anything, and the 4 MiB head limit again.
+
+**How measured:** the published 0.6.3 image and an image built from main, in a rootless Podman
+container pinned to 2 cores of a Core i9-13900H, with a 2 GiB memory limit; a fresh container per
+run. 40 images (5 discs, each in 8 folders) give 1,488 DSF and WAV files in 145 folders. Linux:
+the kernel SMB 3.1.1 client of Fedora 44 (kernel 7.2.15) on the same host, over loopback;
+`scripts/tag-scan.py` over all 1,488 files; bytes from the client's `Bytes read`, CPU from the
+sacdfs process (user and system); copies are `dd` of one stereo WAV file of a DST disc (176 MB)
+and one stereo DSF file of a plain DSD disc (64 MB) after dropping the page cache. Windows:
+Windows 11 Pro 25H2 in a VM on the same host (not on the vendor's hardware), the shell's
+property reading (`Shell.Application`, title and length) of every file, bytes from sacdfs's
+request log, and `robocopy` of the same two files. Two runs of each, timed under a benchmark lock.
+
+| Linux mount (share default unless noted) | Version | Reached sacdfs per file | sacdfs CPU per file | Scan of 1,488 files | WAV / DSF copy |
+|---|---|---|---|---|---|
+| Default | 0.6.3 | 1,824 KB | 69.1, 69.0 ms | 56.5, 56.5 s | 72, 72 / 698, 649 MB/s |
+| Default | main | 1,824 KB | 69.4, 72.1 ms | 57.0, 60.1 s | 67, 72 / 818, 828 MB/s |
+| Default | test build, 4 MiB head | 1,824 KB | **51.2, 51.3 ms** | **41.3, 41.4 s** | 70, 71 / 690, 643 MB/s |
+| `rsize=262144` | 0.6.3 | 262 KB | 8.2, 8.2 ms | 7.8, 7.7 s | 78, 78 / 771, 730 MB/s |
+| `rsize=262144` | main | 262 KB | 8.2, 8.2 ms | 8.0, 8.2 s | 74, 75 / 912, 1,000 MB/s |
+| `rsize=262144` | test build | 262 KB | 8.2, 8.2 ms | 7.8, 7.9 s | 73, 74 / 888, 748 MB/s |
+| Share: `smb2 max read = 262144` | 0.6.3 | 262 KB | 8.2, 8.2 ms | 7.8, 7.8 s | 78, 78 / 750, 898 MB/s |
+| Share: `smb2 max read = 262144` | main | 262 KB | 8.2, 8.2 ms | 8.0, 8.3 s | 74, 69 / 831, 761 MB/s |
+
+| Windows 11 (share setting) | Version | Files the shell opened | Reached sacdfs per file opened | sacdfs CPU per file | WAV / DSF copy |
+|---|---|---|---|---|---|
+| Default | 0.6.3 | 744 of 1,488 (the WAV files) | 261 KB (3 reads) | 4.5 ms | |
+| Default | main | 744 of 1,488 | 261 KB (3 reads) | 4.2 ms | 72, 69 / 587, 550 MB/s |
+| `smb2 max read = 262144` | main | 744 of 1,488 | 261 KB (3 reads) | 4.8 ms | 68, 67 / 451, 512 MB/s |
+
+- **No regression:** main matches 0.6.3 in every row. The 2 to 10 % default-mount regression of
+  #360 seen above (main against 0.6.2) is in 0.6.3 too; the two releases are equal here.
+- **Windows reads only what the shell asks for:** about 261 KB for each WAV file it reads tags
+  from, in three reads; it opens no DSF file. The share's `smb2 max read = 262144` changes
+  nothing for that, and its copies were 1 to 6 % slower for WAV and 7 to 18 % for DSF (a DSF copy
+  takes about 0.1 s, so the DSF figures are rough). So the share setting stays off by default:
+  it helps Linux clients only, and those get the same from `rsize=262144` on their own mount.
+- **The 4 MiB head limit** cut the default Linux scan by a quarter (51 against 69 ms of CPU per
+  file, 41 against 57 s), with copies within 2 % on this rig (1 to 8 % slower on the rig above).
+  `rsize=262144` cuts the same scan to 8.2 ms on every build, six times less than the test
+  build's default. The limit isn't changed: a read past 1 MiB is where sacdfs starts its own
+  read-ahead for every reader, players and copies included, so raising it delays that for
+  everyone, to save CPU for one client's default mount on a full scan.
+- **A real tag importer:** beets 2.14 (`beet import` with autotagging, copying and tag writing off),
+  over the same Linux mount, reads each file through mediafile and mutagen: 1 MiB buffered reads of the
+  head and the tags at the end, several times per file. It brought 4,197 KB per file to sacdfs on the
+  default mount on both releases (2.1 MB for the WAV file traced, 6.3 MB for the DSF file), and 1,837 KB
+  with `rsize=262144`. sacdfs CPU per file: 194 and 210 ms on 0.6.3 and 156 and 156 ms on main by default,
+  103 ms on both with `rsize=262144` (all 1,488 files are read; beets kept 186 items because the 8 copies of
+  each disc carry the same tags). The import took 158 to 337 s by default and 205 to 207 s with
+  `rsize=262144`; the host was shared with other work then, so those times are rough. Unlike the scan
+  script, this importer asks for 1 MiB at a time itself, which no client or server setting can cut, so
+  `rsize=262144` halves its cost rather than cutting it seven times.
+- The main rows are from main on 2026-11-15, run while other work shared the host. Its second default run
+  took 4 % more CPU and 6 % more time than 0.6.3; an earlier main build, run on an idle host just before,
+  gave 69.2 and 69.1 ms and 56.6 s twice, equal to 0.6.3. So that is taken as noise, not a regression.
+- macOS was not measured here.
+
+## The Windows front end (#419)
+
+`sacdfs-win` on Windows 11 in a VM (4 vCPUs, 8 GiB, WinFsp 2.1) on the Core i9-13900H host,
+under the host's benchmark lock, 2026-11-15. Other work was running on the host, so the
+figures are rough; ranges are 2 or 3 rounds. The 910 files of the test corpus (188 MB). Each
+measurement starts on a fresh mount; the second pass is on the same mount. The measuring
+program (a small .NET program, unbuffered `FileStream` reads) was excluded from Microsoft
+Defender's scanning, see below. Linux: the FUSE mount on the same host with sacdfs pinned to
+4 CPUs, the same operations from Python.
+
+| Reads of all 910 files | Linux FUSE | spike (#425) | spike, `--kernel-cache` | #419 PR, `--no-kernel-cache` | #419 PR (default) |
+|---|---|---|---|---|---|
+| 4 KiB reads, first pass | 0.64 s | 3.37–3.43 s | 3.52–3.66 s | 1.50–1.90 s | 1.62–1.87 s |
+| 4 KiB reads, second pass | 0.06–0.11 s | 3.39–3.46 s | 0.16–0.17 s | 1.46–1.78 s | 0.14–0.16 s |
+| 1 MiB reads, first pass | 0.59–0.61 s | 0.88–0.89 s | 0.84–0.85 s | 0.78–0.86 s | 0.76–0.83 s |
+| 1 MiB reads, second pass | 0.04–0.07 s | 0.80–0.82 s | 0.08 s | 0.71–0.81 s | 0.08 s |
+| 910 opens and closes | 0.01 s | 0.05–0.06 s | 0.05–0.06 s | 0.07 s | 0.06–0.08 s |
+
+| Robocopy of the corpus (188 MB) | spike (#425) | #419 PR, `--no-kernel-cache` | #419 PR (default) |
+|---|---|---|---|
+| `/J` (unbuffered), Defender on | 3.10–3.61 s | 4.08–4.26 s | 3.86–5.97 s |
+| `/J`, Robocopy excluded from Defender | 2.96–3.16 s | 2.95–3.53 s | 3.07–3.41 s |
+| buffered (`/MT:1`), Defender on | 2.11–2.33 s | 2.38–2.42 s | 2.24–2.53 s |
+| buffered, excluded | 1.85–1.93 s | 2.02–2.04 s | 2.02–2.11 s |
+
+Whole-file copies are bound by decoding; this PR is 0–10 % slower than the spike here, within
+the spread of a busy host on all but the buffered, excluded row (2 rounds each). Not
+investigated further: the spike skipped the cleanup round trip and change notification that
+this PR adds.
+
+**Why small files and small reads were slow in the spike:**
+- **Defender scans each file the first time a program opens it on a mount,** reading it:
+  4.5 to 7 ms per file here, 4 to 6.5 s for the corpus, with Defender's own process using 6 s of
+  CPU. Later opens on the same mount don't scan again; a new mount scans again. This was most of
+  the spike's small-file cost, and it hid the kernel cache: the spike's second pass paid the scan
+  too. With the measuring program excluded, 910 opens take 0.05 s. sacdfs-win can't avoid the
+  scan (the Windows install guide says what it costs).
+- **Windows passes small reads through as they are.** A program's 4 KiB reads reach the file
+  system as 4 KiB reads, also with the cache manager on (49,091 reads for the corpus), where
+  Linux's page cache reads ahead in 128 KiB. Each costs a WinFsp round trip and a core request,
+  about 70 µs in this VM. From the third small read in sequence, sacdfs-win now reads a window
+  of the file from the core (128 KiB, doubling to 1 MiB; 64 MiB for all open files together) and
+  answers the next reads from it: 3,238 core reads for the corpus instead of 49,091.
+- **`--kernel-cache` did work;** a second pass was 20 times faster. It is now the default, with
+  change notification, so that what Windows keeps never outlives a change in SOURCE. The
+  read-ahead window is let go of at the program's last close (Windows keeps a cached file open
+  long after that).
+
+**Large files and the cache manager (#419, after the first front-end PR):** a buffered Robocopy
+of one 5.2 GB RF64 WAV (a real 6-channel disc at `--pcm-rate 352800`) took 430 s (11 MB/s) with
+Windows's cache manager on that file, 85 s (58 MB/s) with `--no-kernel-cache`, and 96 s (52 MB/s)
+now that files over 64 MiB are opened without data caching (their attributes are still cached).
+`/J` (unbuffered) took 98 to 99 s in every case.
+
+**What's left:** a first pass of 4 KiB reads takes about 2.6 times as long as on Linux (one
+WinFsp round trip per read), 1 MiB reads 1.3 times.
+
 ## History
 
 What each improvement changed, one line each, with the pull request that measured it (each
@@ -1406,6 +1707,7 @@ against its own "before", on the code of its day).
 
 | PR | Change | Before → after |
 |---|---|---|
+| #434 | Windows front end (#419): small sequential reads read ahead in windows; Windows's cache on by default, with change notification | Windows 11 VM, the corpus read 4 KiB at a time, against the spike (#425): first pass 3.4 → 1.6 s, second pass 3.4 → 0.15 s; 1 MiB reads 0.9 → 0.8 s and 0.8 → 0.08 s ([above](#the-windows-front-end-419)) |
 | #4 | Frame search aimed with the TOC's track starts, slightly past each estimate | calls per cold seek on real discs 7.0–10.7 → 4.6–6.1 |
 | #15 | WAV pipeline: demultiplex and convert in parallel, 8 MiB read-ahead for fast readers | plain DSD WAV straight read 3.42 s → 2.29 s (2.05x → 1.39x the DSF read) |
 | #25 | Persistent seek index; probes and first reads sized to the area's frames | cold seek 5.29 → 4.50 calls, 293 → 139 KiB; NFS cold seek, first touch, 27.8 → 18.6 ms (plain DSD), 36.9 → 26.8 ms (DST); NFS seek after a remount 2.7 ms |
@@ -1430,6 +1732,7 @@ against its own "before", on the code of its day).
 | #239 | WAV reads demultiplex on the request thread (#238) | bytes unchanged (109 WAV and 109 DSF files equal 0.4.0's and 0.4.1-rc.2's). Reads of healthy discs during a hang, 4 decoder threads, 30 s timeout, 8 clients on the hung image: rc.2 2 `EIO` of 6 reads, worst 60.9 s; this change 0 of 33,595, worst 152 ms. WAV straight reads and seeks, against rc.2: no difference beyond the noise (most medians within 3%, worst −4.9% on 6-channel DST with one reader, whose runs spread by more than that). Local: the hang figures are a single run of each case, the speed figures 5 rounds. Peak memory, 2 decoder threads, 2 images, 16 to 64 fast 6-channel WAV readers, 5 rounds: median 4 to 16 MiB above rc.2, worst 109 MiB against 94 MiB, nothing killed at 256 or 512 MiB. A long hang with retrying clients can still fill the read threads (#241) |
 | #257 | A hung image's new reads fail at once once 4 are blocked past the timeout (#241) | Corpus reads through a fresh mount, 11 alternating rounds under a lock against main, median: DST stereo DSF 0.790 → 0.791 s, DST 6 ch. DSF 1.162 → 1.164 s, plain DSD DSF 0.449 → 0.456 s, 16 parallel readers of DSF and WAV 6.358 → 6.311 s: no difference beyond the noise (ranges overlap). Hang with 8 retrying clients, 2 decoder threads, 2 s timeout: read threads 64 after 23.6 s → at most 8 in 60 s; healthy reads during it 4 of 4 `EIO` → 4 of 4 answered |
 | #327 | scarletbook built in one codegen unit (#270) | bytes unchanged; decoder thread cycles on one thread, 6-channel DST: 1.043× → 1.001× the library's; on a NAS-class CPU (i5-1235U), 6 ch. one thread 1.112× → 0.987× (42 min) and 1.153× → 0.994× (76 min), 12 threads 1.197× → 1.106×, stereo one thread 1.007× → 1.000× the library ([above](#one-codegen-unit-for-scarletbook-270)) |
+| #468 | scarletbook and scarletbook-pcm 0.6.0 → 0.6.1 (`=0.6.1`): a 32-bit arithmetic decoder for DST on 32-bit targets, 64-bit unchanged | bytes unchanged (the corpus in 9 configurations and a DST stereo and 6-channel disc, DSF and WAV, equal 0.6.0's); straight reads of that disc, 2 decoder threads, 0.6.5 (scarletbook 0.5.9) / main (0.6.0) / this branch: DST 6 ch. DSF 138.68 / 133.57 / 133.16 s, DST stereo DSF 48.11 / 44.42 / 44.48 s, DST stereo WAV 56.84 / 53.68 / 53.31 s; corpus workloads of the CI benchmark, main → this branch, medians of 11: DST stereo 0.467 → 0.469 s, DST 6 ch. 0.547 → 0.539 s, plain DSD 0.221 → 0.222 s; nothing slower beyond noise (Ryzen 9 3950X, medians of 5, rotating three builds, under the benchmark lock, generic build, 2026-11-18) |
 
 ## The CI benchmark
 

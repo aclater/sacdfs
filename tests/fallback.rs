@@ -39,7 +39,7 @@ fn library(items: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     for (image, path) in items {
         let at = lib.join(path);
         fs::create_dir_all(at.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(common::corpus().join("images").join(image), at).unwrap();
+        common::link(common::corpus().join("images").join(image), at).unwrap();
     }
     (dir, lib)
 }
@@ -55,7 +55,7 @@ fn text(f: &TrackFile, key: &str) -> Option<String> {
 
 /// The files of a tree under their paths as text, DSF and WAV.
 fn files(t: &Tree) -> BTreeMap<String, Arc<TrackFile>> {
-    t.all_files().into_iter().map(|(p, f)| (p.to_string_lossy().into_owned(), f)).collect()
+    t.all_files().into_iter().map(|(p, f)| (common::slash(&p), f)).collect()
 }
 
 #[test]

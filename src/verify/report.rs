@@ -3,7 +3,7 @@
 //! The report of `sacdfs verify`: one tab-separated row per file, with a header row.
 //!
 //! Fields are escaped so that any path fits on one line: `\\`, `\\t`, `\\n`, `\\r`, and
-//! `\\xNN` for bytes of a path that are not UTF-8.
+//! `\\xNN` for bytes of a path that are not UTF-8 and for the bytes of other control characters.
 //!
 //! **A report under its own name is a finished run's.** Rows are written as they are made to
 //! `FILE.partial`, so an interrupted run leaves the rows it finished (which `--resume` keeps)
@@ -21,10 +21,10 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufWriter, Write};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 use super::id3::Losses;
+use crate::safe_file;
 
 /// The columns, in order.
 pub const COLUMNS: [&str; 12] = [
@@ -148,10 +148,10 @@ impl Row {
         let opt = |v: Option<String>| v.unwrap_or_default();
         let fields = [
             self.status.as_str().to_owned(),
-            escape(self.path.as_os_str().as_bytes()),
+            escape(self.path.as_os_str().as_encoded_bytes()),
             self.bytes.to_string(),
             self.mtime.clone(),
-            opt(self.image.as_ref().map(|p| escape(p.as_os_str().as_bytes()))),
+            opt(self.image.as_ref().map(|p| escape(p.as_os_str().as_encoded_bytes()))),
             escape(self.area.as_bytes()),
             opt(self.track.map(|t| t.to_string())),
             opt(self.channels.map(|c| c.to_string())),
@@ -170,7 +170,7 @@ impl Row {
             return None;
         }
         let text = |s: &str| String::from_utf8_lossy(&unescape(s)).into_owned();
-        let path = |s: &str| PathBuf::from(OsString::from_vec(unescape(s)));
+        let path = |s: &str| PathBuf::from(crate::platform::os_from_bytes(unescape(s)));
         Some(Row {
             status: Status::parse(f[0])?,
             path: path(f[1]),
@@ -198,6 +198,13 @@ pub fn escape(b: &[u8]) -> String {
                 '\t' => out.push_str("\\t"),
                 '\n' => out.push_str("\\n"),
                 '\r' => out.push_str("\\r"),
+                // Other control characters as their bytes, which [`unescape`] reads back: the
+                // report may be shown on a terminal.
+                c if c.is_control() => {
+                    for x in c.to_string().bytes() {
+                        out.push_str(&format!("\\x{x:02x}"));
+                    }
+                }
                 c => out.push(c),
             }
         }
@@ -290,7 +297,7 @@ pub fn previous_path(path: &Path) -> PathBuf {
 /// `/dev/fd/N`, `/proc/self/fd/N`, or a link to one), whatever it is open on: the links are
 /// followed one at a time, as following them all ends at a redirected-to file.
 fn descriptor(path: &Path) -> Option<u32> {
-    let fds = Path::new("/proc").join(std::process::id().to_string()).join("fd");
+    let fds = crate::platform::fd_dir()?;
     let mut p = path.to_owned();
     for _ in 0..8 {
         let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_owned();
@@ -305,7 +312,9 @@ fn descriptor(path: &Path) -> Option<u32> {
 /// Whether a report to `path` is written straight there: it is a descriptor, or exists and is
 /// no regular file.
 fn is_stream(path: &Path) -> bool {
-    descriptor(path).is_some() || fs::metadata(path).is_ok_and(|m| !m.is_file())
+    // Not through a link: a link to a device or a pipe is taken for a file, and replaced.
+    descriptor(path).is_some()
+        || fs::symlink_metadata(path).is_ok_and(|m| !m.is_file() && !m.file_type().is_symlink())
 }
 
 /// Opens a report that [`is_stream`]. Standard output and error are written through themselves,
@@ -315,7 +324,16 @@ fn open_stream(path: &Path) -> io::Result<Box<dyn Write + Send>> {
     Ok(match descriptor(path) {
         Some(1) => Box::new(io::stdout()),
         Some(2) => Box::new(io::stderr()),
-        _ => Box::new(OpenOptions::new().append(true).open(path)?),
+        Some(_) => Box::new(OpenOptions::new().append(true).open(path)?),
+        None => {
+            let f = crate::platform::set_open_flags(
+                OpenOptions::new().append(true),
+                crate::platform::OpenFlags::NO_FOLLOW,
+            )
+            .open(path)?;
+            crate::platform::refuse_link(&f)?;
+            Box::new(f)
+        }
     })
 }
 
@@ -363,7 +381,13 @@ impl Writer {
     pub fn create(path: Option<&Path>, kept: &[Row]) -> io::Result<Writer> {
         let (out, finished): (Box<dyn Write + Send>, _) = match path {
             Some(p) if is_stream(p) => (open_stream(p)?, None),
-            Some(p) => (Box::new(BufWriter::new(File::create(partial_path(p))?)), Some(p)),
+            Some(p) => {
+                // Made anew, never opened through whatever is at that name (its rows, if any,
+                // are in `kept` already).
+                let partial = partial_path(p);
+                remove_leftover(&partial);
+                (Box::new(BufWriter::new(safe_file::create_new(&partial, safe_file::MODE)?)), Some(p))
+            }
             None => (Box::new(io::stdout()), None),
         };
         let mut w = Writer { path: finished.map(Path::to_owned), out };
@@ -396,16 +420,14 @@ impl Writer {
     pub fn finish(mut self, rows: &[Row]) -> io::Result<()> {
         self.out.flush()?;
         let Some(path) = self.path else { return Ok(()) };
-        let tmp = beside(&path, ".tmp");
-        {
-            let mut w = BufWriter::new(File::create(&tmp)?);
+        safe_file::write_atomic_with(&path, safe_file::MODE, |f| {
+            let mut w = BufWriter::new(f);
             writeln!(w, "{}", COLUMNS.join("\t"))?;
             for r in rows {
                 writeln!(w, "{}", r.line())?;
             }
-            w.flush()?;
-        }
-        fs::rename(&tmp, &path)?;
+            w.flush()
+        })?;
         remove_leftover(&partial_path(&path));
         remove_leftover(&previous_path(&path));
         Ok(())
@@ -457,6 +479,7 @@ mod tests {
         assert_eq!(earlier[Path::new("/b")].status, Status::Different);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_report_to_a_stream_is_written_there() {
         let dir = tempfile::tempdir().unwrap();
@@ -481,8 +504,12 @@ mod tests {
 
     #[test]
     fn rows_round_trip() {
-        let mut r =
-            Row::new(PathBuf::from(OsString::from_vec(b"/a\tb\\c\nd\xff.dsf".to_vec())), 12, "1.5".into());
+        // A name that isn't UTF-8 where the system allows one.
+        #[cfg(unix)]
+        let name = <OsString as std::os::unix::ffi::OsStringExt>::from_vec(b"/a\tb\\c\nd\xff.dsf".to_vec());
+        #[cfg(not(unix))]
+        let name = OsString::from("/a\tb\\c\nd.dsf");
+        let mut r = Row::new(PathBuf::from(name), 12, "1.5".into());
         r = r.with(Status::Different, "x\ty".into());
         r.image = Some("/i.iso".into());
         r.track = Some(3);
@@ -492,5 +519,41 @@ mod tests {
         assert!(!line.contains('\n'));
         assert_eq!(Row::parse(&line), Some(r));
         assert_eq!(Row::parse(&COLUMNS.join("\t")), None);
+    }
+
+    /// A report's working files are made anew: a link at their names is replaced, never
+    /// written through, and a link to a device is not taken for a stream.
+    #[cfg(unix)]
+    #[test]
+    fn a_report_writes_through_no_link() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        fs::write(&victim, b"precious").unwrap();
+        let path = dir.path().join("r.tsv");
+        symlink(&victim, partial_path(&path)).unwrap();
+        symlink(&victim, beside(&path, ".tmp")).unwrap();
+        let row = Row::new("/a".into(), 1, "1.5".into()).with(Status::Identical, String::new());
+        let mut w = Writer::create(Some(&path), &[]).unwrap();
+        w.row(&row).unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"precious");
+        w.finish(std::slice::from_ref(&row)).unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"precious");
+        assert!(fs::read_to_string(&path).unwrap().contains("/a"));
+        let device = dir.path().join("d.tsv");
+        symlink("/dev/null", &device).unwrap();
+        assert!(!is_stream(&device));
+    }
+
+    /// Control characters in a field are escaped, so that a report shown on a terminal shows
+    /// them, and read back.
+    #[test]
+    fn control_characters_are_escaped() {
+        let r = Row::new("/a/\x1b]0;x\x07\u{9b}.dsf".into(), 1, "1.5".into())
+            .with(Status::Error, "\x1b[2J".into());
+        let line = r.line();
+        assert!(!line.chars().any(|c| c.is_control() && c != '\t'), "{line:?}");
+        assert!(line.contains("/a/\\x1b]0;x\\x07\\xc2\\x9b.dsf"), "{line:?}");
+        assert_eq!(Row::parse(&line), Some(r));
     }
 }

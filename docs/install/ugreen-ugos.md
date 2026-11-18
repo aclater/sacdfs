@@ -29,7 +29,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    ```
 
    *You should see* a line starting with `crw`.
-3. **Make the folders and go into the first.** `/volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs.
+3. **Make the folders and go into the first.** `/volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs. Keep both folders at the top of the data volume, `/volume1`, not inside a shared folder: sacdfs runs as root, and a user who can write to the top of a shared folder could swap the folders for their own (`ls -ld /volume1` should show `drwxr-xr-x` and the owner `root`; [why](README.md#where-the-files-go)).
 
    ```sh
    mkdir -p /volume1/sacdfs /volume1/sacd
@@ -38,35 +38,35 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 4. **Download sacdfs and its checksum file.**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.3/sacdfs-0.6.3-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.3/sacdfs-0.6.3-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.5/sacdfs-0.6.5-x86_64-linux.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.5/sacdfs-0.6.5-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
 5. **Check the download.**
 
    ```sh
-   sha256sum -c sacdfs-0.6.3-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.6.5-x86_64-linux.tar.gz.sha256
    ```
 
-   *You should see* `sacdfs-0.6.3-x86_64-linux.tar.gz: OK`.
+   *You should see* `sacdfs-0.6.5-x86_64-linux.tar.gz: OK`.
 6. **Unpack it and put the program and the start-up unit in place.** The unit is the file that tells systemd (the part of the system that starts services) how to run sacdfs.
 
    ```sh
-   tar -xzf sacdfs-0.6.3-x86_64-linux.tar.gz
+   tar -xzf sacdfs-0.6.5-x86_64-linux.tar.gz
    mkdir -p /usr/local/bin
-   cp sacdfs-0.6.3-x86_64-linux/sacdfs /usr/local/bin/sacdfs
-   cp sacdfs-0.6.3-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
+   cp sacdfs-0.6.5-x86_64-linux/sacdfs /usr/local/bin/sacdfs
+   cp sacdfs-0.6.5-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
    /usr/local/bin/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.6.3`.
+   *You should see* `sacdfs 0.6.5`.
 7. **Write the settings file.** Change the first line to your images folder.
 
    ```sh
    cat > /etc/default/sacdfs <<'EOF'
-   SACDFS_IMAGES=/volume1/music
-   SACDFS_MOUNT=/volume1/sacd
+   SACDFS_IMAGES='/volume1/music'
+   SACDFS_MOUNT='/volume1/sacd'
    EOF
    ```
 8. **Start sacdfs, and make it start with the NAS.**
