@@ -64,6 +64,12 @@ All notable changes to sacdfs are recorded here. The format follows
   overflow checks, wrap and possibly loop) while reading its cover. Such a tag now has no cover
   past that point. Released builds are 64-bit and were not
   affected.
+- **The soak's stalls reach the request watchdog again (#422).** Since 0.6.4 sacdfs refuses an
+  image that isn't a regular file, so the soak's FIFO stalls were refused before any read. The
+  soak now stalls a regular file served by `examples/stallfs.rs`, a small FUSE filesystem, on a
+  new album each time, and fails if the watchdog doesn't fail a stalled read
+  ([development](docs/development.md#the-soak)). Build it with
+  `cargo build --release --bins --example stallfs`.
 - **The first listing of a library on an NFS share is as fast as 0.6.4's again (#451).** The
   hole check of #402 made one `lseek` per disc area, an NFS round trip each. On an NFS or SMB
   share it is now skipped where the file's allocated size shows that no hole could change the
