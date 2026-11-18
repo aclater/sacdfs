@@ -324,7 +324,7 @@ pub const KERNEL_FIRST_WINDOW: u64 = 256 << 10;
 /// file, and held the decoder threads while the scanner went on to the next file.
 pub const HEAD_WINDOW: u64 = 1 << 20;
 
-/// The end of the start-of-track decode-ahead (#481, [`Reader::start_ahead`]): the first 8 s of
+/// The end of the start-of-track decode-ahead (#481, `Reader::start_ahead`): the first 8 s of
 /// a track, within a quarter of the cache. *Why:* a player starting a track from stopped reads its
 /// first seconds as fast as it can, to fill its buffer. Before, its first 1 MiB was decoded read
 /// by read, and then a 2 s window in one batch, which held the reads behind it: on two slow cores
@@ -576,7 +576,7 @@ impl TrackFile {
     /// The end of the start-of-track decode-ahead (#481): [`START_AHEAD_FRAMES`], within the
     /// file and a quarter of a cache of `cache_bytes` (the decode-ahead can get that far ahead
     /// of the reads). 0 if that quarter can't hold what it decodes past the furthest read
-    /// ([`start_lead`]) and a slice of `slice` frames.
+    /// (`start_lead`) and a slice of `slice` frames.
     pub fn start_ahead_frames(&self, cache_bytes: usize, lead: u32, slice: u32) -> u32 {
         let frame = (self.byte_rate() as u64 / 75).max(1);
         let quarter = cache_bytes as u64 / 4 / frame;
@@ -865,7 +865,7 @@ pub struct ReadAhead {
     pub first: u32,
     /// End frame (exclusive).
     pub end: u32,
-    /// Whether this is the start-of-track decode-ahead ([`Reader::start_ahead`]), which
+    /// Whether this is the start-of-track decode-ahead (`Reader::start_ahead`), which
     /// decides its frames as it goes.
     pub start: bool,
     /// Whether it is decoded in slices, so that a read of its frames waits for a slice.
@@ -920,8 +920,10 @@ struct StartAhead {
     /// From a read past the kernel's first window, after a first read of the start of the
     /// audio, until the reader jumps, closes or pauses, or the decode-ahead reaches `end`.
     active: bool,
-    /// Whether a job runs it now.
+    /// Whether a job runs it now. Reads wait for it only then.
     running: bool,
+    /// When a job was last planned to run it.
+    planned: Option<std::time::Instant>,
     /// The first frame (file index) not yet taken by the job.
     next: u32,
     /// Frames before this one are wanted now: the furthest read and the lead.
@@ -984,12 +986,6 @@ pub struct Reader {
 
 impl Drop for Reader {
     fn drop(&mut self) {
-        // A start-of-track decode-ahead planned and never run: its job held the reader.
-        if self.start.get_mut().unwrap_or_else(|p| p.into_inner()).running {
-            if let Some(traffic) = self.counted.get() {
-                traffic.starting.fetch_sub(1, Ordering::Relaxed);
-            }
-        }
         if let Some(traffic) = self.counted.get() {
             traffic.fast.forget(self.id);
             traffic.players.forget(self.id);
@@ -1131,6 +1127,21 @@ impl Reader {
                 self.1.starting.fetch_sub(1, Ordering::Relaxed);
             }
         }
+        // The job takes its place here, not when planned: a plan may be dropped unrun (`sacdfs
+        // verify` reads without read-ahead; a read the watchdog answered first spawns nothing).
+        {
+            let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
+            if !st.active || st.running {
+                return;
+            }
+            let starting = &engine.traffic().starting;
+            if starting.fetch_add(1, Ordering::Relaxed) >= START_RUNNING_MAX {
+                starting.fetch_sub(1, Ordering::Relaxed);
+                st.active = false;
+                return;
+            }
+            st.running = true;
+        }
         let _running = Running(self, engine.traffic());
         let slice = slice_frames(engine);
         loop {
@@ -1192,7 +1203,12 @@ impl Reader {
         let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
         let lead = start_lead(engine);
         // A read far past what it was asked for (a seek) decodes its own frames.
-        if !st.active || k1 > st.end || k1 <= st.done || k0 > st.target.max(st.next).saturating_add(lead) {
+        if !st.active
+            || !st.running
+            || k1 > st.end
+            || k1 <= st.done
+            || k0 > st.target.max(st.next).saturating_add(lead)
+        {
             return;
         }
         // The reader is ahead of decoding, as a player filling its buffer is: whole slices up to
@@ -1200,7 +1216,7 @@ impl Reader {
         st.target = st.end;
         self.start_more.notify_all();
         let deadline = std::time::Instant::now() + START_WAIT;
-        while st.active && st.done < k1 {
+        while st.active && st.running && st.done < k1 {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             if left.is_zero() {
                 return;
@@ -1213,7 +1229,7 @@ impl Reader {
     /// at the first read in order past the head window (#78) of a reader whose first read of
     /// audio was of the start, unless another reader plays (#363); extends it at the next reads
     /// in order, and stops it at a jump. `None` if it does not run (the read-ahead plans as
-    /// before), else what to spawn (`Some(None)`: it runs already).
+    /// before), else what to spawn (`Some(None)`: it runs, or was planned a moment ago).
     fn plan_start(
         &self,
         engine: &Engine,
@@ -1268,16 +1284,12 @@ impl Reader {
         let lead = start_lead(engine);
         st.target = st.target.max(st.end.min(k1.saturating_add(lead)));
         self.start_more.notify_all();
-        if st.running {
+        // Planned again if a plan has not started its job within START_IDLE: it was dropped.
+        let now = std::time::Instant::now();
+        if st.running || st.planned.is_some_and(|t| now.saturating_duration_since(t) < START_IDLE) {
             return Some(None);
         }
-        let starting = &engine.traffic().starting;
-        if starting.fetch_add(1, Ordering::Relaxed) >= START_RUNNING_MAX {
-            starting.fetch_sub(1, Ordering::Relaxed);
-            st.active = false;
-            return None;
-        }
-        st.running = true;
+        st.planned = Some(now);
         Some(Some(ReadAhead { first: st.next, end: st.target, start: true, sliced: true }))
     }
 
@@ -2049,7 +2061,7 @@ mod tests {
             let reader = Reader::new(f.clone());
             let ahead = plan_start_past_the_head(&engine, &reader).expect("planned");
             assert!(ahead.start && ahead.first == 2 && ahead.end > 2, "{format:?}: {ahead:?}");
-            assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 1);
+            assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 0, "a place is taken when it runs");
             reader.read_ahead(&engine, ahead);
             assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 0, "{format:?}: done");
             // With no more reads, it goes its lead past the furthest read, waits for one and ends.
@@ -2140,12 +2152,37 @@ mod tests {
         assert!(!jumped.start.lock().unwrap().active, "jumped");
         assert!(!cached_at(ahead.first), "jumped: nothing decoded ahead");
 
-        let readers: Vec<Reader> = (0..START_RUNNING_MAX + 1).map(|_| Reader::new(f.clone())).collect();
-        let planned =
-            readers.iter().filter(|r| plan_start_past_the_head(&engine, r).is_some_and(|a| a.start)).count();
-        assert_eq!(planned, START_RUNNING_MAX, "the rest read without");
-        drop(readers);
+        // With every place taken, a planned job ends at once and the read-ahead goes on as before.
+        let full = Reader::new(f.clone());
+        let ahead = plan_start_past_the_head(&engine, &full).unwrap();
+        engine.traffic().starting.store(START_RUNNING_MAX, Ordering::Relaxed);
+        full.read_ahead(&engine, ahead);
+        assert!(!full.start.lock().unwrap().active, "no place");
+        assert!(!cached_at(ahead.first), "no place: nothing decoded ahead");
+        engine.traffic().starting.store(0, Ordering::Relaxed);
         assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 0, "places given back");
+    }
+
+    /// A plan dropped unrun (`sacdfs verify`, or a read the watchdog answered first) holds
+    /// nothing: reads don't wait for it, it is planned again after `START_IDLE`, and no place is
+    /// taken.
+    #[test]
+    fn a_start_ahead_planned_and_dropped_holds_nothing() {
+        let tree = corpus();
+        let f = longest(&tree, Format::Dsf);
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        let reader = Reader::new(f.clone());
+        let dropped = plan_start_past_the_head(&engine, &reader).unwrap();
+        assert!(dropped.start);
+        let t = std::time::Instant::now();
+        let (data, _) = reader.read(&engine, 0, f.size).unwrap();
+        assert!(t.elapsed() < START_WAIT / 2, "a read waited {:?} for a job not running", t.elapsed());
+        assert!(data == whole(&f));
+        assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 0);
+        let again = |off: u64| reader.plan_read_ahead(&engine, off, off + 4096, 3, 4);
+        assert!(again(HEAD_WINDOW + (256 << 10)).is_none(), "planned a moment ago");
+        reader.start.lock().unwrap().planned = Some(std::time::Instant::now() - START_IDLE);
+        assert!(again(HEAD_WINDOW + (384 << 10)).is_some_and(|a| a.start), "planned again");
     }
 
     /// Reads that come while the decode-ahead runs wait for it, or decode their own frames, and
