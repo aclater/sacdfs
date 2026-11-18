@@ -3,7 +3,8 @@
 //! The report of `sacdfs verify`: one tab-separated row per file, with a header row.
 //!
 //! Fields are escaped so that any path fits on one line: `\\`, `\\t`, `\\n`, `\\r`, and
-//! `\\xNN` for bytes of a path that are not UTF-8 and for the bytes of other control characters.
+//! `\\xNN` for bytes of a path that are not UTF-8 and for the bytes of other control characters,
+//! format characters (bidi controls and the like) and U+2028/U+2029 (#448).
 //!
 //! **A report under its own name is a finished run's.** Rows are written as they are made to
 //! `FILE.partial`, so an interrupted run leaves the rows it finished (which `--resume` keeps)
@@ -204,9 +205,9 @@ pub fn escape(b: &[u8]) -> String {
                 '\t' => out.push_str("\\t"),
                 '\n' => out.push_str("\\n"),
                 '\r' => out.push_str("\\r"),
-                // Other control characters as their bytes, which [`unescape`] reads back: the
-                // report may be shown on a terminal.
-                c if c.is_control() => {
+                // Other control characters, format characters and line separators as their
+                // bytes, which [`unescape`] reads back: the report may be shown on a terminal.
+                c if crate::printable::needs_escape(c) => {
                     for x in c.to_string().bytes() {
                         out.push_str(&format!("\\x{x:02x}"));
                     }
@@ -560,6 +561,17 @@ mod tests {
         let line = r.line();
         assert!(!line.chars().any(|c| c.is_control() && c != '\t'), "{line:?}");
         assert!(line.contains("/a/\\x1b]0;x\\x07\\xc2\\x9b.dsf"), "{line:?}");
+        assert_eq!(Row::parse(&line), Some(r));
+    }
+
+    /// Bidi controls and line separators too (#448), read back as they were.
+    #[test]
+    fn format_characters_are_escaped() {
+        let r = Row::new("/a/b\u{202e}vaw.exe\u{2028}.dsf".into(), 1, "1.5".into())
+            .with(Status::Error, "\u{200b}x".into());
+        let line = r.line();
+        assert!(line.contains("/a/b\\xe2\\x80\\xaevaw.exe\\xe2\\x80\\xa8.dsf"), "{line:?}");
+        assert!(line.contains("\\xe2\\x80\\x8bx"), "{line:?}");
         assert_eq!(Row::parse(&line), Some(r));
     }
 }

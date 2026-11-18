@@ -32,11 +32,29 @@ pub fn fallback_title(number: u8) -> String {
     format!("Track {number:02}")
 }
 
+/// A disc's title as part of a file name: [`sanitize`], with format characters (Unicode
+/// category Cf: bidi controls such as U+202E, zero-width characters, the soft hyphen) left out
+/// and the line and paragraph separators U+2028 and U+2029 made `_` (#448).
+///
+/// *Why:* a bidi override in a title could make a name read in another order than it is, so
+/// that `.dsf` or `.wav` seems to be some other extension in a file manager, and a separator
+/// breaks the name over two lines. Format characters are invisible, so leaving them out changes
+/// how no name reads. *Why not in tags:* a tag is shown as a field, not as a name with an
+/// extension, and it stays what the disc holds, as extractors write it.
+pub fn title_name(text: &str) -> String {
+    let kept: String = text
+        .chars()
+        .filter(|&c| !crate::printable::is_format(c))
+        .map(|c| if c == '\u{2028}' || c == '\u{2029}' { '_' } else { c })
+        .collect();
+    sanitize(&kept)
+}
+
 /// The name of a track's file: `NN - <title>.<ext>`, with [`fallback_title`] without a usable
 /// title. `ext` is a short extension (`dsf`, `wav`), so that the files of one track differ only
 /// in it.
 pub fn track_file_name(number: u8, title: Option<&str>, ext: &str) -> String {
-    let title = title.map(sanitize).filter(|t| !t.is_empty()).unwrap_or_else(|| fallback_title(number));
+    let title = title.map(title_name).filter(|t| !t.is_empty()).unwrap_or_else(|| fallback_title(number));
     let prefix = format!("{number:02} - ");
     // Room for " (NNN)" from de-duplication as well as the extension.
     let room = NAME_MAX.saturating_sub(prefix.len() + 1 + ext.len() + 6);
@@ -94,6 +112,19 @@ mod tests {
         assert_eq!(sanitize("a/b\0c\u{1}d\u{7f}e\u{9f}"), "a_b_c_d_e_");
         assert_eq!(sanitize("  x  "), "x");
         assert_eq!(sanitize("日本語"), "日本語");
+    }
+
+    /// Bidi controls, zero-width characters and the soft hyphen are left out of names, line
+    /// and paragraph separators become `_` (#448); everything else as [`sanitize`].
+    #[test]
+    fn title_names_have_no_format_characters() {
+        assert_eq!(title_name("abc\u{202e}vaw.exe"), "abcvaw.exe");
+        assert_eq!(title_name("\u{2066}x\u{2069}\u{200b}y\u{feff}\u{ad}z\u{200f}"), "xyz");
+        assert_eq!(title_name("a\u{2028}b\u{2029}c/d\u{1b}"), "a_b_c_d_");
+        assert_eq!(title_name(" \u{200b} "), "");
+        assert_eq!(title_name("Caf\u{e9} \u{65e5}\u{672c}"), "Caf\u{e9} \u{65e5}\u{672c}");
+        assert_eq!(track_file_name(2, Some("\u{202e}"), "dsf"), "02 - Track 02.dsf");
+        assert_eq!(track_file_name(2, Some("Song\u{202e}3pm.exe"), "wav"), "02 - Song3pm.exe.wav");
     }
 
     #[test]

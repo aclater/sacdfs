@@ -30,6 +30,12 @@ All notable changes to sacdfs are recorded here. The format follows
   come last ([user guide](docs/user-guide.md#before-you-delete-extracts)).
 
 ### Changed
+- **Format characters escaped and kept out of names (#448).** `sacdfs-nfs`, `sacdfs tags` and
+  `sacdfs verify` log through the same escaping logger as the mount. Terminal output and
+  `verify` reports now escape format characters (bidi controls such as U+202E, zero-width
+  characters) and U+2028/U+2029 as they did control characters. Track file names leave format
+  characters out and make U+2028/U+2029 `_`, so a title can't make a name read in another order;
+  a track whose title holds one gets a new name once. Tags are unchanged.
 - **WAV `INFO` tags in Windows-1252 (#444).** Windows Explorer and Windows Media Player read a
   WAV file's `LIST`/`INFO` chunk in the ANSI code page, so the UTF-8 text written before showed
   accented and CJK titles as mojibake. INFO text is now Windows-1252; a field with characters

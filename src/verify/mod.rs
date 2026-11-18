@@ -101,7 +101,10 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         2 => "debug",
         _ => "trace",
     };
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).try_init();
+    // Escaped where lines are written, as the mount's (#391, #448).
+    let _ = crate::printable::install(
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).build(),
+    );
     match run(&args) {
         Ok(summary) => {
             eprint!("{}", crate::safe_file::printable(&summary.render()));

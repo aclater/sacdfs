@@ -1023,7 +1023,7 @@ from 539 lines to 144, all of it the options below).
   writer gets the set, line breaks kept in the comments only. *Why:* scarletbook (0.6.0) keeps
   control characters in a TOC's strings (C0, DEL and C1 in ISRCs and catalogue numbers, DEL
   and C1 in free text), and sacdfs filters what it serves itself: file names
-  (`names::sanitize`), WAV INFO, log lines and reports (escaped), lookup queries
+  (`names::title_name`), WAV INFO, log lines and reports (escaped), lookup queries
   (percent-encoded). The writer is also set to remove them (W9); with sacdfs's filter first it
   finds none, so the bytes are the same, but for a tags file's track or disc number or date
   holding one: read without it, where the writer, checking the raw value, dropped the number
@@ -2191,9 +2191,23 @@ everything:
   bidi control showed a line in another order than its bytes. *Why at the logger, not at each of
   the hundred or so log calls:* the names also arrive inside `io::Error` and scarletbook's
   errors, which the calls don't build, and lines added later are covered too. The line format
-  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are, and the
-  names on the mount don't change: whether file names should drop format characters is a
-  separate question (#392). `sacdfs verify` and `sacdfs tags` keep their own loggers.
+  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are.
+- **The same everywhere disc text can be shown
+  ([#448](https://github.com/aclater/sacdfs/issues/448)).** `sacdfs-nfs`, `sacdfs tags` and
+  `sacdfs verify` install the same logger, so no binary logs raw controls, even where no disc
+  string reaches a log line today. Their other terminal output (`safe_file::printable`,
+  `one_line`, `shown`) and the rows of a `verify` report escape the same characters, the
+  report as bytes (`\xNN`) that `--resume` reads back. Track file names leave format
+  characters out and make U+2028/U+2029 `_` (`names::title_name`). *Why leave out, not `_`:*
+  the characters are invisible, so a name without them reads as the title did, while `_` would
+  show where a Latin-1 disc had a soft hyphen. *Why names at all:* a bidi override in a title
+  could make `01 - x\u{202E}vaw.exe.dsf` show in a file manager as ending in another
+  extension. *Why not tags:* a tag is shown as a field, not as a name with an extension, and it
+  stays what the disc holds, as extractors write it, so that `verify` and `tags import` still
+  compare equal; WAV INFO leaves them out as part of its Windows-1252 text (#444). *Trade-off:*
+  a track whose title has one gets a new name once, which a player sees as a removal and an
+  addition. Of SACD's character sets only ISO 8859-1 holds one (the soft hyphen), so this is
+  rare outside crafted discs.
 - **A hung image's reads are capped once they have failed
   ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
   free the thread, which stays blocked until the source answers, so each retry by a client took
