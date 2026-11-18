@@ -174,7 +174,14 @@ fn stamp(image: &Path) -> Option<(u64, u64)> {
 impl State {
     fn load(file: Option<PathBuf>) -> State {
         let mut s = State { file, ..State::default() };
-        let Some(text) = s.file.as_deref().and_then(|f| fs::read_to_string(f).ok()) else { return s };
+        // As every read in the tags directory: no link followed, a regular file only, and bounded.
+        let Some((text, _)) = s
+            .file
+            .as_deref()
+            .and_then(|f| crate::safe_file::read_text(f, crate::safe_file::MAX_STATE_TEXT).ok())
+        else {
+            return s;
+        };
         let mut lines = text.lines();
         if lines.next() != Some(STATE_HEADER) {
             return s;
@@ -477,7 +484,7 @@ impl Session {
                     let v: Value = serde_json::from_slice(&r.body)
                         .map_err(|e| Error::Failed(format!("the response is not JSON: {e}")))?;
                     if v["status"].as_str() != Some("ok") {
-                        return Err(service_error(&v, r.status));
+                        return Err(service_error(&v, r.status, &self.config.key));
                     }
                     let found = parse_lookup(&v);
                     self.cache.insert(cache_key, found.clone());
@@ -491,7 +498,7 @@ impl Session {
                 }
                 Ok(r) => {
                     let v: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
-                    return Err(service_error(&v, r.status));
+                    return Err(service_error(&v, r.status, &self.config.key));
                 }
                 Err(e) => problem = hide(e, &self.config.key),
             }
@@ -504,10 +511,14 @@ impl Session {
 }
 
 /// An error answer: a refused key or client stops the run; anything else fails this disc.
-fn service_error(v: &Value, status: u16) -> Error {
+fn service_error(v: &Value, status: u16, key: &str) -> Error {
     let code = v["error"]["code"].as_i64();
-    let message: String =
-        v["error"]["message"].as_str().unwrap_or("").chars().filter(|c| !c.is_control()).take(200).collect();
+    let mut message = v["error"]["message"].as_str().unwrap_or("").to_owned();
+    // In case a server or proxy ever echoes the request: the key never shows.
+    if !key.is_empty() {
+        message = message.replace(key, "<key>");
+    }
+    let message: String = message.chars().filter(|c| !c.is_control()).take(200).collect();
     match code {
         // 4: invalid API key; 5: (in old versions) invalid user key; 6: client not allowed.
         Some(4..=6) => Error::Stop(format!(
@@ -587,9 +598,9 @@ mod tests {
     #[test]
     fn a_refused_key_stops_the_run() {
         let v = json!({"status": "error", "error": {"code": 4, "message": "invalid API key"}});
-        assert!(matches!(service_error(&v, 400), Error::Stop(m) if m.contains("application key")));
+        assert!(matches!(service_error(&v, 400, ""), Error::Stop(m) if m.contains("application key")));
         let v = json!({"status": "error", "error": {"code": 3, "message": "invalid fingerprint"}});
-        assert!(matches!(service_error(&v, 400), Error::Failed(_)));
+        assert!(matches!(service_error(&v, 400, ""), Error::Failed(_)));
     }
 
     #[test]
@@ -616,5 +627,35 @@ mod tests {
         assert_eq!(s.settled(&image).map(|e| e.how), Some(Settled::Refused));
         fs::write(&image, b"xy").unwrap();
         assert!(s.settled(&image).is_none(), "a changed image is fingerprinted again");
+    }
+
+    #[test]
+    fn a_service_message_never_shows_the_key() {
+        let v = json!({"status": "error", "error": {"code": 3, "message": "bad request client=Abc123"}});
+        assert!(
+            matches!(service_error(&v, 400, "Abc123"), Error::Failed(m) if !m.contains("Abc123") && m.contains("<key>"))
+        );
+    }
+
+    /// A link at the state file's name, to a FIFO or to a file outside the tags directory, isn't
+    /// followed: the run starts with an empty state, at once.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_state_file_is_not_followed() {
+        let d = tempfile::tempdir().unwrap();
+        let outside = d.path().join("outside");
+        fs::write(&outside, format!("{STATE_HEADER}\nday\t{}\t7\n", now_secs() / 86_400)).unwrap();
+        assert_eq!(State::load(Some(outside.clone())).count, 7, "read when not a link");
+        let fifo = d.path().join("fifo");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+        for target in [&outside, &fifo] {
+            let tags = tempfile::tempdir().unwrap();
+            let file = tags.path().join(STATE_FILE);
+            std::os::unix::fs::symlink(target, &file).unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            thread::spawn(move || tx.send(State::load(Some(file)).count).unwrap());
+            let count = rx.recv_timeout(Duration::from_secs(10)).expect("the load returns at once");
+            assert_eq!(count, 0, "{}", target.display());
+        }
     }
 }

@@ -504,7 +504,7 @@ sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations --ac
 
 - **What it needs:** Chromaprint's `fpcalc` program (Fedora: `dnf install chromaprint-tools`;
   RHEL 10: `chromaprint-tools` from EPEL 10, untested; Debian and Ubuntu:
-  `libchromaprint-tools`, untested), on `PATH` or given with `--fpcalc PATH`. The container image
+  `libchromaprint-tools`, untested), on `PATH` or given with `--fpcalc PATH` (as root, give the full path, e.g. `--fpcalc /usr/bin/fpcalc`, rather than trust `PATH`). The container image
   doesn't include it ([why](deployment.md#acoustid-and-the-container)). And an AcoustID **application** key of your own: sign in at acoustid.org and
   register an application ("New application"); the key it shows goes in `ACOUSTID_API_KEY`, or in
   a file named by `--acoustid-key-file FILE`. A user key (the one acoustid.org shows for
