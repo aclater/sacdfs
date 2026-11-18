@@ -153,7 +153,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
                 ) {
                     Ok(s) => Some(s),
                     Err(e) => {
-                        eprintln!("sacdfs tags: {e}");
+                        eprintln!("sacdfs tags: {}", safe_file::printable(&e));
                         return ExitCode::FAILURE;
                     }
                 },
