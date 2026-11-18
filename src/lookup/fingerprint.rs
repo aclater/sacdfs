@@ -142,9 +142,8 @@ pub fn stream_track(
     let mut fed = Fed::default();
     let mut read = |t: u32| -> io::Result<Vec<u8>> {
         let content = cursor.content(disc, t).map_err(io::Error::other)?;
-        let frame =
-            scarletbook::audio::decode_frame(&mut decoder, TrackFrame { number: t, content }, channels)
-                .map_err(io::Error::other)?;
+        let frame = scarletbook::audio::decode_frame(&mut decoder, TrackFrame::new(t, content), channels)
+            .map_err(io::Error::other)?;
         Ok(frame.data)
     };
     let mut prev: Option<Vec<u8>> = None;

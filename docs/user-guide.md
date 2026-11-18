@@ -526,7 +526,7 @@ sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations --ac
   the idle I/O class; `fpcalc` inherits both. The audio is decoded as it is fingerprinted, a
   second at a time, with a decoder of its own, in under 1 MiB of memory (32 MiB is the bound the
   tests enforce). While the 1-minute load average is over `--max-load` (default: the number of
-  CPUs), it waits. At most `--acoustid-budget` discs a day are fingerprinted (default 20); the rest
+  CPUs), it waits; on macOS and Windows, which have no `/proc/loadavg`, it doesn't. At most `--acoustid-budget` discs a day are fingerprinted (default 20); the rest
   are left for the next run, which makes it suited to a daily cron job. At most 2.5 requests a
   second go to AcoustID (it allows 3), each with a timeout and up to 4 tries; a refused key ends
   the run.
@@ -538,7 +538,8 @@ sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations --ac
   budget but keeps no verdict.
 - **Stopping:** Ctrl-C or SIGTERM stops at the next second of audio or the next disc: nothing is
   written for a disc half done, its budget is given back, and the next run starts where this one
-  stopped. A second Ctrl-C ends the run at once.
+  stopped. A second Ctrl-C ends the run at once. On Windows the first Ctrl-C ends the run at once,
+  and the CPU seconds read 0.
 - **What it says:** a line per disc fingerprinted (tracks, seconds of audio, tracks AcoustID knows,
   releases read, the time and CPU seconds), and at the end `acoustid: N queued, N fingerprinted,
   N skipped, N left for another day; N tracks, N requests; N CPU seconds`.

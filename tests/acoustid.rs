@@ -519,3 +519,28 @@ fn the_command_checks_its_key_and_fpcalc_first() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");
 }
+
+/// With a key from the environment and a working fpcalc, the command starts its session and
+/// reports its counters, without the key; an image that doesn't open asks nothing of anyone.
+#[test]
+fn the_command_reports_its_counters_without_the_key() {
+    let d = tempfile::tempdir().unwrap();
+    // Before the shared hold below: fake_fpcalc takes the same lock exclusively.
+    let fpcalc = fake_fpcalc(d.path());
+    common::spawns_children!();
+    let bin = env!("CARGO_BIN_EXE_sacdfs");
+    let out = std::process::Command::new(bin)
+        .env("ACOUSTID_API_KEY", "Abc123")
+        .args(["tags", "fetch", "--acoustid", "--acoustid-budget", "3", "--max-load", "64", "--fpcalc"])
+        .arg(&fpcalc)
+        .arg("--tags")
+        .arg(d.path().join("tags"))
+        .arg(d.path().join("missing.iso"))
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "{out:?}");
+    assert!(err.contains("acoustid: 0 queued, 0 fingerprinted") && !err.contains("Abc123"), "{err}");
+    assert!(d.path().join("tags").is_dir(), "{err}");
+    assert!(!d.path().join("args").exists(), "fpcalc fingerprinted nothing");
+}
