@@ -66,6 +66,12 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **Windows: a SOURCE ending in a backslash works through WinFsp.Launcher (#466).** The
+  launcher quotes each argument, so `D:\Music\SACD\` or a drive root `E:\` reached sacdfs-win
+  as an escaped quote that ran SOURCE and MOUNTPOINT together; it exited at once and the
+  launcher still said `OK`. sacdfs-win now spots a quote inside an argument, reads its command
+  line again with backslashes kept, and logs that it did. The `windows` workflow tests both
+  through the launcher.
 - **The soak's stalls reach the request watchdog again (#422).** Since 0.6.4 sacdfs refuses an
   image that isn't a regular file, so the soak's FIFO stalls were refused before any read. The
   soak now stalls a regular file served by `examples/stallfs.rs`, a small FUSE filesystem, on a

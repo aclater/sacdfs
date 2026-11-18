@@ -32,7 +32,8 @@ use std::process::ExitCode;
 use clap::Parser;
 
 fn main() -> ExitCode {
-    let args = options::Args::parse();
+    let (argv, requoted) = options::args();
+    let args = options::Args::parse_from(argv);
     let level = match args.verbose {
         0 => "info",
         1 => "debug",
@@ -53,6 +54,14 @@ fn main() -> ExitCode {
     // Names from SOURCE in the log are escaped where lines are written, as on Linux.
     if let Err(e) = sacdfs::printable::install(logger.build()) {
         eprintln!("sacdfs-win: {e}");
+    }
+    if requoted {
+        log::warn!(
+            "an argument held a quote, as WinFsp.Launcher makes of a folder ending in a backslash \
+             (#466): read the command line again with backslashes kept, as SOURCE {} and MOUNTPOINT {}",
+            args.source.display(),
+            args.mountpoint
+        );
     }
     match mount(args) {
         Ok(()) => ExitCode::SUCCESS,
