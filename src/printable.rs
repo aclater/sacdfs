@@ -20,8 +20,10 @@
 //! *Why at the logger, not at each log call:* the daemon has about a hundred log calls, and the
 //! names reach them through error messages too (`io::Error`, scarletbook's errors), which the
 //! calls don't build. Escaping once, where lines are written, covers them all, and the lines
-//! added later. Only log output changes: the names on the mount are the disc's and SOURCE's as
-//! they are.
+//! added later. Only log output changes. Every binary installs it: the mount, `sacdfs-nfs`,
+//! `sacdfs tags` and `sacdfs verify` (#448). Terminal output other than logs is escaped the same
+//! way by `safe_file::printable`, and track file names leave format characters out
+//! (`names::title_name`).
 
 use std::fmt::{self, Write};
 

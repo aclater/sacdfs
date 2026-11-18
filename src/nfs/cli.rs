@@ -85,7 +85,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         return match super::agent::write(&argv) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("sacdfs-nfs: {e}");
+                eprintln!("sacdfs-nfs: {}", crate::safe_file::printable(&e.to_string()));
                 ExitCode::FAILURE
             }
         };
@@ -95,11 +95,16 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         1 => "debug",
         _ => "trace",
     };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    // Escaped where lines are written, as the mount's (#391, #448).
+    if let Err(e) = crate::printable::install(
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).build(),
+    ) {
+        eprintln!("sacdfs-nfs: {}", crate::safe_file::printable(&e.to_string()));
+    }
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("sacdfs-nfs: {e}");
+            eprintln!("sacdfs-nfs: {}", crate::safe_file::printable(&e.to_string()));
             ExitCode::FAILURE
         }
     }
