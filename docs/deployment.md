@@ -1645,6 +1645,7 @@ the system. `systemd-analyze security sacdfs` rates it 4.1 ("OK"), from 9.6 ("UN
 | `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | the journal and systemd's notify socket, and MusicBrainz lookups (`--musicbrainz`) |
 | `SystemCallFilter=~@clock @cpu-emulation @debug @module @obsolete @privileged @raw-io @reboot @swap`, `SystemCallErrorNumber=EPERM` | a deny list: those calls fail with `EPERM` |
 | `SystemCallArchitectures=native`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `ProtectClock=yes`, `ProtectHostname=yes` | each closes a kind of call sacdfs never makes |
+| `Environment=XDG_CACHE_HOME=/var/cache`, `CacheDirectory=sacdfs` | the seek index cache in `/var/cache/sacdfs`, since a service has no `HOME` (#465; `--index-cache` in `SACDFS_OPTIONS` overrides it). The installer's `--uninstall` deletes it. systemd before v235 ignores `CacheDirectory=`, and sacdfs makes the folder itself |
 | `PermissionsStartOnly=yes` | the helper lines (`modprobe fuse` when `/dev/fuse` is missing, `mkdir`, `umount -l` after a stop) run without these limits, so `modprobe` can still load FUSE |
 
 **Left out, on purpose:**
