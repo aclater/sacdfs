@@ -82,10 +82,10 @@ pub fn data_sectors(disc: &Disc, area: &Area) -> u64 {
         }
     };
     let stored = toc.sector_format.stored_size();
-    if let Some(bound) = crate::platform::hole_bound(&file)
-        && holes_cannot_matter(area, n, stored, bound)
-    {
-        return audio_sector_range(area, n).1;
+    if crate::platform::hole_bound(&file).is_some_and(|b| holes_cannot_matter(area, n, stored, b)) {
+        // What the search below gives with no gaps.
+        let (start, end) = audio_sector_range(area, n);
+        return end.max(start);
     }
     let gaps = gap_sectors(&file, stored, area, n);
     if gaps > 0 {
