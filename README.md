@@ -1,3 +1,5 @@
+<img src="deploy/icon.svg" alt="" width="96" align="right">
+
 # sacdfs
 
 [![CI](https://github.com/aclater/sacdfs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aclater/sacdfs/actions/workflows/ci.yml)
