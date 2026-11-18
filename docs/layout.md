@@ -23,7 +23,8 @@ MOUNTPOINT/
 - File names come from the track titles (`NN - Track NN.dsf` for a track without one); repeated
   names get ` (2)`, ` (3)`. `/` and control characters become `_`, and invisible format
   characters (bidi controls such as U+202E, zero-width characters, the soft hyphen) are left out,
-  so a title can't make a name read differently from what it is. Tags keep the disc's text.
+  so a title can't make a name read differently from what it is. Tags keep the disc's text,
+  and folder names are SOURCE's own, as they are.
 - Files that are not SACD images (a DVD-Video or Blu-ray `.iso`, say), folders with no SACD image
   below them (their sidecars too), and tracks the disc cannot play are left out. A box set that
   mixes an SACD with DVD discs shows only the SACD.
