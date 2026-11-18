@@ -1577,6 +1577,37 @@ decoding them twice.
   it would already be decoded); decoding only part of the head (the head is decoded once,
   and it is the reads' own frames).
 
+- **The start of a track is decoded ahead in slices (#481).** A reader whose first read of audio
+  was at the start of the file, and whose reads go on in order past the head window above,
+  starts a *start-of-track decode-ahead*: one job that decodes the next frames into the cache, a
+  slice at a time (two frames per decoder thread, doubling to 8 per thread), up to 8 s of audio,
+  within a quarter of the cache. It goes at most 32 frames (a slice with fewer than 4 threads)
+  past the furthest read; a read of frames it has not reached yet has it go on to its end and
+  waits for its slice, up to 2 s, instead of decoding its own few frames. It ends at its end, when
+  the reader jumps or closes, when no read comes for 0.5 s once it is ahead, or on an error;
+  the read-ahead then goes on from where it got, and its first window goes in slices too. At
+  most two run at once per mount, and none starts while another reader plays (#363) or without a
+  cache that holds its lead and a slice. *Why:* a player starting a track from stopped reads its
+  first seconds as fast as it can, to fill its buffer. Before, its first 1 MiB was decoded read by
+  read, and then a 2 s window in one batch, which the reads behind it waited for: on two slow cores
+  decoding 6-channel DST at twice real time, a read waited a second, about half a second after
+  playback began, and the first second of reads brought half a second of audio. Playback over SMB
+  glitched for 5 to 7 s from a cold start on a 32-bit Atom NAS, though it held once running and
+  after a pause (#456). Measured: [deployment](deployment.md#starting-playback-on-a-slow-cpu).
+  *Why from the reads, not the open:* SMB and NFS servers open files they then only stat, and a
+  scanner opens thousands; the first read comes milliseconds after a player's open. *Why past
+  the head window, not at the first reads:* starting after 256 KiB made a library import (768 KiB
+  heads) cost 1.35 times the CPU with a 32-frame lead, and 4.6 times with a lead of two slices on
+  12 threads; past the head it costs nothing there. *Why slices:* a read waits for its slice, not
+  for a window, and slices of 8 frames per thread still decode at the batch's speed. *Why the
+  lead is lifted while reads wait for it:* bounded by the furthest read, each slice was one read's
+  few frames, and decoding fell to 1.4 times real time. *Why a jump or a close stops it, but not a
+  reader judged to read for throughput:* a local player filling its buffer reads 4 MiB faster
+  than 1.5 times real time and counts as one (`cp` reads its first 8 s in slices, then its long
+  window). *Trade-off:* a scanner that reads more than its head in order decodes up to 32 frames
+  it may not read; a second player starting beside one that plays is not helped; a reader that
+  stops reading without closing holds a request thread for 0.5 s.
+
 **What a DSF header read still costs, and why it stays.** The 256 KiB the kernel reads hold
 the track's first frames (about 28 in stereo), and the first page itself holds 4004 bytes of
 the first frame, so a DSF tag walk reads audio sectors: 3.7 calls to the image per file on

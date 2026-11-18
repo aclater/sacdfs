@@ -157,6 +157,37 @@ pub fn failed(key: &str, msg: fmt::Arguments<'_>) -> bool {
     limiter().failed(key, msg)
 }
 
+/// The line written to a log file when a session starts (#481), before anything is logged:
+/// `--log-file` appends, so this tells a session's lines from the last one's. The time is UTC
+/// to the second, from `now` in seconds since 1970.
+pub fn session_start_line(program: &str, now: u64, pid: u32) -> String {
+    let (days, secs) = (now / 86_400, now % 86_400);
+    // Days since 1970-01-01 to a civil date (proleptic Gregorian), after Howard Hinnant's
+    // public-domain `civil_from_days`.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "---- {program} {} started {year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z, pid {pid} ----",
+        env!("CARGO_PKG_VERSION"),
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
+/// Writes [`session_start_line`] for now and this process to a log file just opened.
+pub fn write_session_start(f: &mut impl std::io::Write, program: &str) -> std::io::Result<()> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    writeln!(f, "{}", session_start_line(program, now, std::process::id()))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -198,5 +229,19 @@ pub(crate) mod tests {
         assert!(l.failed("cap-new", format_args!("cap-test after")));
         let after = lines_with("cap-test after");
         assert!(after[0].contains("17 other failed requests"), "{after:?}");
+    }
+
+    #[test]
+    fn session_start_line_gives_the_utc_time() {
+        let v = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            session_start_line("sacdfs", 0, 1),
+            format!("---- sacdfs {v} started 1970-01-01T00:00:00Z, pid 1 ----")
+        );
+        // A leap day, a date of this year and a century not a leap year.
+        assert!(session_start_line("sacdfs", 1_709_251_199, 7).contains(" 2024-02-29T23:59:59Z,"));
+        assert!(session_start_line("sacdfs", 1_795_037_405, 7).contains(" 2026-11-18T21:30:05Z,"));
+        assert!(session_start_line("sacdfs", 4_102_444_800, 7).contains(" 2100-01-01T00:00:00Z,"));
+        assert!(session_start_line("sacdfs", 4_107_542_399, 7).contains(" 2100-02-28T23:59:59Z,"));
     }
 }

@@ -177,6 +177,18 @@ impl FastReaders {
     }
 }
 
+/// Frames of a slice of read-ahead: [`SLICE_FRAMES_PER_THREAD`] per decoder thread, at least
+/// [`SHARED_WINDOW_MIN`].
+fn slice_frames(engine: &Engine) -> u32 {
+    (engine.threads() as u32).saturating_mul(SLICE_FRAMES_PER_THREAD).max(SHARED_WINDOW_MIN)
+}
+
+/// How far the start-of-track decode-ahead goes past the furthest frame read
+/// ([`START_LEAD`]).
+fn start_lead(engine: &Engine) -> u32 {
+    slice_frames(engine).min(START_LEAD)
+}
+
 /// Whether `read` bytes in `secs` of a file of `byte_rate` bytes per second is more than a player
 /// reads ([`Traffic`]).
 fn faster_than_a_player(read: u64, secs: f64, byte_rate: f64) -> bool {
@@ -211,6 +223,8 @@ pub struct Traffic {
     /// Players' requests decoding now.
     decoding: Mutex<usize>,
     done: Condvar,
+    /// Start-of-track decode-aheads running now ([`START_RUNNING_MAX`]).
+    starting: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for Traffic {
@@ -220,6 +234,7 @@ impl Default for Traffic {
             players: FastReaders::with_idle(PLAYER_IDLE),
             decoding: Mutex::default(),
             done: Condvar::default(),
+            starting: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -308,6 +323,36 @@ pub const KERNEL_FIRST_WINDOW: u64 = 256 << 10;
 /// decoded 2 s of audio nobody read, three times the head's own decoding for a 6-channel DST
 /// file, and held the decoder threads while the scanner went on to the next file.
 pub const HEAD_WINDOW: u64 = 1 << 20;
+
+/// The end of the start-of-track decode-ahead (#481, [`Reader::start_ahead`]): the first 8 s of
+/// a track, within a quarter of the cache. *Why:* a player starting a track from stopped reads its
+/// first seconds as fast as it can, to fill its buffer. Before, its first 1 MiB was decoded read
+/// by read, and then a 2 s window in one batch, which held the reads behind it: on two slow cores
+/// decoding 6-channel DST at twice real time, one read waited a second and the first second of
+/// reads brought half a second of audio. Playback over SMB glitched for 5 to 7 s from a cold
+/// start, though it held once running (#456). *Why 8 s:* with a cache that held them, 4 s gave
+/// worse worst reads than 8 s (the window after it came while the player's buffer was still
+/// small), and 12 s no better.
+pub const START_AHEAD_FRAMES: u32 = 8 * 75;
+
+/// Most frames the start-of-track decode-ahead decodes past the furthest frame read
+/// ([`Reader::start_ahead`]), and less with fewer than 4 decoder threads: a slice. *Why bounded:*
+/// a reader that stops (a scanner reading more than its head) has those decoded for nothing. A
+/// player starting a track reads ahead of decoding, so the bound does not hold it up.
+const START_LEAD: u32 = 32;
+
+/// How long the start-of-track decode-ahead waits for the next read once it has got
+/// [`START_LEAD`] ahead, before it ends: the client paused, or read the head and left
+/// without closing (an NFS client never closes).
+const START_IDLE: std::time::Duration = CLIENT_PAUSE;
+
+/// The longest a read waits for the start-of-track decode-ahead to reach its frames, before it
+/// decodes them itself ([`Reader::wait_for_start`]): a source that stalls holds the decode-ahead.
+const START_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Most start-of-track decode-aheads running at once, per engine. *Why:* a library scan opens
+/// many files at once; each could otherwise take decoder threads for its head's next slices.
+const START_RUNNING_MAX: usize = 2;
 
 /// What a file's node holds without its trailer, in bytes: the struct, the layout or header, the
 /// name and entry, the node and its place in the map, with the allocator's overhead on them.
@@ -526,6 +571,19 @@ impl TrackFile {
                 .clamp(u64::from(READ_AHEAD_FRAMES), u64::from(READ_AHEAD_FRAMES_MAX))
                 as u32,
         }
+    }
+
+    /// The end of the start-of-track decode-ahead (#481): [`START_AHEAD_FRAMES`], within the
+    /// file and a quarter of a cache of `cache_bytes` (the decode-ahead can get that far ahead
+    /// of the reads). 0 if that quarter can't hold what it decodes past the furthest read
+    /// ([`start_lead`]) and a slice of `slice` frames.
+    pub fn start_ahead_frames(&self, cache_bytes: usize, lead: u32, slice: u32) -> u32 {
+        let frame = (self.byte_rate() as u64 / 75).max(1);
+        let quarter = cache_bytes as u64 / 4 / frame;
+        if quarter < u64::from(lead) + u64::from(slice) {
+            return 0;
+        }
+        quarter.min(u64::from(START_AHEAD_FRAMES)).min(u64::from(self.layout.frames)) as u32
     }
 
     /// The share of a quarter of the cache, in frames, of one of `readers` reading for
@@ -807,6 +865,11 @@ pub struct ReadAhead {
     pub first: u32,
     /// End frame (exclusive).
     pub end: u32,
+    /// Whether this is the start-of-track decode-ahead ([`Reader::start_ahead`]), which
+    /// decides its frames as it goes.
+    pub start: bool,
+    /// Whether it is decoded in slices, so that a read of its frames waits for a slice.
+    pub sliced: bool,
 }
 
 /// Whether a process is a network file server's ([`Reader::opened_by`]).
@@ -835,6 +898,8 @@ struct Seq {
     opener: Option<(u32, IsServer)>,
     /// When the first read of audio came, and where it started.
     started: Option<(std::time::Instant, u64)>,
+    /// The start-of-track decode-ahead has just ended, and the next window goes in slices.
+    after_start: bool,
     /// Frames below this one (file index) are given up already ([`Engine::give_up`]).
     given_up: u32,
     /// Whether its client has paused since it last jumped ([`CLIENT_PAUSE`]). *Why (#357):*
@@ -845,6 +910,28 @@ struct Seq {
     /// frames evicted before they were read were converted again. The player's worst read was 3
     /// times 0.6.1's. A copy's client never pauses; a player's does whenever the server keeps up.
     paused: bool,
+}
+
+/// The start-of-track decode-ahead of a reader ([`Reader::start_ahead`]).
+#[derive(Debug, Default)]
+struct StartAhead {
+    /// The reader's first read of audio was of its start, and it has not started yet.
+    eligible: bool,
+    /// From a read past the kernel's first window, after a first read of the start of the
+    /// audio, until the reader jumps, closes or pauses, or the decode-ahead reaches `end`.
+    active: bool,
+    /// Whether a job runs it now.
+    running: bool,
+    /// The first frame (file index) not yet taken by the job.
+    next: u32,
+    /// Frames before this one are wanted now: the furthest read and the lead.
+    target: u32,
+    /// Its last frame (exclusive).
+    end: u32,
+    /// Frames up to here are decoded (or failed), for the read-ahead that follows it.
+    done: u32,
+    /// Slices taken so far.
+    slices: u32,
 }
 
 /// A reader's reads in progress, from their arrival to their reply ([`Reader::arrived`]).
@@ -888,10 +975,21 @@ pub struct Reader {
     throughput: AtomicBool,
     /// Whether it is a player ([`Traffic`]).
     player: AtomicBool,
+    start: Mutex<StartAhead>,
+    /// Reads waiting for `stream` ([`Reader::lock_stream`]).
+    stream_waits: AtomicU32,
+    /// Told when the start-of-track decode-ahead has more to do, or must stop.
+    start_more: Condvar,
 }
 
 impl Drop for Reader {
     fn drop(&mut self) {
+        // A start-of-track decode-ahead planned and never run: its job held the reader.
+        if self.start.get_mut().unwrap_or_else(|p| p.into_inner()).running {
+            if let Some(traffic) = self.counted.get() {
+                traffic.starting.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
         if let Some(traffic) = self.counted.get() {
             traffic.fast.forget(self.id);
             traffic.players.forget(self.id);
@@ -922,7 +1020,20 @@ impl Reader {
             counted: OnceLock::new(),
             throughput: AtomicBool::new(false),
             player: AtomicBool::new(false),
+            start: Mutex::default(),
+            stream_waits: AtomicU32::new(0),
+            start_more: Condvar::new(),
         }
+    }
+
+    /// Notes that the file was closed: its start-of-track decode-ahead stops after its slice.
+    pub fn close(&self) {
+        self.stop_start();
+    }
+
+    fn stop_start(&self) {
+        self.start.lock().unwrap_or_else(|p| p.into_inner()).active = false;
+        self.start_more.notify_all();
     }
 
     /// Bytes `[offset, offset + len)` of the file (fewer at its end), and the frames (file
@@ -936,7 +1047,10 @@ impl Reader {
         let f = &self.file;
         let end = offset.saturating_add(len).min(f.size);
         let (k0, k1) = f.frames_for(offset, end);
-        let frames = if k0 < k1 { self.decoded(engine, k0, k1)? } else { Vec::new() };
+        if k0 < k1 {
+            self.wait_for_start(engine, k0, k1);
+        }
+        let frames = if k0 < k1 { self.decoded(engine, k0, k1, true)? } else { Vec::new() };
         let data = f.assemble(offset, len, k0, &frames);
         // Read ahead only after reads of audio: a tagger reading the header or the tags must
         // not make the file decode (and convert) its first seconds in the background.
@@ -971,17 +1085,220 @@ impl Reader {
     /// *Why slices only while someone plays:* one batch decodes faster, since the threads wait
     /// for the slowest frame at the end of every batch. Alone, a reader keeps that.
     pub fn read_ahead(&self, engine: &Engine, ahead: ReadAhead) {
-        let slice = (engine.threads() as u32).saturating_mul(SLICE_FRAMES_PER_THREAD).max(SHARED_WINDOW_MIN);
+        if ahead.start {
+            self.start_ahead(engine);
+            return;
+        }
+        let slice = slice_frames(engine);
         let mut first = ahead.first;
         while first < ahead.end {
-            let sliced = self.throughput.load(Ordering::Relaxed)
-                && engine.traffic().players.any(std::time::Instant::now());
+            let sliced = ahead.sliced
+                || self.throughput.load(Ordering::Relaxed)
+                    && engine.traffic().players.any(std::time::Instant::now());
             let end = if sliced { first.saturating_add(slice).min(ahead.end) } else { ahead.end };
-            if let Err(e) = self.decoded(engine, first, end) {
+            if sliced {
+                self.let_reads_go_first();
+            }
+            if let Err(e) = self.decoded(engine, first, end, false) {
                 log::debug!("read-ahead of {}: {e}", self.file.disc.path.display());
                 return;
             }
             first = end;
+        }
+    }
+
+    /// The start-of-track decode-ahead (#481), planned by [`Reader::plan_start`]: decodes the
+    /// file's next frames into the cache, a slice at a time, up to [`START_AHEAD_FRAMES`] (within
+    /// a quarter of the cache) and [`START_LEAD`] frames past the furthest read, or to the end
+    /// while reads wait for it ([`Reader::wait_for_start`]). It stops when the reader jumps or
+    /// closes, or does not read for [`START_IDLE`] once it is that far ahead; the read-ahead then
+    /// goes on from where it got, its first window in slices.
+    ///
+    /// *Why slices:* a read of frames being decoded waits for their slice, not for a whole
+    /// window. *Why from the first read rather than the open:* a scanner or a file server opens
+    /// files it never reads (an SMB or NFS server opens before it reads), and the first read
+    /// comes milliseconds after a player's open.
+    fn start_ahead(&self, engine: &Engine) {
+        struct Running<'a>(&'a Reader, &'a Traffic);
+        impl Drop for Running<'_> {
+            fn drop(&mut self) {
+                // Also after a panic: reads must not wait for a job that is gone.
+                let mut st = self.0.start.lock().unwrap_or_else(|p| p.into_inner());
+                st.running = false;
+                st.active = false;
+                drop(st);
+                self.0.start_more.notify_all();
+                self.1.starting.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+        let _running = Running(self, engine.traffic());
+        let slice = slice_frames(engine);
+        loop {
+            let (first, end) = {
+                let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
+                loop {
+                    if !st.active || st.next >= st.end {
+                        st.active = false;
+                        return;
+                    }
+                    if st.next < st.target {
+                        break;
+                    }
+                    let (g, waited) =
+                        self.start_more.wait_timeout(st, START_IDLE).unwrap_or_else(|p| p.into_inner());
+                    st = g;
+                    if waited.timed_out() && st.next >= st.target {
+                        st.active = false;
+                        return;
+                    }
+                }
+                // The first slices are short, so that the reads that came with the first one
+                // wait little: two frames per thread, then twice as many each time.
+                let size = (engine.threads() as u32)
+                    .max(1)
+                    .saturating_mul(2)
+                    .checked_shl(st.slices)
+                    .unwrap_or(u32::MAX)
+                    .min(slice);
+                st.slices = st.slices.saturating_add(1);
+                let first = st.next;
+                st.next = st.target.min(first.saturating_add(size));
+                (first, st.next)
+            };
+            // Beside a player, a slice at a time after its decoding, like a reader for
+            // throughput's read-ahead (#363).
+            if engine.traffic().players.any_but(self.id, std::time::Instant::now()) {
+                engine.traffic().yield_to_players();
+            }
+            self.let_reads_go_first();
+            let r = self.decoded(engine, first, end, false);
+            let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
+            st.done = st.done.max(end);
+            if let Err(e) = r {
+                st.active = false;
+                log::debug!("start-ahead of {}: {e}", self.file.disc.path.display());
+            }
+            drop(st);
+            self.start_more.notify_all();
+        }
+    }
+
+    /// Before a read of frames `[k0, k1)` decodes them itself: while the start-of-track
+    /// decode-ahead runs and will reach them, has it go as far, and waits until it has, for
+    /// [`START_WAIT`] at most. *Why:* the reads of a player starting a track come faster than
+    /// decoding; each decoding its own few frames used the decoder threads poorly and took
+    /// turns with the decode-ahead's slices for the open file's demultiplexer.
+    fn wait_for_start(&self, engine: &Engine, k0: u32, k1: u32) {
+        let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
+        let lead = start_lead(engine);
+        // A read far past what it was asked for (a seek) decodes its own frames.
+        if !st.active || k1 > st.end || k1 <= st.done || k0 > st.target.max(st.next).saturating_add(lead) {
+            return;
+        }
+        // The reader is ahead of decoding, as a player filling its buffer is: whole slices up to
+        // the end, not a read's few frames at a time behind it.
+        st.target = st.end;
+        self.start_more.notify_all();
+        let deadline = std::time::Instant::now() + START_WAIT;
+        while st.active && st.done < k1 {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            st = self.start_more.wait_timeout(st, left).unwrap_or_else(|p| p.into_inner()).0;
+        }
+    }
+
+    /// Plans the start-of-track decode-ahead at a read of frames `[k0, k1)` (#481): starts it
+    /// at the first read in order past the head window (#78) of a reader whose first read of
+    /// audio was of the start, unless another reader plays (#363); extends it at the next reads
+    /// in order, and stops it at a jump. `None` if it does not run (the read-ahead plans as
+    /// before), else what to spawn (`Some(None)`: it runs already).
+    fn plan_start(
+        &self,
+        engine: &Engine,
+        s: &mut Seq,
+        sequential: bool,
+        k0: u32,
+        k1: u32,
+    ) -> Option<Option<ReadAhead>> {
+        let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
+        if s.audio_reads == 1 {
+            st.eligible = k0 == 0;
+            return None;
+        }
+        if st.eligible {
+            // Not within a scanner's read of the head (#78), which holds the kernel's read-ahead
+            // of the first read (#32): a tagger or a library import reads it and leaves.
+            let head = s
+                .started
+                .is_some_and(|(_, at)| s.max_end <= at.saturating_add(HEAD_WINDOW.max(KERNEL_FIRST_WINDOW)));
+            if !sequential {
+                st.eligible = false;
+            }
+            if !sequential || head {
+                return None;
+            }
+            st.eligible = false;
+            // Beside a player, a reader not yet judged reads ahead little (#363): a copy starting
+            // there looks the same as a player.
+            let end =
+                self.file.start_ahead_frames(engine.cache().cap(), start_lead(engine), slice_frames(engine));
+            if k1 >= end || engine.traffic().players.any_but(self.id, std::time::Instant::now()) {
+                return None;
+            }
+            *st = StartAhead { active: true, next: k1, end, ..StartAhead::default() };
+        } else if !st.active {
+            // Done or stopped: the read-ahead goes on from where it got.
+            let done = std::mem::take(&mut st.done);
+            if done > 0 {
+                s.ahead_until = s.ahead_until.max(done);
+                s.after_start = true;
+            }
+            return None;
+        } else if !sequential {
+            // A jump. *Why not stop it for a reader for throughput (`cp`) too, which reads with
+            // a longer window:* a local player filling its buffer reads 4 MiB faster than 1.5
+            // times real time and counts as one; its next read waited for that whole window.
+            st.active = false;
+            drop(st);
+            self.start_more.notify_all();
+            return None;
+        }
+        let lead = start_lead(engine);
+        st.target = st.target.max(st.end.min(k1.saturating_add(lead)));
+        self.start_more.notify_all();
+        if st.running {
+            return Some(None);
+        }
+        let starting = &engine.traffic().starting;
+        if starting.fetch_add(1, Ordering::Relaxed) >= START_RUNNING_MAX {
+            starting.fetch_sub(1, Ordering::Relaxed);
+            st.active = false;
+            return None;
+        }
+        st.running = true;
+        Some(Some(ReadAhead { first: st.next, end: st.target, start: true, sliced: true }))
+    }
+
+    /// The open file's demultiplexer, for a read: counted while it waits ([`Reader::let_reads_go_first`]).
+    fn lock_stream(&self, for_read: bool) -> std::sync::MutexGuard<'_, Stream> {
+        if !for_read {
+            return self.stream.lock().unwrap_or_else(|p| p.into_inner());
+        }
+        self.stream_waits.fetch_add(1, Ordering::Relaxed);
+        let g = self.stream.lock().unwrap_or_else(|p| p.into_inner());
+        self.stream_waits.fetch_sub(1, Ordering::Relaxed);
+        g
+    }
+
+    /// Before a slice of read-ahead: waits, for [`YIELD_MAX`] at most, until no read of this file
+    /// waits for its demultiplexer. *Why:* the lock is not fair, so a job of slices took it again
+    /// at once after each one, and a read behind it waited for the whole window (#481).
+    fn let_reads_go_first(&self) {
+        let start = std::time::Instant::now();
+        while self.stream_waits.load(Ordering::Relaxed) > 0 && start.elapsed() < YIELD_MAX {
+            std::thread::sleep(std::time::Duration::from_micros(200));
         }
     }
 
@@ -998,7 +1315,14 @@ impl Reader {
         }
     }
 
-    fn decoded(&self, engine: &Engine, k0: u32, k1: u32) -> Result<Vec<Arc<Frame>>, ReadError> {
+    /// Frames `[k0, k1)` of the file, for a read (`for_read`) or for read-ahead.
+    fn decoded(
+        &self,
+        engine: &Engine,
+        k0: u32,
+        k1: u32,
+        for_read: bool,
+    ) -> Result<Vec<Arc<Frame>>, ReadError> {
         let f = &self.file;
         let (t0, t1) = (f.start_frame + k0, f.start_frame + k1);
         match f.audio {
@@ -1007,7 +1331,7 @@ impl Reader {
                     return Ok(frames);
                 }
                 let _decoding = self.before_decoding(engine);
-                let mut stream = self.stream.lock().unwrap_or_else(|p| p.into_inner());
+                let mut stream = self.lock_stream(for_read);
                 engine.frames(&f.disc, f.area, &mut stream.cursor, t0, t1)
             }
             Audio::Wav(l) => {
@@ -1020,7 +1344,7 @@ impl Reader {
                     return Ok(frames);
                 }
                 let _decoding = self.before_decoding(engine);
-                let mut stream = self.stream.lock().unwrap_or_else(|p| p.into_inner());
+                let mut stream = self.lock_stream(for_read);
                 engine.pcm_frames(&f.disc, f.area, &mut stream, t0, t1, f.area_end)
             }
         }
@@ -1149,6 +1473,9 @@ impl Reader {
         } else {
             traffic.players.forget(self.id);
         }
+        if let Some(start) = self.plan_start(engine, &mut s, sequential, k0, k1) {
+            return start;
+        }
         if !sequential {
             return None;
         }
@@ -1197,7 +1524,11 @@ impl Reader {
         let start = s.ahead_until.max(k1);
         let stop = frames.min(k1 + window);
         s.ahead_until = stop;
-        (start < stop).then_some(ReadAhead { first: start, end: stop })
+        // The first window after the start-of-track decode-ahead goes in slices too (#481): a
+        // player still filling its buffer reads right behind it, and would wait for the whole
+        // window, a second on a slow CPU.
+        let sliced = std::mem::take(&mut s.after_start);
+        (start < stop).then_some(ReadAhead { first: start, end: stop, start: false, sliced })
     }
 }
 
@@ -1521,9 +1852,10 @@ mod tests {
         let reader = Reader::new(f.clone());
         let window =
             |off: u64| reader.plan_read_ahead(&engine, off, off + (128 << 10), 0, 1).map(|a| a.end - a.first);
-        // Past the head window, in order, at once: not yet judged.
+        // Past the head window, in order, at once: not yet judged. The first read is not of the
+        // start, so that no start-of-track decode-ahead (#481) plans instead.
         let past = HEAD_WINDOW + (128 << 10);
-        window(0);
+        reader.plan_read_ahead(&engine, 0, 128 << 10, 1, 2);
         let alone = window(past).expect("read-ahead with no player");
         assert_eq!(alone, READ_AHEAD_FRAMES.min(f.layout.frames - 1));
 
@@ -1668,5 +2000,179 @@ mod tests {
         assert!(READ_BUFFERS.lock().unwrap_or_else(|p| p.into_inner()).len() <= READ_BUFFERS_KEPT);
         assert!(read_buffer().capacity() <= READ_BUFFER_MAX);
         drop_read_buffers();
+    }
+
+    fn longest(tree: &crate::tree::Tree, format: Format) -> Arc<TrackFile> {
+        tree.all_files()
+            .into_iter()
+            .map(|(_, f)| f)
+            .filter(|f| f.format() == format)
+            .max_by_key(|f| f.layout.frames)
+            .expect("a file of the format in the corpus")
+    }
+
+    /// The whole file, read at once by a reader of its own on an engine of its own.
+    fn whole(f: &Arc<TrackFile>) -> Vec<u8> {
+        let engine = Engine::new(2, 0).unwrap();
+        Reader::new(f.clone()).read(&engine, 0, f.size).unwrap().0
+    }
+
+    /// No file of the corpus is longer than a scanner's head (`HEAD_WINDOW`), so the reads that
+    /// start the decode-ahead are given as plans: a first read of frames `[0, 1)` at the start,
+    /// then one of `[1, 2)` past the head. What it plans.
+    fn plan_start_past_the_head(engine: &Engine, reader: &Reader) -> Option<ReadAhead> {
+        assert!(reader.plan_read_ahead(engine, 0, 128 << 10, 0, 1).is_none());
+        reader.plan_read_ahead(engine, HEAD_WINDOW, HEAD_WINDOW + (128 << 10), 1, 2)
+    }
+
+    /// The decode-ahead's end: its frames, within the file, and none if a quarter of the cache
+    /// can't hold its lead and a slice.
+    #[test]
+    fn the_start_ahead_is_bounded_by_the_cache_and_the_file() {
+        let tree = corpus();
+        let f = longest(&tree, Format::Dsf);
+        let frame = (f.byte_rate() / 75.0) as usize;
+        assert_eq!(f.start_ahead_frames(0, 32, 32), 0, "no cache");
+        assert_eq!(f.start_ahead_frames(4 * frame * 63, 32, 32), 0, "too small for lead and slice");
+        assert_eq!(f.start_ahead_frames(4 * frame * 64, 32, 32), f.layout.frames.min(START_AHEAD_FRAMES));
+        assert!(f.layout.frames < START_AHEAD_FRAMES, "the corpus's files end first");
+    }
+
+    /// Past the head, after a first read of the start, the next frames are decoded into the
+    /// cache, and the file's bytes are what a single read gives.
+    #[test]
+    fn the_start_of_a_track_is_decoded_ahead() {
+        let tree = corpus();
+        for format in [Format::Dsf, Format::Wav] {
+            let f = longest(&tree, format);
+            let engine = Engine::new(2, 32 << 20).unwrap();
+            let reader = Reader::new(f.clone());
+            let ahead = plan_start_past_the_head(&engine, &reader).expect("planned");
+            assert!(ahead.start && ahead.first == 2 && ahead.end > 2, "{format:?}: {ahead:?}");
+            assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 1);
+            reader.read_ahead(&engine, ahead);
+            assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 0, "{format:?}: done");
+            // With no more reads, it goes its lead past the furthest read, waits for one and ends.
+            let done = f.layout.frames.min(2 + start_lead(&engine));
+            let st = reader.start.lock().unwrap();
+            assert!(!st.active && !st.running, "{format:?}");
+            assert_eq!(st.done, done, "{format:?}");
+            drop(st);
+            let (t0, t1) = (f.start_frame + 2, f.start_frame + done);
+            let cached = match format {
+                Format::Dsf => engine.cached(&f.disc, f.area, t0, t1),
+                Format::Wav => engine.cached_pcm(&f.disc, f.area, t0, t1),
+            };
+            assert!(cached.is_some(), "{format:?}: decoded ahead");
+            // The read-ahead goes on from where it got.
+            let next =
+                reader.plan_read_ahead(&engine, HEAD_WINDOW + (128 << 10), HEAD_WINDOW + (256 << 10), 2, 3);
+            assert!(next.is_none_or(|a| !a.start && a.first == done), "{format:?}: {next:?}");
+            assert!(reader.read(&engine, 0, f.size).unwrap().0 == whole(&f), "{format:?}: the same bytes");
+        }
+    }
+
+    /// A tagger (the head, then the tag), a scanner reading the head, a read of the middle first,
+    /// a reader beside a player and a mount without a cache start none.
+    #[test]
+    fn only_a_reader_going_on_from_the_start_decodes_it_ahead() {
+        let tree = corpus();
+        let f = longest(&tree, Format::Dsf);
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        let starts = |engine: &Engine, reader: &Reader, reads: &[(u64, u32)]| {
+            reads.iter().any(|&(off, k)| {
+                reader.plan_read_ahead(engine, off, off + (128 << 10), k, k + 1).is_some_and(|a| a.start)
+            })
+        };
+        let head: Vec<(u64, u32)> = (0..6).map(|i| (i * (128 << 10), i as u32)).collect();
+        assert!(!starts(&engine, &Reader::new(f.clone()), &head), "a scanner's head");
+        let tagger = [(0, 0), (128 << 10, 1), (64 << 20, 20), (HEAD_WINDOW, 2)];
+        assert!(!starts(&engine, &Reader::new(f.clone()), &tagger), "a tagger");
+        assert!(
+            !starts(&engine, &Reader::new(f.clone()), &[(HEAD_WINDOW, 1), (HEAD_WINDOW * 2, 2)]),
+            "the middle"
+        );
+        let no_cache = Engine::new(2, 0).unwrap();
+        assert!(
+            plan_start_past_the_head(&no_cache, &Reader::new(f.clone())).is_none_or(|a| !a.start),
+            "no cache"
+        );
+        let now = std::time::Instant::now();
+        engine.traffic().players.note_since(u64::MAX, now, now, None);
+        assert!(
+            plan_start_past_the_head(&engine, &Reader::new(f.clone())).is_none_or(|a| !a.start),
+            "beside a player"
+        );
+        engine.traffic().players.forget(u64::MAX);
+        assert!(
+            plan_start_past_the_head(&engine, &Reader::new(f.clone())).is_some_and(|a| a.start),
+            "a player"
+        );
+        assert_eq!(
+            engine.traffic().starting.load(Ordering::Relaxed),
+            0,
+            "a reader dropped gives its place back"
+        );
+    }
+
+    /// A reader that closes or jumps stops its decode-ahead before its next slice; and only so
+    /// many run at once.
+    #[test]
+    fn the_start_ahead_stops_at_a_close_or_a_jump_and_is_bounded() {
+        let tree = corpus();
+        let f = longest(&tree, Format::Dsf);
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        let cached_at =
+            |k: u32| engine.cached(&f.disc, f.area, f.start_frame + k, f.start_frame + k + 1).is_some();
+
+        let closed = Reader::new(f.clone());
+        let ahead = plan_start_past_the_head(&engine, &closed).unwrap();
+        closed.close();
+        closed.read_ahead(&engine, ahead);
+        assert!(!cached_at(ahead.first), "closed: nothing decoded ahead");
+        assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 0);
+
+        let jumped = Reader::new(f.clone());
+        let ahead = plan_start_past_the_head(&engine, &jumped).unwrap();
+        let again = jumped.plan_read_ahead(&engine, 64 << 20, (64 << 20) + 4096, 20, 21);
+        assert!(again.is_none_or(|a| !a.start));
+        jumped.read_ahead(&engine, ahead);
+        assert!(!jumped.start.lock().unwrap().active, "jumped");
+        assert!(!cached_at(ahead.first), "jumped: nothing decoded ahead");
+
+        let readers: Vec<Reader> = (0..START_RUNNING_MAX + 1).map(|_| Reader::new(f.clone())).collect();
+        let planned =
+            readers.iter().filter(|r| plan_start_past_the_head(&engine, r).is_some_and(|a| a.start)).count();
+        assert_eq!(planned, START_RUNNING_MAX, "the rest read without");
+        drop(readers);
+        assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 0, "places given back");
+    }
+
+    /// Reads that come while the decode-ahead runs wait for it, or decode their own frames, and
+    /// give the same bytes either way.
+    #[test]
+    fn reads_beside_the_start_ahead_give_the_same_bytes() {
+        let tree = corpus();
+        for format in [Format::Dsf, Format::Wav] {
+            let f = longest(&tree, format);
+            let want = whole(&f);
+            for piece in [4096u64, 32 << 10, 100_000] {
+                let engine = Arc::new(Engine::new(3, 32 << 20).unwrap());
+                let reader = Arc::new(Reader::new(f.clone()));
+                let ahead = plan_start_past_the_head(&engine, &reader).unwrap();
+                let job = {
+                    let (e, r) = (engine.clone(), reader.clone());
+                    std::thread::spawn(move || r.read_ahead(&e, ahead))
+                };
+                let mut got = Vec::new();
+                while (got.len() as u64) < f.size {
+                    got.extend(reader.read(&engine, got.len() as u64, piece).unwrap().0);
+                }
+                reader.close();
+                job.join().unwrap();
+                assert!(got == want, "{format:?}, reads of {piece}");
+                assert_eq!(engine.traffic().starting.load(Ordering::Relaxed), 0);
+            }
+        }
     }
 }

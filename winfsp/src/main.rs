@@ -41,7 +41,13 @@ fn main() -> ExitCode {
     };
     let mut logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level));
     if let Some(path) = &args.log_file {
-        match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        // The file is appended to: a line marks where this session starts (#481).
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut f| sacdfs::errlog::write_session_start(&mut f, "sacdfs-win").map(|()| f))
+        {
             Ok(f) => {
                 logger.target(env_logger::Target::Pipe(Box::new(f)));
             }

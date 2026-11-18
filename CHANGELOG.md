@@ -7,6 +7,14 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The start of a track is decoded ahead (#481).** When a player starts a track from stopped, its
+  first seconds are decoded in slices on all decoder threads as its reads come in, rather than a
+  read at a time and then in one 2 s batch that held its reads back. On a slow CPU this removes the
+  glitches of a cold start (on a 32-bit Atom NAS, 5 to 7 s of multichannel DSF over SMB, #456).
+  Library scans and taggers, which read a file's head and leave, start none. See
+  docs/deployment.md, "Starting playback on a slow CPU".
+- **`--log-file` marks where each session starts (#481).** The log file is still appended to; a
+  line `---- sacdfs VERSION started TIME, pid N ----` now comes first.
 - **`sacdfs tags fetch --acoustid`: a lookup by audio fingerprint for discs nothing else
   identifies (part of #296).** When the barcode or catalogue number, the name and the durations
   find nothing, it fingerprints the first two minutes of each stereo track (10 s or longer) with

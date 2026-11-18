@@ -469,7 +469,10 @@ impl Volume {
 
     /// Closes the file open as `fh`.
     pub fn release(&self, fh: u64) {
-        self.shared.handles.lock().unwrap_or_else(|p| p.into_inner()).remove(&fh);
+        let open = self.shared.handles.lock().unwrap_or_else(|p| p.into_inner()).remove(&fh);
+        if let Some((_, Open::Track(reader))) = open {
+            reader.close();
+        }
     }
 
     /// Opens folder `ino`.

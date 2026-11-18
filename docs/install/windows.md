@@ -214,7 +214,7 @@ others in [options](../options.md). `sacdfs-win --help` lists them. Windows only
 - `--allow-other`: let the other users of the PC read the drive (needed to share it over SMB).
   By default only the user who started sacdfs-win can, besides administrators; run as SYSTEM,
   everyone can, unless `--no-allow-other`.
-- `--log-file FILE`: write the log there instead of the window.
+- `--log-file FILE`: append the log there instead of the window. Each start writes a `---- sacdfs-win VERSION started TIME, pid N ----` line first.
 
 The seek index is kept in `%LOCALAPPDATA%\sacdfs` unless `--index-cache` names another folder.
 
