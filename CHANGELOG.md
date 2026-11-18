@@ -46,6 +46,12 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **Windows: a SOURCE ending in a backslash works through WinFsp.Launcher (#466).** The
+  launcher quotes each argument, so `D:\Music\SACD\` or a drive root `E:\` reached sacdfs-win
+  as an escaped quote that ran SOURCE and MOUNTPOINT together; it exited at once and the
+  launcher still said `OK`. sacdfs-win now spots a quote inside an argument, reads its command
+  line again with backslashes kept, and logs that it did. The `windows` workflow tests both
+  through the launcher.
 - **WAV INFO fields have no control characters.** A disc whose text holds U+007F or C1
   characters (or a tags file with any control character) got them in INAM, IART and IPRD,
   while the WAV file's ID3 tag left them out. INFO now leaves them out too. Other discs are
