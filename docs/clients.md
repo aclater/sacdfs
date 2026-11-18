@@ -569,7 +569,7 @@ authentication, sacdfs 0.2.0-rc.1, `dsf,wav`, `--flatten`, 93 DSF + 93 WAV (54.9
 
 Not checked: Explorer's large-icon view in a real window, a real audio output, Japanese, Chinese or Korean names, library changes, an output-version change.
 
-**Non-ASCII WAV tags** (main, November 2026, Windows 11 in a VM): Explorer and the Windows Media Player library show accented and CJK titles in WAV files as mojibake, because the files' `LIST`/`INFO` tags are UTF-8 and Windows reads them in the ANSI code page ([#444](https://github.com/aclater/sacdfs/issues/444)). Programs that read the `id3 ` chunk show them correctly.
+**Non-ASCII WAV tags** (main, November 2026, Windows 11 in a VM): Explorer and the Windows Media Player library showed accented and CJK titles in WAV files as mojibake, because the files' `LIST`/`INFO` tags were UTF-8 and Windows reads them in the ANSI code page ([#444](https://github.com/aclater/sacdfs/issues/444)). Since 0.7.0, INFO text is Windows-1252, and a field with characters outside it (CJK, Cyrillic, Greek) is left out, so Explorer shows no value there instead of mojibake. Programs that read the `id3 ` chunk show the full text. Not yet re-checked on Windows.
 
 **Robocopy speed ([#225](https://github.com/aclater/sacdfs/issues/225)).** Robocopy from a Windows VM ran at one of two speeds, 3 to 4.5 times apart. The test VM's emulated network card caused it, not sacdfs, Samba, Robocopy or the sacdfs version. Windows 11 25H2 ran in a VM (4 vCPUs configured, of which Windows used 2; 8 GB) and the container in a Fedora 44 VM (8 vCPUs) on one host's libvirt bridge. Each run copied one DST disc (61 files, 19.8 GiB) with `robocopy /MIR /MT:1` from a fresh container over a new SMB connection:
 

@@ -1091,8 +1091,20 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   in an `id3 ` chunk (FFmpeg, TagLib, mutagen, foobar2000 and mp3tag read it), and a
   `LIST`/`INFO` chunk for software that reads only that: INAM (title), IART (performer), IPRD
   (album), ITRK (the track number), ICRD (date), IGNR (the first genre), the first value of the
-  same tag items, UTF-8 and NUL-terminated, without control characters (C0, DEL, C1), as the
-  ID3 writer leaves them out. *Why INFO from the items, not from the ID3 frames:*
+  same tag items, NUL-terminated, without control characters (C0, DEL, C1), as the
+  ID3 writer leaves them out, nor format characters (bidi controls, zero-width characters).
+  **INFO text is Windows-1252 (#444)**, and a field with a character outside it is left out.
+  *Why:* INFO declares no encoding; Windows Explorer and Windows Media Player read it in the
+  ANSI code page, so the UTF-8 written before showed accented and CJK text as mojibake (Windows
+  11, code page 1252). *Alternatives:* ASCII only (loses accented Latin text, which 1252 shows
+  right); UTF-8 with the limit documented (keeps the mojibake). *Trade-off:* a CJK, Cyrillic or
+  Greek field is missing from INFO, and on a Windows set to another ANSI code page the
+  characters 0x80 to 0xFF show as that code page's; the `id3 ` chunk keeps the full text for
+  every other reader. ASCII fields keep their bytes; the WAV output version moved to 5. *Bytes
+  0x80 to 0x9F:* `›` (U+203A) is 0x9B, which an 8-bit terminal outside UTF-8 mode takes as CSI.
+  Kept, as the code page has it: a WAV file's audio holds every byte value anyway, so a raw dump
+  of one on such a terminal is never safe, and readers decode the field as text.
+  *Why INFO from the items, not from the ID3 frames:*
   the library has no INFO writer, and built from one `TagSet` the two cannot disagree. The WAV
   output version moved to 2 with the DSF one (#28): the same 40 files' `id3 ` chunk changed. A chunk with
   nothing to hold is left out. *Why after the audio:* so that the header, and with it the

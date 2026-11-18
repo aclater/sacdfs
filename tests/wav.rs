@@ -631,3 +631,30 @@ fn first_audio_read_starts_no_read_ahead() {
         }
     }
 }
+
+/// INFO text is Windows-1252 (#444): a disc's Latin-1 album name is there, one byte per
+/// character, and a CJK one is left out while the `id3 ` chunk keeps it.
+#[test]
+fn info_text_is_windows_1252() {
+    let rate = PcmRate::R176400;
+    for (id, want) in [
+        ("charset-2", Some("Caf\u{e9} M\u{fc}ller \u{c5}ngstr\u{f6}m \u{bd}")),
+        ("charset-table-points-3-4", None),
+    ] {
+        let case = ok_cases().into_iter().find(|c| c["id"] == id).unwrap();
+        let tree = Tree::with_options(
+            SourceDir::scan(&image(&case)).unwrap(),
+            Tuning::default(),
+            output(rate, false),
+        );
+        let engine = Engine::with_pcm(2, 1, config(rate)).unwrap();
+        let wavs = wav_files(&tree);
+        assert!(!wavs.is_empty(), "{id}");
+        for (path, f) in &wavs {
+            let w = parse_wav(&read_all(&engine, f, 1 << 20));
+            let album = w.info.iter().find(|(field, _)| field == "IPRD").map(|(_, t)| t.as_str());
+            assert_eq!(album, want, "{id} {path:?}");
+            assert!(w.id3.is_some(), "{id} {path:?}");
+        }
+    }
+}
