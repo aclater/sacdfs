@@ -729,3 +729,184 @@ fn pause_kept_extracts() {
     assert!(text.contains("IDENTICAL-PAUSE"), "{text}");
     assert!(text.contains("3 of them IDENTICAL-PAUSE"), "{text}");
 }
+
+/// A DSF file of `channels` (each channel's bytes, earliest sample in the MSB), in blocks of
+/// 4096 with the last one padded, as `sacd_extract` writes them.
+fn dsf_of(channels: &[Vec<u8>]) -> Vec<u8> {
+    let ch = channels.len();
+    let per = channels[0].len();
+    let blocks = per.div_ceil(4096);
+    let mut data = vec![0u8; blocks * 4096 * ch];
+    for (c, bytes) in channels.iter().enumerate() {
+        for (i, &b) in bytes.iter().enumerate() {
+            data[(i / 4096) * 4096 * ch + c * 4096 + i % 4096] = b.reverse_bits();
+        }
+    }
+    let mut f = b"DSD ".to_vec();
+    f.extend_from_slice(&28u64.to_le_bytes());
+    f.extend_from_slice(&((92 + data.len()) as u64).to_le_bytes());
+    f.extend_from_slice(&0u64.to_le_bytes());
+    f.extend_from_slice(b"fmt ");
+    f.extend_from_slice(&52u64.to_le_bytes());
+    for v in [1u32, 0, if ch == 2 { 2 } else { 7 }, ch as u32, 2_822_400, 1] {
+        f.extend_from_slice(&v.to_le_bytes());
+    }
+    f.extend_from_slice(&(per as u64 * 8).to_le_bytes());
+    f.extend_from_slice(&4096u32.to_le_bytes());
+    f.extend_from_slice(&0u32.to_le_bytes());
+    f.extend_from_slice(b"data");
+    f.extend_from_slice(&((12 + data.len()) as u64).to_le_bytes());
+    f.extend_from_slice(&data);
+    f
+}
+
+/// Each channel's audio of the served tracks of `area` in `lib`, in track order.
+fn area_tracks(lib: &Path, area: &str, kept: bool) -> Vec<Vec<Vec<u8>>> {
+    let tree = Tree::with_options(
+        SourceDir::scan(lib).unwrap(),
+        Tuning::default(),
+        Output { pauses_kept: kept, ..Output::dsf_only() },
+    );
+    let engine = Engine::new(2, 16 << 20).unwrap();
+    let mut files: Vec<(PathBuf, Vec<Vec<u8>>)> = tree
+        .all_files()
+        .into_iter()
+        .filter(|(p, _)| p.parent().is_some_and(|d| d.ends_with(area)))
+        .map(|(p, f)| (p, common::dsf_channels(&Reader::new(f.clone()).read(&engine, 0, f.size).unwrap().0)))
+        .collect();
+    files.sort();
+    files.into_iter().map(|(_, c)| c).collect()
+}
+
+/// The files of a gapless chain of `tracks`, as `sacd_extract -z` cuts it: each file but the
+/// last ends on the last whole block its track reaches, one block earlier when it reaches one
+/// exactly, and `shift` blocks earlier still; the rest opens the next file.
+fn z_chain(tracks: &[Vec<Vec<u8>>], shift: usize) -> Vec<Vec<Vec<u8>>> {
+    let ch = tracks[0].len();
+    let joined: Vec<Vec<u8>> = (0..ch).map(|c| tracks.iter().flat_map(|t| t[c].clone()).collect()).collect();
+    let mut out = Vec::new();
+    let (mut start, mut end) = (0, 0);
+    for (k, t) in tracks.iter().enumerate() {
+        end += t[0].len();
+        let cut = if k + 1 == tracks.len() {
+            joined[0].len()
+        } else {
+            let whole = end / 4096 * 4096;
+            let whole = if whole == end { whole - 4096 } else { whole };
+            whole - shift * 4096
+        };
+        out.push(joined.iter().map(|c| c[start..cut].to_vec()).collect());
+        start = cut;
+    }
+    out
+}
+
+fn put_chain(dir: &Path, files: &[Vec<Vec<u8>>], first: usize) {
+    fs::create_dir_all(dir).unwrap();
+    for (k, f) in files.iter().enumerate() {
+        fs::write(dir.join(format!("{:02} - Track.dsf", first + k)), dsf_of(f)).unwrap();
+    }
+}
+
+/// #442: gapless chains of extracts (`sacd_extract -z`), whatever block each file ends on, are
+/// IDENTICAL-CHAIN when their audio joined is that of the served tracks joined, give or take
+/// silence at the ends; a chain short of audio, or of the other pause mode, is not.
+#[test]
+fn gapless_chains() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = dir.path().join("lib");
+    let a = lib.join("a");
+    fs::create_dir_all(&a).unwrap();
+    common::link(common::corpus().join("images").join("dsd-stereo-mch-2048.iso"), a.join("d.iso")).unwrap();
+    let dropped = area_tracks(&lib, "Stereo", false);
+    let kept = area_tracks(&lib, "Stereo", true);
+    let mch = area_tracks(&lib, "Multichannel", false);
+    assert_eq!(dropped.len(), 3);
+    assert_ne!(dropped, kept, "the corpus disc has pauses");
+    let n = |t: &[Vec<Vec<u8>>]| t[0][0].len();
+    assert!(n(&dropped) > 4096 && n(&mch) > 4096, "a chain needs files of a block or more");
+
+    put_chain(&a.join("chain"), &z_chain(&dropped, 0), 1);
+    put_chain(&a.join("carried"), &z_chain(&dropped, 1), 1);
+    put_chain(&a.join("mch"), &z_chain(&mch, 0), 1);
+    put_chain(&a.join("kept"), &z_chain(&kept, 0), 1);
+    // The last file with digital silence after the area's end, or short of its last frame.
+    let mut idle = z_chain(&dropped, 0);
+    idle.last_mut().unwrap().iter_mut().for_each(|c| c.extend(vec![0x69u8; 4704]));
+    put_chain(&a.join("idle tail"), &idle, 1);
+    let mut short = z_chain(&dropped, 0);
+    short.last_mut().unwrap().iter_mut().for_each(|c| c.truncate(c.len() - 4704));
+    put_chain(&a.join("short"), &short, 1);
+    // Tracks 1 and 2 only: sacd_extract keeps back the last block, which no file holds.
+    let mut two = z_chain(&dropped[..2], 0);
+    two.last_mut().unwrap().iter_mut().for_each(|c| c.truncate(c.len() / 4096 * 4096));
+    put_chain(&a.join("two"), &two, 1);
+    // Numbered from 2: not the tracks it holds.
+    put_chain(&a.join("misnumbered"), &z_chain(&dropped[..2], 0), 2);
+
+    let report = dir.path().join("r.tsv");
+    let mut ar = args(&lib, Vec::new(), Vec::new(), Some(report.clone()));
+    let s = run(&ar).unwrap();
+    let rows = |s: &sacdfs::verify::Summary, folder: &str| -> Vec<sacdfs::verify::Row> {
+        s.rows.iter().filter(|r| r.path.parent().unwrap().ends_with(folder)).cloned().collect()
+    };
+    for folder in ["chain", "carried", "mch", "idle tail"] {
+        let rs = rows(&s, folder);
+        assert_eq!(rs.len(), if folder == "mch" { mch.len() } else { 3 }, "{folder}");
+        for (k, r) in rs.iter().enumerate() {
+            assert_eq!(r.status, Status::IdenticalChain, "{folder} {:?}: {}", r.path, r.reason);
+            assert_eq!(r.track, Some(k as u8 + 1));
+            assert!(r.reason.contains("gapless chain") && r.reason.contains("files 01 to"), "{}", r.reason);
+        }
+        assert_eq!(rs[0].area, if folder == "mch" { "Multichannel" } else { "Stereo" });
+        // The audio compared is the chain's.
+        assert!(rs.iter().all(|r| r.sha256 == rs[0].sha256 && r.sha256.len() == 64));
+    }
+    assert_eq!(rows(&s, "chain")[0].sha256, rows(&s, "carried")[0].sha256);
+    assert!(
+        rows(&s, "idle tail")[2].reason.contains("digital silence after them"),
+        "{}",
+        rows(&s, "idle tail")[2].reason
+    );
+    for r in rows(&s, "kept") {
+        assert!(matches!(r.status, Status::NoMatch | Status::Different), "{:?}: {}", r.path, r.reason);
+        assert!(r.reason.contains("--pauses kept: check again"), "{}", r.reason);
+    }
+    // The corpus's last frame is not silence: deleting the short chain would lose nothing, but
+    // it lacks audio, so it is not reported as a match; nor is the chain of two.
+    for folder in ["short", "two"] {
+        for r in rows(&s, folder) {
+            assert!(!r.status.is_match(), "{folder} {:?}: {}", r.path, r.reason);
+            assert!(r.reason.contains("they lack audio sacdfs serves"), "{folder}: {}", r.reason);
+        }
+    }
+    for r in rows(&s, "misnumbered") {
+        assert!(!r.status.is_match(), "{:?}: {}", r.path, r.reason);
+    }
+    assert!(s.render().contains("IDENTICAL-CHAIN: files of gapless chains"), "{}", s.render());
+    // The report holds each row once, as the summary has it.
+    let text = fs::read_to_string(&report).unwrap();
+    assert_eq!(text.lines().count(), s.rows.len() + 1);
+    assert_eq!(text.lines().filter(|l| l.starts_with("IDENTICAL-CHAIN\t")).count(), 3 + 3 + mch.len() + 3);
+
+    // With --pauses kept, the kept chain matches, and the dropped one points back.
+    ar.pauses = "kept".into();
+    ar.output = Some(dir.path().join("kept.tsv"));
+    let k = run(&ar).unwrap();
+    assert!(rows(&k, "kept").iter().all(|r| r.status == Status::IdenticalChain), "{:?}", rows(&k, "kept"));
+    assert!(rows(&k, "chain").iter().all(|r| r.reason.contains("--pauses dropped")));
+
+    // Resuming: nothing changed keeps every row; one file of a chain changed checks the chain again.
+    ar.pauses = "dropped".into();
+    ar.output = Some(report.clone());
+    ar.resume = true;
+    run(&ar).unwrap();
+    assert_eq!(fs::read_to_string(&report).unwrap(), text);
+    let last = a.join("chain").join("03 - Track.dsf");
+    let mut b = fs::read(&last).unwrap();
+    b[100] ^= 0xFF;
+    fs::write(&last, b).unwrap();
+    let r = run(&ar).unwrap();
+    assert!(rows(&r, "chain").iter().all(|r| !r.status.is_match()), "{:?}", rows(&r, "chain"));
+    assert!(rows(&r, "carried").iter().all(|r| r.status == Status::IdenticalChain));
+}

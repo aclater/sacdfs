@@ -773,7 +773,8 @@ mounted: the files sacdfs would serve are read in-process, through the same code
 |---|---|
 | `--map FROM TO` | Extracts under `FROM` belong to the images under `TO`, a directory in `SOURCE`; for extracts kept in a tree of their own that mirrors the images' folders. Repeat it for more trees; the longest `FROM` that applies wins. |
 | `-o`, `--output FILE` | Write the report to `FILE` instead of standard output. |
-| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. An interrupted run leaves every row it finished in `FILE.partial`, so `--resume` picks up where it stopped. |
+| `--pauses MODE` | Compare with the files sacdfs serves with `--pauses MODE`: `dropped` (the default) or `kept`, for extracts that hold each track's pause. |
+| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. In a folder where a DSF or DFF file changed, its NO-MATCH, DIFFERENT and IDENTICAL-CHAIN rows are checked again too, since a gapless chain is checked as a whole. An interrupted run leaves every row it finished in `FILE.partial`, so `--resume` picks up where it stopped. |
 | `--threads N` | Files checked at once, and DST decoder threads; `0` (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded frames, in MiB (default `64`). |
 | `-q`, `--quiet` | No progress line on standard error. |
@@ -794,6 +795,7 @@ are decoded, so a library is read about once.
 |---|---|---|
 | `IDENTICAL` | sacdfs serves the same audio (the `image`, `area` and `track` columns say which track). | Safe for the audio; see `loses` for tags. |
 | `IDENTICAL-PAUSE` | The extract is a served track plus pauses: the track's audio is inside it with silence before and/or after, up to 60 s in all, or it is a track cut short where sacdfs serves only silence beyond the end. The reason says what surrounds the track and how it was measured. | Safe for the audio: the silence is not served, nothing else is lost. |
+| `IDENTICAL-CHAIN` | The extract is one file of a gapless chain (`sacd_extract -z`): with the other files of the chain, it holds the audio of consecutive served tracks, joined, give or take silence at the ends. The reason names the files and the tracks. | Safe for the audio: sacdfs serves all of it, in its tracks. |
 | `DIFFERENT` | A track of the same length and channels exists, but its audio differs. | Keep it. |
 | `NO-MATCH` | No track of those images has the file's channel count and length, or the file isn't at SACD's 2.8224 MHz, or no image is in its folder, above it, or in its subfolders (two levels down). The reason names the nearest track by length. It also holds a track plus audio that is not silence (a hidden track, applause, the next track's start), or a track cut short with audio missing: the reason gives the length and level of the extra audio. | Keep it. |
 | `UNSUPPORTED` | A file that can't be compared, such as a DST-compressed DFF; the reason says why. Decompress it (to a plain DSD DFF or DSF) and check again. | Keep it. |
@@ -812,10 +814,22 @@ above -60.2 dB). A person decides about those. Up to 60 s of difference in lengt
 considered; sacdfs does not serve pauses, so deleting an `IDENTICAL-PAUSE` extract drops its
 silence. The summary counts these files in the reclaimable space.
 
-**Gapless chains.** Extracts written as one chain without padding (`sacd_extract -z`) are not
-recognised yet. Each file but the last ends on a whole DSF block and carries the rest of its track into the
-next file, so verify reports them `NO-MATCH` or `DIFFERENT`. Keep them
-([#442](https://github.com/aclater/sacdfs/issues/442)).
+**Gapless chains.** Extracts written as one chain without padding (`sacd_extract -z`, with or
+without `-b`) end on a whole DSF block (4096 bytes per channel), all but the last, and carry the
+rest of their track into the next file, so no file of the chain but the area's last matches a
+track on its own. verify finds them: DSF files in one folder whose names start with consecutive
+track numbers, of one channel count, each but the last a whole number of blocks. It joins their
+audio and compares it with the served tracks of those numbers, of one area, joined, under the
+rules for pauses and silence above. When they match, every file of the chain is
+`IDENTICAL-CHAIN`, and its row names its own track; the `sha256` column holds the digest of the
+whole chain. Otherwise each file keeps its own status, and the reason says what the chain lacks or
+holds besides. A chain of only some of an area's tracks lacks audio when its last track ends on a
+whole block: `sacd_extract` holds that block back for a next file that it doesn't write, so it is
+in no file, and the files are reported `NO-MATCH` ("they lack audio sacdfs serves").
+
+A chain made with `-z -b` holds every pause, which sacdfs serves only with `--pauses kept`, and
+one made with `-z` alone holds none. When a chain matches only in the other mode, the reason says
+so; check it again with that `--pauses`. ([#442](https://github.com/aclater/sacdfs/issues/442))
 
 **What a deletion would lose.** The `loses` column lists what the extract's tags hold that
 sacdfs's own tag for the track doesn't: `musicbrainz` (MusicBrainz IDs), `art` (embedded
@@ -831,7 +845,8 @@ summary counts the IDENTICAL files that lose each kind.
 compared audio), `loses` and `reason`. Tabs, newlines and backslashes in fields are
 escaped (`\t`, `\n`, `\\`), as are other control characters and bytes of a path that
 aren't UTF-8 (`\xNN`). The summary goes to standard error: counts and bytes by status, the
-reclaimable bytes (the IDENTICAL files), and the tags they carry.
+reclaimable bytes (the IDENTICAL files), and the tags they carry. With no `-o`, or a stream,
+the `NO-MATCH` and `DIFFERENT` rows come last, after the gapless chains are checked.
 
 **Exit status:** 0 when every DSF and DFF file is IDENTICAL, 2 when any is not, 1 when the
 check couldn't run or didn't finish.
