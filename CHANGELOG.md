@@ -30,6 +30,13 @@ All notable changes to sacdfs are recorded here. The format follows
   come last ([user guide](docs/user-guide.md#before-you-delete-extracts)).
 
 ### Changed
+- **WAV `INFO` tags in Windows-1252 (#444).** Windows Explorer and Windows Media Player read a
+  WAV file's `LIST`/`INFO` chunk in the ANSI code page, so the UTF-8 text written before showed
+  accented and CJK titles as mojibake. INFO text is now Windows-1252; a field with characters
+  outside it (CJK, Cyrillic, Greek) is left out, and the `id3 ` chunk keeps the full text as
+  before. Format characters (bidi controls, zero-width characters) are left out of INFO like
+  control characters. Output change: `WAV_VERSION` 5, so every WAV file shows a new mtime and
+  generation once; files whose INFO text is ASCII keep their bytes.
 - **scarletbook 0.6.1: faster DST decoding on 32-bit x86.** scarletbook and scarletbook-pcm
   move to 0.6.1 (`=0.6.1`), whose DST decoder keeps its arithmetic decoder's state in a 32-bit
   word on 32-bit targets ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.6.1),
