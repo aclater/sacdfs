@@ -3,6 +3,7 @@
 """Soak test: hours of reads, seeks and churn on one sacdfs mount, then a verdict on its
 memory (#151). Run on a test host, not in PR CI; see docs/development.md.
 
+  cargo build --release --bin sacdfs --example stallfs
   scripts/soak.py --sacdfs target/release/sacdfs --images DIR [--hours 2] [--out soak.tsv]
 
 DIR holds `.iso` images (real discs, or tests/corpus/images). The script builds a library
@@ -14,9 +15,12 @@ of links to them in a work directory and mounts it with `--tags`. While it runs:
 - the churner, every few seconds: adds or removes an image and a sidecar (the re-read,
   #101/#123), adds or removes an `Artwork/` folder, and edits a tags file (the reload, #121).
   Each added album has a new name, unless `--churn-slots K` reuses K names;
-- the staller, every `--stall-every` seconds: points an image's link at a FIFO, reads it
-  until the watchdog fails the request (#141), then releases the stuck open and restores
-  the link (the abandoned request then finishes);
+- the staller, every `--stall-every` seconds: adds a new stall album (and removes the last)
+  whose image is served by a small FUSE filesystem of its own (`examples/stallfs.rs`, #422),
+  lists it, then has that filesystem leave its opens and reads unanswered and reads the
+  album's files until the watchdog fails the request (#141); then answers the held requests
+  (the abandoned ones then finish). A new album each time: sacdfs has none of its frames
+  cached, so the reads reach the image;
 - the remounter, every `--remount-every` seconds: mounts the library a second time with the
   same caches, reads, and unmounts (the persistent seek index and tags state across mounts).
 
@@ -54,7 +58,7 @@ from pathlib import Path
 STOP = threading.Event()
 LOCK = threading.Lock()
 COUNTS = {"bytes": 0, "reads": 0, "read_errors": 0, "err_churn": 0, "err_stall": 0, "err_tags": 0, "err_sidecar": 0,
-          "err_unexpected": 0, "churn": 0, "stalls": 0, "stall_fails": 0,
+          "err_unexpected": 0, "churn": 0, "stalls": 0, "stall_fails": 0, "stall_missed": 0,
           "remounts": 0, "remount_fails": 0}
 
 
@@ -83,9 +87,10 @@ def classify(path, err, mnt):
     - churn: a path under the churn folders, in an album the churner has removed: ENOENT or
       ENOTDIR (at any time: the album is gone), or EIO within 30 s of the removal (a request
       that was in flight when the image's link went away);
-    - stall: a path under the stall folder, from the staller's link change until the stuck
-      requests are released and a few watchdog timeouts have passed, with EIO, ETIMEDOUT,
-      ENOENT or EINTR (the watchdog fails the request, #141);
+    - stall: a path under the stall folder, from the start of a stall until the held
+      requests are answered and a few watchdog timeouts have passed, with EIO, ETIMEDOUT,
+      ENOENT or EINTR (the watchdog fails the request, #141); and, as for churn, a path in a
+      stall album the staller has removed: ENOENT or ENOTDIR at any time, EIO within 30 s;
     - tags: ENOENT on a .dsf when the churner edited a tags file after the reader's list was
       taken, or less than 60 s ago (a tags edit can rename a track's file, so the listed name
       is gone); and EIO on a track file of an album whose image's tags file the churner edited
@@ -112,6 +117,10 @@ def classify(path, err, mnt):
         gone = removed.get("album:" + rel[1] if len(rel) > 1 else "")
         if gone is not None and (e in (errno.ENOENT, errno.ENOTDIR) or (e == errno.EIO and now - gone <= 30)):
             return "churn"
+    if rel[:2] and rel[0] == "stall":
+        gone = removed.get("stall:" + rel[1] if len(rel) > 1 else "")
+        if gone is not None and (e in (errno.ENOENT, errno.ENOTDIR) or (e == errno.EIO and now - gone <= 30)):
+            return "stall"
     if (rel[:1] == ("stall",) and TIMES["stall_from"] <= now <= TIMES["stall_until"]
             and e in (errno.EIO, errno.ETIMEDOUT, errno.ENOENT, errno.EINTR)):
         return "stall"
@@ -351,51 +360,113 @@ def churner(args, images, keys):
             log(f"churn: {e}")
 
 
-def staller(args, image):
-    link = args.work / "lib" / "stall" / "disc.iso"
-    fifo = args.work / "fifo"
-    os.mkfifo(fifo)
+class StallFs:
+    """The stall album's image, served by `examples/stallfs.rs` at `mp`: `stall()` holds its opens
+    and reads, `release()` answers them and says how many there were."""
+
+    def __init__(self, args, image, mp):
+        mp.mkdir(exist_ok=True)
+        self.mp = mp
+        self.proc = subprocess.Popen([args.stallfs, str(image), str(mp)], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=open(args.work / "stallfs.stderr", "ab"),
+                                     text=True)
+        if self.proc.stdout.readline().strip() != "ready":
+            raise RuntimeError(f"stallfs did not mount on {mp}: see stallfs.stderr in the work directory")
+        self.file = mp / "disc.iso"
+
+    def _cmd(self, cmd):
+        self.proc.stdin.write(cmd + "\n")
+        self.proc.stdin.flush()
+        return self.proc.stdout.readline().split()
+
+    def stall(self):
+        self._cmd("stall")
+
+    def release(self):
+        """Answers the held requests: how many opens and reads were held."""
+        ack = self._cmd("release")
+        return int(ack[1]) + int(ack[2]) if len(ack) == 3 else 0
+
+    def stop(self):
+        try:
+            self.proc.stdin.close()
+            self.proc.wait(30)
+        except (OSError, subprocess.TimeoutExpired):
+            subprocess.run(["fusermount3", "-u", "-z", str(self.mp)], check=False)
+            self.proc.kill()
+            self.proc.wait()
+
+
+def staller(args, sfs):
+    """Every --stall-every seconds: a new stall album, listed while its image answers; then the
+    image stalled and the album's files read until a read fails with EIO, which the watchdog
+    gives after --request-timeout (#141). Counts: `stalls`, the watchdog failed a read that
+    reached the stalled image; `stall_fails`, a read reached it and was not failed so (no error
+    within six timeouts, another errno, or EIO well before the timeout); `stall_missed`, nothing
+    reached the image, which proves nothing either way."""
+    lib, mnt = args.work / "lib" / "stall", args.work / "mnt" / "stall"
+    slot = 0
     while not STOP.wait(args.stall_every):
         try:
-            names = [p for p in files_under(args.work / "mnt" / "stall") if p.suffix == ".dsf"]
+            slot += 1
+            new_stall_album(lib, sfs.file, slot)
+            names = []
+            end = time.monotonic() + 30
+            while not names and time.monotonic() < end and not STOP.is_set():
+                names = [p for p in files_under(mnt / f"s{slot}") if p.suffix == ".dsf"]
+                if not names:
+                    time.sleep(0.5)
             if not names:
+                log(f"stall: album s{slot} not listed")
                 continue
-            tmp = link.with_name("disc.tmp")
             TIMES["stall_from"] = time.monotonic()
             TIMES["stall_until"] = float("inf")
-            tmp.symlink_to(fifo)
-            os.replace(tmp, link)
-            # sacdfs's open handle of the image may still be good: closed when idle or when the
-            # link changes; read until a request stalls and the watchdog fails it.
-            t0 = time.monotonic()
-            failed = False
-            while time.monotonic() - t0 < args.request_timeout * 6 and not STOP.is_set():
-                try:
-                    with open(names[0], "rb") as f:
-                        f.seek(random.randrange(max(os.fstat(f.fileno()).st_size, 1)))
-                        f.read(65536)
-                except OSError:
-                    failed = True
-                    break
-                time.sleep(0.5)
-            # A stall cut short by the end of the run proves nothing either way (#349).
-            if failed or not STOP.is_set():
-                count("stalls")
-                if not failed:
-                    count("stall_fails")
-            # Release the stuck opens: a writer comes and goes, so they see an empty FIFO.
-            for _ in range(20):
-                try:
-                    os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
-                except OSError:
-                    pass
-                time.sleep(0.05)
-            tmp.symlink_to(image)
-            os.replace(tmp, link)
-            # abandoned requests may still fail for a few timeouts
-            TIMES["stall_until"] = time.monotonic() + 3 * args.request_timeout
-        except OSError as e:
+            stall_once(args, sfs, names)
+        except (OSError, ValueError) as e:
             log(f"stall: {e}")
+        TIMES["stall_until"] = time.monotonic() + 3 * args.request_timeout
+
+
+def new_stall_album(lib, image, slot):
+    """Album `s<slot>` of the stall folder `lib`, linking to `image`; the earlier ones go."""
+    for old in lib.glob("s*"):
+        with LOCK:
+            REMOVED["stall:" + old.name] = time.monotonic()
+        (old / "disc.iso").unlink()
+        old.rmdir()
+    (lib / f"s{slot}").mkdir(parents=True)
+    (lib / f"s{slot}" / "disc.iso").symlink_to(image)
+
+
+def stall_once(args, sfs, names):
+    """One stall: reads of `names` (files of a fresh stall album) while the image is stalled."""
+    err, took, stopped = None, 0.0, True
+    try:
+        sfs.stall()
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < args.request_timeout * 6 and not STOP.is_set():
+            t = time.monotonic()
+            try:
+                with open(random.choice(names), "rb") as f:
+                    f.seek(random.randrange(max(os.fstat(f.fileno()).st_size, 1)))
+                    f.read(65536)
+            except OSError as e:
+                err, took = e.errno, time.monotonic() - t
+                break
+            time.sleep(0.5)
+        stopped = STOP.is_set()
+    finally:
+        held = sfs.release()
+    # A stall cut short by the end of the run proves nothing either way (#349).
+    if stopped and err is None:
+        return
+    if not held:
+        count("stall_missed")
+    elif err == errno.EIO and took >= args.request_timeout * 0.8:
+        count("stalls")
+    else:
+        count("stall_fails")
+        log(f"stall: not failed by the watchdog: errno {err}, after {took:.1f} s, {held} requests held")
 
 
 def remounter(args):
@@ -609,8 +680,16 @@ def verdict(rows, args):
     if c["err_unexpected"]:
         ok = False
         lines.append("FAIL: unexpected read errors")
-    if c["stall_fails"] or c["remount_fails"]:
-        lines.append("note: some stalls were not failed by the watchdog, or some remounts failed")
+    # The watchdog (#141, #422): a read that reached a stalled image must fail with EIO after the
+    # request timeout, and a run with stalls must have had at least one that did.
+    if c["stall_fails"]:
+        ok = False
+        lines.append(f"FAIL: {c['stall_fails']} stalled reads were not failed by the watchdog")
+    elif c["stalls"] == 0 and c["stall_missed"]:
+        ok = False
+        lines.append(f"FAIL: no stall reached the image ({c['stall_missed']} served from the cache)")
+    if c["remount_fails"]:
+        lines.append("note: some remounts failed")
     return ok, lines
 
 
@@ -631,6 +710,8 @@ def main():
     ap.add_argument("--churn-slots", type=int, default=0,
                     help="reuse this many album names (0: every added album has a new name)")
     ap.add_argument("--stall-every", type=float, default=180)
+    ap.add_argument("--stallfs", help="the stallfs example binary (default: examples/stallfs beside "
+                                      "--sacdfs, as cargo builds it)")
     ap.add_argument("--remount-every", type=float, default=300)
     ap.add_argument("--noise-mb", type=float, default=32)
     ap.add_argument("--max-slope", type=float, default=4, help="MiB per hour")
@@ -654,6 +735,10 @@ def main():
                          "directory: warn has every failed request (#339); info or debug say more")
     args = ap.parse_args()
     args.sacdfs = str(Path(args.sacdfs).resolve())
+    args.stallfs = str(Path(args.stallfs or Path(args.sacdfs).parent / "examples" / "stallfs").resolve())
+    if not os.access(args.stallfs, os.X_OK):
+        sys.exit(f"no stallfs at {args.stallfs}: build it with `cargo build --release --example stallfs`, "
+                 "or give --stallfs")
     if args.work is None:
         args.work = Path(subprocess.run(["mktemp", "-d", "/var/tmp/sacdfs-soak.XXXXXX"],
                                         capture_output=True, text=True, check=True).stdout.strip())
@@ -666,10 +751,10 @@ def main():
         (lib / f"a{i}").mkdir(parents=True, exist_ok=True)
         (lib / f"a{i}" / "disc.iso").symlink_to(img)
     (lib / "churn").mkdir()
-    (lib / "stall").mkdir()
-    (lib / "stall" / "disc.iso").symlink_to(images[0])
     for d in ("tags", "cache", "mnt", "mnt2"):
         (args.work / d).mkdir(exist_ok=True)
+    stallfs = StallFs(args, images[0], args.work / "stallfs")
+    new_stall_album(lib / "stall", stallfs.file, 0)
     keys = [tags_key(args, img) for img in images]
     for n, k in enumerate(keys):
         write_tags(args, k, n)
@@ -684,7 +769,7 @@ def main():
     state = {"files": files_under(args.work / "mnt")}
     threads = [threading.Thread(target=reader, args=(i, args, state), daemon=True) for i in range(args.readers)]
     threads += [threading.Thread(target=f, args=a, daemon=True) for f, a in (
-        (refresher, (args, state)), (churner, (args, images, keys)), (staller, (args, images[0])),
+        (refresher, (args, state)), (churner, (args, images, keys)), (staller, (args, stallfs)),
         (remounter, (args,)))]
     for t in threads:
         t.start()
@@ -700,6 +785,7 @@ def main():
             t.join(timeout=120)
         alive = main_mount.proc.poll() is None
         main_mount.stop(300)
+        stallfs.stop()
     ok, lines = verdict(rows, args)
     if not alive:
         ok = False
