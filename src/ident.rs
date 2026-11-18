@@ -74,8 +74,9 @@ pub const DSF_VERSION: u32 = 3;
 /// differ (converter coefficients, rounding, header, tags). 2: the `id3 ` chunk is the DSF
 /// file's scarletbook tag, the `INFO` chunk built from the same items (#28). 3: the converter
 /// is scarletbook-pcm (#84), whose samples differ from sacdfs's own converter's. 4: multichannel files' album tag (`IPRD` and the
-/// `id3 ` chunk) has the suffix " (Multichannel)" (#97).
-pub const WAV_VERSION: u32 = 4;
+/// `id3 ` chunk) has the suffix " (Multichannel)" (#97). 5: `INFO` text is Windows-1252, and a
+/// field with a character outside it is left out (#444).
+pub const WAV_VERSION: u32 = 5;
 
 /// Seconds a file's mtime moves forward per output version: more than any PCM offset, so
 /// that a version bump moves every file past every time it showed before.

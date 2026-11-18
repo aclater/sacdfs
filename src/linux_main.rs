@@ -76,7 +76,7 @@ pub fn main() -> ExitCode {
     let argv = match mount_opts::expand(std::env::args_os().collect()) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("sacdfs: {e}");
+            eprintln!("sacdfs: {}", sacdfs::safe_file::printable(&e.to_string()));
             return ExitCode::FAILURE;
         }
     };
@@ -98,21 +98,25 @@ pub fn main() -> ExitCode {
                 logger.target(env_logger::Target::Pipe(Box::new(f)));
             }
             Err(e) => {
-                eprintln!("sacdfs: --log-file {}: {e}", path.display());
+                eprintln!(
+                    "sacdfs: --log-file {}: {}",
+                    sacdfs::safe_file::shown(path),
+                    sacdfs::safe_file::printable(&e.to_string())
+                );
                 return ExitCode::FAILURE;
             }
         }
     }
     // Names from SOURCE in the log are escaped where lines are written (#391).
     if let Err(e) = sacdfs::printable::install(logger.build()) {
-        eprintln!("sacdfs: {e}");
+        eprintln!("sacdfs: {}", sacdfs::safe_file::printable(&e.to_string()));
     }
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         // A daemon that told the waiting parent, which printed it: once is enough (#282).
         Err(_) if REPORTED.load(Ordering::Relaxed) => ExitCode::FAILURE,
         Err(e) => {
-            eprintln!("sacdfs: {e}");
+            eprintln!("sacdfs: {}", sacdfs::safe_file::printable(&e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -920,7 +924,7 @@ fn daemonize(keep_stderr: bool) -> io::Result<Notify> {
                     std::process::exit(1)
                 }
                 m => {
-                    eprintln!("sacdfs: {}", String::from_utf8_lossy(m));
+                    eprintln!("sacdfs: {}", sacdfs::safe_file::printable(&String::from_utf8_lossy(m)));
                     std::process::exit(1)
                 }
             }

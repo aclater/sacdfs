@@ -233,7 +233,11 @@ impl<T: Transport> Client<T> {
             }
             if attempt + 1 < ATTEMPTS {
                 if wait >= SAY_WAIT {
-                    eprintln!("MusicBrainz: {problem}: waiting {} s", wait.as_secs());
+                    eprintln!(
+                        "MusicBrainz: {}: waiting {} s",
+                        crate::safe_file::printable(&problem),
+                        wait.as_secs()
+                    );
                 }
                 thread::sleep(wait);
             }

@@ -1023,7 +1023,7 @@ from 539 lines to 144, all of it the options below).
   writer gets the set, line breaks kept in the comments only. *Why:* scarletbook (0.6.0) keeps
   control characters in a TOC's strings (C0, DEL and C1 in ISRCs and catalogue numbers, DEL
   and C1 in free text), and sacdfs filters what it serves itself: file names
-  (`names::sanitize`), WAV INFO, log lines and reports (escaped), lookup queries
+  (`names::title_name`), WAV INFO, log lines and reports (escaped), lookup queries
   (percent-encoded). The writer is also set to remove them (W9); with sacdfs's filter first it
   finds none, so the bytes are the same, but for a tags file's track or disc number or date
   holding one: read without it, where the writer, checking the raw value, dropped the number
@@ -1091,8 +1091,20 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   in an `id3 ` chunk (FFmpeg, TagLib, mutagen, foobar2000 and mp3tag read it), and a
   `LIST`/`INFO` chunk for software that reads only that: INAM (title), IART (performer), IPRD
   (album), ITRK (the track number), ICRD (date), IGNR (the first genre), the first value of the
-  same tag items, UTF-8 and NUL-terminated, without control characters (C0, DEL, C1), as the
-  ID3 writer leaves them out. *Why INFO from the items, not from the ID3 frames:*
+  same tag items, NUL-terminated, without control characters (C0, DEL, C1), as the
+  ID3 writer leaves them out, nor format characters (bidi controls, zero-width characters).
+  **INFO text is Windows-1252 (#444)**, and a field with a character outside it is left out.
+  *Why:* INFO declares no encoding; Windows Explorer and Windows Media Player read it in the
+  ANSI code page, so the UTF-8 written before showed accented and CJK text as mojibake (Windows
+  11, code page 1252). *Alternatives:* ASCII only (loses accented Latin text, which 1252 shows
+  right); UTF-8 with the limit documented (keeps the mojibake). *Trade-off:* a CJK, Cyrillic or
+  Greek field is missing from INFO, and on a Windows set to another ANSI code page the
+  characters 0x80 to 0xFF show as that code page's; the `id3 ` chunk keeps the full text for
+  every other reader. ASCII fields keep their bytes; the WAV output version moved to 5. *Bytes
+  0x80 to 0x9F:* `›` (U+203A) is 0x9B, which an 8-bit terminal outside UTF-8 mode takes as CSI.
+  Kept, as the code page has it: a WAV file's audio holds every byte value anyway, so a raw dump
+  of one on such a terminal is never safe, and readers decode the field as text.
+  *Why INFO from the items, not from the ID3 frames:*
   the library has no INFO writer, and built from one `TagSet` the two cannot disagree. The WAV
   output version moved to 2 with the DSF one (#28): the same 40 files' `id3 ` chunk changed. A chunk with
   nothing to hold is left out. *Why after the audio:* so that the header, and with it the
@@ -2179,9 +2191,23 @@ everything:
   bidi control showed a line in another order than its bytes. *Why at the logger, not at each of
   the hundred or so log calls:* the names also arrive inside `io::Error` and scarletbook's
   errors, which the calls don't build, and lines added later are covered too. The line format
-  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are, and the
-  names on the mount don't change: whether file names should drop format characters is a
-  separate question (#392). `sacdfs verify` and `sacdfs tags` keep their own loggers.
+  is unchanged otherwise. Non-ASCII letters and the backslash are written as they are.
+- **The same everywhere disc text can be shown
+  ([#448](https://github.com/aclater/sacdfs/issues/448)).** `sacdfs-nfs`, `sacdfs tags` and
+  `sacdfs verify` install the same logger, so no binary logs raw controls, even where no disc
+  string reaches a log line today. Their other terminal output (`safe_file::printable`,
+  `one_line`, `shown`) and the rows of a `verify` report escape the same characters, the
+  report as bytes (`\xNN`) that `--resume` reads back. Track file names leave format
+  characters out and make U+2028/U+2029 `_` (`names::title_name`). *Why leave out, not `_`:*
+  the characters are invisible, so a name without them reads as the title did, while `_` would
+  show where a Latin-1 disc had a soft hyphen. *Why names at all:* a bidi override in a title
+  could make `01 - x\u{202E}vaw.exe.dsf` show in a file manager as ending in another
+  extension. *Why not tags:* a tag is shown as a field, not as a name with an extension, and it
+  stays what the disc holds, as extractors write it, so that `verify` and `tags import` still
+  compare equal; WAV INFO leaves them out as part of its Windows-1252 text (#444). *Trade-off:*
+  a track whose title has one gets a new name once, which a player sees as a removal and an
+  addition. Of SACD's character sets only ISO 8859-1 holds one (the soft hyphen), so this is
+  rare outside crafted discs.
 - **A hung image's reads are capped once they have failed
   ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
   free the thread, which stays blocked until the source answers, so each retry by a client took

@@ -112,7 +112,10 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Cmd::Key { .. } | Cmd::Fetch { .. } => 0,
     };
     let level = ["warn", "info", "debug"].get(usize::from(verbose)).copied().unwrap_or("trace");
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).try_init();
+    // Escaped where lines are written, as the mount's (#391, #448).
+    let _ = crate::printable::install(
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).build(),
+    );
     let r = match cli.cmd {
         Cmd::Key { tags, images } => key(tags.as_deref(), &images),
         Cmd::Import { tags, verify } => import(&tags, verify).map(|s| {

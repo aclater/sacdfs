@@ -140,19 +140,21 @@ pub fn read_text(path: &Path, max: u64) -> io::Result<(String, fs::Metadata)> {
     Ok((text, meta))
 }
 
-/// `s` with its control characters escaped (`\x1b`, `\u{9b}`, ...), line ends kept when
-/// `lines`: for a terminal or a log.
+/// `s` with its control characters escaped (`\x1b`, `\u{9b}`, ...), and its format characters
+/// (bidi controls and the like) and line and paragraph separators as `\u{202e}` (#448), the
+/// characters [`crate::printable::needs_escape`] names; line ends kept when `lines`: for a
+/// terminal or a log.
 fn escape_controls(s: &str, lines: bool) -> Cow<'_, str> {
-    if !s.chars().any(|c| c.is_control() && !(lines && c == '\n')) {
+    let escaped = |c: char| crate::printable::needs_escape(c) && !(lines && c == '\n');
+    if !s.chars().any(escaped) {
         return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         match c {
-            '\n' if lines => out.push('\n'),
-            c if c.is_control() && (c as u32) < 0x100 => out.push_str(&format!("\\x{:02x}", c as u32)),
-            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
-            c => out.push(c),
+            c if !escaped(c) => out.push(c),
+            c if (c as u32) < 0x100 && c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
         }
     }
     Cow::Owned(out)
@@ -268,5 +270,10 @@ mod tests {
         assert_eq!(printable("a\x1bb\nc\t"), "a\\x1bb\nc\\x09");
         assert!(matches!(printable("plain\n"), Cow::Borrowed(_)));
         assert_eq!(one_line("TXXX:a\nb\x1b"), "TXXX:a\\x0ab\\x1b");
+        // Bidi controls, zero-width characters and line separators too (#448).
+        assert_eq!(printable("a\u{202e}b\u{200b}c\u{2028}d\n"), "a\\u{202e}b\\u{200b}c\\u{2028}d\n");
+        assert_eq!(one_line("\u{2066}x\u{9b}"), "\\u{2066}x\\x9b");
+        assert_eq!(shown(Path::new("a\u{202e}b")).to_string(), "a\\u{202e}b");
+        assert!(matches!(printable("Caf\u{e9} \u{65e5}\n"), Cow::Borrowed(_)));
     }
 }
