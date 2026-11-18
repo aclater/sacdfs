@@ -59,6 +59,11 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **The first listing of a library on an NFS share is as fast as 0.6.4's again (#451).** The
+  hole check of #402 made one `lseek` per disc area, an NFS round trip each. On an NFS or SMB
+  share it is now skipped where the file's allocated size shows that no hole could change the
+  area's listing, which is every intact disc; listings are unchanged. 416 images over NFS:
+  0.6.4 1.00 s, 0.6.5 1.40 s, now 1.02 s, with 471 SEEK calls down to 1.
 - **WAV INFO fields have no control characters.** A disc whose text holds U+007F or C1
   characters (or a tags file with any control character) got them in INAM, IART and IPRD,
   while the WAV file's ID3 tag left them out. INFO now leaves them out too. Other discs are

@@ -801,6 +801,25 @@ file. The last column is 0.3.0 at its default.
 Mounting reads no image: only the names of the source tree are walked. An image's TOCs are read
 when its directory is first listed.
 
+### First listing over NFS, by release (#451)
+
+The whole library over NFS 4.2 (416 images, 13,948 entries, each taking less space on the NAS than its length), read
+from an i9-13900H client over a 20 Gb/s link: `sacdfs` started with an empty index cache, then
+`find` over the mount, timed from the mount being ready. 11 rounds alternating the builds,
+under the benchmark lock, client cache warm, medians (min to max). SEEK calls counted from
+`/proc/self/mountstats`. The listings of 0.6.5 and this change are identical in names, types,
+sizes and mtimes, with the default and the DSF-only formats.
+
+| | 0.6.4 | 0.6.5 | #451 |
+|---|---|---|---|
+| First listing | 0.999 s (0.97 to 1.03) | 1.395 s (1.32 to 1.55) | **1.018 s** (1.00 to 1.05) |
+| NFS SEEK calls | 0 | 471 | 1 |
+| Mount | 1.02 s | 1.02 s | 1.06 s |
+
+The one SEEK left is an image whose allocated size is a third of its length, so that holes
+could matter there. The 0.6.5 gate measured the same listing on another client at 0.178 s
+(0.6.4) and 0.324 s (0.6.5-rc.1): compare within a column set, not across them.
+
 ## On a NAS (#21)
 
 *Historical:* measured before the 32 MiB default cache (#150), when the default was 256 MiB, so the
