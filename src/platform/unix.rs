@@ -363,6 +363,26 @@ pub fn lower_thread_priority() -> Vec<(&'static str, io::Error)> {
     Vec::new()
 }
 
+pub fn cpu_seconds() -> f64 {
+    use nix::sys::resource::{UsageWho, getrusage};
+    let secs = |who| {
+        getrusage(who).map_or(0.0, |u| {
+            let (a, b) = (u.user_time(), u.system_time());
+            a.tv_sec() as f64 + b.tv_sec() as f64 + (a.tv_usec() + b.tv_usec()) as f64 / 1e6
+        })
+    };
+    secs(UsageWho::RUSAGE_SELF) + secs(UsageWho::RUSAGE_CHILDREN)
+}
+
+pub fn stop_on_signals(stop: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<()> {
+    for sig in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+        // The first stops at the next safe point; a second ends the run now.
+        signal_hook::flag::register_conditional_shutdown(sig, 130, stop.clone())?;
+        signal_hook::flag::register(sig, stop.clone())?;
+    }
+    Ok(())
+}
+
 /// The `comm` of thread `tid`'s thread group, from `/proc`.
 #[cfg(target_os = "linux")]
 pub fn process_name(tid: u32) -> Option<String> {

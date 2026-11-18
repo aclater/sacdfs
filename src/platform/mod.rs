@@ -292,6 +292,25 @@ pub fn lower_thread_priority() -> Vec<(&'static str, io::Error)> {
     imp::lower_thread_priority()
 }
 
+/// CPU seconds, user and system, of this process and of the programs it ran that ended.
+/// *Fallback:* 0 where the system doesn't say (Windows so far).
+pub fn cpu_seconds() -> f64 {
+    imp::cpu_seconds()
+}
+
+/// The 1-minute load average. *Fallback:* `None` where the system has no `/proc/loadavg` (macOS
+/// and Windows so far): nothing waits for the load there.
+pub fn load_average() -> Option<f64> {
+    std::fs::read_to_string("/proc/loadavg").ok()?.split_whitespace().next()?.parse().ok()
+}
+
+/// Sets `stop` on SIGINT or SIGTERM, and ends the process with status 130 on a second one
+/// while `stop` is still set. *Fallback:* nothing on Windows, where Ctrl-C ends the process at
+/// once.
+pub fn stop_on_signals(stop: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<()> {
+    imp::stop_on_signals(stop)
+}
+
 /// The name of the process that thread `tid` belongs to (Linux: its thread group's `comm`).
 /// *Fallback:* `None` where the system's process table isn't read (macOS and Windows so far),
 /// or the thread is unknown.

@@ -275,7 +275,7 @@ impl Worker {
 
 /// Nice 19 and the idle I/O class for this thread, where the system allows: the worker's TOC
 /// reads and its CPU come after everything a client asks for. Best effort.
-fn lower_priority() {
+pub(crate) fn lower_priority() {
     for (what, e) in crate::platform::lower_thread_priority() {
         log::debug!("musicbrainz: {what}: {e}");
     }

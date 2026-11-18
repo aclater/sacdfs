@@ -21,6 +21,14 @@
         "library_index::real_discs",
         "wav::real_discs"
       ]
+    },
+    {
+      "why": "Chromaprint's fpcalc is not packaged for UBI, which these jobs run on. The other tests of `tags fetch --acoustid` use a stand-in for fpcalc. Run on Fedora (chromaprint-tools), or anywhere with fpcalc on PATH.",
+      "reason": "no fpcalc: install Chromaprint (Fedora: chromaprint-tools)",
+      "jobs": ["tests", "tests-arm64", "coverage"],
+      "tests": [
+        "acoustid::the_real_fpcalc_fingerprints_a_track"
+      ]
     }
   ]
 }
