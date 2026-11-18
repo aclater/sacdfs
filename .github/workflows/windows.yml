@@ -3,7 +3,8 @@
 # installs WinFsp from its MSI (checked by SHA-256), runs clippy on the core and the front end
 # and the front end's tests, builds sacdfs-win, mounts the same corpus as a drive letter and
 # runs winfsp/ci/checks.ps1: every file byte-identical to Linux, end of file, case, refused
-# writes, the WinFsp notice and a clean stop on Ctrl+C and Ctrl+Break.
+# writes, the WinFsp notice and a clean stop on Ctrl+C and Ctrl+Break; then
+# winfsp/ci/launcher.ps1 starts it through WinFsp.Launcher with a SOURCE ending in a backslash.
 name: windows
 
 on:
@@ -137,3 +138,8 @@ jobs:
         run: |
           winfsp\ci\checks.ps1 -Exe winfsp\target\release\sacdfs-win.exe -Source tests\corpus\images `
             -Mount X: -Reference (Join-Path $env:RUNNER_TEMP "linux.sha256") -Work $env:RUNNER_TEMP
+      - name: "Through WinFsp.Launcher, SOURCE ending in a backslash (winfsp/ci/launcher.ps1, #466)"
+        run: |
+          $files = @(Get-Content (Join-Path $env:RUNNER_TEMP "linux.sha256")).Count
+          winfsp\ci\launcher.ps1 -Exe winfsp\target\release\sacdfs-win.exe -Source tests\corpus\images `
+            -Files $files -Work $env:RUNNER_TEMP
