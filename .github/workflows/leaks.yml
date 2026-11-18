@@ -70,7 +70,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends fuse3
-      - run: cargo build --locked --release
+      # The soak's stalling image (#422) is an example: `cargo build` alone doesn't build it.
+      - run: cargo build --locked --release --bins --example stallfs
       - name: Soak
         run: |
           mkdir -p target/soak-images

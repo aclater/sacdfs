@@ -89,7 +89,7 @@ of each allocation site are what the listing holds. The breakdown in
 ## The soak
 
 ```sh
-cargo build --release
+cargo build --release --bins --example stallfs
 python3 scripts/soak.py --sacdfs target/release/sacdfs --images DIR --hours 2 --out soak.tsv
 ```
 
@@ -104,8 +104,18 @@ denied" and one under the runner's temporary directory worked, so the weekly run
   start/middle/end reads.
 - **The churner** acts every 5 s. It adds and removes album folders with an image in them,
   adds and removes cover images, adds and removes an `Artwork/` folder, and edits tags files.
-- **The staller** acts every 3 min. It points an image's link at a FIFO and reads until the
-  watchdog fails the request (#141), then releases the stuck open and restores the link.
+- **The staller** acts every 3 min. It adds a new album under `stall/` (and removes the last)
+  whose image is served by `examples/stallfs.rs`, a small FUSE filesystem of the soak's own,
+  and lists it. Then stallfs leaves the image's opens and reads unanswered, as a hung share
+  does, and the staller reads the album's files until the watchdog fails a request with EIO
+  (#141); stallfs then answers what it held. A new album each time, so that none of its
+  frames are in sacdfs's cache and the reads reach the image. *Why not a FIFO, as before
+  0.7.0:* since 0.6.4 sacdfs refuses an image that isn't a regular file before any read, so
+  a FIFO stall never reached the watchdog (#422). The soak looks for stallfs beside
+  `--sacdfs` (`target/release/examples/stallfs`), or takes `--stallfs`.
+  Each stall is counted: `stalls` (a read reached the stalled image and the watchdog failed
+  it after the request timeout), `stall_fails` (a read reached it and was not failed that
+  way) or `stall_missed` (nothing reached the image).
 - **The remounter** acts every 5 min. It mounts the library a second time with the same
   caches, reads, and unmounts.
 
@@ -148,10 +158,13 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   thread would have failed a run that did nothing different;
 - open files do not climb: the second half's maximum is at most 8 above the first half's;
 - the cache directory plateaus;
+- the watchdog fails every stalled read that reaches the image (`stall_fails` is 0), and at
+  least one stall reached it if any stall was made;
 - no read error is unexpected. Reads fail on purpose in some places, and the soak sorts every
   failure by path and errno: `churn` (a path in a churn album the churner has removed: ENOENT
   or ENOTDIR, or EIO within 30 s of the removal), `stall` (EIO, ETIMEDOUT, ENOENT or EINTR
-  under the `stall` folder while a stall is on, and for three request timeouts after), `tags`
+  under the `stall` folder while a stall is on, and for three request timeouts after; and, as
+  for churn, a path in a stall album the staller has removed), `tags`
   (ENOENT on a `.dsf` after a tags edit since the file list was taken, or within 60 s of it;
   and EIO on a track file of an album whose image's tags file was edited less than 60 s ago,
   since the kernel fails a descriptor still open on the old version of an edited file, #339),

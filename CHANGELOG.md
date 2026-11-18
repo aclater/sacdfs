@@ -46,6 +46,12 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **The soak's stalls reach the request watchdog again (#422).** Since 0.6.4 sacdfs refuses an
+  image that isn't a regular file, so the soak's FIFO stalls were refused before any read. The
+  soak now stalls a regular file served by `examples/stallfs.rs`, a small FUSE filesystem, on a
+  new album each time, and fails if the watchdog doesn't fail a stalled read
+  ([development](docs/development.md#the-soak)). Build it with
+  `cargo build --release --bins --example stallfs`.
 - **WAV INFO fields have no control characters.** A disc whose text holds U+007F or C1
   characters (or a tags file with any control character) got them in INAM, IART and IPRD,
   while the WAV file's ID3 tag left them out. INFO now leaves them out too. Other discs are
