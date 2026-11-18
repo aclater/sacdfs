@@ -1,4 +1,4 @@
-<img src="deploy/icon.svg" alt="" width="96" align="right">
+<img src="deploy/icon.svg" alt="" width="96">
 
 # sacdfs
 
