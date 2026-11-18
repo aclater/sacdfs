@@ -11,6 +11,11 @@ After=local-fs.target network.target
 [Service]
 Type=notify
 EnvironmentFile=/etc/default/sacdfs
+# The seek index cache in /var/cache/sacdfs: a service has no HOME (#465). --index-cache in
+# SACDFS_OPTIONS overrides it. systemd before v235 ignores CacheDirectory=; sacdfs then
+# makes the folder itself.
+Environment=XDG_CACHE_HOME=/var/cache
+CacheDirectory=sacdfs
 # Load FUSE where /dev/fuse is missing, and make the folder to mount on. A mount left
 # by a killed sacdfs makes mkdir fail; sacdfs clears that itself when it starts.
 ExecStartPre=-/bin/sh -c '[ -e /dev/fuse ] || /sbin/modprobe fuse'
