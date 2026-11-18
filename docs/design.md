@@ -2990,6 +2990,27 @@ the owner's NAS already used.
   pauses (the issue's option 2) is not done here, and sacdfs keeps serving the TOC's length.
   *Trade-off:* a track that is entirely idle pattern has no needle, so is not compared this
   way; extras over 60 s are different recordings, not pauses (the longest seen is 24 s).
+- **Gapless chains (#442), `IDENTICAL-CHAIN`.** `sacd_extract -z` writes an area as one chain
+  of DSF files without padding: each file but the last ends on a whole block and the rest opens
+  the next, and when a file's audio ends exactly on a block, it ends one block earlier. So no
+  file but the area's last can match a track. After every file is checked, the DSF files of a
+  folder named with consecutive track numbers, of one channel count, all but the last on a whole
+  block, form a chain when one of them is NO-MATCH or DIFFERENT; their canonical streams are
+  joined and compared with the joined served tracks of those numbers, of one area, by hash at the
+  same length, else by the pause search above (the shorter inside the longer, silence beyond).
+  Matched files that were NO-MATCH or DIFFERENT become IDENTICAL-CHAIN, with their own track and
+  tags. *Why this way:* comparing the joined audio doesn't depend on where each file ends, so it
+  needs neither the extractor's block rule nor a chain plan from the library, and a hash still
+  decides. Joined canonical streams equal the joined audio because every file but the last holds
+  whole bytes. The pause modes: `-z` drops pauses and `-z -b` keeps them, so a chain that
+  matches only the other mode's tracks (built on demand) gets a reason naming that `--pauses`,
+  not a match, as a single file would. *Alternatives:* serving `-z` chains as files (needs the
+  extractor's carry; not proposed); matching any run of tracks rather than the numbers in the
+  names (more decoding, and `sacd_extract` names its files by track). *Trade-off:* a chain is
+  checked after the files, so with a stream report the NO-MATCH and DIFFERENT rows come last,
+  and `--resume` checks a chain's unmatched rows again when any file of its folder changed. A
+  chain of some tracks whose last ends on a block lacks that block in every file, and stays
+  NO-MATCH.
 - **Parallel and bounded.** `--threads N` workers (plain threads, not a rayon pool, so that a
   worker waiting for another's decode of the same track can't be handed that same work by
   work stealing) check files at once, with an engine of N DST decoder threads and a small

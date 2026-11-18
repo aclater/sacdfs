@@ -92,6 +92,125 @@ impl Source for &[u8] {
     }
 }
 
+/// A canonical stream (see the module documentation): one file's audio, or several files' audio
+/// joined end to end ([`Joined`], #442).
+pub trait Stream {
+    /// Channel count.
+    fn channels(&self) -> u8;
+    /// Length of the canonical stream, if it fits in 64 bits.
+    fn canonical_len(&self) -> Option<u64>;
+    /// Feeds the canonical stream to `sink`, a few MiB at a time, stopping as soon as `sink`
+    /// returns false. `read` is increased by the bytes read.
+    fn canonical_while(
+        &mut self,
+        read: &std::sync::atomic::AtomicU64,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<(), Problem>;
+    /// The SHA-256 of the canonical stream.
+    fn digest(&mut self, read: &std::sync::atomic::AtomicU64) -> Result<[u8; 32], Problem> {
+        let mut hash = Sha256::new();
+        self.canonical_while(read, &mut |b| {
+            hash.update(b);
+            true
+        })?;
+        Ok(hash.finalize().into())
+    }
+}
+
+/// One file's audio as a [`Stream`].
+pub struct One<'a> {
+    audio: &'a Audio,
+    src: &'a mut dyn Source,
+}
+
+impl<'a> One<'a> {
+    /// The audio `audio` of `src`.
+    pub fn new(audio: &'a Audio, src: &'a mut dyn Source) -> One<'a> {
+        One { audio, src }
+    }
+}
+
+impl std::fmt::Debug for One<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("One").field("audio", self.audio).finish_non_exhaustive()
+    }
+}
+
+impl Stream for One<'_> {
+    fn channels(&self) -> u8 {
+        self.audio.channels
+    }
+    fn canonical_len(&self) -> Option<u64> {
+        self.audio.canonical_len()
+    }
+    fn canonical_while(
+        &mut self,
+        read: &std::sync::atomic::AtomicU64,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<(), Problem> {
+        self.audio.canonical_while(self.src, read, sink)
+    }
+}
+
+/// The audio of several files joined end to end, earliest first: a gapless chain of extracts,
+/// or the served tracks it is compared with (#442).
+pub struct Joined<'a> {
+    parts: Vec<(Audio, Box<dyn Source + 'a>)>,
+}
+
+impl<'a> Joined<'a> {
+    /// `parts` joined, if they are at least one, all of one channel count, and every one but the
+    /// last a whole number of bytes per channel (the canonical streams then join exactly).
+    pub fn new(parts: Vec<(Audio, Box<dyn Source + 'a>)>) -> Option<Joined<'a>> {
+        let (first, _) = parts.first()?;
+        let ch = first.channels;
+        let n = parts.len();
+        let ok = parts
+            .iter()
+            .enumerate()
+            .all(|(i, (a, _))| a.channels == ch && (i + 1 == n || a.samples % 8 == 0));
+        ok.then_some(Joined { parts })
+    }
+
+    /// Samples per channel of all the parts.
+    pub fn samples(&self) -> u64 {
+        self.parts.iter().map(|(a, _)| a.samples).fold(0u64, u64::saturating_add)
+    }
+}
+
+impl std::fmt::Debug for Joined<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let audio: Vec<&Audio> = self.parts.iter().map(|(a, _)| a).collect();
+        f.debug_struct("Joined").field("parts", &audio).finish()
+    }
+}
+
+impl Stream for Joined<'_> {
+    fn channels(&self) -> u8 {
+        self.parts[0].0.channels
+    }
+    fn canonical_len(&self) -> Option<u64> {
+        self.parts.iter().try_fold(0u64, |n, (a, _)| n.checked_add(a.canonical_len()?))
+    }
+    fn canonical_while(
+        &mut self,
+        read: &std::sync::atomic::AtomicU64,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<(), Problem> {
+        let mut go = true;
+        for (audio, src) in &mut self.parts {
+            audio.canonical_while(src.as_mut(), read, &mut |b| {
+                go = sink(b);
+                go
+            })?;
+            if !go {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
 fn eof() -> io::Error {
     io::Error::new(io::ErrorKind::UnexpectedEof, "past the end of the file")
 }

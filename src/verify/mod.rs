@@ -12,6 +12,7 @@
 //! count and sample count; only those candidates are decoded. The tags are compared too, to
 //! tell what a deletion would lose.
 
+mod chain;
 pub mod container;
 pub mod id3;
 pub mod pause;
@@ -33,7 +34,7 @@ use crate::disc::Tuning;
 use crate::engine::{Engine, default_threads};
 use crate::track::{Format, Reader, TrackFile};
 use crate::tree::{DirKind, Node, Output, SourceDir, Tree};
-use container::{FileSource, Problem, Source};
+use container::{FileSource, One, Problem, Source};
 use id3::Losses;
 pub use report::{Row, Status};
 
@@ -536,7 +537,8 @@ fn with_pauses(
         let extract_longer = audio.samples > served.samples;
         let found = if extract_longer {
             let Ok(sd) = c.digest(ctx.engine, &ctx.read) else { continue };
-            pause::locate((audio, src), (&served, &mut tsrc), &sd, &ctx.read).map(|f| f.map(|f| (f, sd)))
+            pause::locate(&mut One::new(audio, src), &mut One::new(&served, &mut tsrc), &sd, &ctx.read)
+                .map(|f| f.map(|f| (f, sd)))
         } else {
             let ed = match extract_digest {
                 Some(d) => d,
@@ -545,7 +547,8 @@ fn with_pauses(
                     Err(p) => return decided(row, Status::Error, problem_text(p)),
                 },
             };
-            pause::locate((&served, &mut tsrc), (audio, src), &ed, &ctx.read).map(|f| f.map(|f| (f, ed)))
+            pause::locate(&mut One::new(&served, &mut tsrc), &mut One::new(audio, src), &ed, &ctx.read)
+                .map(|f| f.map(|f| (f, ed)))
         };
         let (f, digest) = match found {
             Ok(Some(x)) => x,
@@ -661,20 +664,23 @@ impl Summary {
         let ident: Vec<&Row> = self.rows.iter().filter(|r| r.status.is_match()).collect();
         let reclaim: u64 = ident.iter().map(|r| r.bytes).sum();
         let pauses = ident.iter().filter(|r| r.status == Status::IdenticalPause).count();
-        if pauses == 0 {
-            s.push_str(&format!(
-                "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio).\n",
-                human(reclaim),
-                ident.len()
-            ));
-        } else {
-            s.push_str(&format!(
-                "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio; {pauses} of them \
-                 IDENTICAL-PAUSE: also silence around the track, which sacdfs does not serve).\n",
-                human(reclaim),
-                ident.len()
+        let chains = ident.iter().filter(|r| r.status == Status::IdenticalChain).count();
+        let mut of_them = Vec::new();
+        if pauses > 0 {
+            of_them.push(format!(
+                "{pauses} of them IDENTICAL-PAUSE: also silence around the track, which sacdfs does not serve"
             ));
         }
+        if chains > 0 {
+            of_them
+                .push(format!("{chains} of them IDENTICAL-CHAIN: files of gapless chains (sacd_extract -z)"));
+        }
+        let extra = if of_them.is_empty() { String::new() } else { format!("; {}", of_them.join("; ")) };
+        s.push_str(&format!(
+            "Reclaimable: {} in {} IDENTICAL files (sacdfs serves the same audio{extra}).\n",
+            human(reclaim),
+            ident.len()
+        ));
         let count = |f: &dyn Fn(&Losses) -> bool| ident.iter().filter(|r| f(&r.loses)).count();
         let (mb, art, rg) = (count(&|l| l.musicbrainz), count(&|l| l.art), count(&|l| l.replaygain));
         let other = count(&|l| !l.other.is_empty() || l.unread.is_some());
@@ -809,24 +815,37 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         (Some(p), true) => report::read_earlier(p)?,
         _ => HashMap::new(),
     };
+    let unchanged = |path: &Path, meta: &fs::Metadata, mtime: &str| {
+        earlier.get(path).filter(|r| r.bytes == meta.len() && r.mtime == mtime && r.status != Status::Error)
+    };
+    // A file of a chain is checked again with the rest when one of them is (#442): an earlier
+    // row that a chain could change is kept only if every file in its folder is unchanged.
+    let changed_dirs: HashSet<&Path> = found
+        .iter()
+        .filter(|(p, k, m)| *k == ExtractKind::Dsd && unchanged(p, m, &mtime_text(m)).is_none())
+        .filter_map(|(p, _, _)| p.parent())
+        .collect();
+    let chain_may_change = |r: &Row| {
+        matches!(r.status, Status::NoMatch | Status::Different | Status::IdenticalChain)
+            && r.path.parent().is_some_and(|d| changed_dirs.contains(d))
+    };
     let mut kept = Vec::new();
     let mut items = Vec::new();
-    for (path, kind, meta) in found {
-        let mtime = mtime_text(&meta);
-        if let Some(r) = earlier.get(&path) {
-            if r.bytes == meta.len() && r.mtime == mtime && r.status != Status::Error {
-                kept.push(r.clone());
-                continue;
-            }
+    for (path, kind, meta) in &found {
+        let mtime = mtime_text(meta);
+        if let Some(r) = unchanged(path, meta, &mtime).filter(|r| !chain_may_change(r)) {
+            kept.push(r.clone());
+            continue;
         }
-        let of = folder_of(&path, &maps, &root, &folders);
-        items.push(Item { path, kind, bytes: meta.len(), mtime, folders: of });
+        let of = folder_of(path, &maps, &root, &folders);
+        items.push(Item { path: path.clone(), kind: *kind, bytes: meta.len(), mtime, folders: of });
     }
+    drop(changed_dirs);
 
     let threads = if args.threads == 0 { default_threads() } else { args.threads };
     let engine = Engine::new(threads, args.cache_mb.saturating_mul(1 << 20))?;
     let tree = Tree::with_options(
-        scanned,
+        scanned.clone(),
         Tuning::default(),
         Output { pauses_kept: args.pauses == "kept", ..Output::dsf_only() },
     );
@@ -882,11 +901,13 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
                                     .with(Status::NotComparable, pcm_reason(what))
                             }
                         };
-                        let mut w = out.lock().unwrap_or_else(|p| p.into_inner());
-                        if let Err(e) = w.row(&row) {
-                            write_err.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert(e);
+                        // A row a chain may change waits for the chains (#442).
+                        if !matches!(row.status, Status::NoMatch | Status::Different) {
+                            let mut w = out.lock().unwrap_or_else(|p| p.into_inner());
+                            if let Err(e) = w.row(&row) {
+                                write_err.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert(e);
+                            }
                         }
-                        drop(w);
                         rows.lock().unwrap_or_else(|p| p.into_inner()).push(row);
                         done.fetch_add(1, Ordering::Relaxed);
                     }
@@ -910,10 +931,72 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
             total - rows.len()
         )));
     }
+    let fresh = rows.len();
     rows.extend(kept);
+    let item_folders: HashMap<&Path, &[PathBuf]> =
+        items.iter().map(|i| (i.path.as_path(), i.folders.as_slice())).collect();
+    check_chains(
+        &mut rows,
+        fresh,
+        &item_folders,
+        &ctx,
+        &chain::OtherMode::new(&scanned, &root, args.pauses == "kept"),
+        workers,
+    );
+    let mut out = out.into_inner().unwrap_or_else(|p| p.into_inner());
+    for r in rows[..fresh]
+        .iter()
+        .filter(|r| matches!(r.status, Status::NoMatch | Status::Different | Status::IdenticalChain))
+    {
+        out.row(r)?;
+    }
     rows.sort_by(|a, b| a.path.cmp(&b.path));
-    out.into_inner().unwrap_or_else(|p| p.into_inner()).finish(&rows)?;
+    out.finish(&rows)?;
     Ok(Summary { rows, ignored })
+}
+
+/// Finds the gapless chains among `rows` and replaces the rows of those that match (#442).
+/// The first `fresh` rows were checked in this run, with their folders in `folders`.
+fn check_chains(
+    rows: &mut [Row],
+    fresh: usize,
+    folders: &HashMap<&Path, &[PathBuf]>,
+    ctx: &Ctx<'_>,
+    other: &chain::OtherMode<'_>,
+    workers: usize,
+) {
+    let chains = chain::find(rows, &|i| i < fresh);
+    if chains.is_empty() {
+        return;
+    }
+    let shared: &[Row] = rows;
+    let next = AtomicUsize::new(0);
+    let updates = Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..workers.min(chains.len()) {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(c) = chains.get(i) else { break };
+                    // Its folders: those of a file of it checked in this run.
+                    let Some(f) = c.members.iter().find_map(|&m| folders.get(shared[m].path.as_path()))
+                    else {
+                        continue;
+                    };
+                    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        chain::check(c, shared, f, ctx, other)
+                    }));
+                    match caught {
+                        Ok(u) => updates.lock().unwrap_or_else(|p| p.into_inner()).extend(u),
+                        Err(_) => log::warn!("a check of a gapless chain failed; its files keep their rows"),
+                    }
+                }
+            });
+        }
+    });
+    for (i, r) in updates.into_inner().unwrap_or_else(|p| p.into_inner()) {
+        rows[i] = r;
+    }
 }
 
 fn pcm_reason(what: &str) -> String {

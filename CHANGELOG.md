@@ -21,6 +21,13 @@ All notable changes to sacdfs are recorded here. The format follows
   and 10, Fedora 44 and 45, Debian 12 and 13 and Ubuntu 22.04 and 24.04, and has a `.sha256`
   and an attestation. A source RPM (`packaging/sacdfs.spec`, the tag's source and its vendored
   crates) rebuilds offline with the distribution's own Rust. 0.6.5 gets them as added assets.
+- **verify recognises gapless chains (#442).** DSF extracts written as one chain without
+  padding (`sacd_extract -z`, with or without `-b`) were NO-MATCH or DIFFERENT although their
+  audio was complete. The files of a folder numbered as consecutive tracks, every one but the
+  last ending on a whole DSF block, are now joined and compared with the served tracks joined;
+  when they match, each is `IDENTICAL-CHAIN` and counts as reclaimable. A chain of the other
+  pause mode says which `--pauses` to use. With a stream report, NO-MATCH and DIFFERENT rows now
+  come last ([user guide](docs/user-guide.md#before-you-delete-extracts)).
 
 ### Changed
 - **scarletbook 0.6.1: faster DST decoding on 32-bit x86.** scarletbook and scarletbook-pcm
