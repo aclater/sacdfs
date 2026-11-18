@@ -48,7 +48,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.6.0, from crates.io (`=0.6.0`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.6.1, from crates.io (`=0.6.1`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -71,6 +71,9 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   builds may now be up to `MAX_TAG_BYTES` long, where 0.5.9 refused the last 10 bytes before it
   (no footer, no padding, as sacdfs writes it); a tags file whose tag lands there is applied
   instead of left out, and those files move by their tag stamp, not by an output version.
+  0.6.1: a 32-bit arithmetic decoder for DST on 32-bit targets (scarletbook-rs#369), no API
+  change; *why:* same rule, and it nearly halves i686 DST decoding time; bytes unchanged, gated
+  as above, with 64-bit decoding measured unchanged.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
