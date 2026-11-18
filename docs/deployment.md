@@ -679,6 +679,61 @@ with nothing cached, mounting a library of 122,676 files took 194 s. That is a m
 disk, but it is longer than the 60 s the container used to wait. The container now waits for
 `SACDFS_MOUNT_TIMEOUT` seconds (default 300; [#232](https://github.com/aclater/sacdfs/issues/232)).
 
+### Starting playback on a slow CPU
+
+On a CPU that decodes multichannel DST only about twice as fast as it plays (a 32-bit Atom NAS,
+[#456](https://github.com/aclater/sacdfs/issues/456)), playback holds once it runs, but starting
+a track from stopped used to glitch for a few seconds: the player asks for its first seconds as
+fast as it can, to fill its buffer, and sacdfs decoded them a read at a time and then in one 2 s
+batch that held the player's next read for about a second. Pausing and resuming did not glitch,
+because the buffer was full by then.
+
+Since #481 sacdfs decodes the start of a track ahead ([design](design.md#read-ahead)): once a
+player that began at the start of a file reads on past its first 1 MiB, the next frames, up to 8 s
+of audio, are decoded in slices on all decoder threads, and each read waits only for its slice.
+A library scan or a tagger, which reads a file's head and leaves, starts none.
+
+Measured on 2 Gracemont E-cores (Core i9-13900H) limited to 0.45 of a CPU, which decodes 6-channel
+DST at about 2 times real time as the Atom does, `--threads 4`, default cache, a 6-channel DST
+DSF track, read locally through the mount by a player that reads in order at 8 times real time
+until it holds 4 s of audio (8 s for the last row), then at real time; playback starts at 0.5 s of
+audio, and a stall is when it has caught up with the reads. Medians of 5, main against #481:
+
+| Reads of | Audio by 1 s | Audio by 2 s | Worst read | Stalled |
+|---|---|---|---|---|
+| 64 KiB | 0.62 → 1.30 s | 3.03 → 3.41 s | 0.94 → 0.69 s | 0.38 → 0 s |
+| 256 KiB | 0.62 → 1.24 s | 2.97 → 3.34 s | 0.91 → 0.62 s | 0.26 → 0 s |
+| 1 MiB | 0.50 → 0.99 s | 2.48 → 2.97 s | 1.05 → 0.79 s | 0 → 0 s (playback starts at 1.46 → 0.93 s) |
+| 256 KiB, 8 s burst | 0.62 → 1.24 s | 2.72 → 2.97 s | 0.96 → 0.74 s | 0.34 → 0 s |
+
+The first read takes as long as before (28 to 36 ms for 64 KiB, about 100 ms for 256 KiB, about
+0.42 s for 1 MiB, which is 37 frames to decode). Through Samba (the 0.6.3 container image with the
+binary under test, the same cores at 0.5 of a CPU, a client reading one request at a time over
+loopback SMB, the 8 s burst profile, medians of 3): audio by 1 s 0.62 → 1.36 s with 256 KiB reads
+and 0.50 → 0.99 s with 1 MiB reads; worst read 0.85 → 0.33 s and 0.93 → 0.71 s; stalled 0.13 → 0 s
+with 256 KiB reads, and not at all with 1 MiB reads either way. Neither a real player nor an Atom
+was measured.
+
+**Tuning.** The decode-ahead stays within a quarter of the cache: at the default 32 MiB that is
+about 4 s of 6-channel DSF and the full 8 s of stereo. A larger cache (`--cache-mb 128`,
+`SACDFS_CACHE_MB=128`) lets 6-channel files have all 8 s: with it, the worst reads of the table
+were 0.23 to 0.75 s, against 0.89 to 1.13 s on main with the same cache. With a cache too small for
+a slice and 32 frames (under about 7 MiB for 6 channels at 4 threads), it is off.
+`--threads` sets how many frames decode at once: on a 2-core Atom with Hyper-Threading, 4 is
+right. It does not start while another reader is playing, so a second player starting beside a
+first one is not helped; at most two run at once.
+
+What else was checked, main against #481 (medians of 3 unless said): on 4 P-cores with no limit,
+the same player had the same audio over time, worst read 24 to 37 → 3 to 28 ms; straight reads of
+a whole 6-channel DST track as DSF and WAV took 8.07 → 8.10 s and 10.10 → 10.15 s, and its first
+128 MiB on the slow cores 33.5 → 32.2 s; a library import's reads (768 KiB heads) of 94 files on
+12 threads, one at a time and 8 at once, and on the slow cores, took the same CPU (4.14 → 4.13 s,
+4.33 → 4.34 s, 13.5 → 13.5 s); 32 readers at once of each file's first 2 MiB took 18.5 → 19.2 s of
+CPU (within the spread) and peaked at 100 → 96 MiB; under a 128 MiB limit on the slow cores they
+ran without a kill (peak 68 → 68 MiB), and under 256 MiB the player gained as in the table.
+The bytes served are unchanged: 910 corpus files and 94 files of 3 real discs, DSF and WAV, hash the
+same as on main.
+
 ## Running it
 
 ### Docker or Podman

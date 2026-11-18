@@ -1597,14 +1597,20 @@ decoding them twice.
   *Why from the reads, not the open:* SMB and NFS servers open files they then only stat, and a
   scanner opens thousands; the first read comes milliseconds after a player's open. *Why past
   the head window, not at the first reads:* starting after 256 KiB made a library import (768 KiB
-  heads) cost 1.35 times the CPU with a 32-frame lead, and 4.6 times with a lead of two slices on
+  heads) cost 1.35 times the CPU with a 16-frame lead, and 4.6 times with a lead of two slices on
   12 threads; past the head it costs nothing there. *Why slices:* a read waits for its slice, not
   for a window, and slices of 8 frames per thread still decode at the batch's speed. *Why the
   lead is lifted while reads wait for it:* bounded by the furthest read, each slice was one read's
   few frames, and decoding fell to 1.4 times real time. *Why a jump or a close stops it, but not a
   reader judged to read for throughput:* a local player filling its buffer reads 4 MiB faster
   than 1.5 times real time and counts as one (`cp` reads its first 8 s in slices, then its long
-  window). *Trade-off:* a scanner that reads more than its head in order decodes up to 32 frames
+  window). *Why the job takes its place when it starts:* a plan can be dropped unrun (`sacdfs
+  verify` reads without read-ahead, and a read the watchdog answered first spawns nothing);
+  reads wait only for a job that runs, and a plan not started within 0.5 s is made again. *Why
+  reads take the demultiplexer first:* its lock is not fair, so a job of slices took it again
+  after each one and a read behind it waited for the whole window; before each slice a job now
+  waits, up to 50 ms, while a read of the file waits for it. *Trade-off:* a scanner that reads
+  more than its head in order decodes up to 32 frames
   it may not read; a second player starting beside one that plays is not helped; a reader that
   stops reading without closing holds a request thread for 0.5 s.
 
