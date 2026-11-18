@@ -774,7 +774,7 @@ mounted: the files sacdfs would serve are read in-process, through the same code
 | `--map FROM TO` | Extracts under `FROM` belong to the images under `TO`, a directory in `SOURCE`; for extracts kept in a tree of their own that mirrors the images' folders. Repeat it for more trees; the longest `FROM` that applies wins. |
 | `-o`, `--output FILE` | Write the report to `FILE` instead of standard output. |
 | `--pauses MODE` | Compare with the files sacdfs serves with `--pauses MODE`: `dropped` (the default) or `kept`, for extracts that hold each track's pause. |
-| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. In a folder where a DSF or DFF file changed, its NO-MATCH, DIFFERENT and IDENTICAL-CHAIN rows are checked again too, since a gapless chain is checked as a whole. An interrupted run leaves every row it finished in `FILE.partial`, so `--resume` picks up where it stopped. |
+| `--resume` | With `-o`: keep the rows of an earlier report at `FILE` for files whose size and modification time haven't changed, except ERROR rows, and check only the rest. A row checked with another `--pauses` mode is checked again, as is every row of a report from 0.6.5 or earlier, which doesn't record the mode. In a folder where a DSF or DFF file changed, its NO-MATCH, DIFFERENT and IDENTICAL-CHAIN rows are checked again too, since a gapless chain is checked as a whole. An interrupted run leaves every row it finished in `FILE.partial`, so `--resume` picks up where it stopped. |
 | `--threads N` | Files checked at once, and DST decoder threads; `0` (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded frames, in MiB (default `64`). |
 | `-q`, `--quiet` | No progress line on standard error. |
@@ -842,7 +842,8 @@ summary counts the IDENTICAL files that lose each kind.
 
 **The report** is tab-separated, one row per file, with a header row: `status`, `path`,
 `bytes`, `mtime`, `image`, `area`, `track`, `channels`, `samples`, `sha256` (of the
-compared audio), `loses` and `reason`. Tabs, newlines and backslashes in fields are
+compared audio), `loses`, `reason` and `pauses` (the `--pauses` mode the file was checked with;
+reports from 0.6.5 and earlier lack this column, and are still read). Tabs, newlines and backslashes in fields are
 escaped (`\t`, `\n`, `\\`), as are other control characters and bytes of a path that
 aren't UTF-8 (`\xNN`). The summary goes to standard error: counts and bytes by status, the
 reclaimable bytes (the IDENTICAL files), and the tags they carry. With no `-o`, or a stream,

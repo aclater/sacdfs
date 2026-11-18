@@ -30,7 +30,7 @@ oneliner() {
 }
 state() {
     ls -d /opt/sacdfs /opt/sacdfs/compose.yaml /srv/sacd /etc/default/sacdfs /etc/systemd/system/sacdfs.service \
-        /usr/local/bin/sacdfs /usr/local/etc/init.d/S99sacdfs "$vol/sacdfs" "$vol/.sacdfs" "$vol/sacd" 2>/dev/null
+        /usr/local/bin/sacdfs /usr/local/etc/init.d/S99sacdfs /var/cache/sacdfs "$vol/sacdfs" "$vol/.sacdfs" "$vol/sacd" 2>/dev/null
     grep -cE ' fuse(\.[^ ]+)? ' /proc/mounts   # not fusectl, which the first FUSE use mounts
 }
 # same A B: equal files (cmp isn't in every image).

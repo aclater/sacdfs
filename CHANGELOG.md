@@ -57,7 +57,8 @@ All notable changes to sacdfs are recorded here. The format follows
   `verify` reports now escape format characters (bidi controls such as U+202E, zero-width
   characters) and U+2028/U+2029 as they did control characters. Track file names leave format
   characters out and make U+2028/U+2029 `_`, so a title can't make a name read in another order;
-  a track whose title holds one gets a new name once. Tags are unchanged.
+  a track whose title holds one gets a new name once. Tags are unchanged. sacdfs-win's own
+  error lines (a failed mount, `--log-file`) are escaped the same way.
 - **WAV `INFO` tags in Windows-1252 (#444).** Windows Explorer and Windows Media Player read a
   WAV file's `LIST`/`INFO` chunk in the ANSI code page, so the UTF-8 text written before showed
   accented and CJK titles as mojibake. INFO text is now Windows-1252; a field with characters
@@ -88,6 +89,20 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **`sacdfs verify --resume` no longer reuses rows checked with the other `--pauses` mode (#479).**
+  The report has a new last column, `pauses`, with the mode each file was checked with. On resume,
+  rows of another mode, and rows of reports from 0.6.5 and earlier (which lack the column), are
+  checked again. Older reports are still read.
+- **No overflow on 32-bit builds in cover art reading (#457).** An ID3v2.3 tag whose extended
+  header or frame claims a size near 4 GiB made `tags import` panic on 32-bit targets (or, without
+  overflow checks, wrap and possibly loop) while reading its cover. Such a tag now has no cover
+  past that point. Released builds are 64-bit and were not
+  affected.
+- **The archive's systemd unit keeps a seek index cache (#465).** `sacdfs.service` (install.sh's
+  systemd route) ran without `HOME`, so sacdfs logged "no seek index cache" and seeks after a
+  restart searched from scratch. The unit now sets `XDG_CACHE_HOME=/var/cache` and
+  `CacheDirectory=sacdfs`, as the rpm and deb packages already did at pack time; the packages
+  now take it from the unit. The installer's `--uninstall` also deletes `/var/cache/sacdfs`.
 - **Windows: a SOURCE ending in a backslash works through WinFsp.Launcher (#466).** The
   launcher quotes each argument, so `D:\Music\SACD\` or a drive root `E:\` reached sacdfs-win
   as an escaped quote that ran SOURCE and MOUNTPOINT together; it exited at once and the

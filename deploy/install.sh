@@ -848,6 +848,8 @@ uninstall_systemd() {
     systemctl is-active sacdfs >/dev/null 2>&1 && run systemctl stop sacdfs
     systemctl is-enabled sacdfs >/dev/null 2>&1 && run systemctl disable sacdfs
     remove "$UNIT" /etc/default/sacdfs /usr/local/bin/sacdfs
+    # The unit's seek index cache (CacheDirectory=sacdfs, #465).
+    [ -d /var/cache/sacdfs ] && run rm -rf /var/cache/sacdfs
     run systemctl daemon-reload
 }
 
