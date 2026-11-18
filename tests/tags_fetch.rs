@@ -899,14 +899,28 @@ fn the_command() {
 
     let help = Command::new(bin).args(["tags", "fetch", "--help"]).output().unwrap();
     let help = String::from_utf8_lossy(&help.stdout);
-    for flag in
-        ["--tags", "--lookup-name", "--lookup-durations", "--dry-run", "--no-multichannel-album-suffix"]
-    {
+    for flag in [
+        "--tags",
+        "--lookup-name",
+        "--lookup-durations",
+        "--acoustid",
+        "--lookup-acoustid",
+        "--acoustid-budget",
+        "--dry-run",
+        "--no-multichannel-album-suffix",
+    ] {
         assert!(help.contains(flag), "{flag}: {help}");
     }
-    for flag in ["--acoustid", "--lookup-acoustid"] {
-        assert!(!help.contains(flag), "{flag}: {help}");
-    }
+    // Without a key, --acoustid asks for one and sends nothing.
+    let out = Command::new(bin)
+        .args(["tags", "fetch", "--acoustid", "--tags"])
+        .arg(d.path())
+        .arg(&image)
+        .env_remove("ACOUSTID_API_KEY")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("application key"), "{out:?}");
     let none = Command::new(bin).args(["tags", "fetch", "--tags", "x"]).output().unwrap();
     assert_eq!(none.status.code(), Some(2), "an image is required");
 }

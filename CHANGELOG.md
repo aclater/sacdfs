@@ -7,6 +7,20 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`sacdfs tags fetch --acoustid`: a lookup by audio fingerprint for discs nothing else
+  identifies (part of #296).** When the barcode or catalogue number, the name and the durations
+  find nothing, it fingerprints the first two minutes of each stereo track (10 s or longer) with
+  Chromaprint's `fpcalc`, fed sacdfs's own 11,025 Hz mono PCM, looks the fingerprints up in
+  AcoustID with the user's own application key (`ACOUSTID_API_KEY` or `--acoustid-key-file`), and
+  confirms the release holding the most of those recordings, in order, as the other steps do.
+  One disc at a time at nice 19 and the idle I/O class, a wait while the load is high
+  (`--max-load`), a daily budget of discs (`--acoustid-budget`, default 20) kept with each disc's
+  verdict in the tags directory, at most 2.5 requests a second, and a clean stop on Ctrl-C or
+  SIGTERM. The audio streams in under 1 MiB of heap. `fpcalc` is a program run, not a library
+  linked, so the release binaries gain no dependency. The container image doesn't include it, since
+  its FFmpeg dependencies would double the image (docs/deployment.md, "AcoustID and the container").
+  Tested with synthetic discs and recorded answers; a run with a real application key and the soak
+  that the in-process switch waits for are still to come.
 - **macOS archives for 0.6.5.** The 0.6.5 release now carries
   `sacdfs-0.6.5-aarch64-macos.tar.gz` (Apple Silicon) and `sacdfs-0.6.5-x86_64-macos.tar.gz`
   (Intel), built and tested by its release run, each with a `.sha256` and an attestation, and

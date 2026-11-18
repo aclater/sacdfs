@@ -48,6 +48,7 @@ fuzz_target!(|data: &[u8]| {
         album: Some("Album".into()),
         artist: Some("Artist".into()),
         year: Some("2001".into()),
+        prints: None,
     };
     let refs: Vec<&AreaFacts> = facts.areas.iter().collect();
     let options = Options { by_name: true, by_durations: true, ..Options::default() };

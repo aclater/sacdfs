@@ -71,6 +71,26 @@ enum Cmd {
         /// Sends the times.
         #[arg(long)]
         lookup_durations: bool,
+        /// If that finds nothing, identify the disc by its audio: fingerprint the first two minutes
+        /// of each stereo track with Chromaprint's `fpcalc` and look them up in AcoustID. Sends the
+        /// fingerprints, the tracks' durations and your AcoustID application key
+        /// (ACOUSTID_API_KEY or --acoustid-key-file). Runs at low priority, one disc at a time,
+        /// at most --acoustid-budget discs a day.
+        #[arg(long, visible_alias = "lookup-acoustid")]
+        acoustid: bool,
+        /// A file holding the AcoustID application key, instead of ACOUSTID_API_KEY.
+        #[arg(long, value_name = "FILE", requires = "acoustid")]
+        acoustid_key_file: Option<PathBuf>,
+        /// Discs fingerprinted a day, at most; what is left waits for the next run. The count is
+        /// kept in the tags directory.
+        #[arg(long, value_name = "N", default_value_t = lookup::acoustid::DEFAULT_BUDGET, requires = "acoustid")]
+        acoustid_budget: usize,
+        /// Wait while the 1-minute load average is over this (default: the number of CPUs).
+        #[arg(long, value_name = "LOAD", requires = "acoustid")]
+        max_load: Option<f64>,
+        /// The `fpcalc` program (Chromaprint's), if not `fpcalc` on PATH.
+        #[arg(long, value_name = "PATH", default_value = "fpcalc", requires = "acoustid")]
+        fpcalc: PathBuf,
         /// Say what would be written, and write nothing.
         #[arg(long)]
         dry_run: bool,
@@ -102,7 +122,19 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
             eprint!("{}", safe_file::printable(&s.render()));
             s.all_handled()
         }),
-        Cmd::Fetch { tags, lookup_name, lookup_durations, dry_run, no_multichannel_album_suffix, images } => {
+        Cmd::Fetch {
+            tags,
+            lookup_name,
+            lookup_durations,
+            acoustid,
+            acoustid_key_file,
+            acoustid_budget,
+            max_load,
+            fpcalc,
+            dry_run,
+            no_multichannel_album_suffix,
+            images,
+        } => {
             let options = lookup::Options {
                 by_name: lookup_name,
                 by_durations: lookup_durations,
@@ -110,11 +142,40 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
                 no_suffix: no_multichannel_album_suffix,
                 only_wanting: false,
             };
+            let mut session = match acoustid {
+                false => None,
+                true => match acoustid_session(
+                    &tags,
+                    acoustid_key_file.as_deref(),
+                    acoustid_budget,
+                    max_load,
+                    fpcalc,
+                ) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        eprintln!("sacdfs tags: {}", safe_file::printable(&e));
+                        return ExitCode::FAILURE;
+                    }
+                },
+            };
             let mut client = lookup::Client::new(lookup::Http::new());
-            let s = lookup::fetch(&tags, &images, options, &mut client, |line| {
+            let s = lookup::fetch_with(&tags, &images, options, &mut client, session.as_mut(), |line| {
                 println!("{}", safe_file::printable(&line));
             });
             eprint!("{}", safe_file::printable(&s.render()));
+            if let Some(a) = &session {
+                let c = a.counters;
+                eprintln!(
+                    "acoustid: {} queued, {} fingerprinted, {} skipped (fingerprinted before), {} left for another day; {} tracks, {} requests; {:.1} CPU seconds",
+                    c.queued,
+                    c.done,
+                    c.skipped,
+                    c.deferred,
+                    c.tracks,
+                    c.requests,
+                    lookup::acoustid::cpu_seconds()
+                );
+            }
             Ok(s.all_handled())
         }
     };
@@ -126,6 +187,51 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The AcoustID side of `tags fetch --acoustid`: the key, a working `fpcalc`, low priority and a
+/// stop on SIGINT and SIGTERM.
+fn acoustid_session(
+    tags: &Path,
+    key_file: Option<&Path>,
+    budget: usize,
+    max_load: Option<f64>,
+    fpcalc: PathBuf,
+) -> Result<lookup::acoustid::Session, String> {
+    use std::sync::atomic::AtomicBool;
+    let key = match key_file {
+        Some(f) => fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?,
+        None => std::env::var("ACOUSTID_API_KEY").map_err(|_| {
+            "--acoustid needs an AcoustID application key, in ACOUSTID_API_KEY or --acoustid-key-file (see docs/user-guide.md, \"Looking tags up\")".to_owned()
+        })?,
+    };
+    let key = key.trim().to_owned();
+    if key.is_empty() || key.len() > 64 || !key.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err("the AcoustID key must be letters and digits only".to_owned());
+    }
+    let works = std::process::Command::new(&fpcalc)
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if !works {
+        return Err(format!(
+            "--acoustid needs Chromaprint's fpcalc, and {} doesn't run: install it (Fedora: chromaprint-tools) or give its path with --fpcalc",
+            fpcalc.display()
+        ));
+    }
+    lookup::worker::lower_priority();
+    let stop = Arc::new(AtomicBool::new(false));
+    // The first stops at the next second of audio or the next disc; a second ends the run now.
+    crate::platform::stop_on_signals(&stop).map_err(|e| e.to_string())?;
+    let mut config = lookup::acoustid::Config::new(key, fpcalc);
+    config.budget = budget;
+    if let Some(m) = max_load {
+        config.max_load = Some(m);
+    }
+    fs::create_dir_all(tags).map_err(|e| format!("{}: {e}", tags.display()))?;
+    Ok(lookup::acoustid::Session::new(config, Box::new(lookup::Http::new()), tags, stop))
 }
 
 fn key(dir: Option<&Path>, images: &[PathBuf]) -> io::Result<bool> {
