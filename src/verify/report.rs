@@ -28,10 +28,41 @@ use super::id3::Losses;
 use crate::safe_file;
 
 /// The columns, in order.
-pub const COLUMNS: [&str; 12] = [
+pub const COLUMNS: [&str; 13] = [
     "status", "path", "bytes", "mtime", "image", "area", "track", "channels", "samples", "sha256", "loses",
-    "reason",
+    "reason", "pauses",
 ];
+
+/// The columns of a report from 0.6.5 and earlier, which had no `pauses` (#479).
+const OLD_COLUMNS: usize = 12;
+
+/// The `--pauses` mode a row was checked with (#479).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Pauses {
+    /// `--pauses dropped`, the default.
+    Dropped,
+    /// `--pauses kept`.
+    Kept,
+}
+
+impl Pauses {
+    /// The mode of `--pauses kept` when `kept`.
+    pub fn of(kept: bool) -> Pauses {
+        if kept { Pauses::Kept } else { Pauses::Dropped }
+    }
+
+    /// Its name, as `--pauses` takes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Pauses::Dropped => "dropped",
+            Pauses::Kept => "kept",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Pauses> {
+        [Pauses::Dropped, Pauses::Kept].into_iter().find(|p| p.as_str() == s)
+    }
+}
 
 /// The outcome for one file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -122,6 +153,9 @@ pub struct Row {
     pub loses: Losses,
     /// Why, for any status but IDENTICAL (for IDENTICAL-PAUSE, what surrounds the track).
     pub reason: String,
+    /// The `--pauses` mode it was checked with; `None` in a report from before #479, or in a
+    /// row not yet stamped by the run.
+    pub pauses: Option<Pauses>,
 }
 
 impl Row {
@@ -140,6 +174,7 @@ impl Row {
             sha256: String::new(),
             loses: Losses::default(),
             reason: String::new(),
+            pauses: None,
         }
     }
 
@@ -166,14 +201,16 @@ impl Row {
             self.sha256.clone(),
             escape(self.loses.render().as_bytes()),
             escape(self.reason.as_bytes()),
+            self.pauses.map(Pauses::as_str).unwrap_or_default().to_owned(),
         ];
         fields.join("\t")
     }
 
-    /// The row of a report's line; `None` if it is not one.
+    /// The row of a report's line; `None` if it is not one. A line of an older report, with
+    /// no `pauses` column, is a row whose mode is unknown.
     pub fn parse(line: &str) -> Option<Row> {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() != COLUMNS.len() {
+        if f.len() != COLUMNS.len() && f.len() != OLD_COLUMNS {
             return None;
         }
         let text = |s: &str| String::from_utf8_lossy(&unescape(s)).into_owned();
@@ -191,6 +228,7 @@ impl Row {
             sha256: f[9].to_owned(),
             loses: Losses::parse(&text(f[10])),
             reason: text(f[11]),
+            pauses: f.get(12).and_then(|p| Pauses::parse(p)),
         })
     }
 }
@@ -550,6 +588,26 @@ mod tests {
         let device = dir.path().join("d.tsv");
         symlink("/dev/null", &device).unwrap();
         assert!(!is_stream(&device));
+    }
+
+    /// The `pauses` column round-trips, and a line of a report from before it (12 columns) is a
+    /// row whose mode is unknown (#479).
+    #[test]
+    fn pauses_column_and_old_reports() {
+        let mut r = Row::new("/a.dsf".into(), 1, "1.5".into()).with(Status::Identical, String::new());
+        for m in [Pauses::Dropped, Pauses::Kept] {
+            r.pauses = Some(m);
+            let line = r.line();
+            assert!(line.ends_with(&format!("\t{}", m.as_str())), "{line:?}");
+            assert_eq!(Row::parse(&line), Some(r.clone()));
+        }
+        let old = r.line().rsplit_once('\t').unwrap().0.to_owned();
+        assert_eq!(old.split('\t').count(), 12);
+        assert_eq!(Row::parse(&old), Some(Row { pauses: None, ..r.clone() }));
+        let odd = format!("{old}\tsometimes");
+        assert_eq!(Row::parse(&odd).unwrap().pauses, None, "an unknown mode is unknown");
+        assert_eq!(Row::parse(&format!("{odd}\tx")), None);
+        assert_eq!(Row::parse(&COLUMNS[..12].join("\t")), None, "an old header");
     }
 
     /// Control characters in a field are escaped, so that a report shown on a terminal shows

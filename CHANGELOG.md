@@ -81,6 +81,10 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **`sacdfs verify --resume` no longer reuses rows checked with the other `--pauses` mode (#479).**
+  The report has a new last column, `pauses`, with the mode each file was checked with. On resume,
+  rows of another mode, and rows of reports from 0.6.5 and earlier (which lack the column), are
+  checked again. Older reports are still read.
 - **No overflow on 32-bit builds in cover art reading (#457).** An ID3v2.3 tag whose extended
   header or frame claims a size near 4 GiB made `tags import` panic on 32-bit targets (or, without
   overflow checks, wrap and possibly loop) while reading its cover. Such a tag now has no cover
