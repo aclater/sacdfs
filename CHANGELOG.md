@@ -91,6 +91,10 @@ All notable changes to sacdfs are recorded here. The format follows
   ([design](docs/design.md#dsf-files)).
 
 ### Fixed
+- **Windows: read-ahead survives in the frame cache (#481).** Without the anonymous mappings the
+  cache's pool uses on Linux and macOS, every new frame evicted all cached frames to free slots it
+  could never get, so read-ahead was decoded and thrown away before it was read. Frames now go on
+  the heap there with nothing evicted for them, and the cache still keeps within its size.
 - **`sacdfs verify --resume` no longer reuses rows checked with the other `--pauses` mode (#479).**
   The report has a new last column, `pauses`, with the mode each file was checked with. On resume,
   rows of another mode, and rows of reports from 0.6.5 and earlier (which lack the column), are

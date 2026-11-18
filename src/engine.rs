@@ -407,9 +407,14 @@ impl FrameCache {
     /// `n` buffers of `len` bytes for new frames: free slots of the pool, evicting the least
     /// recently used frames to free some when it is full; past that (no cache, or frames
     /// that readers still hold fill it), buffers on the heap. Their content is unspecified.
+    ///
+    /// Without anonymous mappings (Windows: `Mapping::new` gives none), every buffer is on the
+    /// heap and nothing is evicted here; `insert` keeps the cached frames within the cap. *Why
+    /// (#481):* evicting to free slots that could never be had emptied the whole cache at
+    /// every new frame, so on Windows no read-ahead survived to be read.
     fn buffers(&self, len: usize, n: usize) -> Vec<FrameBuf> {
         let mut out = Vec::with_capacity(n);
-        while self.cap > 0 && out.len() < n {
+        while cfg!(unix) && self.cap > 0 && out.len() < n {
             self.pool.alloc_into(len, n, &mut out);
             if out.len() >= n {
                 break;
