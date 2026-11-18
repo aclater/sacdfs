@@ -42,6 +42,10 @@ pub enum Status {
     /// served track inside it, with silence before and after (or a track cut short, where
     /// sacdfs serves only silence beyond the end) (#93).
     IdenticalPause,
+    /// sacdfs serves the same audio, and the extract is one file of a gapless chain
+    /// (`sacd_extract -z`): the chain's files joined hold the audio of consecutive served tracks
+    /// joined, give or take silence at its ends (#442).
+    IdenticalChain,
     /// A track of the same channel and sample counts exists, with other audio.
     Different,
     /// No track of the disc has the file's channel and sample counts.
@@ -56,9 +60,10 @@ pub enum Status {
 
 impl Status {
     /// Every status, in the order the summary lists them.
-    pub const ALL: [Status; 7] = [
+    pub const ALL: [Status; 8] = [
         Status::Identical,
         Status::IdenticalPause,
+        Status::IdenticalChain,
         Status::Different,
         Status::NoMatch,
         Status::Unsupported,
@@ -71,6 +76,7 @@ impl Status {
         match self {
             Status::Identical => "IDENTICAL",
             Status::IdenticalPause => "IDENTICAL-PAUSE",
+            Status::IdenticalChain => "IDENTICAL-CHAIN",
             Status::Different => "DIFFERENT",
             Status::NoMatch => "NO-MATCH",
             Status::Unsupported => "UNSUPPORTED",
@@ -81,7 +87,7 @@ impl Status {
 
     /// Whether sacdfs serves the extract's audio (the files whose deletion is safe for audio).
     pub fn is_match(self) -> bool {
-        matches!(self, Status::Identical | Status::IdenticalPause)
+        matches!(self, Status::Identical | Status::IdenticalPause | Status::IdenticalChain)
     }
 
     fn parse(s: &str) -> Option<Status> {

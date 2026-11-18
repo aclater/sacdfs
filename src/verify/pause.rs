@@ -20,7 +20,7 @@ use std::sync::atomic::AtomicU64;
 use sha2::{Digest, Sha256};
 
 use super::SACD_RATE;
-use super::container::{Audio, Problem, Source};
+use super::container::{Problem, Stream};
 
 /// The most audio, in seconds, a stream may have beyond the other for them to be compared.
 /// Beyond it the files are different recordings, not a pause: the longest pause seen in a real
@@ -217,16 +217,12 @@ impl Finder {
 
 /// A piece of `audio` that is unlikely to be anywhere else: the first window of
 /// [`NEEDLE_FRAMES`] frames, at a multiple of its length, with many distinct byte values.
-fn pick_needle(
-    audio: &Audio,
-    src: &mut dyn Source,
-    read: &AtomicU64,
-) -> Result<Option<(u64, Vec<u8>)>, Problem> {
-    let w = NEEDLE_FRAMES * usize::from(audio.channels);
+fn pick_needle(audio: &mut dyn Stream, read: &AtomicU64) -> Result<Option<(u64, Vec<u8>)>, Problem> {
+    let w = NEEDLE_FRAMES * usize::from(audio.channels());
     let mut pending: Vec<u8> = Vec::new();
     let mut base = 0u64;
     let mut found = None;
-    audio.canonical_while(src, read, &mut |b| {
+    audio.canonical_while(read, &mut |b| {
         pending.extend_from_slice(b);
         let mut i = 0;
         while i + w <= pending.len() {
@@ -260,31 +256,29 @@ pub struct Found {
 /// Looks for `small` (whose canonical stream hashes to `small_digest`) inside `big`, both of the
 /// same channel count. `None`: it is not there, or no needle could be picked from it.
 pub fn locate(
-    big: (&Audio, &mut dyn Source),
-    small: (&Audio, &mut dyn Source),
+    big: &mut dyn Stream,
+    small: &mut dyn Stream,
     small_digest: &[u8; 32],
     read: &AtomicU64,
 ) -> Result<Option<Found>, Problem> {
-    let (big, big_src) = big;
-    let (small, small_src) = small;
-    let ch = u64::from(big.channels);
+    let ch = u64::from(big.channels());
     let (Some(l), Some(m)) = (big.canonical_len(), small.canonical_len()) else { return Ok(None) };
-    if small.channels != big.channels || m == 0 || l < m {
+    if small.channels() != big.channels() || m == 0 || l < m {
         return Ok(None);
     }
     let d = l - m;
-    let Some((p, needle)) = pick_needle(small, small_src, read)? else { return Ok(None) };
+    let Some((p, needle)) = pick_needle(small, read)? else { return Ok(None) };
     let limit = d + p + needle.len() as u64;
     let mut finder = Finder { needle, channels: ch, tail: Vec::new(), base: 0, hits: Vec::new() };
     let mut seen = 0u64;
-    big.canonical_while(big_src, read, &mut |b| {
+    big.canonical_while(read, &mut |b| {
         finder.feed(b);
         seen += b.len() as u64;
         finder.hits.len() < MAX_HITS && seen < limit
     })?;
     for q in finder.hits {
         let Some(o) = q.checked_sub(p).filter(|&o| o <= d && o % ch == 0) else { continue };
-        let (head, mid, tail) = scan(big, big_src, read, o, m)?;
+        let (head, mid, tail) = scan(big, read, o, m)?;
         if &mid == small_digest {
             return Ok(Some(Found { head, tail, offset_samples: o / ch * 8 }));
         }
@@ -295,16 +289,15 @@ pub fn locate(
 /// One pass over `big`: the region before `offset`, the SHA-256 of the next `len` bytes, and the
 /// region after them.
 fn scan(
-    big: &Audio,
-    src: &mut dyn Source,
+    big: &mut dyn Stream,
     read: &AtomicU64,
     offset: u64,
     len: u64,
 ) -> Result<(Region, [u8; 32], Region), Problem> {
-    let (mut head, mut tail) = (Meter::new(big.channels), Meter::new(big.channels));
+    let (mut head, mut tail) = (Meter::new(big.channels()), Meter::new(big.channels()));
     let mut mid = Sha256::new();
     let mut at = 0u64;
-    big.canonical_while(src, read, &mut |mut b| {
+    big.canonical_while(read, &mut |mut b| {
         while !b.is_empty() {
             let (n, which) = if at < offset {
                 ((offset - at).min(b.len() as u64), 0)
@@ -329,6 +322,7 @@ fn scan(
 
 #[cfg(test)]
 mod tests {
+    use super::super::container::One;
     use super::*;
 
     fn dff(canon: &[u8], ch: u16) -> Vec<u8> {
@@ -375,7 +369,7 @@ mod tests {
         let ab = super::super::container::parse(&mut sb).unwrap();
         let asm = super::super::container::parse(&mut ss).unwrap();
         let digest = asm.digest(&mut ss, &read).unwrap();
-        locate((&ab, &mut sb), (&asm, &mut ss), &digest, &read).unwrap()
+        locate(&mut One::new(&ab, &mut sb), &mut One::new(&asm, &mut ss), &digest, &read).unwrap()
     }
 
     #[test]
