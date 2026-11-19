@@ -366,7 +366,41 @@ fn free_reserve(cap: usize) -> usize {
 #[derive(Debug)]
 struct CacheInner {
     lru: LruCache<Key, Arc<Frame>>,
+    /// Frames of files' heads and tails that readers read ([`FrameCache::keep`]): evicted only
+    /// when `lru` is empty, or when they hold more than [`heads_cap`].
+    heads: LruCache<Key, Arc<Frame>>,
+    /// Bytes of the frames of both.
     bytes: usize,
+    /// Bytes of the frames of `heads`.
+    head_bytes: usize,
+}
+
+impl CacheInner {
+    fn get(&mut self, key: &Key) -> Option<&Arc<Frame>> {
+        if self.lru.contains(key) { self.lru.get(key) } else { self.heads.get(key) }
+    }
+
+    /// Takes out the least recently used frame, of `lru` first.
+    fn pop_lru(&mut self) -> Option<Arc<Frame>> {
+        let f = match self.lru.pop_lru() {
+            Some((_, f)) => f,
+            None => {
+                let (_, f) = self.heads.pop_lru()?;
+                self.head_bytes -= f.data.len();
+                f
+            }
+        };
+        self.bytes -= f.data.len();
+        Some(f)
+    }
+}
+
+/// Most bytes of [`CacheInner::heads`]: half the cache. *Why half:* the heads of a 12-track
+/// 6-channel album as DSF and WAV, as a player re-reads them each time it starts a track
+/// (#456), take about 27 MiB; the rest of a 64 MiB cache still holds the start-of-track
+/// decode-ahead (a quarter) and the free reserve.
+fn heads_cap(cap: usize) -> usize {
+    cap / 2
 }
 
 /// A least-recently-used cache of decoded DSD frames and converted PCM frames, bounded in
@@ -396,7 +430,12 @@ impl FrameCache {
     /// A cache holding at most `cap` bytes of frames.
     pub fn new(cap: usize) -> Self {
         FrameCache {
-            inner: Mutex::new(CacheInner { lru: LruCache::unbounded(), bytes: 0 }),
+            inner: Mutex::new(CacheInner {
+                lru: LruCache::unbounded(),
+                heads: LruCache::unbounded(),
+                bytes: 0,
+                head_bytes: 0,
+            }),
             pool: Arc::new(Pool { inner: Mutex::new(PoolInner::default()), cap }),
             cap,
             used: AtomicU64::new(0),
@@ -426,8 +465,7 @@ impl FrameCache {
                 let mut g = self.lock();
                 let mut v = Vec::with_capacity(n - out.len());
                 while v.len() < n - out.len() {
-                    let Some((_, f)) = g.lru.pop_lru() else { break };
-                    g.bytes -= f.data.len();
+                    let Some(f) = g.pop_lru() else { break };
                     v.push(f);
                 }
                 v
@@ -460,9 +498,8 @@ impl FrameCache {
         }
         let frames: Vec<Arc<Frame>> = {
             let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            g.bytes = 0;
-            let mut v = Vec::with_capacity(g.lru.len());
-            while let Some((_, f)) = g.lru.pop_lru() {
+            let mut v = Vec::with_capacity(g.lru.len() + g.heads.len());
+            while let Some(f) = g.pop_lru() {
                 v.push(f);
             }
             v
@@ -474,7 +511,35 @@ impl FrameCache {
     }
 
     fn get(&self, key: &Key) -> Option<Arc<Frame>> {
-        self.lock().lru.get(key).cloned()
+        self.lock().get(key).cloned()
+    }
+
+    /// Keeps these frames, if cached, among the heads: evicted after every other frame, while
+    /// the heads hold at most [`heads_cap`] (#456). *Why:* a network player re-reads the heads
+    /// (and tails) of every file of an album each time it starts a track; the playing track's
+    /// read-ahead had evicted them, so each start decoded them again, 3 to 4 s of a 2-core
+    /// Atom's CPU in the seconds the player was filling its buffer.
+    fn keep(&self, keys: impl Iterator<Item = Key>) {
+        if self.cap == 0 {
+            return;
+        }
+        let mut g = self.lock();
+        for k in keys {
+            if let Some(f) = g.lru.pop(&k) {
+                g.head_bytes += f.data.len();
+                g.heads.put(k, f);
+            } else {
+                g.heads.get(&k);
+            }
+        }
+        // Over the cap, the least recently read heads go back among the other frames, as
+        // the first to be evicted.
+        while g.head_bytes > heads_cap(self.cap) {
+            let Some((k, f)) = g.heads.pop_lru() else { break };
+            g.head_bytes -= f.data.len();
+            g.lru.put(k, f);
+            g.lru.demote(&k);
+        }
     }
 
     fn insert(&self, key: Key, frame: Arc<Frame>) {
@@ -485,6 +550,11 @@ impl FrameCache {
         {
             let mut g = self.lock();
             let len = frame.data.len();
+            if let Some(old) = g.heads.pop(&key) {
+                g.head_bytes -= old.data.len();
+                g.bytes -= old.data.len();
+                evicted.push(old);
+            }
             if let Some(old) = g.lru.put(key, frame) {
                 g.bytes -= old.data.len();
                 evicted.push(old);
@@ -494,11 +564,8 @@ impl FrameCache {
             // frames mostly take free slots rather than evict first; heap buffers (past the
             // pool) count too.
             while g.bytes > self.cap - free_reserve(self.cap) {
-                match g.lru.pop_lru() {
-                    Some((_, f)) => {
-                        g.bytes -= f.data.len();
-                        evicted.push(f);
-                    }
+                match g.pop_lru() {
+                    Some(f) => evicted.push(f),
                     None => break,
                 }
             }
@@ -511,6 +578,7 @@ impl FrameCache {
         let mut g = self.lock();
         for k in keys {
             g.lru.demote(&k);
+            g.heads.demote(&k);
         }
     }
 
@@ -732,19 +800,27 @@ impl Engine {
     /// Timeline positions `[first, end)` of an area, if all of them are cached.
     pub fn cached(&self, disc: &Disc, area: usize, first: u32, end: u32) -> Option<Vec<Arc<Frame>>> {
         let mut g = self.cache.lock();
-        (first..end).map(|t| g.lru.get(&Self::key(disc, area, t)).cloned()).collect()
+        (first..end).map(|t| g.get(&Self::key(disc, area, t)).cloned()).collect()
     }
 
     /// PCM frames of timeline positions `[first, end)` of an area, if all of them are
     /// cached.
     pub fn cached_pcm(&self, disc: &Disc, area: usize, first: u32, end: u32) -> Option<Vec<Arc<Frame>>> {
         let mut g = self.cache.lock();
-        (first..end).map(|t| g.lru.get(&Self::pcm_key(disc, area, t)).cloned()).collect()
+        (first..end).map(|t| g.get(&Self::pcm_key(disc, area, t)).cloned()).collect()
     }
 
     /// Bytes of PCM per frame of `channels` channels with the engine's settings.
     pub fn pcm_frame_bytes(&self, channels: u8) -> usize {
         self.pcm.rate.samples_per_frame() * usize::from(channels) * 3
+    }
+
+    /// Keeps the cached frames of timeline positions `[first, end)` among the heads
+    /// ([`FrameCache::keep`]): DSD frames, or PCM frames if `pcm`.
+    pub fn keep_heads(&self, disc: &Disc, area: usize, pcm: bool, first: u32, end: u32) {
+        self.cache.keep(
+            (first..end).map(|t| if pcm { Self::pcm_key(disc, area, t) } else { Self::key(disc, area, t) }),
+        );
     }
 
     /// Makes the cached frames of timeline positions `[first, end)` the first to be evicted:
@@ -1428,6 +1504,38 @@ mod tests {
         }
         assert!(cache.get(&key(0)).is_some(), "the frame nobody gave up is still there");
         assert!(cache.bytes() <= 7 * len);
+    }
+
+    /// Kept heads outlive a stream of new frames, within half the cap (#456), and count in
+    /// its bytes; past that the least recently read ones go first.
+    #[test]
+    fn kept_heads_outlive_streaming_within_half_the_cap() {
+        let len = 1000;
+        let c = FrameCache::new(40 * len);
+        for i in 0..4 {
+            c.insert(key(i), frame(len));
+        }
+        c.keep((0..4).map(key));
+        for i in 100..300 {
+            c.insert(key(i), frame(len));
+        }
+        assert!((0..4).all(|i| c.get(&key(i)).is_some()), "kept heads evicted");
+        assert!(c.bytes() <= 35 * len, "{}", c.bytes());
+        // More heads than half the cap: the first kept go back, first to be evicted.
+        for i in 4..30 {
+            c.insert(key(i), frame(len));
+            c.keep(std::iter::once(key(i)));
+        }
+        assert!(c.lock().head_bytes <= 20 * len);
+        for i in 300..400 {
+            c.insert(key(i), frame(len));
+        }
+        assert!(c.get(&key(0)).is_none() && c.get(&key(29)).is_some());
+        // A frame inserted again replaces its kept copy.
+        c.insert(key(29), frame(len));
+        assert!(c.bytes() <= 35 * len);
+        assert!(c.release_if_idle(Duration::ZERO));
+        assert_eq!((c.bytes(), c.lock().head_bytes), (0, 0));
     }
 
     #[test]
