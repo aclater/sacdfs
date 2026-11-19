@@ -1592,6 +1592,21 @@ decoding them twice.
   it would already be decoded); decoding only part of the head (the head is decoded once,
   and it is the reads' own frames).
 
+- **The heads and tails that readers read stay in the cache (#456).** The frames a read takes
+  from a file's first 2 MiB of audio, or its last frame, go to a second LRU list of the frame
+  cache, evicted only when no other frame is left, while it holds at most half the cache; past
+  that, its least recently read frames go back to the main list as the first to be evicted. A
+  frame decoded again replaces its kept copy. *Why:* a network player (a Zidoo over SMB in the
+  trace) re-reads the heads (1.6 MiB of each 6-channel DSF file, 0.6 MiB of each WAV file) and
+  tails of all the album's files each time it starts a track, and waits for them before it reads
+  much of the track it plays. The playing track's read-ahead had evicted them, so on a 4-thread
+  Atom every start decoded 13 to 15 MB of heads again, 3 to 4 s of its CPU, and the player read
+  its track at half real time for 8 s. *Why half:* an album of 12 tracks as 6-channel DSF and WAV
+  has about 27 MiB of heads; the rest of a 64 MiB cache still holds the start-of-track
+  decode-ahead (a quarter) and the free reserve. *Alternatives:* a separate cache on top of
+  `--cache-mb` (more memory than asked for); keeping them on disk (writes on every scan);
+  lowering the priority of the decode-ahead (the CPU is still short: the heads alone need it).
+
 - **The start of a track is decoded ahead in slices (#481).** A reader whose first read of audio
   was within the decode-ahead's frames below, and whose reads go on in order past the head
   window above, starts a *start-of-track decode-ahead*: one job that decodes the next frames into the cache, a
@@ -1675,10 +1690,8 @@ decoding them twice.
     within a quarter of the cache) at once, instead of a slice past the furthest read: from its
     start for a reader that began past the start (a player's handle after its probe, #456), and
     once past the file's first 2 MiB of audio (`HEAD_SCAN`) for a reader from the start. It stops
-    at a close or a jump as before, or when no read comes for 2 s;
-  - the frames a read decodes within a file's first 2 MiB are kept apart from the rest of the
-    cache, in at most a quarter of it, where no other frame evicts them. A kept head gives its
-    place to a new one only once nobody has read it for 10 minutes.
+    at a close or a jump as before, or when no read comes for 2 s.
+  The heads themselves stay decoded on every machine since #508 (kept heads, above).
 
   On any machine, a reader whose reads all end within the file's first 2 MiB gets no read-ahead
   while another file's decode-ahead runs or another reader plays, and a reader from the start of
@@ -1691,19 +1704,18 @@ decoding them twice.
   1.5 s of CPU): the 20 refusals marked "another reader plays" in the first trace were all such
   heads of other files while a track played, correctly refused under #363, and none was the start
   of a track played. A rescan decoded 11 to 26 MB again (3 to 7 s of the whole CPU) while the
-  track starting needed it. A cache of 64 MiB had evicted those heads by the next start, behind
-  the playing track's read-ahead. *Why measured and not a setting:* the same build runs on
+  track starting needed it (#508 keeps those heads; a mount's first start still decodes each
+  once). *Why measured and not a setting:* the same build runs on
   desktops that decode 6-channel DST many times faster than it plays and on the Atom at 1.8 times
-  (1.07 for 6-channel WAV); a machine fast enough changes nothing but the head rule, and a measured rate
-  follows the load it is under. *Why 3.5:* the fastest sustained start the player research
+  (1.07 for 6-channel WAV); a machine fast enough changes nothing but the head rule, and a
+  measured rate follows the load it is under. *Why 3.5:* the fastest sustained start the player research
   traced (mpv, 30 s at 3.5 times real time); FFmpeg's `-re` bursts 0.5 s. It is an option because
   other players' bursts are not measured yet. *Why the decode-ahead goes to its end at once on a
   slow machine:* a player that fills its buffer faster than the machine decodes waits for every
   frame not decoded ahead, and in the traces a player busy with its rescan read its track slowly at
   first and asked for more later, when the decode-ahead had stopped a slice ahead. *Why not
   within the head of a reader from the start:* that is how the rescans and the probes read, and
-  they close a moment later. *Why first come for the kept heads, not least recently used:* a
-  rescan of more heads than fit would evict each just before its next read and keep none.
+  they close a moment later.
   *Alternatives:* decoding the first seconds of a file at its probe (the probe of the file about
   to play reads exactly like the rescans of the 23 others; in the traces of an album's start it
   came 1.7 s and two files before the play handle, and at the next track the play handle came 0.08
@@ -1711,11 +1723,11 @@ decoding them twice.
   gains at most that, against up to 8 s of decoding for every head); requiring the longer head
   before a reader from the start begins its decode-ahead on a slow machine (measured: worse for a
   DSF probe followed by its play handle, whose first reads the probe's decode-ahead had decoded;
-  audio held after 2 s fell from 3.2 to 2.7 s); keeping decoded heads in a file on disk (see the
-  measurements: [deployment](deployment.md#starting-playback-on-a-slow-cpu)); rules per player.
+  audio held after 2 s fell from 3.2 to 2.7 s); keeping decoded heads in a file on disk, so that
+  a mount's first start finds them too (not done: [deployment](deployment.md#starting-playback-on-a-slow-cpu));
+  rules per player.
   *Trade-off:* a second player starting beside one that plays reads its first 2 MiB without
-  read-ahead; on a slow machine a quarter of the cache holds heads that may not be read again,
-  and a reader that reads past 2 MiB and stops without closing has up to 8 s decoded for nothing
+  read-ahead; on a slow machine a reader that reads past 2 MiB and stops without closing has up to 8 s decoded for nothing
   (it stops after 2 s without reads); the speed is only known after the first decodes, so a
   mount's first start is served as on a fast machine.
 

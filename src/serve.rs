@@ -45,9 +45,8 @@ pub struct Options {
     #[arg(long, value_name = "N")]
     pub listing_mb: Option<usize>,
     /// How fast players read a track they start, in times real time (#504). Where this machine
-    /// decodes a format slower than that (measured as it serves), sacdfs keeps the heads of files
-    /// players read again in a quarter of the cache, waits past a longer head before decoding a
-    /// file ahead, and decodes a starting track ahead without waiting for its reads. 0: off.
+    /// decodes a format slower than that (measured as it serves), a starting track is decoded
+    /// ahead without waiting for the player's reads. 0: off.
     #[arg(long, default_value_t = 3.5, value_name = "X", value_parser = parse_burst)]
     pub start_burst: f64,
     /// Seconds of audio decoded ahead when a track starts playing, within a quarter of the cache.

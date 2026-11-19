@@ -174,11 +174,10 @@ mpv about 3.5 times for its first 30 s, and FFmpeg-based players (Kodi, Jellyfin
 network players) after a probe of the file's head. Some re-read the heads of every file in the
 folder at the same moment. sacdfs measures, as it serves, how fast it decodes each format and
 channel count. Where that is slower than `--start-burst` (3.5 times real time by default), as for
-multichannel DST on a 32-bit Atom NAS, it:
-- keeps the decoded heads of files (their first 2 MiB) in a quarter of the cache, so that a player
-  re-reading an album's heads is served without decoding them again;
-- decodes the start of a playing track (`--start-burst-secs`, 8 s by default, within a quarter of
-  the cache) without waiting for the player's reads.
+multichannel DST on a 32-bit Atom NAS, it decodes the start of a playing track
+(`--start-burst-secs`, 8 s by default, within a quarter of the cache) without waiting for the
+player's reads. The decoded heads of files that players read again stay in the cache on any
+machine (#456).
 
 On any machine, a reader of a file's head gets no read-ahead while another file starts or plays,
 and does not start its own decode-ahead while another file starts. A machine that decodes faster
@@ -1107,4 +1106,6 @@ scripts/trace-replay.py /tmp/sacdfs-trace.log --anonymise session.trace.gz  # no
 player on a 32-bit Atom NAS starting 6-channel DSF and WAV tracks from stopped (#456). `session-456-b.trace.gz` is
 a later one on the same NAS with #489: four 6-channel WAV starts, three of them while the player
 re-read the heads of all 24 files of the album. Its WAV header length can't be inferred from it;
-replay it with `--wav-audio-start 268864`.
+replay it with `--wav-audio-start 268864`. `session-456-c.trace.gz` is a third, with #502:
+three starts of the same 6-channel WAV file, each while the player re-read the heads and tails of
+the album's other files (`--wav-audio-start 268864` too).

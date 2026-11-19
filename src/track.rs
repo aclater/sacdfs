@@ -357,6 +357,11 @@ pub const HEAD_WINDOW: u64 = 1 << 20;
 /// small), and 12 s no better.
 pub const START_AHEAD_FRAMES: u32 = 8 * 75;
 
+/// Bytes of a file's audio from its start whose frames a read keeps in the cache as its head
+/// ([`crate::engine::FrameCache::keep`], #456): a network player's probe of a 6-channel DSF
+/// file reads its first 1.6 MiB.
+const HEAD_KEEP: u64 = 2 << 20;
+
 /// A reader whose reads all end within this many bytes after the file's header has read only
 /// its head (`Reader::head_only`, #503). *Why this far:* a player that re-reads the heads of an
 /// album's files reads 1.6 MB of each DSF file and 0.6 MB of each WAV file; Roon's import reads
@@ -624,12 +629,6 @@ impl TrackFile {
             return 0;
         }
         quarter.min(u64::from(secs) * 75).min(u64::from(self.layout.frames)) as u32
-    }
-
-    /// The end of the file's head ([`HEAD_SCAN`]): frames (file indices) before it.
-    fn head_frames(&self) -> u32 {
-        let h = self.header_len();
-        self.frames_for(h, h.saturating_add(HEAD_SCAN)).1
     }
 
     /// The share of a quarter of the cache, in frames, of one of `readers` reading for
@@ -1160,15 +1159,6 @@ impl Reader {
             self.wait_for_start(engine, k0, k1);
         }
         let frames = if k0 < k1 { self.decoded(engine, k0, k1, true)? } else { Vec::new() };
-        // On a slow machine, a file's head stays decoded for the players that read it again
-        // (#503).
-        if k0 < k1
-            && offset < f.header_len().saturating_add(HEAD_SCAN)
-            && self.slow(engine)
-            && k1 <= f.head_frames()
-        {
-            engine.keep_head(&f.disc, f.area, f.format(), f.start_frame + k0, f.start_frame + k1);
-        }
         let data = f.assemble(offset, len, k0, &frames);
         // Read ahead only after reads of audio: a tagger reading the header or the tags must
         // not make the file decode (and convert) its first seconds in the background.
@@ -1557,6 +1547,30 @@ impl Reader {
 
     /// Frames `[k0, k1)` of the file, for a read (`for_read`) or for read-ahead.
     fn decoded(
+        &self,
+        engine: &Engine,
+        k0: u32,
+        k1: u32,
+        for_read: bool,
+    ) -> Result<Vec<Arc<Frame>>, ReadError> {
+        let frames = self.decoded_frames(engine, k0, k1, for_read)?;
+        // A read of the head or the last frame: keep those frames (#456).
+        if for_read {
+            let f = &self.file;
+            let head = ((HEAD_KEEP / (f.byte_rate() as u64 / 75).max(1)) as u32).min(f.layout.frames);
+            let pcm = matches!(f.audio, Audio::Wav(_));
+            if k0 < head {
+                engine.keep_heads(&f.disc, f.area, pcm, f.start_frame + k0, f.start_frame + k1.min(head));
+            }
+            let last = f.layout.frames.saturating_sub(1);
+            if k1 > last && k1 > head {
+                engine.keep_heads(&f.disc, f.area, pcm, f.start_frame + k0.max(last), f.start_frame + k1);
+            }
+        }
+        Ok(frames)
+    }
+
+    fn decoded_frames(
         &self,
         engine: &Engine,
         k0: u32,
@@ -2391,28 +2405,6 @@ mod tests {
         assert!(head.is_none(), "{head:?}");
         let past = reader.plan_read_ahead(&engine, HEAD_SCAN, HEAD_SCAN + (128 << 10), 3, 4);
         assert!(past.is_some_and(|a| !a.start), "{past:?}");
-    }
-
-    /// On a slow machine, the frames of a file's head that a reader reads stay apart in the cache
-    /// (#503); on a fast one, nothing is kept.
-    #[test]
-    fn a_slow_machine_keeps_the_heads_read() {
-        let tree = corpus();
-        for format in [Format::Dsf, Format::Wav] {
-            let f = longest(&tree, format);
-            for slow in [false, true] {
-                let engine = slow_or_fast(slow);
-                engine.rates().set(format == Format::Wav, f.layout.channels, 1.5);
-                let reader = Reader::new(f.clone());
-                let at = f.header_len();
-                let len = (f.size - at).min(256 << 10);
-                let (data, _) = reader.read(&engine, at, len).unwrap();
-                assert_eq!(engine.cache().head_bytes() > 0, slow, "{format:?}");
-                assert_eq!(data, whole(&f)[at as usize..][..data.len()], "{format:?}: the same bytes");
-                let (again, _) = reader.read(&engine, at, len).unwrap();
-                assert_eq!(again, data, "{format:?}");
-            }
-        }
     }
 
     /// The decode-ahead's end: its frames, within the file, and none if a quarter of the cache

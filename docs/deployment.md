@@ -800,6 +800,24 @@ at 6.1 s of audio, then 2 to 5 more over 0.5 s; none over 0.5 s with #502), 15 s
 starts on such a CPU still read at the speed it decodes: that is the CPU's limit, not the
 read-ahead's.
 
+**A player that re-reads the album's heads (#456).** A third trace (with #502) had three starts of a
+6-channel track, each with the player re-reading the heads and tails of the album's other 22
+files: 13 to 15 MB in the first 10 s, about 3.5 to 4 s of the Atom's decoding, since the playing
+track's read-ahead had evicted them. The playing file's own reads were answered in about 1 ms
+from its second second, yet the player asked for half real time until about 9 s (2.3 s of audio
+after 8 s): it waits for those head reads, which were slow while the CPU was busy. A copy of the
+album as plain DSF files plays without glitches there because a head read from disk needs no
+CPU. Since #456 the frames a read takes from a file's first 2 MiB of audio or its last frame
+stay in the cache within half of it. Measured with a client that plays track 1 of a 6-channel
+album over one connection, taking turns with re-reads of the heads (DSF and WAV, as in the
+trace) of tracks 2 to 12, on the same E-cores (0.45 and 0.54 of a CPU: 6-channel WAV at 1.05 and
+1.3 times real time, DSF at 1.4 and 1.85), `--threads 4`, `--cache-mb 64`: a first start with the
+heads already read, 150 MB more of the track, then the measured start, 2 runs each, main against
+#456, seconds of playback stalled in its first 25 s: DSF 5.6 to 14.9 → 0.2 to 0.9 (0.45) and 7.4
+to 8.6 → 0.1 to 0.3 (0.54); WAV 14.3 to 16.1 → 3.6 to 9.5 and 5.8 to 7.3 → 0.5 to 2.3. With no
+re-reads beside it, the same client stalled 0 s for DSF and at most 0.4 s for WAV on main. The
+first start after a mount still decodes the heads once.
+
 ## Running it
 
 ### Docker or Podman

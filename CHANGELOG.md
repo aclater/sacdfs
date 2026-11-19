@@ -17,8 +17,7 @@ All notable changes to sacdfs are recorded here. The format follows
   format and channel count as it serves. Where that is below `--start-burst` (3.5 times real time
   by default, how fast mpv reads a track it starts), as for multichannel DST on a 32-bit Atom NAS,
   the start of a playing track is decoded ahead to `--start-burst-secs` (8 s by default) without
-  waiting for the player's reads, and the decoded heads of files that players read again stay in
-  a quarter of the cache. Machines that decode faster are unchanged. `--start-burst 0` turns it off;
+  waiting for the player's reads. Machines that decode faster are unchanged. `--start-burst 0` turns it off;
   the container takes `SACDFS_START_BURST` and `SACDFS_START_BURST_SECS`. Output bytes are unchanged.
   Why and what was measured: docs/design.md, "Players' start-up bursts on slow CPUs".
 
@@ -39,6 +38,13 @@ All notable changes to sacdfs are recorded here. The format follows
   a Ryzen 9 3950X is unchanged. Output bytes are unchanged. Not yet: 6-channel WAV reads on that
   Intel CPU, still about 5 % slower than 0.6.5. Why 6: docs/design.md, "Why frames are decoded
   in groups".
+- **A player that re-reads an album's heads at each start no longer has them decoded again (#456).**
+  A network player re-reads the first 0.6 to 1.6 MiB and the last bytes of every file of an album
+  each time it starts a track. The playing track's read-ahead had evicted those frames, so every
+  start decoded them again: on a 4-thread Atom, 3 to 4 s of its CPU in the seconds the player was
+  filling its buffer, which made it glitch for about 10 s. The frames a read takes from a file's
+  first 2 MiB of audio or its last frame now stay in the cache, evicted after every other frame,
+  within half of it. Output bytes are unchanged.
 - **No second's wait just after the start-of-track decode-ahead on a slow CPU (#456).** On a
   4-thread Atom that converts 6-channel DST to WAV at about 1.07 times real time, a player
   starting a track reads right behind the decode-ahead. When it ended, a read halfway through the
