@@ -2670,6 +2670,17 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   the CPU has it (#23); v3 compiles the rest of sacdfs and scarletbook for AVX2 as well. The
   v3 build is tested on the runner only if its CPU is x86-64-v3, and the release stops
   otherwise.
+- **32-bit x86 (#488): static `i686-unknown-linux-musl`, `-C target-cpu=pentium4`.** *Owner
+  decision:* official builds for 32-bit Atom NAS units, after a user ran test builds on an ASUSTOR
+  AS-302T (#456). *Why this target:* it is the build those test runs used, and a static binary
+  runs whatever C library and glibc version 32-bit NAS firmware ships; Pentium 4 means SSE2 at
+  most, which every 32-bit Atom has (SSE3 and SSSE3 code appears only in the crypto crates'
+  CPU-checked paths). *Trade-off accepted:* musl's malloc, measured above at 1.25 to 2.6 times
+  slower on x86_64 and, in the #456 test builds, 3.5 to 4.2 % slower than glibc on full-track DST
+  reads; there is no other build these systems can run. Tested like the others (the whole suite on
+  the x86_64 runner, which runs it natively), and the packaged binary must serve the corpus with
+  the x86_64 build's bytes. No installer or image support: the installer still stops on 32-bit
+  systems.
 - **Rust from rustup** (the version the other workflows use): the tested toolchain should be the
   shipped one.
 - **Each build is tested as built:** on its native runner (aarch64 on an arm64 runner), the whole

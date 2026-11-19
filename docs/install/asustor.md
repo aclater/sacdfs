@@ -8,7 +8,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 ## What you need
 
-- An ASUSTOR NAS with an Intel or AMD chip (`uname -m` in step 1 prints `x86_64`).
+- An ASUSTOR NAS with an Intel or AMD chip (`uname -m` in step 1 prints `x86_64`). On a 32-bit model (it prints `i686`, as the AS-302T does), use the `i686` archive from 0.7.1 on: `i686` in place of `x86_64` in the file names below ([32-bit x86](binary.md#32-bit-x86); these steps were not run with it).
 - An administrator login over SSH. SSH is a way to type commands on the NAS from another computer.
 - A folder of SACD images on the NAS. This page uses `/volume1/music`; change it to yours.
 - About 100 MB free on `/volume1`.

@@ -7,6 +7,8 @@
 #     sacdfs-<version>-aarch64-linux.tar.gz, each with COPYING,
 #     README.md, CHANGELOG.md, sacdfs-ctl, sacdfs.service, sacdfs.conf.example, install.sh and
 #     nas-compose.yaml, a .sha256 checksum and a build provenance attestation;
+#   - a static 32-bit x86 binary (#488), sacdfs-<version>-i686-linux.tar.gz, with the same files
+#     but install.sh and nas-compose.yaml, a .sha256 checksum and an attestation;
 #   - two macOS archives (#420), sacdfs-<version>-aarch64-macos.tar.gz (Apple Silicon) and
 #     sacdfs-<version>-x86_64-macos.tar.gz (Intel), each with sacdfs-nfs (the mount, over the
 #     Mac's own NFS client), sacdfs (verify and tags), COPYING, README.md, CHANGELOG.md and
@@ -327,6 +329,104 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # 32-bit x86 (#488), for 32-bit NAS units such as Atom-based ones: a static
+  # i686-unknown-linux-musl binary for Pentium 4 and later (SSE2 at most), so it needs no C
+  # library on the system (docs/design.md, "Release binaries and image"). Same zig and
+  # cargo-zigbuild as above. The x86_64 runner runs it natively: the whole test suite (FUSE
+  # included), then the packaged binary must serve the corpus with the x86_64 build's bytes.
+  # No install.sh or nas-compose.yaml in its archive: the installer stops on 32-bit systems and
+  # the image has no 32-bit build.
+  binary-i686:
+    name: binary (i686)
+    needs: [preflight, binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      TARGET: i686-unknown-linux-musl
+      ZIG_VERSION: 0.16.0
+      ZIG_SHA256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+      CARGO_ZIGBUILD_VERSION: 0.24.0
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust, zig, cargo-zigbuild and fusermount3
+        run: |
+          rustup toolchain install "$RUST_STABLE" --profile minimal --target "$TARGET"
+          rustup default "$RUST_STABLE"
+          zig="zig-x86_64-linux-$ZIG_VERSION"
+          curl -sSfL --proto =https --tlsv1.2 -o "$RUNNER_TEMP/$zig.tar.xz" \
+            "https://ziglang.org/download/$ZIG_VERSION/$zig.tar.xz"
+          echo "$ZIG_SHA256  $RUNNER_TEMP/$zig.tar.xz" | sha256sum -c
+          tar -C "$RUNNER_TEMP" -xJf "$RUNNER_TEMP/$zig.tar.xz"
+          echo "$RUNNER_TEMP/$zig" >> "$GITHUB_PATH"
+          cargo install --locked cargo-zigbuild --version "$CARGO_ZIGBUILD_VERSION"
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+          ls -l /dev/fuse
+          # The runner's paths are left out of the binary.
+          echo "RUSTFLAGS=-C target-cpu=pentium4 -C target-feature=+crt-static --remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$GITHUB_WORKSPACE=/sacdfs" >> "$GITHUB_ENV"
+      - name: Build and test, static (FUSE tests required)
+        env:
+          SACDFS_FUSE_TESTS: "1"
+        run: |
+          zig version
+          cargo zigbuild --release --locked --bin sacdfs --target "$TARGET"
+          cargo-zigbuild test --release --locked --target "$TARGET"
+      - name: Static 32-bit, stripped
+        run: |
+          bin="target/$TARGET/release/sacdfs"
+          file "$bin"
+          file "$bin" | grep -q 'ELF 32-bit LSB executable, Intel'
+          if readelf -l "$bin" | grep -q INTERP || readelf -d "$bin" | grep -q NEEDED; then
+            echo "::error::the binary is not static"; exit 1
+          fi
+          if readelf -S "$bin" | grep -q '\.symtab'; then
+            echo "::error::the binary is not stripped"; exit 1
+          fi
+      - name: Package
+        run: |
+          pkg="sacdfs-$VERSION-i686-linux"
+          mkdir -p "dist/$pkg"
+          install -m 0755 "target/$TARGET/release/sacdfs" "dist/$pkg/sacdfs"
+          install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
+          install -m 0755 deploy/sacdfs-ctl "dist/$pkg/"
+          install -m 0644 deploy/systemd/sacdfs.service deploy/sacdfs.conf.example "dist/$pkg/"
+          # Reproducible: fixed order, owner and times (the commit's), no gzip timestamp.
+          mtime=$(git log -1 --format=%ct)
+          tar -C dist --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$mtime" \
+            -cf - "$pkg" | gzip -n -9 > "dist/$pkg.tar.gz"
+          (cd dist && sha256sum "$pkg.tar.gz" > "$pkg.tar.gz.sha256" && cat "$pkg.tar.gz.sha256")
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: corpus-sha256
+          path: ${{ runner.temp }}/x86_64
+      - name: The packaged binary serves the corpus with the x86_64 build's bytes
+        run: |
+          mkdir -p /tmp/check /tmp/mnt
+          tar -C /tmp/check -xzf "dist/$PKG.tar.gz"
+          bin="/tmp/check/$PKG/sacdfs"
+          "$bin" --version
+          "$bin" tests/corpus/images /tmp/mnt 2> /tmp/serve.log
+          status=0
+          python3 -I deploy/check-share.py tests/corpus/manifest.json /tmp/mnt --min 400 --wav || status=$?
+          (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /tmp/i686.sha256
+          fusermount3 -u /tmp/mnt
+          [[ $status == 0 ]] || exit $status
+          wc -l "$RUNNER_TEMP/x86_64/host.sha256" /tmp/i686.sha256
+          cmp "$RUNNER_TEMP/x86_64/host.sha256" /tmp/i686.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: bin-i686
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   # macOS (#420): built and tested on the matching runner, then the packaged sacdfs-nfs
   # mounts the corpus with the Mac's own NFS client (tests/macos-nfs.sh).
   macos:
@@ -476,7 +576,7 @@ jobs:
   # come from the same server as the archive.
   installer:
     name: installer, with the archives' checksums
-    needs: [preflight, binaries]
+    needs: [preflight, binaries, binary-i686]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
@@ -493,8 +593,8 @@ jobs:
         run: |
           mkdir -p installer
           sh .github/scripts/stamp-installer.sh "$VERSION" dist deploy/install.sh installer/install.sh
-          # All three builds, and the one the installer downloads on each processor.
-          for a in x86_64 x86_64-v3 aarch64; do
+          # All four builds (the installer itself stops on i686, #488).
+          for a in x86_64 x86_64-v3 aarch64 i686; do
             grep -q "^[0-9a-f]\{64\}  sacdfs-$VERSION-$a-linux\.tar\.gz\$" installer/install.sh
           done
           (cd installer && sha256sum install.sh > install.sh.sha256 && cat install.sh.sha256)
@@ -815,7 +915,7 @@ jobs:
   dry-run:
     name: dry run summary
     if: github.ref_type != 'tag'
-    needs: [preflight, binaries, macos, windows, image, installer, packages-test, srpm-test]
+    needs: [preflight, binaries, binary-i686, macos, windows, image, installer, packages-test, srpm-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -861,7 +961,7 @@ jobs:
   release:
     name: GitHub release
     if: github.ref_type == 'tag'
-    needs: [preflight, binaries, macos, windows, image, installer, packages-test, srpm-test]
+    needs: [preflight, binaries, binary-i686, macos, windows, image, installer, packages-test, srpm-test]
     runs-on: ubuntu-latest
     permissions:
       # Creating the release and uploading its assets.
@@ -944,6 +1044,7 @@ jobs:
             echo "- \`sacdfs-$VERSION-x86_64-linux.tar.gz\`: generic x86-64, for any x86_64 CPU."
             echo "- \`sacdfs-$VERSION-x86_64-v3-linux.tar.gz\`: x86-64-v3 (AVX2, most Intel and AMD CPUs since about 2015): about 20 % less CPU for WAV files. It stops with an illegal-instruction error on older CPUs."
             echo "- \`sacdfs-$VERSION-aarch64-linux.tar.gz\`: aarch64 (64-bit ARM)."
+            echo "- \`sacdfs-$VERSION-i686-linux.tar.gz\`: 32-bit x86 (Pentium 4, Atom and later), static: it needs no C library. Install it by hand ([binary guide](https://github.com/$GH_REPO/blob/main/docs/install/binary.md#32-bit-x86)); the installer and the image are 64-bit only."
             echo
             v=${VERSION/-/\~}
             echo "Linux packages of the binaries above, x86_64 and aarch64 (\`/usr/bin/sacdfs\` and a systemd unit, not enabled; they need fuse3; not signed with a package key: check the \`.sha256\` and the attestation; [packages guide](https://github.com/$GH_REPO/blob/main/docs/install/packages.md)):"

@@ -6,7 +6,18 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Release builds for 32-bit x86 (#488).** Each release has `sacdfs-<version>-i686-linux.tar.gz`,
+  a static build for Pentium 4, Atom and later (SSE2), with its `.sha256`, attestation and
+  `SHA256SUMS` line, for 32-bit NAS units such as the ASUSTOR AS-302T (#456). It needs no C library.
+  The installer and the container image stay 64-bit only. CI runs the test suite on i686, and the
+  release checks that the packaged binary serves the test corpus with the x86_64 build's bytes. See
+  docs/install/binary.md, "32-bit x86".
+
 ### Fixed
+- **The default listing budget no longer wraps on 32-bit builds (#488).** Under a memory limit
+  above about 10.6 GiB, the budget for listed images (3/8 of the limit) overflowed a 32-bit
+  `usize` and became tiny; it now saturates.
 - **6-channel DST on 20-thread CPUs (#493).** A batch of frames is now decoded in groups from 6
   frames per decoder thread (was 8). 6-channel DSF batches on a 20-thread CPU fell just under 8
   and were decoded frame by frame, which scarletbook 0.6.0 does about 11 % slower than 0.5.x: the
