@@ -1193,13 +1193,10 @@ const BUFFERS_AT_ONCE: usize = 16;
 /// Frames of a batch per decoder thread from which frames are decoded in groups: see
 /// [`group_size`].
 ///
-/// *Why 6, not 8 (#493):* a 6-channel read hands the decoders batches of about 150 frames.
-/// With 8, a 20-thread CPU (7 or 8 frames per thread) decoded them one by one, and
-/// scarletbook 0.6.0 decodes a lone 6-channel frame 12 % slower than 0.5.x but a group about as
-/// fast: one P-core decoded 6 channels 37 % faster in groups. On that CPU (i9-13900H) a real
-/// disc's multichannel area now takes 12 % less time. A 32-thread CPU (Ryzen 9 3950X, 4 or 5
-/// frames per thread) still decodes them one by one, which is faster there: grouped, it was
-/// 13 % slower, because two SMT threads on one core already overlap two frames.
+/// *Why 6, not 8 (#493):* 6-channel DSF reads come in batches of about 150 frames, 7 per
+/// thread on 20 threads, which 8 left ungrouped; scarletbook 0.6.0 decodes a lone 6-channel
+/// frame about 11 % slower than 0.5.x. On 32 threads (4 to 5 per thread) grouping is slower:
+/// docs/design.md, "Why frames are decoded in groups".
 const GROUPS_FROM: usize = 6;
 
 /// How many frames of a batch of `n` to decode together on one of `threads` threads: the

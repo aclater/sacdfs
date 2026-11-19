@@ -1203,9 +1203,24 @@ the difference between a one-thread read through the mount and the library's own
 stereo took 45.1 s frame by frame against 33.4 s for the library, and 34.3 s in groups. A batch
 ends with its slowest job, though, and a group takes longer than a frame, so with many threads
 and short batches grouping made reads slower (4.15 to 4.65 s for 50 minutes of stereo, with
-batches of 75 frames on 32 threads). So a batch is grouped only with at least 8 frames per
-thread (`GROUPS_FROM`). This replaces 0.4.0's one frame per job, chosen when grouping made no
-measurable difference to all-thread reads with the shorter window.
+batches of 75 frames on 32 threads). So a batch is grouped only with at least 6 frames per
+thread (`GROUPS_FROM`; 8 until #493). This replaces 0.4.0's one frame per job, chosen when
+grouping made no measurable difference to all-thread reads with the shorter window.
+
+*Why 6 frames per thread, not 8 (#493):* 6-channel DSF reads come in batches of about 150
+frames. On a 20-thread CPU (i9-13900H) that is 7 per thread, so with 8 they were decoded one by
+one, and scarletbook 0.6.0 decodes a lone 6-channel frame about 11 % slower than 0.5.x (a group
+about as fast). On one thread, groups decode 6 channels 36 % faster than single frames on a
+P-core of that CPU, 27 % on an E-core and 21 % on a Ryzen 9 3950X; a real disc's multichannel
+area now reads 10 % faster on all 20 threads. On the 3950X's 32 threads a batch is 4 or 5
+frames per thread and stays ungrouped, which is faster there: grouped it took 13 % longer,
+because the batch ends with its slowest group and two SMT threads per core leave a group little
+to gain. *Alternatives:* 4 or 2 (as fast on the 20-thread CPU, 13 % slower on the 32-thread
+one); choosing by measuring both ways at run time. *Trade-off:* the threshold comes from two
+CPUs and today's batch sizes. WAV reads of 6 channels come in batches of about 100 frames, 4 to
+5 per thread on 20 threads, and stay ungrouped: grouping them would make them 6 % faster there,
+but the same frames per thread are the 32-thread case that grouping makes slower, so no
+threshold serves both; that needs the run-time choice.
 
 *Why demultiplexing overlaps decoding (#210):* the thread reading the batch demultiplexes and
 hands frames to the pool as it finds them (`in_place_scope`), so the decoder threads no longer

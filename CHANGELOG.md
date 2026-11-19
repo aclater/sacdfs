@@ -6,6 +6,16 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **6-channel DST on 20-thread CPUs (#493).** A batch of frames is now decoded in groups from 6
+  frames per decoder thread (was 8). 6-channel DSF batches on a 20-thread CPU fell just under 8
+  and were decoded frame by frame, which scarletbook 0.6.0 does about 11 % slower than 0.5.x: the
+  cause of 0.7.0's slower multichannel reads on a hybrid Intel CPU. On an i9-13900H a real disc's
+  multichannel DSF files now read 10 % faster than with 0.7.0 (and 7 to 8 % faster than 0.6.5);
+  a Ryzen 9 3950X is unchanged. Output bytes are unchanged. Not yet: 6-channel WAV reads on that
+  Intel CPU, still about 5 % slower than 0.6.5. Why 6: docs/design.md, "Why frames are decoded
+  in groups".
+
 ## [0.7.0] - 2026-11-19
 
 Tested as release candidates 0.7.0-rc.1 and 0.7.0-rc.2; the results are in docs/test-plan.md
