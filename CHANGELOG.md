@@ -6,6 +6,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0-rc.2] - 2026-11-19
+
+A read trace (`-vv`) with a replay script, and the start-of-track decode-ahead now also starts
+for players that read a track's head in a probe before they play it (#489); a read of a DSF
+file's tag no longer turns read-ahead off. The replay script no longer hangs on files that open
+and close in the same millisecond (#492). The gate results are in docs/test-plan.md.
+
 ### Added
 - **A read trace (#456).** `-vv`, or `RUST_LOG=info,sacdfs::trace=debug` alone, logs a short line
   per open, read and close of a file, with what each read waited for, and when the start-of-track
@@ -1900,7 +1907,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.2...HEAD
+[0.7.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.1...v0.7.0-rc.2
 [0.7.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0-rc.1
 [0.6.5]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5
 [0.6.5-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5-rc.1
