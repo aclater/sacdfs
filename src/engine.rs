@@ -1192,7 +1192,12 @@ const BUFFERS_AT_ONCE: usize = 16;
 
 /// Frames of a batch per decoder thread from which frames are decoded in groups: see
 /// [`group_size`].
-const GROUPS_FROM: usize = 8;
+///
+/// *Why 6, not 8 (#493):* 6-channel DSF reads come in batches of about 150 frames, 7 per
+/// thread on 20 threads, which 8 left ungrouped; scarletbook 0.6.0 decodes a lone 6-channel
+/// frame about 11 % slower than 0.5.x. On 32 threads (4 to 5 per thread) grouping is slower:
+/// docs/design.md, "Why frames are decoded in groups".
+const GROUPS_FROM: usize = 6;
 
 /// How many frames of a batch of `n` to decode together on one of `threads` threads: the
 /// decoder's best (`dst::lanes`) in a batch long enough for each thread to take several
@@ -1363,7 +1368,11 @@ mod tests {
     fn groups_only_in_long_batches() {
         let best = scarletbook::dst::lanes(2);
         assert_eq!(group_size(14, 1, 2), best);
-        assert_eq!(group_size(7, 1, 2), 1);
+        assert_eq!(group_size(6, 1, 2), best);
+        assert_eq!(group_size(5, 1, 2), 1);
+        // A 6-channel batch on 20 threads (#493) and on 32.
+        assert_eq!(group_size(150, 20, 6), scarletbook::dst::lanes(6));
+        assert_eq!(group_size(150, 32, 6), 1);
         assert_eq!(group_size(75, 32, 2), 1);
         assert_eq!(group_size(445, 32, 2), best);
         assert_eq!(group_size(8, 0, 2), best);
