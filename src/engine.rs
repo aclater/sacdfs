@@ -376,8 +376,11 @@ struct CacheInner {
 }
 
 impl CacheInner {
-    fn get(&mut self, key: &Key) -> Option<&Arc<Frame>> {
-        if self.lru.contains(key) { self.lru.get(key) } else { self.heads.get(key) }
+    fn get(&mut self, key: &Key) -> Option<Arc<Frame>> {
+        if let Some(f) = self.lru.get(key) {
+            return Some(f.clone());
+        }
+        self.heads.get(key).cloned()
     }
 
     /// Takes out the least recently used frame, of `lru` first.
@@ -511,7 +514,7 @@ impl FrameCache {
     }
 
     fn get(&self, key: &Key) -> Option<Arc<Frame>> {
-        self.lock().get(key).cloned()
+        self.lock().get(key)
     }
 
     /// Keeps these frames, if cached, among the heads: evicted after every other frame, while
@@ -800,14 +803,14 @@ impl Engine {
     /// Timeline positions `[first, end)` of an area, if all of them are cached.
     pub fn cached(&self, disc: &Disc, area: usize, first: u32, end: u32) -> Option<Vec<Arc<Frame>>> {
         let mut g = self.cache.lock();
-        (first..end).map(|t| g.get(&Self::key(disc, area, t)).cloned()).collect()
+        (first..end).map(|t| g.get(&Self::key(disc, area, t))).collect()
     }
 
     /// PCM frames of timeline positions `[first, end)` of an area, if all of them are
     /// cached.
     pub fn cached_pcm(&self, disc: &Disc, area: usize, first: u32, end: u32) -> Option<Vec<Arc<Frame>>> {
         let mut g = self.cache.lock();
-        (first..end).map(|t| g.get(&Self::pcm_key(disc, area, t)).cloned()).collect()
+        (first..end).map(|t| g.get(&Self::pcm_key(disc, area, t))).collect()
     }
 
     /// Bytes of PCM per frame of `channels` channels with the engine's settings.
