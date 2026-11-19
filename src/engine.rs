@@ -816,7 +816,8 @@ impl Engine {
     }
 
     /// Keeps the cached frames of timeline positions `[first, end)` among the heads
-    /// ([`FrameCache::keep`]): DSD frames, or PCM frames if `pcm`.
+    /// (evicted after every other frame, within half the cache): DSD frames, or PCM frames if
+    /// `pcm`.
     pub fn keep_heads(&self, disc: &Disc, area: usize, pcm: bool, first: u32, end: u32) {
         self.cache.keep(
             (first..end).map(|t| if pcm { Self::pcm_key(disc, area, t) } else { Self::key(disc, area, t) }),
