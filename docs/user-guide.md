@@ -1070,3 +1070,19 @@ milliseconds since the mount started; times in a line are milliseconds too.
 
 Ten minutes of 6-channel DSF read in 128 KiB requests log about 10,000 trace lines (1.2 MB);
 `-vv` adds about as many lines from the FUSE library, one per request.
+
+**Replaying a trace.** `scripts/trace-replay.py` sends the opens, reads and closes of a trace
+to another mount with the trace's timing: each request as long after the last reply its file had
+as in the trace, so a faster mount gets the next one sooner. It prints the read times of one
+open file (`--play`, its `r=` number) and how a player buffering it would have fared: when its
+audio could start and how long it stalled. `--help` says how traced files map to the mount's.
+
+```sh
+sacdfs -vv --log-file /tmp/sacdfs-trace.log /music/Example.iso /mnt/sacd   # then play
+scripts/trace-replay.py /tmp/sacdfs-trace.log --play 12                     # the trace's own numbers
+scripts/trace-replay.py /tmp/sacdfs-trace.log /mnt/sacd --play 12           # replayed on a mount
+scripts/trace-replay.py /tmp/sacdfs-trace.log --anonymise session.trace.gz  # no names or paths
+```
+
+`tests/fixtures/traces/session-456.trace.gz` is one recorded session, anonymised: a network
+player on a 32-bit Atom NAS starting 6-channel DSF and WAV tracks from stopped (#456).
