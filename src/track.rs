@@ -335,6 +335,11 @@ pub const HEAD_WINDOW: u64 = 1 << 20;
 /// small), and 12 s no better.
 pub const START_AHEAD_FRAMES: u32 = 8 * 75;
 
+/// Bytes of a file's audio from its start whose frames a read keeps in the cache as its head
+/// ([`crate::engine::FrameCache::keep`], #456): a network player's probe of a 6-channel DSF
+/// file reads its first 1.6 MiB.
+const HEAD_KEEP: u64 = 2 << 20;
+
 /// Most frames the start-of-track decode-ahead decodes past the furthest frame read
 /// ([`Reader::start_ahead`]), and less with fewer than 4 decoder threads: a slice. *Why bounded:*
 /// a reader that stops (a scanner reading more than its head) has those decoded for nothing. A
@@ -1433,6 +1438,30 @@ impl Reader {
 
     /// Frames `[k0, k1)` of the file, for a read (`for_read`) or for read-ahead.
     fn decoded(
+        &self,
+        engine: &Engine,
+        k0: u32,
+        k1: u32,
+        for_read: bool,
+    ) -> Result<Vec<Arc<Frame>>, ReadError> {
+        let frames = self.decoded_frames(engine, k0, k1, for_read)?;
+        // A read of the head or the last frame: keep those frames (#456).
+        if for_read {
+            let f = &self.file;
+            let head = ((HEAD_KEEP / (f.byte_rate() as u64 / 75).max(1)) as u32).min(f.layout.frames);
+            let pcm = matches!(f.audio, Audio::Wav(_));
+            if k0 < head {
+                engine.keep_heads(&f.disc, f.area, pcm, f.start_frame + k0, f.start_frame + k1.min(head));
+            }
+            let last = f.layout.frames.saturating_sub(1);
+            if k1 > last && k1 > head {
+                engine.keep_heads(&f.disc, f.area, pcm, f.start_frame + k0.max(last), f.start_frame + k1);
+            }
+        }
+        Ok(frames)
+    }
+
+    fn decoded_frames(
         &self,
         engine: &Engine,
         k0: u32,

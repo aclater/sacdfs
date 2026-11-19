@@ -1592,6 +1592,21 @@ decoding them twice.
   it would already be decoded); decoding only part of the head (the head is decoded once,
   and it is the reads' own frames).
 
+- **The heads and tails that readers read stay in the cache (#456).** The frames a read takes
+  from a file's first 2 MiB of audio, or its last frame, go to a second LRU list of the frame
+  cache, evicted only when no other frame is left, while it holds at most half the cache; past
+  that, its least recently read frames go back to the main list as the first to be evicted. A
+  frame decoded again replaces its kept copy. *Why:* a network player (a Zidoo over SMB in the
+  trace) re-reads the heads (1.6 MiB of each 6-channel DSF file, 0.6 MiB of each WAV file) and
+  tails of all the album's files each time it starts a track, and waits for them before it reads
+  much of the track it plays. The playing track's read-ahead had evicted them, so on a 4-thread
+  Atom every start decoded 13 to 15 MB of heads again, 3 to 4 s of its CPU, and the player read
+  its track at half real time for 8 s. *Why half:* an album of 12 tracks as 6-channel DSF and WAV
+  has about 27 MiB of heads; the rest of a 64 MiB cache still holds the start-of-track
+  decode-ahead (a quarter) and the free reserve. *Alternatives:* a separate cache on top of
+  `--cache-mb` (more memory than asked for); keeping them on disk (writes on every scan);
+  lowering the priority of the decode-ahead (the CPU is still short: the heads alone need it).
+
 - **The start of a track is decoded ahead in slices (#481).** A reader whose first read of audio
   was within the decode-ahead's frames below, and whose reads go on in order past the head
   window above, starts a *start-of-track decode-ahead*: one job that decodes the next frames into the cache, a
