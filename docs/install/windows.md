@@ -298,10 +298,10 @@ time.
 
 ## Details
 
-- **What was checked with 0.7.0-rc.1 and rc.2:** steps 1 to 7 as a standard user on Windows 11
-  in a VM (checksum, unpack, drive letter, Explorer, Ctrl+C): all 186 files of five real discs,
-  and two RF64 files over 4 GiB, hash like the Linux build's read. Explorer's Title and Album
-  columns show accented titles. A SOURCE ending in a backslash, a drive root and a `subst` drive
+- **What was checked with 0.7.0-rc.1:** steps 1 to 7 as a standard user on Windows 11 in a VM
+  (checksum, unpack, drive letter, Explorer, Ctrl+C): all 186 files of five real discs, and two
+  RF64 files over 4 GiB, hash like the Linux build's read. Explorer's Title and Album columns
+  show accented titles. With 0.7.0-rc.2: checksum, unpack, mount and the same hashes. A SOURCE ending in a backslash, a drive root and a `subst` drive
   mount through WinFsp.Launcher.
 - **What was checked with 0.6.5:** the steps above as a standard user, with the 0.6.5 release zip, on
   Windows 11 25H2 (build 26200) and Windows 10 22H2 (build 19045) in VMs, not on physical
