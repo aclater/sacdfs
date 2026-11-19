@@ -1037,3 +1037,36 @@ goes to the journal: `journalctl -u sacdfs`.
 
 Bugs are reported as in [CONTRIBUTING.md](../CONTRIBUTING.md#reporting-a-bug), with the
 `-f -vv` log.
+
+### Tracing reads
+
+When playback stutters, the read trace shows what the player asked for and what each read
+waited for. `-vv` turns it on with the rest of the debug log; `RUST_LOG=info,sacdfs::trace=debug`
+turns on only the trace. Off, it costs one comparison per request. Each line starts with the
+milliseconds since the mount started; times in a line are milliseconds too.
+
+```text
+[... DEBUG sacdfs::trace] 100.3 open fh=1 r=0 pid=3925367 size=750993795 "SICX-10020 HD.iso #1 6ch .dsf"
+[... DEBUG sacdfs::trace] 114.2 read fh=1 off=0 len=131072 miss q=0.0 sw=0.0 dec=16.2
+[... DEBUG sacdfs::trace] 320.2 start-ahead r=0 start: frames 42-297
+[... DEBUG sacdfs::trace] 279.5 read fh=1 off=1048576 len=131072 miss q=8.7 sw=0.0 dec=32.1 ahead=start 42-74
+[... DEBUG sacdfs::trace] 328.3 read fh=1 off=1310720 len=131072 miss q=0.0 sw=92.6 dec=0.1
+[... DEBUG sacdfs::trace] 421.2 read fh=1 off=1572864 len=131072 hit q=0.0 sw=0.0 dec=7.1
+[... DEBUG sacdfs::trace] 1250.0 start-ahead r=0 stop: end at 297
+[... DEBUG sacdfs::trace] 2001.2 ahead r=0 frames 297-429 took=751.0
+[... DEBUG sacdfs::trace] 12202.8 close fh=1 r=0
+```
+
+- `open`, `close`: a file opened or closed; `r` numbers the open file in the `start-ahead` and
+  `ahead` lines, `pid` is the process that opened it (Samba's, say).
+- `read`: timed at its arrival, written at its reply. `hit` if its audio was decoded already;
+  `q` the wait for a free request thread, `sw` the wait for the start-of-track decode-ahead,
+  `dec` the rest (decoding, or waiting for frames another read is decoding); `got` when it
+  returned less than asked (the end of the file), `failed` when it failed; `ahead` the frames
+  (75 per second) it had decoded ahead.
+- `start-ahead`: the start-of-track decode-ahead ([deployment.md](deployment.md#starting-playback-on-a-slow-cpu))
+  starting, not starting and why, and stopping and why. `ahead`: a later window of read-ahead
+  and how long it took.
+
+Ten minutes of 6-channel DSF read in 128 KiB requests log about 10,000 trace lines (1.2 MB);
+`-vv` adds about as many lines from the FUSE library, one per request.

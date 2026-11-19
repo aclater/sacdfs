@@ -36,6 +36,7 @@ pub mod serve;
 pub mod sidecar;
 pub mod tags;
 pub mod tags_cli;
+pub mod trace;
 pub mod track;
 pub mod track_ranges;
 pub mod tree;

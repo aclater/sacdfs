@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **A read trace (#456).** `-vv`, or `RUST_LOG=info,sacdfs::trace=debug` alone, logs a short line
+  per open, read and close of a file, with what each read waited for, and when the start-of-track
+  decode-ahead starts or stops and why. It is off otherwise. See docs/user-guide.md, "Tracing
+  reads".
+
 ## [0.7.0-rc.1] - 2026-11-19
 
 Linux `.rpm` and `.deb` packages and macOS archives in the release itself, the start of a track
