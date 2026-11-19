@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Release builds for 32-bit x86 (#488).** Each release has `sacdfs-<version>-i686-linux.tar.gz`,
+  a static build for Pentium 4, Atom and later (SSE2), with its `.sha256`, attestation and
+  `SHA256SUMS` line, for 32-bit NAS units such as the ASUSTOR AS-302T (#456). It needs no C library.
+  The installer and the container image stay 64-bit only. CI runs the test suite on i686, and the
+  release checks that the packaged binary serves the test corpus with the x86_64 build's bytes. See
+  docs/install/binary.md, "32-bit x86".
+
 ## [0.7.0] - 2026-11-19
 
 Tested as release candidates 0.7.0-rc.1 and 0.7.0-rc.2; the results are in docs/test-plan.md

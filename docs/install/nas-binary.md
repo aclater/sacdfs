@@ -12,7 +12,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 - **Root.** The commands below run as root, the all-powerful account. `id -u` must print `0`. If it prints another number, type `sudo -i`, enter your password, and check again.
 - **Your data volume's path.** The examples use `/volume1` (Synology, ASUSTOR, UGREEN). TerraMaster uses `/Volume1`, ReadyNAS `/data`, and QNAP a shared folder such as `/share/CACHEDEV1_DATA/Multimedia`. Replace `/volume1` everywhere with yours.
 - **A folder of images.** The examples use `/volume1/music`; sacdfs looks for `.iso` files there and in every folder below it.
-- **An Intel or AMD chip:** `uname -m` prints `x86_64`. (`aarch64` archives exist; no ARM NAS was checked.)
+- **An Intel or AMD chip:** `uname -m` prints `x86_64`. (`aarch64` archives exist; no ARM NAS was checked. If it prints `i686`, a 32-bit system, use the `i686` archive from 0.7.1 on, `i686` in place of `x86_64` in the file names: [32-bit x86](binary.md#32-bit-x86).)
 
 ## Steps
 
