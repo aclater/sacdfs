@@ -6,6 +6,14 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0-rc.1] - 2026-11-19
+
+Linux `.rpm` and `.deb` packages and macOS archives in the release itself, the start of a track
+decoded ahead for cold starts on slow CPUs, `tags fetch --acoustid`, `verify` for gapless
+chains, scarletbook 0.6.1, and fixes for Windows, 32-bit builds, the systemd unit and NFS
+listings. WAV `INFO` tags are now Windows-1252 (`WAV_VERSION` 5), so WAV files show a new mtime
+once. The gate results are in docs/test-plan.md ("Results: 0.7.0 gate").
+
 ### Added
 - **The start of a track is decoded ahead (#481).** When a player starts a track from stopped, its
   first seconds are decoded in slices on all decoder threads as its reads come in, rather than a
@@ -1869,7 +1877,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.1...HEAD
+[0.7.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0-rc.1
 [0.6.5]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5
 [0.6.5-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5-rc.1
 [0.6.4]: https://github.com/aclater/sacdfs/compare/v0.6.3...v0.6.4
