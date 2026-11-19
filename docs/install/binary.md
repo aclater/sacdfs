@@ -9,7 +9,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
 
 ## What you need
 
-- A Linux computer (x86_64 or aarch64) and a terminal on it.
+- A Linux computer (x86_64 or aarch64; 32-bit x86: [see below](#32-bit-x86)) and a terminal on it.
 - A folder with your SACD images (`.iso` files). The examples use `~/music/sacd-images`.
 - `fusermount3`, which lets a normal user mount (package `fuse3`). Root needs nothing.
 
@@ -99,7 +99,7 @@ More: [the user guide](../user-guide.md) (running it, fstab, systemd, troublesho
 
 ### Binaries
 
-Each [release](https://github.com/aclater/sacdfs/releases) has three builds:
+Each [release](https://github.com/aclater/sacdfs/releases) has these builds:
 
 - `sacdfs-<version>-x86_64-linux.tar.gz`: generic x86-64, for any x86_64 CPU. Its WAV converter
   already uses AVX2 where the CPU has it.
@@ -108,6 +108,7 @@ Each [release](https://github.com/aclater/sacdfs/releases) has three builds:
   DST areas read 10 to 18 % faster ([performance](../performance.md#straight-reads)). On an older
   CPU it stops with an illegal-instruction error. `grep -qw avx2 /proc/cpuinfo && echo v3` tells.
 - `sacdfs-<version>-aarch64-linux.tar.gz`: 64-bit ARM.
+- `sacdfs-<version>-i686-linux.tar.gz`: 32-bit x86, from 0.7.1 ([32-bit x86](#32-bit-x86)).
 
 Each archive holds `sacdfs`, `sacdfs-ctl`, `sacdfs.service`, `sacdfs.conf.example`, `COPYING`,
 `README.md` and `CHANGELOG.md` (0.5.0 and earlier: no `sacdfs-ctl`, `sacdfs.service` or
@@ -142,6 +143,27 @@ Sigstore) shows this repository's release workflow built it, and from which comm
 `gh attestation verify` also accepts the `.intoto.jsonl` bundle next to each archive, with `--bundle`,
 to check offline. On TerraMaster TOS, `install` is a different program: use `cp`
 ([the NAS steps](nas-binary.md)).
+
+### 32-bit x86
+
+From 0.7.1, `sacdfs-<version>-i686-linux.tar.gz` is a static build for 32-bit x86 CPUs from the
+Pentium 4 and Atom on (SSE2), such as Atom-based NAS units where `uname -m` prints `i686`. It needs
+no C library, so the glibc 2.17 floor above doesn't apply; FUSE is needed as above. Its archive has
+no `install.sh` or `nas-compose.yaml`: the installer and the container image are 64-bit only, so
+install it by hand with [the NAS steps](nas-binary.md), `i686` in place of `x86_64` in the file
+names. DST decoding takes about 2.3 to 2.5 times the CPU time of the x86_64 build on the same core.
+
+On a kernel older than 3.16 with system call auditing on (`auditd` running), starting any current
+static program can crash the kernel (CVE-2014-4508), and sacdfs is no exception: check that no
+`auditd` runs before the first start.
+
+*Checked:* in CI, the whole test suite on every pull request, and on each release the packaged
+binary serves the test corpus with the x86_64 build's bytes. Before 0.7.1, the same build on an
+i9-13900H served the corpus (910 files) and three real discs (94 DSF and WAV files) with the bytes
+of the x86_64 build. Test builds of the same recipe ran on an ASUSTOR AS-302T (Atom D2700, ADM) in
+[#456](https://github.com/aclater/sacdfs/issues/456), and on CentOS 7 i386 (kernel 3.10) in a VM,
+where the audit crash above was seen. Not checked: other 32-bit systems, and multichannel WAV
+playing in real time on an Atom.
 
 ### From source
 

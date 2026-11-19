@@ -294,7 +294,8 @@ processor other than 64-bit x86-64 or aarch64 (also for the container route), a 
 that runs 32-bit programs (Raspberry Pi OS 32-bit on a Pi 4 or 5 reports `aarch64`), a glibc
 older than 2.17 or musl instead of glibc (for the binary; the container brings its own), no
 `/dev/fuse` that `modprobe fuse` can load, or `--method compose` with no Docker or Podman that
-answers. It then prints a short block of system details and a link to the
+answers. (On 32-bit x86, install the `i686` archive by hand from 0.7.1 on:
+[32-bit x86](binary.md#32-bit-x86).) It then prints a short block of system details and a link to the
 [unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml):
 paste the block there to ask for that system. After a download, it still tries the binary
 before installing it, and stops the same way if it doesn't start. A Mac or Windows PC gets the
