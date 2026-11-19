@@ -4,9 +4,10 @@ This shows your SACD images as a drive letter of DSF and WAV files on a Windows 
 player on that PC can open. About 10 minutes. To play the discs from a NAS instead, install
 sacdfs on the NAS ([install guide](README.md)) and open its share from Windows.
 
-Checked with the 0.6.5 release zip, following these steps as a standard (non-administrator)
-user, on Windows 11 25H2 and Windows 10 22H2 in VMs (x64), not on physical hardware, with WinFsp
-2.1. See [Details](#details).
+Checked with the 0.7.0 release candidates' zips, following these steps as a standard
+(non-administrator) user, on Windows 11 25H2 in a VM (x64), not on physical hardware, with WinFsp
+2.1; Windows 10 22H2 and the service, logon task and NAS steps were last checked with 0.6.5. See
+[Details](#details).
 
 ## What you need
 
@@ -39,14 +40,14 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
    ```powershell
    cd $HOME\Downloads
-   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.5/sacdfs-0.6.5-x86_64-windows.zip
-   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.6.5/sacdfs-0.6.5-x86_64-windows.zip.sha256
+   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.0/sacdfs-0.7.0-x86_64-windows.zip
+   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.0/sacdfs-0.7.0-x86_64-windows.zip.sha256
    ```
 
 3. **Check the download.**
 
    ```powershell
-   (Get-FileHash sacdfs-0.6.5-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.6.5-x86_64-windows.zip.sha256).Split(" ")[0]
+   (Get-FileHash sacdfs-0.7.0-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.7.0-x86_64-windows.zip.sha256).Split(" ")[0]
    ```
 
    *You should see* `True`. If you see `False`, delete both files and download them again.
@@ -54,7 +55,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 4. **Unpack it into your programs folder.**
 
    ```powershell
-   Expand-Archive sacdfs-0.6.5-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
+   Expand-Archive sacdfs-0.7.0-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
    Unblock-File $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe
    ```
 
@@ -297,7 +298,12 @@ time.
 
 ## Details
 
-- **What was checked:** the steps above as a standard user, with the 0.6.5 release zip, on
+- **What was checked with 0.7.0-rc.1 and rc.2:** steps 1 to 7 as a standard user on Windows 11
+  in a VM (checksum, unpack, drive letter, Explorer, Ctrl+C): all 186 files of five real discs,
+  and two RF64 files over 4 GiB, hash like the Linux build's read. Explorer's Title and Album
+  columns show accented titles. A SOURCE ending in a backslash, a drive root and a `subst` drive
+  mount through WinFsp.Launcher.
+- **What was checked with 0.6.5:** the steps above as a standard user, with the 0.6.5 release zip, on
   Windows 11 25H2 (build 26200) and Windows 10 22H2 (build 19045) in VMs, not on physical
   hardware: the launcher (as a user and as SYSTEM), the logon task across a restart, a Windows
   service (Windows 11), a NAS share as SOURCE (path and mapped drive), hibernating with the drive

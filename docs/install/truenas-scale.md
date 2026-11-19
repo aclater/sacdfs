@@ -19,7 +19,7 @@ Checked on 0.6.3 on TrueNAS SCALE 25.10.8, in a VM, through the API call behind 
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.6.5
+       image: ghcr.io/aclater/sacdfs:0.7.0
        restart: unless-stopped
        devices:
          - /dev/fuse
