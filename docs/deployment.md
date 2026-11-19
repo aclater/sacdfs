@@ -273,6 +273,8 @@ All settings are environment variables.
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | (32, or 16 under a limit below 256 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
 | `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
+| `SACDFS_START_BURST` | (3.5) | `--start-burst`: how fast players read a track they start, in times real time; `0` turns off what sacdfs does when it measures that it decodes slower than that ([Starting playback on a slow CPU](#starting-playback-on-a-slow-cpu)) |
+| `SACDFS_START_BURST_SECS` | (8) | `--start-burst-secs`: seconds of audio decoded ahead when a track starts playing |
 | `SACDFS_THREADS` | (one per CPU, at most one per 64 MiB of a limit) | `--threads`: DST decoder threads. On a NAS that also serves other things, fewer threads keep decoding from crowding them out |
 | `SACDFS_MAX_OPEN_IMAGES` | (64) | `--max-open-images`: image files kept open between reads |
 | `SACDFS_REQUEST_TIMEOUT` | (30) | `--request-timeout` in seconds: a read, lookup or listing that waits longer for the images (a stalled disk or share) fails with an I/O error, and is logged, instead of hanging the SMB or NFS client; `0` waits for good. See [Troubleshooting](#troubleshooting) |

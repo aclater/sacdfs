@@ -167,6 +167,25 @@ its own mount, never one started on the same path since.
 **CPU code paths.** The WAV converter (scarletbook-pcm) picks its code when it starts: AVX2 and
 FMA where the CPU has them, SSE2 otherwise, with the same output bit for bit.
 
+### Slow CPUs and players starting a track
+
+Many players read a track faster than real time while they start it, to fill their buffer:
+mpv about 3.5 times for its first 30 s, and FFmpeg-based players (Kodi, Jellyfin, Plex, VLC, many
+network players) after a probe of the file's head. Some re-read the heads of every file in the
+folder at the same moment. sacdfs measures, as it serves, how fast it decodes each format and
+channel count. Where that is slower than `--start-burst` (3.5 times real time by default), as for
+multichannel DST on a 32-bit Atom NAS, it:
+- keeps the decoded heads of files (their first 2 MiB) in a quarter of the cache, so that a player
+  re-reading an album's heads is served without decoding them again;
+- decodes the start of a playing track (`--start-burst-secs`, 8 s by default, within a quarter of
+  the cache) without waiting for the player's reads.
+
+On any machine, a reader of a file's head gets no read-ahead while another file starts or plays,
+and does not start its own decode-ahead while another file starts. A machine that decodes faster
+than `--start-burst` changes nothing else. `--start-burst 0` turns the slow-machine part off. The
+log's read trace (`-vv`) shows `slow: to frame N at once` when it applies. What it measured:
+[deployment guide](deployment.md#starting-playback-on-a-slow-cpu).
+
 ## Formats
 
 ### DSF files

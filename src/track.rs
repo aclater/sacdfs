@@ -225,6 +225,8 @@ pub struct Traffic {
     done: Condvar,
     /// Start-of-track decode-aheads running now ([`START_RUNNING_MAX`]).
     starting: std::sync::atomic::AtomicUsize,
+    /// Readers whose start-of-track decode-ahead is active ([`Traffic::others_starting`]).
+    started: Mutex<Vec<u64>>,
 }
 
 impl Default for Traffic {
@@ -235,6 +237,7 @@ impl Default for Traffic {
             decoding: Mutex::default(),
             done: Condvar::default(),
             starting: std::sync::atomic::AtomicUsize::new(0),
+            started: Mutex::default(),
         }
     }
 }
@@ -244,6 +247,21 @@ impl Traffic {
     fn yield_to_players(&self) {
         let g = self.decoding.lock().unwrap_or_else(|p| p.into_inner());
         drop(self.done.wait_timeout_while(g, YIELD_MAX, |n| *n > 0).unwrap_or_else(|p| p.into_inner()));
+    }
+
+    /// Notes that reader `id`'s start-of-track decode-ahead is active (`true`) or not.
+    fn set_started(&self, id: u64, active: bool) {
+        let mut v = self.started.lock().unwrap_or_else(|p| p.into_inner());
+        v.retain(|&r| r != id);
+        if active {
+            v.push(id);
+        }
+    }
+
+    /// Whether a reader other than `id` is starting a track: its start-of-track decode-ahead is
+    /// active.
+    fn others_starting(&self, id: u64) -> bool {
+        self.started.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|&r| r != id)
     }
 
     /// Marks a player's decoding until the guard drops.
@@ -334,6 +352,17 @@ pub const HEAD_WINDOW: u64 = 1 << 20;
 /// worse worst reads than 8 s (the window after it came while the player's buffer was still
 /// small), and 12 s no better.
 pub const START_AHEAD_FRAMES: u32 = 8 * 75;
+
+/// A reader whose reads all end within this many bytes after the file's header has read only
+/// its head ([`Reader::head_only`], #503). *Why this far:* a player that re-reads the heads of an
+/// album's files reads 1.6 MB of each DSF file and 0.6 MB of each WAV file; Roon's import reads
+/// 768 KiB. A player starting a track goes past it within a second or two of audio.
+pub const HEAD_SCAN: u64 = 2 << 20;
+
+/// On a machine too slow for players' start-up bursts ([`Reader::slow`]), the start-of-track
+/// decode-ahead runs to its end without waiting for the reads, and stops when the reader has
+/// not read for this long (an NFS client never closes).
+const START_IDLE_SLOW: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Most frames the start-of-track decode-ahead decodes past the furthest frame read
 /// ([`Reader::start_ahead`]), and less with fewer than 4 decoder threads: a slice. *Why bounded:*
@@ -579,17 +608,24 @@ impl TrackFile {
         }
     }
 
-    /// The end of the start-of-track decode-ahead (#481): [`START_AHEAD_FRAMES`], within the
-    /// file and a quarter of a cache of `cache_bytes` (the decode-ahead can get that far ahead
-    /// of the reads). 0 if that quarter can't hold what it decodes past the furthest read
-    /// (`start_lead`) and a slice of `slice` frames.
-    pub fn start_ahead_frames(&self, cache_bytes: usize, lead: u32, slice: u32) -> u32 {
+    /// The end of the start-of-track decode-ahead (#481): `secs` seconds of audio
+    /// ([`START_AHEAD_FRAMES`] by default, `--start-burst-secs`), within the file and a quarter
+    /// of a cache of `cache_bytes` (the decode-ahead can get that far ahead of the reads). 0 if
+    /// that quarter can't hold what it decodes past the furthest read (`start_lead`) and a slice
+    /// of `slice` frames.
+    pub fn start_ahead_frames(&self, cache_bytes: usize, lead: u32, slice: u32, secs: u32) -> u32 {
         let frame = (self.byte_rate() as u64 / 75).max(1);
         let quarter = cache_bytes as u64 / 4 / frame;
         if quarter < u64::from(lead) + u64::from(slice) {
             return 0;
         }
-        quarter.min(u64::from(START_AHEAD_FRAMES)).min(u64::from(self.layout.frames)) as u32
+        quarter.min(u64::from(secs) * 75).min(u64::from(self.layout.frames)) as u32
+    }
+
+    /// The end of the file's head ([`HEAD_SCAN`]): frames (file indices) before it.
+    fn head_frames(&self) -> u32 {
+        let h = self.header_len();
+        self.frames_for(h, h.saturating_add(HEAD_SCAN)).1
     }
 
     /// The share of a quarter of the cache, in frames, of one of `readers` reading for
@@ -948,6 +984,10 @@ struct StartAhead {
     done: u32,
     /// Slices taken so far.
     slices: u32,
+    /// On a slow machine ([`Reader::slow`]): it runs to `end` without waiting for reads.
+    race: bool,
+    /// When the reader last read, for `race`.
+    last_read: Option<std::time::Instant>,
     /// A slice failed to decode (for the trace).
     failed: bool,
 }
@@ -1007,6 +1047,7 @@ impl Drop for Reader {
         if let Some(traffic) = self.counted.get() {
             traffic.fast.forget(self.id);
             traffic.players.forget(self.id);
+            traffic.set_started(self.id, false);
         }
     }
 }
@@ -1053,7 +1094,32 @@ impl Reader {
 
     fn stop_start(&self) {
         self.start.lock().unwrap_or_else(|p| p.into_inner()).active = false;
+        self.not_starting();
         self.start_more.notify_all();
+    }
+
+    /// Notes that its start-of-track decode-ahead is not active any more.
+    fn not_starting(&self) {
+        if let Some(traffic) = self.counted.get() {
+            traffic.set_started(self.id, false);
+        }
+    }
+
+    /// Whether this machine decodes the file's format slower than players read at the start of
+    /// a track (`--start-burst`, #504), as measured so far. Not until measured: a machine fast
+    /// enough changes nothing.
+    fn slow(&self, engine: &Engine) -> bool {
+        let burst = engine.start_burst().rate;
+        burst > 0.0
+            && engine
+                .rates()
+                .rate(self.file.format() == Format::Wav, self.file.layout.channels)
+                .is_some_and(|r| r < burst)
+    }
+
+    /// Whether the reader has read only the file's head so far ([`HEAD_SCAN`]).
+    fn head_only(&self, s: &Seq) -> bool {
+        s.max_end <= self.file.header_len().saturating_add(HEAD_SCAN)
     }
 
     /// Bytes `[offset, offset + len)` of the file (fewer at its end), and the frames (file
@@ -1090,6 +1156,15 @@ impl Reader {
             self.wait_for_start(engine, k0, k1);
         }
         let frames = if k0 < k1 { self.decoded(engine, k0, k1, true)? } else { Vec::new() };
+        // On a slow machine, a file's head stays decoded for the players that read it again
+        // (#503).
+        if k0 < k1
+            && offset < f.header_len().saturating_add(HEAD_SCAN)
+            && self.slow(engine)
+            && k1 <= f.head_frames()
+        {
+            engine.keep_head(&f.disc, f.area, f.format(), f.start_frame + k0, f.start_frame + k1);
+        }
         let data = f.assemble(offset, len, k0, &frames);
         // Read ahead only after reads of audio: a tagger reading the header or the tags must
         // not make the file decode (and convert) its first seconds in the background.
@@ -1179,6 +1254,7 @@ impl Reader {
                 st.active = false;
                 let done = st.done;
                 drop(st);
+                self.1.set_started(self.0.id, false);
                 self.0.start_more.notify_all();
                 self.1.starting.fetch_sub(1, Ordering::Relaxed);
                 crate::trace_line!("start-ahead r={} stop: {} at {done}", self.0.id, self.2);
@@ -1195,6 +1271,7 @@ impl Reader {
             if starting.fetch_add(1, Ordering::Relaxed) >= START_RUNNING_MAX {
                 starting.fetch_sub(1, Ordering::Relaxed);
                 st.active = false;
+                engine.traffic().set_started(self.id, false);
                 crate::trace_line!("start-ahead r={} stop: {START_RUNNING_MAX} running already", self.id);
                 return;
             }
@@ -1214,6 +1291,11 @@ impl Reader {
                         } else {
                             "jump or close"
                         };
+                        st.active = false;
+                        return;
+                    }
+                    if st.race && st.last_read.is_some_and(|t| t.elapsed() >= START_IDLE_SLOW) {
+                        running.2 = "idle";
                         st.active = false;
                         return;
                     }
@@ -1302,12 +1384,21 @@ impl Reader {
         engine: &Engine,
         s: &mut Seq,
         sequential: bool,
+        slow: bool,
         k0: u32,
         k1: u32,
     ) -> Option<Option<ReadAhead>> {
         let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
-        let end =
-            || self.file.start_ahead_frames(engine.cache().cap(), start_lead(engine), slice_frames(engine));
+        let now = std::time::Instant::now();
+        st.last_read = Some(now);
+        let end = || {
+            self.file.start_ahead_frames(
+                engine.cache().cap(),
+                start_lead(engine),
+                slice_frames(engine),
+                engine.start_burst().secs,
+            )
+        };
         if s.audio_reads == 1 {
             // Not only from frame 0 (#456): a player's earlier opens of the file (probes reading
             // its head) leave that head in the kernel's page cache (`FOPEN_KEEP_CACHE`), so the
@@ -1343,6 +1434,14 @@ impl Reader {
             if !sequential || head {
                 return None;
             }
+            // Nor, for now, a reader of a file's head from its start while another file starts
+            // (#503): it is most likely a player re-reading the album's heads, which would take
+            // turns with the track starting. It may start once that one has, or once past the
+            // head. *Why not one that began past the start:* that is how a player's handle
+            // begins after its probe (#456), and it must not wait for a scanner's.
+            if st.from == 0 && self.head_only(s) && engine.traffic().others_starting(self.id) {
+                return None;
+            }
             st.eligible = false;
             // Beside a player, a reader not yet judged reads ahead little (#363): a copy starting
             // there looks the same as a player.
@@ -1355,7 +1454,15 @@ impl Reader {
                 crate::trace_line!("start-ahead r={} no: another reader plays", self.id);
                 return None;
             }
-            *st = StartAhead { active: true, next: k1, end, ..StartAhead::default() };
+            *st = StartAhead {
+                active: true,
+                from: st.from,
+                next: k1,
+                end,
+                last_read: Some(now),
+                ..StartAhead::default()
+            };
+            engine.traffic().set_started(self.id, true);
             crate::trace_line!("start-ahead r={} start: frames {k1}-{end}", self.id);
         } else if !st.active {
             // Done or stopped: the read-ahead goes on from where it got.
@@ -1370,16 +1477,27 @@ impl Reader {
             // a longer window:* a local player filling its buffer reads 4 MiB faster than 1.5
             // times real time and counts as one; its next read waited for that whole window.
             st.active = false;
+            engine.traffic().set_started(self.id, false);
             crate::trace_line!("start-ahead r={} stopping: a jump to frame {k0}", self.id);
             drop(st);
             self.start_more.notify_all();
             return None;
         }
+        // On a slow machine, to the end at once (#504) from a reader that began past the start (a
+        // player's handle after its probe) or is past the head: a player that fills its buffer
+        // faster than the machine decodes waits for every frame not decoded ahead, and one that
+        // reads slowly at first (busy with other files) asks for more later. *Why not within the
+        // head of a reader from the start:* that is how a player re-reading an album's heads
+        // reads, and it closes the file a moment later.
+        if slow && !st.race && (st.from > 0 || !self.head_only(s)) {
+            st.race = true;
+            st.target = st.end;
+            crate::trace_line!("start-ahead r={} slow: to frame {} at once", self.id, st.end);
+        }
         let lead = start_lead(engine);
         st.target = st.target.max(st.end.min(k1.saturating_add(lead)));
         self.start_more.notify_all();
         // Planned again if a plan has not started its job within START_IDLE: it was dropped.
-        let now = std::time::Instant::now();
         if st.running || st.planned.is_some_and(|t| now.saturating_duration_since(t) < START_IDLE) {
             return Some(None);
         }
@@ -1596,7 +1714,8 @@ impl Reader {
         } else {
             traffic.players.forget(self.id);
         }
-        if let Some(start) = self.plan_start(engine, &mut s, sequential, k0, k1) {
+        let slow = self.slow(engine);
+        if let Some(start) = self.plan_start(engine, &mut s, sequential, slow, k0, k1) {
             return start;
         }
         if !sequential {
@@ -1609,6 +1728,13 @@ impl Reader {
         if s.started
             .is_some_and(|(_, at)| s.max_end <= at.saturating_add(HEAD_WINDOW.max(KERNEL_FIRST_WINDOW)))
         {
+            return None;
+        }
+        // Nor a reader of a file's head while another file starts or plays (#503): a player
+        // re-reading the heads of an album's files as a track starts. Its read-ahead (2 s of each
+        // file on a slow machine, 1.5 to 3 s of the whole CPU per rescan) came when the track
+        // starting needed the CPU.
+        if self.head_only(&s) && (traffic.others_starting(self.id) || traffic.players.any_but(self.id, now)) {
             return None;
         }
         let frames = self.file.layout.frames;
@@ -2010,6 +2136,9 @@ mod tests {
         engine.traffic().players.note_since(player, now, now, None);
         let fresh = Reader::new(f.clone());
         fresh.plan_read_ahead(&engine, 0, 128 << 10, 0, 1);
+        // Within the file's head, nothing (#503); past it, a few frames.
+        assert!(fresh.plan_read_ahead(&engine, past, past + (128 << 10), 0, 1).is_none(), "head");
+        let past = HEAD_SCAN + (128 << 10);
         let ahead = fresh.plan_read_ahead(&engine, past, past + (128 << 10), 0, 1).unwrap();
         assert_eq!(ahead.end - ahead.first, UNJUDGED_WINDOW.min(f.layout.frames - 1), "beside a player");
         assert!(!fresh.player.load(Ordering::Relaxed));
@@ -2171,6 +2300,115 @@ mod tests {
         reader.plan_read_ahead(engine, HEAD_WINDOW, HEAD_WINDOW + (128 << 10), 1, 2)
     }
 
+    /// An engine on which every format decodes slower (or faster) than players' start-up bursts,
+    /// whatever reads measure.
+    fn slow_or_fast(slow: bool) -> Engine {
+        let rate = if slow { 1e9 } else { 1e-9 };
+        Engine::new(2, 32 << 20).unwrap().with_start_burst(crate::engine::StartBurst { rate, secs: 8 })
+    }
+
+    /// On a machine too slow for players' start-up bursts (#504), the start-of-track decode-ahead
+    /// of a reader from the start goes a slice past the reads within the file's head
+    /// (`HEAD_SCAN`), as on a fast one, and to its end at once past it; a reader that began past
+    /// the start (a player's handle after its probe) has it go to its end at once.
+    #[test]
+    fn a_slow_machine_decodes_the_start_to_its_end_at_once() {
+        let tree = corpus();
+        for format in [Format::Dsf, Format::Wav] {
+            let f = longest(&tree, format);
+            for slow in [false, true] {
+                let engine = slow_or_fast(slow);
+                engine.rates().set(format == Format::Wav, f.layout.channels, 1.5);
+                let reader = Reader::new(f.clone());
+                let at_window = plan_start_past_the_head(&engine, &reader);
+                assert!(at_window.is_some_and(|a| a.start), "{format:?}: {at_window:?}");
+                assert!(!reader.start.lock().unwrap().race, "{format:?}: within the head");
+                // In order past the head (a WAV file's header is longer).
+                let h = f.header_len() + HEAD_SCAN;
+                let mut off = HEAD_WINDOW + (128 << 10);
+                while off < h {
+                    reader.plan_read_ahead(&engine, off, off + (128 << 10), 2, 3);
+                    off += 128 << 10;
+                }
+                let st = reader.start.lock().unwrap();
+                assert_eq!(st.race, slow, "{format:?}");
+                assert_eq!(st.target == st.end, slow, "{format:?}: {st:?}");
+                drop(st);
+
+                // A player's handle after its probe: its first read of audio is 1.5 MiB in.
+                let reader = Reader::new(f.clone());
+                let at = 1536 << 10;
+                assert!(reader.plan_read_ahead(&engine, at, at + (128 << 10), 1, 2).is_none());
+                let mut off = at + (128 << 10);
+                let mut next = None;
+                while next.is_none() && off < at + (8 << 20) {
+                    next = reader.plan_read_ahead(&engine, off, off + (128 << 10), 2, 3);
+                    off += 128 << 10;
+                }
+                assert!(next.is_some_and(|a| a.start), "{format:?}: {next:?}");
+                assert_eq!(reader.start.lock().unwrap().race, slow, "{format:?}");
+            }
+        }
+    }
+
+    /// A reader of a file's head from its start (#503) does not start its decode-ahead while
+    /// another file starts, and reads ahead nothing beside a file starting or a player; it starts
+    /// once the other has.
+    #[test]
+    fn a_head_reader_beside_a_file_starting_waits() {
+        let tree = corpus();
+        let f = longest(&tree, Format::Dsf);
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        let other = u64::MAX;
+        engine.traffic().set_started(other, true);
+        let reader = Reader::new(f.clone());
+        assert!(plan_start_past_the_head(&engine, &reader).is_none(), "deferred");
+        assert!(reader.start.lock().unwrap().eligible, "not refused");
+        let next =
+            reader.plan_read_ahead(&engine, HEAD_WINDOW + (128 << 10), HEAD_WINDOW + (256 << 10), 2, 3);
+        assert!(next.is_none(), "{next:?}");
+        engine.traffic().set_started(other, false);
+        let started =
+            reader.plan_read_ahead(&engine, HEAD_WINDOW + (256 << 10), HEAD_WINDOW + (384 << 10), 3, 4);
+        assert!(started.is_some_and(|a| a.start), "{started:?}");
+        assert!(engine.traffic().others_starting(other) && !engine.traffic().others_starting(reader.id()));
+        reader.close();
+        assert!(!engine.traffic().others_starting(other), "closed");
+
+        // Beside a player, a reader of the head reads ahead nothing; past the head it does.
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        engine.traffic().players.note(other, std::time::Instant::now());
+        let reader = Reader::new(f.clone());
+        assert!(plan_start_past_the_head(&engine, &reader).is_none());
+        let head =
+            reader.plan_read_ahead(&engine, HEAD_WINDOW + (128 << 10), HEAD_WINDOW + (256 << 10), 2, 3);
+        assert!(head.is_none(), "{head:?}");
+        let past = reader.plan_read_ahead(&engine, HEAD_SCAN, HEAD_SCAN + (128 << 10), 3, 4);
+        assert!(past.is_some_and(|a| !a.start), "{past:?}");
+    }
+
+    /// On a slow machine, the frames of a file's head that a reader reads stay apart in the cache
+    /// (#503); on a fast one, nothing is kept.
+    #[test]
+    fn a_slow_machine_keeps_the_heads_read() {
+        let tree = corpus();
+        for format in [Format::Dsf, Format::Wav] {
+            let f = longest(&tree, format);
+            for slow in [false, true] {
+                let engine = slow_or_fast(slow);
+                engine.rates().set(format == Format::Wav, f.layout.channels, 1.5);
+                let reader = Reader::new(f.clone());
+                let at = f.header_len();
+                let len = (f.size - at).min(256 << 10);
+                let (data, _) = reader.read(&engine, at, len).unwrap();
+                assert_eq!(engine.cache().head_bytes() > 0, slow, "{format:?}");
+                assert_eq!(data, whole(&f)[at as usize..][..data.len()], "{format:?}: the same bytes");
+                let (again, _) = reader.read(&engine, at, len).unwrap();
+                assert_eq!(again, data, "{format:?}");
+            }
+        }
+    }
+
     /// The decode-ahead's end: its frames, within the file, and none if a quarter of the cache
     /// can't hold its lead and a slice.
     #[test]
@@ -2178,9 +2416,9 @@ mod tests {
         let tree = corpus();
         let f = longest(&tree, Format::Dsf);
         let frame = (f.byte_rate() / 75.0) as usize;
-        assert_eq!(f.start_ahead_frames(0, 32, 32), 0, "no cache");
-        assert_eq!(f.start_ahead_frames(4 * frame * 63, 32, 32), 0, "too small for lead and slice");
-        assert_eq!(f.start_ahead_frames(4 * frame * 64, 32, 32), f.layout.frames.min(START_AHEAD_FRAMES));
+        assert_eq!(f.start_ahead_frames(0, 32, 32, 8), 0, "no cache");
+        assert_eq!(f.start_ahead_frames(4 * frame * 63, 32, 32, 8), 0, "too small for lead and slice");
+        assert_eq!(f.start_ahead_frames(4 * frame * 64, 32, 32, 8), f.layout.frames.min(START_AHEAD_FRAMES));
         assert!(f.layout.frames < START_AHEAD_FRAMES, "the corpus's files end first");
     }
 
@@ -2288,7 +2526,8 @@ mod tests {
         for format in [Format::Dsf, Format::Wav] {
             let f = longest(&tree, format);
             let engine = Engine::new(2, 32 << 20).unwrap();
-            let end = f.start_ahead_frames(engine.cache().cap(), start_lead(&engine), slice_frames(&engine));
+            let end =
+                f.start_ahead_frames(engine.cache().cap(), start_lead(&engine), slice_frames(&engine), 8);
             assert!(end > 8, "{format:?}: {end}");
             // Reads of 128 KiB from `from`, the n-th of frame k (the offsets need not match the
             // frames: the corpus's files are shorter than the head).
@@ -2423,6 +2662,8 @@ mod tests {
         assert!(peek(&player).is_none());
         assert!(player.start.lock().unwrap().active, "the tag read stopped it");
 
+        // Closed, so that the next reader of the head need not wait for it (#503).
+        player.close();
         let tag_first = Reader::new(f.clone());
         assert!(peek(&tag_first).is_none());
         assert!(plan_start_past_the_head(&engine, &tag_first).is_some_and(|a| a.start), "tag first");

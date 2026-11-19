@@ -65,6 +65,8 @@ const VALUES: &[&str] = &[
     "pcm_rate",
     "pcm_cutoff",
     "pcm_gain",
+    "start_burst",
+    "start_burst_secs",
     "sidecars",
     "index_cache",
     "max_open_images",
