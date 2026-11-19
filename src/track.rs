@@ -225,8 +225,9 @@ pub struct Traffic {
     done: Condvar,
     /// Start-of-track decode-aheads running now ([`START_RUNNING_MAX`]).
     starting: std::sync::atomic::AtomicUsize,
-    /// Readers whose start-of-track decode-ahead is active ([`Traffic::others_starting`]).
-    started: Mutex<Vec<u64>>,
+    /// Readers whose start-of-track decode-ahead is active, and when that was last noted
+    /// ([`Traffic::others_starting`]).
+    started: Mutex<Vec<(u64, std::time::Instant)>>,
 }
 
 impl Default for Traffic {
@@ -249,19 +250,22 @@ impl Traffic {
         drop(self.done.wait_timeout_while(g, YIELD_MAX, |n| *n > 0).unwrap_or_else(|p| p.into_inner()));
     }
 
-    /// Notes that reader `id`'s start-of-track decode-ahead is active (`true`) or not.
+    /// Notes that reader `id`'s start-of-track decode-ahead is active (`true`: at its start, its
+    /// reads and its slices) or not.
     fn set_started(&self, id: u64, active: bool) {
         let mut v = self.started.lock().unwrap_or_else(|p| p.into_inner());
-        v.retain(|&r| r != id);
+        v.retain(|&(r, _)| r != id);
         if active {
-            v.push(id);
+            v.push((id, std::time::Instant::now()));
         }
     }
 
     /// Whether a reader other than `id` is starting a track: its start-of-track decode-ahead is
-    /// active.
+    /// active, and was noted within [`START_WAIT`]. *Why the bound:* a plan dropped unrun leaves
+    /// it active until the reader reads or closes again, and an NFS client never closes.
     fn others_starting(&self, id: u64) -> bool {
-        self.started.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|&r| r != id)
+        let v = self.started.lock().unwrap_or_else(|p| p.into_inner());
+        v.iter().any(|&(r, at)| r != id && at.elapsed() < START_WAIT)
     }
 
     /// Marks a player's decoding until the guard drops.
@@ -1330,6 +1334,7 @@ impl Reader {
                 engine.traffic().yield_to_players();
             }
             self.let_reads_go_first();
+            engine.traffic().set_started(self.id, true);
             let r = self.decoded(engine, first, end, false);
             let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
             st.done = st.done.max(end);
@@ -1494,6 +1499,7 @@ impl Reader {
             st.target = st.end;
             crate::trace_line!("start-ahead r={} slow: to frame {} at once", self.id, st.end);
         }
+        engine.traffic().set_started(self.id, true);
         let lead = start_lead(engine);
         st.target = st.target.max(st.end.min(k1.saturating_add(lead)));
         self.start_more.notify_all();

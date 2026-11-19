@@ -13,8 +13,21 @@ All notable changes to sacdfs are recorded here. The format follows
   The installer and the container image stay 64-bit only. CI runs the test suite on i686, and the
   release checks that the packaged binary serves the test corpus with the x86_64 build's bytes. See
   docs/install/binary.md, "32-bit x86".
+- **Players starting a track on slow CPUs (#504).** sacdfs now measures how fast it decodes each
+  format and channel count as it serves. Where that is below `--start-burst` (3.5 times real time
+  by default, how fast mpv reads a track it starts), as for multichannel DST on a 32-bit Atom NAS,
+  the start of a playing track is decoded ahead to `--start-burst-secs` (8 s by default) without
+  waiting for the player's reads, and the decoded heads of files that players read again stay in
+  a quarter of the cache. Machines that decode faster are unchanged. `--start-burst 0` turns it off;
+  the container takes `SACDFS_START_BURST` and `SACDFS_START_BURST_SECS`. Output bytes are unchanged.
+  Why and what was measured: docs/design.md, "Players' start-up bursts on slow CPUs".
 
 ### Fixed
+- **Folder rescans no longer take the CPU from a track starting (#503).** A player that re-reads
+  the heads of every file in the folder as it starts a track (seen on a Zidoo) made sacdfs decode
+  each of those files ahead too: up to 3 s of audio per file, or 16 to 150 frames beside the
+  playing track. A reader of a file's first 2 MiB now gets no read-ahead while another file starts
+  or plays, and does not start a decode-ahead while another file starts.
 - **The default listing budget no longer wraps on 32-bit builds (#488).** Under a memory limit
   above about 10.6 GiB, the budget for listed images (3/8 of the limit) overflowed a 32-bit
   `usize` and became tiny; it now saturates.
