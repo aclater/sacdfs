@@ -1578,8 +1578,8 @@ decoding them twice.
   and it is the reads' own frames).
 
 - **The start of a track is decoded ahead in slices (#481).** A reader whose first read of audio
-  was at the start of the file, and whose reads go on in order past the head window above,
-  starts a *start-of-track decode-ahead*: one job that decodes the next frames into the cache, a
+  was within the decode-ahead's frames below, and whose reads go on in order past the head
+  window above, starts a *start-of-track decode-ahead*: one job that decodes the next frames into the cache, a
   slice at a time (two frames per decoder thread, doubling to 8 per thread), up to 8 s of audio,
   within a quarter of the cache. It goes at most 32 frames (a slice with fewer than 4 threads)
   past the furthest read; a read of frames it has not reached yet has it go on to its end and
@@ -1594,6 +1594,27 @@ decoding them twice.
   playback began, and the first second of reads brought half a second of audio. Playback over SMB
   glitched for 5 to 7 s from a cold start on a 32-bit Atom NAS, though it held once running and
   after a pause (#456). Measured: [deployment](deployment.md#starting-playback-on-a-slow-cpu).
+  *Why not only from frame 0 (#456):* a player opens a file several times before it plays it,
+  reading its head (1.5 MiB) and sometimes its tag, and closes it; that head stays in the
+  kernel's page cache (sacdfs keeps the cache across opens), so the reads that reach sacdfs when
+  it plays begin where those probes stopped, 1.5 MiB in, and the decode-ahead never started. A
+  reader whose first read of audio is past the start is past the head only once it has read
+  more than the kernel's first window (256 KiB) and the file's first 1 MiB of audio: a scanner
+  whose head is partly cached still reads within it. A first read past the decode-ahead's end
+  (a seek, or a replay whose first seconds the page cache still holds) starts none.
+  *Why a look at the tag is not a jump (#456):* a player may read a DSF file's tag, after the
+  last frame, between its head and the rest. Counted, it moved the reader's place to the end, so
+  no later read was in order: neither the decode-ahead nor any read-ahead ran for that open file.
+  A read of the last frame that jumps there now leaves the reader's place and any running
+  decode-ahead as they were, and is not its first read of audio. *Why a probe's close still stops
+  it:* a player reading the heads of a whole album to show it opens a dozen files as it starts a
+  track; letting their decode-aheads run on would decode up to 8 s of each. What a probe decoded
+  stays in the cache, and the playing open reads it from there (in the trace, its reads of the
+  frames a probe had decoded half a second before were all hits). *Why the tail is not decoded
+  ahead of a tag look:* in the trace, 24 of 237 opens of DSF files read the tail (4 KiB about 400
+  bytes from the end: the last frame, 20 ms each, median) and 61 read the head; decoding the last
+  frame at each head read would have decoded it 37 times for nothing to save 20 ms of a probe.
+  A WAV file's tags follow its audio, so a look at them decodes nothing (0.1 ms).
   *Why from the reads, not the open:* SMB and NFS servers open files they then only stat, and a
   scanner opens thousands; the first read comes milliseconds after a player's open. *Why past
   the head window, not at the first reads:* starting after 256 KiB made a library import (768 KiB

@@ -11,6 +11,23 @@ All notable changes to sacdfs are recorded here. The format follows
   per open, read and close of a file, with what each read waited for, and when the start-of-track
   decode-ahead starts or stops and why. It is off otherwise. See docs/user-guide.md, "Tracing
   reads".
+- **`scripts/trace-replay.py` (#456).** Replays the opens, reads and closes of a read trace
+  against a mount with the trace's own timing, and prints how a player buffering the played file
+  would have fared; `--anonymise` strips names, paths and process ids. One recorded session from
+  #456 is in tests/fixtures/traces. See docs/user-guide.md, "Tracing reads".
+
+### Fixed
+- **The start-of-track decode-ahead starts when a player's head is cached (#456).** A player that
+  reads a track's head in earlier opens (probes) before it plays has that head served from the
+  page cache, so the reads that reach sacdfs start 1.5 MiB in; the decode-ahead of #481 needed a
+  first read at the start, and never ran. It now starts for a first read within its frames (the
+  first 8 s, within a quarter of the cache), once past the kernel's first window and the file's
+  first 1 MiB of audio. A read of a DSF file's last frame after a jump (a look at the tag) no
+  longer counts as a jump, which had turned off all read-ahead for the rest of that open file.
+  Replayed from the user's trace on slow cores, 6-channel DSF starts lose their one-second wait
+  (worst read 1.07 and 1.10 s → 0.10 and 0.24 s, no stall); 6-channel WAV at 176.4 kHz still
+  stalls there, since those cores make it at 1.4 times real time while the player reads the
+  album's other files (docs/deployment.md, "Starting playback on a slow CPU").
 
 ## [0.7.0-rc.1] - 2026-11-19
 

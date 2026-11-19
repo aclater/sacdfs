@@ -734,6 +734,51 @@ ran without a kill (peak 68 → 68 MiB), and under 256 MiB the player gained as 
 The bytes served are unchanged: 910 corpus files and 94 files of 3 real discs, DSF and WAV, hash the
 same as on main.
 
+**A player that probes first (#456).** A read trace from the Atom NAS (a network player over SMB,
+`-vv`) showed why it still glitched: before it plays a track, the player opens it a few times
+and reads its first 1.5 MiB, and those pages stay in the kernel's page cache, so the playing
+open's reads reached sacdfs only from 1.5 MiB on, and the decode-ahead, which wanted a first read
+at the start, never ran. Since #456 it starts for a first read within its frames once that open
+has read past 256 KiB and the file's first 1 MiB of audio. Replayed with
+`scripts/trace-replay.py` (the trace's opens, reads and closes, the probes of the album's other
+tracks with them, each request sent as long after the last reply as in the trace), on the same
+slow cores with `--threads 4` and `--cache-mb 64` as the NAS ran, medians of 3, main against #456;
+a player is assumed to hold what the probes read, start at 0.5 s of audio and stall when it has
+played all it got:
+
+| Start of | Worst read | Audio by 1 s | Audio by 2 s | Stalled |
+|---|---|---|---|---|
+| DSF, after a probe that read its head | 1.07 → 0.10 s | 1.30 → 2.23 s | 2.72 → 3.59 s | 0.03 → 0 s |
+| DSF, its head read 40 s before | 1.10 → 0.24 s | 1.36 → 1.80 s | 2.35 → 3.28 s | 0.31 → 0 s |
+| WAV, beside the probes of 11 other tracks | 1.57 → 0.34 s | 0.13 → 0.13 s | 0.26 → 0.22 s | 10.3 → 9.8 s |
+| WAV, the same, another album | 1.76 → 0.44 s | 0.17 → 0.17 s | 0.42 → 0.42 s | 8.3 → 8.4 s |
+| WAV, beside probes that read the tag after the head | 0.71 → 0.14 s | 0.13 → 0.13 s | 0.88 → 1.21 s | 4.8 → 4.8 s |
+
+The trace's own numbers on the NAS were close to main's here: a worst read of 1.0 and 1.2 s for
+the DSF starts, 1.7 s for the WAV starts, and 7.5 and 5.7 s stalled for the WAV ones. The 6-channel
+DSF starts lose their one-second wait. The 6-channel WAV starts keep stalling, with a shorter worst
+read: these cores make 6-channel 176.4 kHz WAV at 1.4 times real time (21 s of audio read straight
+in 15.1 s; 13.3 s at `--pcm-rate 88200`, and 10.6 s for the DSF file), and the player went on
+reading the heads of the album's other tracks, DSF and WAV, for 15 s after it started, which the
+same cores decoded too. On the NAS each second of that WAV took 0.9 to 1 s to make while it did.
+In the replay, only the DSF starts played without a stall. In the last row the probes read each
+file's head, then its tag, then more of the head: on main the tag read ended their decode-ahead
+before it began, now five of them start one and stop at their close, and sacdfs's CPU over the
+replay was the same (5.4 → 5.2 s).
+
+What else was checked, main against #456, medians of 3: on the slow cores, the first 128 MiB of
+the 6-channel DST track as DSF took 33.3 → 31.0 s, a library import's reads of 94 files the same
+CPU (13.8 → 13.8 s), and 32 readers of each file's first 2 MiB under a 128 MiB limit ran without a
+kill (55.1 → 53.7 s of CPU, peak 69 → 71 MiB). On 4 and 12 cores of a Ryzen 9 3950X: straight
+reads of the whole track as DSF and WAV took 6.56 → 5.76 s and 7.75 → 6.98 s (the read-ahead
+decisions in the trace were the same line for line; the difference is in the builds), the import's
+reads one file at a time and 8 at once took the same CPU (3.48 → 3.49 s, 3.21 → 3.21 s), and 32 at
+once 14.1 → 13.5 s, peak 99 → 99 MiB. Against 0.6.5 on those 4 cores (release builds, a fresh
+mount each, medians of 6), every corpus DSF file read whole took 0.185 s on 0.6.5, 0.187 s on main
+and 0.191 s with #456 (0.183 to 0.219 s over all runs), and the 6-channel and stereo DST tracks as
+WAV 7.29, 7.03 and 7.05 s and 1.98, 1.90 and 1.95 s. The bytes served are unchanged: 910 corpus files and 94 files
+of 3 real discs, DSF and WAV, hash the same as on main.
+
 ## Running it
 
 ### Docker or Podman

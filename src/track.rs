@@ -915,8 +915,11 @@ struct Seq {
 /// The start-of-track decode-ahead of a reader ([`Reader::start_ahead`]).
 #[derive(Debug, Default)]
 struct StartAhead {
-    /// The reader's first read of audio was of its start, and it has not started yet.
+    /// The reader's first read of audio was within the decode-ahead's frames, and it has not
+    /// started yet.
     eligible: bool,
+    /// The frame (file index) of the reader's first read of audio.
+    from: u32,
     /// From a read past the kernel's first window, after a first read of the start of the
     /// audio, until the reader jumps, closes or pauses, or the decode-ahead reaches `end`.
     active: bool,
@@ -1277,19 +1280,36 @@ impl Reader {
         k1: u32,
     ) -> Option<Option<ReadAhead>> {
         let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
+        let end =
+            || self.file.start_ahead_frames(engine.cache().cap(), start_lead(engine), slice_frames(engine));
         if s.audio_reads == 1 {
-            st.eligible = k0 == 0;
-            if k0 != 0 {
-                crate::trace_line!("start-ahead r={} no: first audio read at frame {k0}", self.id);
+            // Not only from frame 0 (#456): a player's earlier opens of the file (probes reading
+            // its head) leave that head in the kernel's page cache (`FOPEN_KEEP_CACHE`), so the
+            // reads that reach sacdfs when it plays start where they ended, 1.5 MiB in.
+            let end = end();
+            st.eligible = k0 < end;
+            st.from = k0;
+            if !st.eligible {
+                crate::trace_line!(
+                    "start-ahead r={} no: first audio read at frame {k0}, its end is {end}",
+                    self.id
+                );
             }
             return None;
         }
         if st.eligible {
             // Not within a scanner's read of the head (#78), which holds the kernel's read-ahead
-            // of the first read (#32): a tagger or a library import reads it and leaves.
-            let head = s
-                .started
-                .is_some_and(|(_, at)| s.max_end <= at.saturating_add(HEAD_WINDOW.max(KERNEL_FIRST_WINDOW)));
+            // of the first read (#32): a tagger or a library import reads it and leaves. A reader
+            // that began past the start (#456): not within the kernel's read-ahead of its first
+            // read, nor within the file's head, which a scanner reads with part of it cached.
+            let head = s.started.is_some_and(|(_, at)| {
+                if st.from == 0 {
+                    s.max_end <= at.saturating_add(HEAD_WINDOW.max(KERNEL_FIRST_WINDOW))
+                } else {
+                    s.max_end <= at.saturating_add(KERNEL_FIRST_WINDOW)
+                        || s.max_end <= self.file.header_len().saturating_add(HEAD_WINDOW)
+                }
+            });
             if !sequential {
                 st.eligible = false;
                 crate::trace_line!("start-ahead r={} no: a jump to frame {k0} before it started", self.id);
@@ -1300,8 +1320,7 @@ impl Reader {
             st.eligible = false;
             // Beside a player, a reader not yet judged reads ahead little (#363): a copy starting
             // there looks the same as a player.
-            let end =
-                self.file.start_ahead_frames(engine.cache().cap(), start_lead(engine), slice_frames(engine));
+            let end = end();
             if k1 >= end {
                 crate::trace_line!("start-ahead r={} no: read at frame {k1}, its end is {end}", self.id);
                 return None;
@@ -1473,6 +1492,12 @@ impl Reader {
 
     fn plan_read_ahead(&self, engine: &Engine, offset: u64, end: u64, k0: u32, k1: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
+        // A jump to the file's last frame is a look at what follows the audio, as a player
+        // reads a DSF file's tag before it plays (#456): the reads go on from where they were.
+        // Counted, it was a jump, and no later read was in order with it: no read-ahead at all.
+        if k0 > 0 && k1 >= self.file.layout.frames && offset > s.max_end.saturating_add(SEQ_GAP_AHEAD) {
+            return None;
+        }
         // The first read of audio never starts read-ahead: a tagger walking a WAV file's
         // chunks touches the audio once, at the data chunk's header, 256 KiB after the
         // header it read, and must not make the file convert seconds of audio. A player or
@@ -2157,8 +2182,9 @@ mod tests {
         }
     }
 
-    /// A tagger (the head, then the tag), a scanner reading the head, a read of the middle first,
-    /// a reader beside a player and a mount without a cache start none.
+    /// A tagger (the head, then the tag), a scanner reading the head, a read of the middle first
+    /// (past the decode-ahead's frames), a reader beside a player and a mount without a cache
+    /// start none.
     #[test]
     fn only_a_reader_going_on_from_the_start_decodes_it_ahead() {
         let tree = corpus();
@@ -2173,8 +2199,10 @@ mod tests {
         assert!(!starts(&engine, &Reader::new(f.clone()), &head), "a scanner's head");
         let tagger = [(0, 0), (128 << 10, 1), (64 << 20, 20), (HEAD_WINDOW, 2)];
         assert!(!starts(&engine, &Reader::new(f.clone()), &tagger), "a tagger");
+        // The corpus's files are shorter than the decode-ahead: past its end is past theirs.
+        let end = f.layout.frames;
         assert!(
-            !starts(&engine, &Reader::new(f.clone()), &[(HEAD_WINDOW, 1), (HEAD_WINDOW * 2, 2)]),
+            !starts(&engine, &Reader::new(f.clone()), &[(HEAD_WINDOW, end), (HEAD_WINDOW * 2, end + 1)]),
             "the middle"
         );
         let no_cache = Engine::new(2, 0).unwrap();
@@ -2198,6 +2226,81 @@ mod tests {
             0,
             "a reader dropped gives its place back"
         );
+    }
+
+    /// A player whose head is in the page cache from its earlier opens (#456): its first read
+    /// reaching sacdfs is past the start, and it starts the decode-ahead once past the kernel's
+    /// first window and the file's head. A first read past the decode-ahead's end, or reads that
+    /// stay within the head (a scanner with part of the head cached), start none.
+    #[test]
+    fn a_player_whose_head_was_cached_decodes_ahead() {
+        let tree = corpus();
+        for format in [Format::Dsf, Format::Wav] {
+            let f = longest(&tree, format);
+            let engine = Engine::new(2, 32 << 20).unwrap();
+            let end = f.start_ahead_frames(engine.cache().cap(), start_lead(&engine), slice_frames(&engine));
+            assert!(end > 8, "{format:?}: {end}");
+            // Reads of 128 KiB from `from`, the n-th of frame k (the offsets need not match the
+            // frames: the corpus's files are shorter than the head).
+            let plan = |r: &Reader, from: u64, n: u64, k: u32| {
+                let off = from + n * (128 << 10);
+                r.plan_read_ahead(&engine, off, off + (128 << 10), k, k + 1).filter(|a| a.start)
+            };
+            let past_head = f.header_len() + HEAD_WINDOW + (512 << 10);
+
+            let player = Reader::new(f.clone());
+            assert!(plan(&player, past_head, 0, 2).is_none(), "{format:?}: the first read");
+            assert!(plan(&player, past_head, 1, 3).is_none(), "{format:?}: the kernel's first window");
+            let ahead = plan(&player, past_head, 2, 4).expect("started");
+            assert_eq!((ahead.first, player.start.lock().unwrap().end), (5, end), "{format:?}");
+
+            let late = Reader::new(f.clone());
+            assert!(
+                (0..8).all(|n| plan(&late, past_head, n, end + n as u32).is_none()),
+                "{format:?}: past its end"
+            );
+
+            // A scanner reading the head, its first 512 KiB cached.
+            let scanner = Reader::new(f.clone());
+            let from = f.header_len() + (512 << 10);
+            assert!((0..4).all(|n| plan(&scanner, from, n, 2 + n as u32).is_none()), "{format:?}: the head");
+            // Past it, it reads more than a head, and starts.
+            assert!(plan(&scanner, from, 4, 6).is_some(), "{format:?}: past the head");
+        }
+    }
+
+    /// A read of a DSF file's last frame after a jump (a player reading the tag before it
+    /// plays, #456) is not a jump: the reads after it are in order and start the decode-ahead;
+    /// nor does it stop one that runs, or count as the first read of audio.
+    #[test]
+    fn a_look_at_the_tag_is_not_a_jump() {
+        let tree = corpus();
+        let f = longest(&tree, Format::Dsf);
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        let (t0, t1) = f.frames_for(f.size - 412, f.size);
+        assert!(t0 < t1 && t1 == f.layout.frames, "the last bytes hold the last frame: {t0}..{t1}");
+        // The corpus's files are shorter than a jump: the tag read is placed further on.
+        let tag = 64 << 20;
+        let peek = |r: &Reader| r.plan_read_ahead(&engine, tag, tag + 412, t0, t1);
+
+        let player = Reader::new(f.clone());
+        assert!(player.plan_read_ahead(&engine, 0, 128 << 10, 0, 1).is_none());
+        assert!(peek(&player).is_none());
+        let ahead = player.plan_read_ahead(&engine, HEAD_WINDOW, HEAD_WINDOW + (128 << 10), 1, 2);
+        assert!(ahead.is_some_and(|a| a.start), "head, tag, then on: {ahead:?}");
+        assert!(peek(&player).is_none());
+        assert!(player.start.lock().unwrap().active, "the tag read stopped it");
+
+        let tag_first = Reader::new(f.clone());
+        assert!(peek(&tag_first).is_none());
+        assert!(plan_start_past_the_head(&engine, &tag_first).is_some_and(|a| a.start), "tag first");
+
+        // Not a jump to the last frame: the reads after it are not in order.
+        let jumped = Reader::new(f.clone());
+        assert!(jumped.plan_read_ahead(&engine, 0, 128 << 10, 0, 1).is_none());
+        assert!(jumped.plan_read_ahead(&engine, tag, tag + 4096, t0 - 1, t0).is_none());
+        let ahead = jumped.plan_read_ahead(&engine, HEAD_WINDOW, HEAD_WINDOW + (128 << 10), 1, 2);
+        assert!(ahead.is_none(), "a jump elsewhere: {ahead:?}");
     }
 
     /// A reader that closes or jumps stops its decode-ahead before its next slice; and only so
