@@ -934,6 +934,8 @@ struct StartAhead {
     done: u32,
     /// Slices taken so far.
     slices: u32,
+    /// A slice failed to decode (for the trace).
+    failed: bool,
 }
 
 /// A reader's reads in progress, from their arrival to their reply ([`Reader::arrived`]).
@@ -1022,6 +1024,11 @@ impl Reader {
         }
     }
 
+    /// The reader's number, which the read trace names it by ([`crate::trace`]).
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     /// Notes that the file was closed: its start-of-track decode-ahead stops after its slice.
     pub fn close(&self) {
         self.stop_start();
@@ -1040,10 +1047,29 @@ impl Reader {
         offset: u64,
         len: u64,
     ) -> Result<(Vec<u8>, Option<ReadAhead>), ReadError> {
+        self.read_traced(engine, offset, len, None)
+    }
+
+    /// [`Reader::read`], noting in `trace`, if given, whether its audio was in the cache when it
+    /// came and how long it waited for the start-of-track decode-ahead ([`crate::trace`]).
+    pub fn read_traced(
+        &self,
+        engine: &Engine,
+        offset: u64,
+        len: u64,
+        trace: Option<&mut crate::trace::ReadTrace>,
+    ) -> Result<(Vec<u8>, Option<ReadAhead>), ReadError> {
         let f = &self.file;
         let end = offset.saturating_add(len).min(f.size);
         let (k0, k1) = f.frames_for(offset, end);
-        if k0 < k1 {
+        if let Some(t) = trace {
+            t.hit = k0 >= k1 || self.in_cache(engine, k0, k1);
+            let waiting = std::time::Instant::now();
+            if k0 < k1 {
+                self.wait_for_start(engine, k0, k1);
+            }
+            t.start_wait = waiting.elapsed();
+        } else if k0 < k1 {
             self.wait_for_start(engine, k0, k1);
         }
         let frames = if k0 < k1 { self.decoded(engine, k0, k1, true)? } else { Vec::new() };
@@ -1115,16 +1141,18 @@ impl Reader {
     /// files it never reads (an SMB or NFS server opens before it reads), and the first read
     /// comes milliseconds after a player's open.
     fn start_ahead(&self, engine: &Engine) {
-        struct Running<'a>(&'a Reader, &'a Traffic);
+        struct Running<'a>(&'a Reader, &'a Traffic, &'static str);
         impl Drop for Running<'_> {
             fn drop(&mut self) {
                 // Also after a panic: reads must not wait for a job that is gone.
                 let mut st = self.0.start.lock().unwrap_or_else(|p| p.into_inner());
                 st.running = false;
                 st.active = false;
+                let done = st.done;
                 drop(st);
                 self.0.start_more.notify_all();
                 self.1.starting.fetch_sub(1, Ordering::Relaxed);
+                crate::trace_line!("start-ahead r={} stop: {} at {done}", self.0.id, self.2);
             }
         }
         // The job takes its place here, not when planned: a plan may be dropped unrun (`sacdfs
@@ -1138,17 +1166,25 @@ impl Reader {
             if starting.fetch_add(1, Ordering::Relaxed) >= START_RUNNING_MAX {
                 starting.fetch_sub(1, Ordering::Relaxed);
                 st.active = false;
+                crate::trace_line!("start-ahead r={} stop: {START_RUNNING_MAX} running already", self.id);
                 return;
             }
             st.running = true;
         }
-        let _running = Running(self, engine.traffic());
+        let mut running = Running(self, engine.traffic(), "panic");
         let slice = slice_frames(engine);
         loop {
             let (first, end) = {
                 let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
                 loop {
                     if !st.active || st.next >= st.end {
+                        running.2 = if st.active {
+                            "end"
+                        } else if st.failed {
+                            "decode error"
+                        } else {
+                            "jump or close"
+                        };
                         st.active = false;
                         return;
                     }
@@ -1159,6 +1195,7 @@ impl Reader {
                         self.start_more.wait_timeout(st, START_IDLE).unwrap_or_else(|p| p.into_inner());
                     st = g;
                     if waited.timed_out() && st.next >= st.target {
+                        running.2 = "idle";
                         st.active = false;
                         return;
                     }
@@ -1187,6 +1224,7 @@ impl Reader {
             st.done = st.done.max(end);
             if let Err(e) = r {
                 st.active = false;
+                st.failed = true;
                 log::debug!("start-ahead of {}: {e}", self.file.disc.path.display());
             }
             drop(st);
@@ -1241,6 +1279,9 @@ impl Reader {
         let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
         if s.audio_reads == 1 {
             st.eligible = k0 == 0;
+            if k0 != 0 {
+                crate::trace_line!("start-ahead r={} no: first audio read at frame {k0}", self.id);
+            }
             return None;
         }
         if st.eligible {
@@ -1251,6 +1292,7 @@ impl Reader {
                 .is_some_and(|(_, at)| s.max_end <= at.saturating_add(HEAD_WINDOW.max(KERNEL_FIRST_WINDOW)));
             if !sequential {
                 st.eligible = false;
+                crate::trace_line!("start-ahead r={} no: a jump to frame {k0} before it started", self.id);
             }
             if !sequential || head {
                 return None;
@@ -1260,10 +1302,16 @@ impl Reader {
             // there looks the same as a player.
             let end =
                 self.file.start_ahead_frames(engine.cache().cap(), start_lead(engine), slice_frames(engine));
-            if k1 >= end || engine.traffic().players.any_but(self.id, std::time::Instant::now()) {
+            if k1 >= end {
+                crate::trace_line!("start-ahead r={} no: read at frame {k1}, its end is {end}", self.id);
+                return None;
+            }
+            if engine.traffic().players.any_but(self.id, std::time::Instant::now()) {
+                crate::trace_line!("start-ahead r={} no: another reader plays", self.id);
                 return None;
             }
             *st = StartAhead { active: true, next: k1, end, ..StartAhead::default() };
+            crate::trace_line!("start-ahead r={} start: frames {k1}-{end}", self.id);
         } else if !st.active {
             // Done or stopped: the read-ahead goes on from where it got.
             let done = std::mem::take(&mut st.done);
@@ -1277,6 +1325,7 @@ impl Reader {
             // a longer window:* a local player filling its buffer reads 4 MiB faster than 1.5
             // times real time and counts as one; its next read waited for that whole window.
             st.active = false;
+            crate::trace_line!("start-ahead r={} stopping: a jump to frame {k0}", self.id);
             drop(st);
             self.start_more.notify_all();
             return None;
@@ -1324,6 +1373,16 @@ impl Reader {
             Some(engine.traffic().decoding())
         } else {
             None
+        }
+    }
+
+    /// Whether frames `[k0, k1)` of the file are all in the cache (for the trace only).
+    fn in_cache(&self, engine: &Engine, k0: u32, k1: u32) -> bool {
+        let f = &self.file;
+        let (t0, t1) = (f.start_frame + k0, f.start_frame + k1);
+        match f.audio {
+            Audio::Dsf(_) => engine.cached(&f.disc, f.area, t0, t1).is_some(),
+            Audio::Wav(_) => engine.cached_pcm(&f.disc, f.area, t0, t1).is_some(),
         }
     }
 

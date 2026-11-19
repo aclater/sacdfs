@@ -37,7 +37,7 @@ above it.
 | `--request-timeout SECS` | A read, lookup or listing still waiting for the source after `SECS` seconds (default `30`) fails with an I/O error and a log line, instead of hanging its client; other images keep being served. `0` waits for good. |
 | `--stop-grace SECS` | After SIGINT, SIGTERM or SIGHUP, sacdfs detaches the mount at once and keeps serving files clients still hold open for `SECS` seconds (default `10`), then exits even if they are open; their clients get I/O errors. It does not exit while the mount is still in the mount table, so no dead mount is left. `0` waits for the last file to close, however long (the behaviour before this option). Keep the service manager's stop timeout above it: [stopping](user-guide.md#stopping-with-files-open). |
 | `--log-file FILE` | Append the log to `FILE` instead of standard error, at info level unless `-v` says more. Each start first writes a line such as `---- sacdfs 0.7.0 started 2026-11-18T21:30:05Z, pid 1234 ----`, so one session's lines can be told from the last one's. Without it, a background mount logs nowhere, except to the journal under systemd; use it (or `-f`) to see read errors and the `mounted` line ([troubleshooting](user-guide.md#troubleshooting)). |
-| `-v`, `--verbose` | Log more: `-v` info, `-vv` debug. `RUST_LOG` overrides it. |
+| `-v`, `--verbose` | Log more: `-v` info, `-vv` debug, which includes the [read trace](user-guide.md#tracing-reads) (a line per open, read and close). `RUST_LOG` overrides it: `RUST_LOG=info,sacdfs::trace=debug` gives the read trace without the rest of the debug log. |
 | `-h`, `--help` | Print help (`-h` for a summary). |
 | `-V`, `--version` | Print the version. |
 

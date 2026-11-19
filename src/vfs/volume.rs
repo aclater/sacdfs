@@ -234,6 +234,7 @@ impl Volume {
         let meta = Workers::new(4, "sacdfs-meta")?;
         // Read now, while the source has just been walked.
         let size = Arc::new(Mutex::new(ShareSize::of_images(tree.image_bytes(), tree.source())));
+        crate::trace::mark_start();
         Ok(Volume {
             shared: Arc::new(Shared {
                 tree,
@@ -379,6 +380,10 @@ impl Volume {
                 self.requests.spawn(move || {
                     pending.running();
                     let r = read_plain(&file.file, offset, size);
+                    crate::trace_line!(
+                        "read fh={fh} off={offset} len={size} sidecar{}",
+                        if r.is_ok() { "" } else { " failed" }
+                    );
                     let Some(reply) = pending.take() else { return };
                     match r {
                         Ok(data) => reply.data(&data),
@@ -420,6 +425,8 @@ impl Volume {
         };
         // In progress from now, while it may wait for a thread, until after its reply (#357).
         let arrival = reader.arrived();
+        // The read trace (#456): timed only while it is on.
+        let came = crate::trace::enabled().then(std::time::Instant::now);
         let engine = self.engine.clone();
         let pool = self.requests.clone();
         let key = reader.file.disc.path.display().to_string();
@@ -427,9 +434,29 @@ impl Volume {
         let pending = self.watchdog.watch(what, reply);
         self.requests.spawn(move || {
             pending.running();
-            let result = catch_unwind(AssertUnwindSafe(|| reader.read(&engine, offset, u64::from(size))));
+            let mut trace = came.map(|came| crate::trace::ReadTrace {
+                fh,
+                offset,
+                size,
+                queued: came.elapsed(),
+                ..Default::default()
+            });
+            let ran = came.map(|_| std::time::Instant::now());
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                reader.read_traced(&engine, offset, u64::from(size), trace.as_mut())
+            }));
             drop(counted);
-            let Some(reply) = pending.take() else { return };
+            let reply = pending.take();
+            if let (Some(t), Some(came), Some(ran)) = (trace.as_mut(), came, ran) {
+                t.decode = ran.elapsed().saturating_sub(t.start_wait);
+                if let (Ok(Ok((data, ahead))), Some(_)) = (&result, &reply) {
+                    t.got = Some(data.len());
+                    t.ahead = ahead.map(|a| (a.first, a.end, a.start));
+                }
+                // Timed at its arrival, so that the reads show in the order the client sent them.
+                log::debug!(target: crate::trace::TARGET, "{} {t}", crate::trace::at(came));
+            }
+            let Some(reply) = reply else { return };
             match result {
                 Ok(Ok((data, ahead))) => {
                     reply.data(&data);
@@ -437,7 +464,18 @@ impl Volume {
                     crate::track::give_back(data);
                     if let Some(ahead) = ahead {
                         pool.spawn(move || {
+                            let began =
+                                (!ahead.start && crate::trace::enabled()).then(std::time::Instant::now);
                             let _ = catch_unwind(AssertUnwindSafe(|| reader.read_ahead(&engine, ahead)));
+                            if let Some(began) = began {
+                                crate::trace_line!(
+                                    "ahead r={} frames {}-{} took={}",
+                                    reader.id(),
+                                    ahead.first,
+                                    ahead.end,
+                                    crate::trace::Ms(began.elapsed())
+                                );
+                            }
                         });
                     }
                 }
@@ -471,7 +509,10 @@ impl Volume {
     pub fn release(&self, fh: u64) {
         let open = self.shared.handles.lock().unwrap_or_else(|p| p.into_inner()).remove(&fh);
         if let Some((_, Open::Track(reader))) = open {
+            crate::trace_line!("close fh={fh} r={}", reader.id());
             reader.close();
+        } else {
+            crate::trace_line!("close fh={fh}");
         }
     }
 
@@ -786,6 +827,20 @@ impl Shared {
             Node::Dir(_) => return Err(Error::IsDir),
         };
         let fh = self.next_fh.fetch_add(1, Ordering::Relaxed);
+        if crate::trace::enabled() {
+            match &open {
+                Open::Track(r) => crate::trace_line!(
+                    "open fh={fh} r={} pid={pid} size={} \"{}\"",
+                    r.id(),
+                    r.file.size,
+                    crate::trace::short_name(&r.file)
+                ),
+                Open::Sidecar(_, s) => crate::trace_line!(
+                    "open fh={fh} pid={pid} sidecar \"{}\"",
+                    s.target.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+                ),
+            }
+        }
         self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(fh, (ino, open));
         Ok(fh)
     }
