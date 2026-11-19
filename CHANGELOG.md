@@ -8,10 +8,10 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [0.7.0-rc.2] - 2026-11-19
 
-A read trace (`-vv`) with a replay script, and the start-of-track decode-ahead now also starts
+A read trace (`-vv`) with a replay script (#486), and the start-of-track decode-ahead now also starts
 for players that read a track's head in a probe before they play it (#489); a read of a DSF
 file's tag no longer turns read-ahead off. The replay script no longer hangs on files that open
-and close in the same millisecond (#492). The gate results are in docs/test-plan.md.
+and close in the same millisecond (#492). Results: docs/test-plan.md, "Results: 0.7.0-rc.2".
 
 ### Added
 - **A read trace (#456).** `-vv`, or `RUST_LOG=info,sacdfs::trace=debug` alone, logs a short line
