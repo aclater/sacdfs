@@ -235,7 +235,9 @@ def replay(hs, t0, t1, mapping):
     def run(h):
         path, lmap = mapping[h.r]
         # Not before the replayed close that came last before this open in the trace.
-        prev = max((g for g in hs if g.t_close is not None and g.t_close <= h.t_open and g is not h),
+        # Only a file opened before this one: two that open and close in the same millisecond
+        # would otherwise wait for each other.
+        prev = max((g for g in hs[:hs.index(h)] if g.t_close is not None and g.t_close <= h.t_open),
                    key=lambda g: g.t_close, default=None)
         sleep_until(at(h.t_open))
         if prev is not None:
