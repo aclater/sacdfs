@@ -818,6 +818,51 @@ to 8.6 → 0.1 to 0.3 (0.54); WAV 14.3 to 16.1 → 3.6 to 9.5 and 5.8 to 7.3 →
 re-reads beside it, the same client stalled 0 s for DSF and at most 0.4 s for WAV on main. The
 first start after a mount still decodes the heads once.
 
+**Head readers and the measured decoding speed (#504, #503).** sacdfs now measures how fast it
+decodes each format and channel count. A reader of a file's first 2 MiB gets no read-ahead while
+another file starts or plays, and a reader from the start does not begin its decode-ahead within
+that head while another file's runs; that is what the album re-reads above had cost. Where the
+measured speed is below `--start-burst` (3.5 times real time), a starting track's decode-ahead
+goes to its end at once. Replays of the three anonymised traces (`scripts/trace-replay.py`, the
+playing file and every file opened from 3 s before it to 20 s after), on the same E-cores at
+0.45 of a CPU, `--threads 4`, `--cache-mb 64`, medians of 3, main with #508 against #504, for the
+first 15 s of the playing file:
+
+| Start of | Worst read | Stalled | sacdfs CPU over the replay |
+|---|---|---|---|
+| WAV, folder re-read beside it (first trace) | 0.74 → 0.67 s | 6.8 → 6.2 s | 13.8 → 11.6 s |
+| DSF, after its probe (first trace) | 0.26 → 0.14 s | 0.13 → 0 s | 8.8 → 8.8 s |
+| WAV, album start with re-reads (second trace) | 0.47 → 0.39 s | 6.9 → 6.9 s | 15.0 → 11.8 s |
+| WAV, the next start (second trace) | 0.40 → 0.34 s | 4.8 → 4.8 s | 8.7 → 7.3 s |
+| WAV, first start (third trace) | 0.46 → 0.46 s | 7.4 → 6.8 s | 13.3 → 11.3 s |
+| WAV, second start (third trace) | 0.61 → 0.54 s | 7.2 → 7.1 s | 15.5 → 11.3 s |
+
+The stalls are mostly the traced player's own pace, which the replay keeps: it asked for its
+track slowly while it re-read the heads. sacdfs spends 16 to 27 % less CPU where the player re-read
+heads, and reads over 1 s, which main had in a few runs of other rounds (1.3 to 2.0 s), did not
+occur. A second round on
+2 cores of a Ryzen 9 3950X limited to 0.16 and 0.21 of a CPU (6-channel WAV at 1.04 times real time,
+DSF at 1.78) gave the same picture. With `--start-burst 0` (the head rule alone) the replays were
+within the runs' spread of the default: the decode-ahead to its end at once neither helped nor hurt
+measurably here. Nor did it for players reading at 3.5 times real time from the start of a track
+(an mpv-like reader, and FFmpeg's probe followed by a play handle from where the probe stopped):
+on that CPU 6-channel WAV held 15.2 to 15.6 s of audio after 15 s and DSF 27.4 to 28.6 s, main and
+#504 alike. A CPU that decodes slower than a player asks can only serve it at its own speed;
+what sacdfs can do there is spend nothing else.
+
+Machines that decode fast are unchanged: on 4 cores of the Ryzen with no limit, a whole
+6-channel track read as WAV and DSF took 12.71 s (main before #508), 12.76 s (#508) and 12.68 s
+(#504), medians of 5; on all 32 threads 3.80, 3.82 and 3.82 s. The CPU of library scans of the 3
+real discs was the same (Jellyfin-style probes 8.08 s, MPD 7.88, the player's re-reads 5.08,
+tag readers 0.51 and 0.21 s), and on the limited cores too (16.3, 15.9, 9.5, 0.96, 0.45 s, against
+16.3, 16.0, 9.5, 0.98, 0.46 s). The bytes served are unchanged: 910 corpus files and 94 files of 3
+real discs, DSF and WAV, i686 and x86_64, hash the same as on main.
+
+Keeping decoded heads in a file on disk, so that the first start after a mount finds them too,
+was not built: the re-reads at that start cost what #508's first start costs (about 3.5 to 4 s
+of the Atom's CPU for a 12-track 6-channel album), and a file of decoded audio is a new on-disk
+format to bound, check and keep safe for a gain on one start per mount.
+
 ## Running it
 
 ### Docker or Podman

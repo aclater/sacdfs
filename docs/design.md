@@ -1713,7 +1713,11 @@ decoding them twice.
   other players' bursts are not measured yet. *Why the decode-ahead goes to its end at once on a
   slow machine:* a player that fills its buffer faster than the machine decodes waits for every
   frame not decoded ahead, and in the traces a player busy with its rescan read its track slowly at
-  first and asked for more later, when the decode-ahead had stopped a slice ahead. *Why not
+  first and asked for more later, when the decode-ahead had stopped a slice ahead. Measured, it is
+  neutral: replays of the traces and players reading at 3.5 times real time did as well with
+  `--start-burst 0`, since a CPU slower than the player can only serve it at its own speed; the
+  head rule is what saved CPU (16 to 27 % in the replays with re-reads). It stays, bounded, as the
+  place for the burst sizes still being measured on real players. *Why not
   within the head of a reader from the start:* that is how the rescans and the probes read, and
   they close a moment later.
   *Alternatives:* decoding the first seconds of a file at its probe (the probe of the file about
