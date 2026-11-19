@@ -1004,3 +1004,56 @@ The player stalls that 0.6.3 and 0.6.4 show beside copies on 2 slow cores are go
 **Installer and NAS** (each in a VM, not on the vendor's hardware), with the release's own `install.sh`: on QNAP QuTScloud 5.2.9, Synology DSM 7.4.1 and TerraMaster TOS 7.0 a fresh install, an upgrade over 0.6.4 installed by its own installer, and `--uninstall` twice; all 28 files of three corpus images identical to the rc and 0.6.4 binaries' read; a second run changed nothing; the start-at-boot entry written, updated and removed; on Synology and TerraMaster the service back after a power cycle. The container route (`nas-compose.yaml`) on Debian 12 with UGREEN's kernel (6.18) and on Debian 12 with its stock 6.1 kernel: NFS and SMB both list and hash identically. The installer's container suites (BusyBox, BusyBox with no C library, Fedora 44, UBI 7) pass.
 
 **Not run:** macOS (the macOS route has no published archive in this release; the media-server round on `main` below covered it), Roon and Plex at scale (the project's own NAS deployments move to the release after the tag; players are not driven), the Tier 2 tools, foobar2000 and JRiver, a physical Windows PC or NAS, a QNAP power cycle, ASUSTOR and ReadyNAS, aarch64 on hardware, and a soak of the published binaries (the soaks ran source builds of the tags).
+
+## Results: 0.7.0 gate
+
+What was run on 0.7.0-rc.1 (tag `v0.7.0-rc.1`), with 0.6.5 as the baseline. Anything missing here is untested on 0.7.0-rc.1.
+
+**What changed since 0.6.5, and so what ran.** `git diff v0.6.5 v0.7.0-rc.1 -- src Cargo.lock` touches the read path (the start-of-track decode-ahead #481, scarletbook 0.6.1), WAV output (`WAV_VERSION` 5, #474) and listing (#476). So the soak ran, and the full client matrix.
+
+- **Release artifacts.** The release workflow succeeded. The pre-release has the three Linux archives, the Windows zip, the two macOS archives, `.rpm` and `.deb` packages for x86_64 and aarch64, the source RPM and `install.sh`, each with a `.sha256` and an `.intoto.jsonl`, and `SHA256SUMS`. Every hash matches, and `gh attestation verify` passes on all eleven assets and on the image by its tag and its `-amd64` and `-arm64` tags. GitHub publishes the packages as `0.7.0.rc.1` where `SHA256SUMS` and their `.sha256` files say `0.7.0~rc.1`, so `sha256sum -c` doesn't find them; release candidates only ([#485](https://github.com/aclater/sacdfs/issues/485)). The Linux archives hold the same nine files as 0.6.5; `--version` prints `sacdfs 0.7.0-rc.1` on all three (aarch64 under emulation); the newest glibc symbol is 2.17. The archive's unit and the packages' units set `XDG_CACHE_HOME=/var/cache` and `CacheDirectory=sacdfs` (#465). The rpm installs on UBI 9 and the deb on Debian 12, on both architectures (aarch64 under emulation), with the archive's binary.
+- **Checks:** formatting, clippy, docs and cargo-deny pass. The full test suite with FUSE tests passes (493 tests; 507 with the `nfs` feature). The file-handle tests as root and the NFS loopback export were not run.
+- **Audio:** of the corpus's 910 DSF and WAV files, 883 are byte-identical to 0.6.5's and all DSF files are, on the x86_64 and x86_64-v3 builds, in five output configurations (default, 88.2 and 352.8 kHz WAV, flattened, DSF only). The other 27 are WAV files with non-ASCII text: only their `LIST`/`INFO` chunk changes (#474), with the `data` and `id3 ` chunks identical. On eight real discs all 128 DSF files are identical to 0.6.5's; 25 of the 128 WAV files differ in the same way.
+- **Real-disc tests** (`scripts/real-discs.sh`, those eight images): 3 of 3 passed, 0 skipped, exit 0, in two runs: seven images, then the largest (a 4.1 GiB DST multichannel image) alone. On that image the test peaks at about 10 GiB of memory, 0.6.5's too, so run it with a limit of 12 GiB or more.
+- **Whole library** (over 400 images over NFS; 4,911 DSF and 4,911 WAV files listed): a DSF-only listing (9,037 entries) is identical to 0.6.5's in names, types, sizes and mtimes. The default listing (13,948 entries) has the same names and types; every WAV file has a new mtime once (`WAV_VERSION` 5), and 64 WAV files are smaller, by 2 to 44 bytes, because their INFO text is now Windows-1252 or left out. Memory with a DSF-only mount, listed / after reading the first and last 64 KiB of every file / after 10 minutes idle: 0.6.5 27.7 / 73.0 / 32.9 MiB, rc.1 28.0 / 72.9 / 33.1 MiB. A log file's first line is the new session line.
+
+**Performance,** medians of 11 rounds with the builds alternated, under the benchlock on an i9-13900H shared with other work, so judged by the ratio within each round:
+
+| | 0.6.5 | 0.7.0-rc.1 | rc.1 / 0.6.5 |
+|---|---|---|---|
+| Local read, real disc, DST stereo, DSF / WAV | 8.06 / 10.19 s | 7.56 / 9.62 s | 0.94 / 0.94 |
+| Local read, real disc, DST multichannel, DSF / WAV | 16.26 / 21.08 s | 16.66 / 22.29 s | 1.03 / 1.06 |
+| Local read, real disc, plain DSD, DSF / WAV | 0.74 / 2.26 s | 0.71 / 2.47 s | 0.99 / 1.01 |
+| Local read, corpus, DST stereo / DST multichannel / plain DSD, DSF | 0.152 / 0.510 / 0.031 s | 0.145 / 0.547 / 0.028 s | 0.98 / 1.08 / 0.87 |
+| Whole-library first listing over NFS (0.6.4: 1.45 s) | 1.95 s | 1.53 s | 0.80 |
+
+DST multichannel is slower on rc.1, in every round of a second series (7 corpus and 6 real-disc rounds): real disc DSF 1.025 and WAV 1.060 (rounds 1.057 to 1.065), corpus DSF 1.107 (1.04 to 1.24) and WAV 1.09. The corpus DSF figure is over the 10 % limit and not yet explained ([#490](https://github.com/aclater/sacdfs/issues/490)). DST stereo is about 6 % faster.
+
+A 6-channel DST track started at real-time pace from a fresh mount gives its first 1 MiB in about 22 ms on both builds, with no read over 4 ms; with the image in the page cache on this CPU neither build falls behind, so this doesn't show #481's gain on slow CPUs. The first NFS listing of a 416-image library sends 1 SEEK (0.6.5: 471; #451).
+
+**Soak.** `scripts/soak.py --hours 2 --sample-paths --warmup 600` on a 32-thread Zen 2 machine busy with other jobs, 0.7.0-rc.1 side by side with 0.6.5 on the same five corpus images and the same load, both built from their tags with the same toolchain, each under an 8 GiB memory limit. Both builds ran the rc's soak, which stalls through `stallfs` (#478).
+
+| | 0.6.5 | rc.1 |
+|---|---|---|
+| Verdict | pass | pass |
+| Read | 205.9 GB | 205.6 GB |
+| Warm resident size | 56.3 MiB | 56.4 MiB |
+| Peak above warm | +35.7 MiB | +36.4 MiB |
+| Second-half trend (limit about 5 MiB/h) | +0.39 MiB/h | +0.08 MiB/h |
+| Threads, peak | 51 | 51 |
+| Open files, max | 18 | 18 |
+| Stalls / remounts | 38 / 23 | 38 / 23 |
+| Unexpected read errors | 0 | 0 |
+
+- The read watchdog failed every stall on both builds, and no remount failed. The images were corpus images, not real discs, so the figures don't compare with the 0.6.5 gate's soak.
+- **Stop checks** on the published x86_64 binaries of both versions, with the same results: SIGTERM with a file held open (#276) took the mount out of the table at once and sacdfs exited 0 after the 10 s grace; 200 SIGTERMs 0 to 40 ms after the start (#334) hung none and left no mount, each within 8 ms; 100 outside `fusermount3 -u` while idle (#333) exited 0 within 6 ms.
+
+**Clients,** on the rc's release binary and image:
+
+- **Linux NFS 4.2 and SMB 3.1.1,** in VMs: 22 of 22 checks on Fedora 44, RHEL 10.1, RHEL 9.7, Debian 13, Debian 12 and Ubuntu 26.04; Ubuntu 24.04 passes 21 of 22 (the known non-ASCII SMB `stat` problem). Six real discs, 206 files, 124.4 GB, two WAV files over 4 GiB: samples hash like the server's own read over both protocols. Requests per workload are 0.6.5's less one GETATTR (NFS `ls -lR` 1,594, `find` 107, `getfattr -d -R` 1,848; SMB 80 and 82). By `cmp` on the mount and through the Linux SMB client, every file is identical to 0.6.5's except two WAV files whose INFO text changed (#474).
+- **Jellyfin, Navidrome, Lyrion, MPD and MinimServer:** the same tracks, albums, art and stream bytes as 0.6.5, with `dsf` and `dsf,wav`. Requests for a first scan and a full rescan are within 5 %. A rescan with nothing changed varies between two levels on both builds: in Navidrome with `dsf,wav` the upper one adds 36 opens that read nothing, and the rc took it in 6 of 9 runs, 0.6.5 in 2 of 9; Jellyfin's is 6 % higher, within its range.
+- **The container on Debian 12 (kernel 6.1),** in a VM, under Docker and rootful Podman: the NFS export lists, and every corpus file hashes the same over NFS, over SMB and inside the container (#439). Capabilities per program are as in 0.6.5.
+- **Windows 11, in a VM, not on physical hardware,** WinFsp 2.1: the Windows guide followed with the rc zip as a standard user (checksum, unpack, drive letter, Explorer, Ctrl+C). All 186 files of five real discs hash like the Linux build's read, RF64 files over 4 GiB included. Explorer's Title and Album columns show accented titles correctly where 0.6.5 showed mojibake, and leave Japanese, Korean and Chinese ones empty (#474). A SOURCE ending in a backslash, a drive root and a `subst` drive mount through WinFsp.Launcher; 0.6.5 said `OK` with no drive (#466). Reading a 6-channel WAV a second time is faster than the first on the rc and slower on 0.6.5 (#481). Over SMB 3.1.1 to the rc image, the share lists, a Robocopy of all 186 files hashes the same, and writes are refused.
+- **macOS 27.2 in a VM on Apple hardware,** with the rc's Apple Silicon archive from the command line, as the user: all 910 corpus files through the `sacdfs-nfs` mount are byte-identical to the Linux read of the same release, names look up in NFC and NFD, writes are refused, a read during a 20 s restart waits and completes with the same bytes, and the launch agent loads and unloads with `launchctl` (not across a real logout).
+
+**Not run:** the file-handle tests as root and the NFS loopback export, Roon and Plex at scale (the project's own NAS deployments move to the release after the tag; players are not driven), the installer and the container route on the NAS OS VMs, the Tier 2 tools, foobar2000 and JRiver, a physical Windows PC, Mac or NAS, the Intel macOS archive, a logout and login with the launch agent, aarch64 on hardware, a soak of the published binaries or on real discs, a cold start from disk or NFS, and a title with format characters on a real disc (#475).
