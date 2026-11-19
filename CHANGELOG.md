@@ -26,6 +26,15 @@ All notable changes to sacdfs are recorded here. The format follows
   a Ryzen 9 3950X is unchanged. Output bytes are unchanged. Not yet: 6-channel WAV reads on that
   Intel CPU, still about 5 % slower than 0.6.5. Why 6: docs/design.md, "Why frames are decoded
   in groups".
+- **No second's wait just after the start-of-track decode-ahead on a slow CPU (#456).** On a
+  4-thread Atom that converts 6-channel DST to WAV at about 1.07 times real time, a player
+  starting a track reads right behind the decode-ahead. When it ended, a read halfway through the
+  next window planned another, decoded in one batch beside it, and the player's reads waited for
+  that whole batch: about 1 s, some 6 s into the track (9 s for DSF). Now one window in slices
+  runs at a time there, and the windows go on in slices while the player is still that close and
+  reads at less than 4 times real time (a copy on a fast CPU keeps its batches). Output bytes are
+  unchanged. The first seconds of 6-channel WAV on such a CPU still glitch: it decodes barely
+  faster than it plays.
 
 ## [0.7.0] - 2026-11-19
 

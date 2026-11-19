@@ -1085,4 +1085,7 @@ scripts/trace-replay.py /tmp/sacdfs-trace.log --anonymise session.trace.gz  # no
 ```
 
 `tests/fixtures/traces/session-456.trace.gz` is one recorded session, anonymised: a network
-player on a 32-bit Atom NAS starting 6-channel DSF and WAV tracks from stopped (#456).
+player on a 32-bit Atom NAS starting 6-channel DSF and WAV tracks from stopped (#456). `session-456-b.trace.gz` is
+a later one on the same NAS with #489: four 6-channel WAV starts, three of them while the player
+re-read the heads of all 24 files of the album. Its WAV header length can't be inferred from it;
+replay it with `--wav-audio-start 268864`.

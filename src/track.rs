@@ -341,6 +341,12 @@ pub const START_AHEAD_FRAMES: u32 = 8 * 75;
 /// player starting a track reads ahead of decoding, so the bound does not hold it up.
 const START_LEAD: u32 = 32;
 
+/// Above this many times real time, a reader close behind the read-ahead after the
+/// start-of-track decode-ahead reads like a copy, and its windows go in one batch
+/// ([`Reader::plan_read_ahead`], #456). A player on a CPU too slow to fill its buffer quickly
+/// reads at no more than the CPU's decoding speed, about 1 to 2 times real time on an Atom.
+const SLICE_PACE_MAX: f64 = 4.0;
+
 /// How long the start-of-track decode-ahead waits for the next read once it has got
 /// [`START_LEAD`] ahead, before it ends: the client paused, or read the head and left
 /// without closing (an NFS client never closes).
@@ -900,6 +906,11 @@ struct Seq {
     started: Option<(std::time::Instant, u64)>,
     /// The start-of-track decode-ahead has just ended, and the next window goes in slices.
     after_start: bool,
+    /// The last window went in slices, after the start-of-track decode-ahead: the next one does
+    /// too while the reader is still within a slice of what is decoded (#456).
+    slicing: bool,
+    /// When a window in slices was planned, until its job starts ([`Reader::sliced_running`]).
+    sliced_planned: Option<std::time::Instant>,
     /// Frames below this one (file index) are given up already ([`Engine::give_up`]).
     given_up: u32,
     /// Whether its client has paused since it last jumped ([`CLIENT_PAUSE`]). *Why (#357):*
@@ -987,6 +998,8 @@ pub struct Reader {
     stream_waits: AtomicU32,
     /// Told when the start-of-track decode-ahead has more to do, or must stop.
     start_more: Condvar,
+    /// A window of read-ahead in slices is being decoded ([`Reader::plan_read_ahead`]).
+    sliced_running: AtomicBool,
 }
 
 impl Drop for Reader {
@@ -1024,6 +1037,7 @@ impl Reader {
             start: Mutex::default(),
             stream_waits: AtomicU32::new(0),
             start_more: Condvar::new(),
+            sliced_running: AtomicBool::new(false),
         }
     }
 
@@ -1114,6 +1128,18 @@ impl Reader {
             self.start_ahead(engine);
             return;
         }
+        struct Sliced<'a>(&'a Reader);
+        impl Drop for Sliced<'_> {
+            fn drop(&mut self) {
+                self.0.sliced_running.store(false, Ordering::Relaxed);
+            }
+        }
+        // Running before the plan is forgotten, so that no read plans another in between.
+        let _sliced = ahead.sliced.then(|| {
+            self.sliced_running.store(true, Ordering::Relaxed);
+            self.seq.lock().unwrap_or_else(|p| p.into_inner()).sliced_planned = None;
+            Sliced(self)
+        });
         let slice = slice_frames(engine);
         let mut first = ahead.first;
         while first < ahead.end {
@@ -1520,6 +1546,7 @@ impl Reader {
         s.max_end = s.max_end.max(end);
         if !sequential {
             s.ahead_until = 0;
+            s.slicing = false;
         }
         if jumped {
             s.paused = false;
@@ -1614,16 +1641,39 @@ impl Reader {
         } else {
             READ_AHEAD_FRAMES
         };
+        // While a window in slices is decoded, no other (#456): one decoded at once beside it
+        // took the decoder threads and the demultiplexer, and the player reading right behind
+        // the slices waited for that whole window, a second twice on a 4-thread Atom.
+        if self.sliced_running.load(Ordering::Relaxed)
+            || s.sliced_planned.is_some_and(|t| now.saturating_duration_since(t) < START_IDLE)
+        {
+            return None;
+        }
         if k1 >= frames || s.ahead_until >= frames.min(k1 + window / 2) {
             return None;
         }
+        // The first window after the start-of-track decode-ahead goes in slices too (#481): a
+        // player still filling its buffer reads right behind it, and would wait for the whole
+        // window, a second on a slow CPU. So does the next while the reader is still within a
+        // slice of what is decoded and reads at less than SLICE_PACE_MAX times real time (#456):
+        // on a CPU that decodes little faster than real time, a player stays that close for as
+        // long as it fills its buffer. *Why the pace:* a copy on a fast CPU is always that close
+        // too, and in slices a whole 6-channel file read 9 % slower. *Why not "not for
+        // throughput":* a player filling its buffer at 1.5 times real time counts as one; and a
+        // bound in frames only moved the wait to where it ended.
+        let slow = s.pace_from.is_some_and(|(t, _)| {
+            let secs = now.saturating_duration_since(t).as_secs_f64().max(0.5);
+            (s.paced as f64) < SLICE_PACE_MAX * self.file.byte_rate() * secs
+        });
+        let sliced = std::mem::take(&mut s.after_start)
+            || s.slicing && slow && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
+        s.slicing = sliced;
         let start = s.ahead_until.max(k1);
         let stop = frames.min(k1 + window);
         s.ahead_until = stop;
-        // The first window after the start-of-track decode-ahead goes in slices too (#481): a
-        // player still filling its buffer reads right behind it, and would wait for the whole
-        // window, a second on a slow CPU.
-        let sliced = std::mem::take(&mut s.after_start);
+        if sliced && start < stop {
+            s.sliced_planned = Some(now);
+        }
         (start < stop).then_some(ReadAhead { first: start, end: stop, start: false, sliced })
     }
 }
@@ -2267,6 +2317,88 @@ mod tests {
             // Past it, it reads more than a head, and starts.
             assert!(plan(&scanner, from, 4, 6).is_some(), "{format:?}: past the head");
         }
+    }
+
+    /// After the start-of-track decode-ahead, read-ahead goes one window in slices at a time
+    /// while the reader is within a slice of what is decoded, as a player is on a CPU that
+    /// decodes little faster than real time (#456); further behind, in one batch as before.
+    #[test]
+    fn the_windows_after_the_start_ahead_go_in_slices_one_at_a_time() {
+        let tree = corpus();
+        let f = longest(&tree, Format::Wav);
+        // The corpus's files are a few frames long: the same file, longer (nothing is decoded).
+        let f = Arc::new(TrackFile {
+            disc: f.disc.clone(),
+            area: f.area,
+            number: f.number,
+            start_frame: f.start_frame,
+            layout: Layout { frames: 75 * 60, ..f.layout },
+            area_end: f.area_end,
+            audio: f.audio,
+            dsf: None,
+            header: f.header.clone(),
+            trailer: f.trailer.clone(),
+            tag: f.tag.clone(),
+            size: f.size,
+            tags: f.tags,
+            filled: f.filled,
+            warned: AtomicBool::new(false),
+            warned_clips: AtomicBool::new(false),
+        });
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        let slice = slice_frames(&engine);
+        let r = Reader::new(f);
+        // Reads of 128 KiB in order (the frames need not match the offsets).
+        let n = std::cell::Cell::new(0u64);
+        let read = |k: u32| {
+            let off = n.get() * (128 << 10);
+            n.set(n.get() + 1);
+            r.plan_read_ahead(&engine, off, off + (128 << 10), k, k + 1)
+        };
+        assert!(read(0).is_none());
+        // No start-ahead here: where it got to is set below.
+        r.start.lock().unwrap().eligible = false;
+        while (n.get() + 1) * (128 << 10) <= HEAD_WINDOW {
+            assert!(read(1).is_none(), "the head");
+        }
+        {
+            let mut s = r.seq.lock().unwrap();
+            s.after_start = true;
+            s.ahead_until = slice;
+        }
+        let a = read(slice - 1).expect("the window after the start-ahead");
+        assert!(a.sliced && a.first == slice, "{a:?}");
+        // A read in its second half, which plans the next window as a rule: not while it is
+        // planned or its job runs.
+        let mid = a.end - 10;
+        assert!(read(mid).is_none(), "planned, its job not started");
+        r.seq.lock().unwrap().sliced_planned = None;
+        r.sliced_running.store(true, Ordering::Relaxed);
+        assert!(read(mid).is_none(), "its job runs");
+        r.sliced_running.store(false, Ordering::Relaxed);
+
+        // Done, and the reader within a slice of it: the next window in slices too.
+        let b = read(mid).expect("the next window");
+        assert!(b.sliced && b.first == a.end, "{b:?}");
+        r.seq.lock().unwrap().sliced_planned = None;
+
+        // Further behind: in one batch, and so on after that.
+        let c = read(b.end - 3 * slice).expect("a window further ahead");
+        assert!(!c.sliced && c.first == b.end, "{c:?}");
+        let d = read(c.end - 5).expect("the window after");
+        assert!(!d.sliced, "{d:?}");
+
+        // Close behind again, but reading far faster than real time, as a copy does: in one batch.
+        let k = {
+            let mut s = r.seq.lock().unwrap();
+            s.slicing = true;
+            s.pace_from = Some((std::time::Instant::now(), 0));
+            s.paced = 1 << 30;
+            s.ahead_until = d.end;
+            d.end
+        };
+        let e = read(k - 4).expect("a copy's window");
+        assert!(!e.sliced, "{e:?}");
     }
 
     /// A read of a DSF file's last frame after a jump (a player reading the tag before it
