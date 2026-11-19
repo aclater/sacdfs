@@ -358,7 +358,7 @@ pub const HEAD_WINDOW: u64 = 1 << 20;
 pub const START_AHEAD_FRAMES: u32 = 8 * 75;
 
 /// A reader whose reads all end within this many bytes after the file's header has read only
-/// its head ([`Reader::head_only`], #503). *Why this far:* a player that re-reads the heads of an
+/// its head (`Reader::head_only`, #503). *Why this far:* a player that re-reads the heads of an
 /// album's files reads 1.6 MB of each DSF file and 0.6 MB of each WAV file; Roon's import reads
 /// 768 KiB. A player starting a track goes past it within a second or two of audio.
 pub const HEAD_SCAN: u64 = 2 << 20;

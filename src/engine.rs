@@ -684,7 +684,7 @@ pub struct Stream {
 }
 
 /// How fast this machine decodes, per kind of frame and channel count, measured from real
-/// decodes (#504): times real time, as a moving average of batches of [`RATE_BATCH`] frames or
+/// decodes (#504): times real time, as a moving average of batches of `RATE_BATCH` frames or
 /// more.
 ///
 /// *Why measured, not configured:* the same build runs on a 32-thread desktop and on a 4-thread
@@ -850,7 +850,7 @@ impl Engine {
     }
 
     /// Keeps the cached frames of timeline positions `[first, end)` of an area apart, as a
-    /// file's head that players read again (#503, [`FrameCache::keep`]).
+    /// file's head that players read again (#503, `FrameCache::keep`).
     pub fn keep_head(&self, disc: &Disc, area: usize, format: crate::track::Format, first: u32, end: u32) {
         let pcm = format == crate::track::Format::Wav;
         self.cache.keep(
