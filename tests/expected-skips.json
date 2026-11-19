@@ -1,10 +1,10 @@
 {
-  "jobs": ["tests", "tests-arm64", "coverage", "nfs", "nfs-arm64"],
+  "jobs": ["tests", "tests-arm64", "tests-i686", "coverage", "nfs", "nfs-arm64"],
   "skips": [
     {
       "why": "open_by_handle_at needs CAP_DAC_READ_SEARCH, and these jobs run as a normal user. Each test checks what comes before the handles (mounting, the numbers across --flatten) and returns there. The `nfs export` job runs them as root with SACDFS_EXPORT_TESTS=1, where a missing capability fails.",
       "reason": "open_by_handle_at needs CAP_DAC_READ_SEARCH: run as root with SACDFS_EXPORT_TESTS=1",
-      "jobs": ["tests", "tests-arm64", "coverage"],
+      "jobs": ["tests", "tests-arm64", "tests-i686", "coverage"],
       "tests": [
         "export::directory_handles_survive_a_restart",
         "export::file_handles_survive_a_restart",
@@ -15,7 +15,7 @@
     {
       "why": "Needs real disc images, which no CI job has: test images in the repository are synthetic. Run by hand on local discs with scripts/real-discs.sh, as a release step (docs/test-plan.md).",
       "reason": "needs real disc images: set SACDFS_REAL_IMAGES",
-      "jobs": ["tests", "tests-arm64", "coverage"],
+      "jobs": ["tests", "tests-arm64", "tests-i686", "coverage"],
       "tests": [
         "dsf_header::real_discs_head_reads",
         "library_index::real_discs",
@@ -23,9 +23,9 @@
       ]
     },
     {
-      "why": "Chromaprint's fpcalc is not packaged for UBI, which these jobs run on. The other tests of `tags fetch --acoustid` use a stand-in for fpcalc. Run on Fedora (chromaprint-tools), or anywhere with fpcalc on PATH.",
+      "why": "Chromaprint's fpcalc is not packaged for UBI, which these jobs run on, and the i686 job has no 32-bit build of it. The other tests of `tags fetch --acoustid` use a stand-in for fpcalc. Run on Fedora (chromaprint-tools), or anywhere with fpcalc on PATH.",
       "reason": "no fpcalc: install Chromaprint (Fedora: chromaprint-tools)",
-      "jobs": ["tests", "tests-arm64", "coverage"],
+      "jobs": ["tests", "tests-arm64", "tests-i686", "coverage"],
       "tests": [
         "acoustid::the_real_fpcalc_fingerprints_a_track"
       ]
