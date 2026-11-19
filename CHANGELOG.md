@@ -14,6 +14,11 @@ All notable changes to sacdfs are recorded here. The format follows
   release checks that the packaged binary serves the test corpus with the x86_64 build's bytes. See
   docs/install/binary.md, "32-bit x86".
 
+### Fixed
+- **The default listing budget no longer wraps on 32-bit builds (#488).** Under a memory limit
+  above about 10.6 GiB, the budget for listed images (3/8 of the limit) overflowed a 32-bit
+  `usize` and became tiny; it now saturates.
+
 ## [0.7.0] - 2026-11-19
 
 Tested as release candidates 0.7.0-rc.1 and 0.7.0-rc.2; the results are in docs/test-plan.md

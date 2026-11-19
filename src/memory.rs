@@ -236,9 +236,10 @@ pub fn default_threads(cpus: usize, limit: Option<u64>) -> usize {
     }
 }
 
-/// The default budget for what listed images hold, in bytes; `None` for no bound.
+/// The default budget for what listed images hold, in bytes; `None` for no bound. On a 32-bit
+/// target a budget past `usize::MAX` (a limit above about 10.6 GiB) is `usize::MAX`, not wrapped.
 pub fn listing_budget(limit: Option<u64>) -> Option<usize> {
-    limit.map(|l| (l / 8 * LISTING_EIGHTHS).max(LISTING_MIN) as usize)
+    limit.map(|l| usize::try_from((l / 8 * LISTING_EIGHTHS).max(LISTING_MIN)).unwrap_or(usize::MAX))
 }
 
 /// What this configuration asks of the limit (#237, item 1).
@@ -402,6 +403,14 @@ mod tests {
         assert_eq!(default_threads(8, Some(8192 * MIB)), 8);
         assert_eq!(listing_budget(Some(256 * MIB)), Some(96 << 20));
         assert_eq!(listing_budget(Some(16 * MIB)), Some(8 << 20));
+    }
+
+    #[test]
+    fn a_large_limit_saturates_the_budget() {
+        // 3/8 of 64 GiB is 24 GiB: past usize::MAX on 32-bit targets, where it used to wrap.
+        let want = usize::try_from(24 * 1024 * MIB).unwrap_or(usize::MAX);
+        assert_eq!(listing_budget(Some(64 * 1024 * MIB)), Some(want));
+        assert!(listing_budget(Some(u64::MAX)).unwrap() >= listing_budget(Some(64 * 1024 * MIB)).unwrap());
     }
 
     fn plan(limit_mb: u64, images: usize, budget: Option<usize>) -> Plan {
