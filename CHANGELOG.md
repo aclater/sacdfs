@@ -6,6 +6,16 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-19
+
+Tested as release candidates 0.7.0-rc.1 and 0.7.0-rc.2; the results are in docs/test-plan.md
+("Results: 0.7.0 gate" and "Results: 0.7.0-rc.2"). No change to the program on top of rc.2:
+everything is in the two rc sections below. The install guides' download commands name this
+release. DSF bytes are those of 0.6.5; WAV files show a new mtime once (`WAV_VERSION` 5), and
+those with non-ASCII tags change only in their `INFO` chunk. Known: DST multichannel decoding is
+3 to 6 % slower than 0.6.5 on a hybrid Intel CPU with scarletbook 0.6.0, within the gate's 10 %
+limit ([#493](https://github.com/aclater/sacdfs/issues/493)).
+
 ## [0.7.0-rc.2] - 2026-11-19
 
 A read trace (`-vv`) with a replay script (#486), and the start-of-track decode-ahead now also
@@ -1907,7 +1917,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.2...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0
 [0.7.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.1...v0.7.0-rc.2
 [0.7.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0-rc.1
 [0.6.5]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5
