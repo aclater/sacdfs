@@ -148,7 +148,6 @@ jobs:
       ZIG_VERSION: 0.16.0
       ZIG_SHA256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
       CARGO_ZIGBUILD_VERSION: 0.24.0
-      RUSTFLAGS: -C target-cpu=pentium4 -C target-feature=+crt-static
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -170,10 +169,12 @@ jobs:
       - name: Tests (FUSE tests required)
         env:
           SACDFS_FUSE_TESTS: "1"
+          # Here, not for the job: cargo install above builds for the runner.
+          RUSTFLAGS: -C target-cpu=pentium4 -C target-feature=+crt-static
         run: |
           set -o pipefail
           cargo-zigbuild test --locked --target "$TARGET" 2>&1 | tee "$RUNNER_TEMP/test-output.txt"
-          file target/$TARGET/debug/sacdfs | tee /dev/stderr | grep -q 'ELF 32-bit.*Intel.*statically linked'
+          file "target/$TARGET/debug/sacdfs" | tee /dev/stderr | grep -q 'ELF 32-bit.*Intel.*statically linked'
       - name: Only the expected tests skipped
         run: python3 -I scripts/check_skips.py --job tests-i686 "$RUNNER_TEMP/test-output.txt"
 
