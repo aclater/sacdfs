@@ -1609,7 +1609,12 @@ decoding them twice.
   decode-ahead as they were, and is not its first read of audio. *Why a probe's close still stops
   it:* a player reading the heads of a whole album to show it opens a dozen files as it starts a
   track; letting their decode-aheads run on would decode up to 8 s of each. What a probe decoded
-  stays in the cache, and the playing open reads it from there.
+  stays in the cache, and the playing open reads it from there (in the trace, its reads of the
+  frames a probe had decoded half a second before were all hits). *Why the tail is not decoded
+  ahead of a tag look:* in the trace, 24 of 237 opens of DSF files read the tail (4 KiB about 400
+  bytes from the end: the last frame, 20 ms each, median) and 61 read the head; decoding the last
+  frame at each head read would have decoded it 37 times for nothing to save 20 ms of a probe.
+  A WAV file's tags follow its audio, so a look at them decodes nothing (0.1 ms).
   *Why from the reads, not the open:* SMB and NFS servers open files they then only stat, and a
   scanner opens thousands; the first read comes milliseconds after a player's open. *Why past
   the head window, not at the first reads:* starting after 256 KiB made a library import (768 KiB
