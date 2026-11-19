@@ -903,6 +903,8 @@ struct Seq {
     /// The last window went in slices, after the start-of-track decode-ahead: the next one does
     /// too while the reader is still within a slice of what is decoded (#456).
     slicing: bool,
+    /// The frame (file index) from which windows no longer go in slices for `slicing`.
+    slice_until: u32,
     /// When a window in slices was planned, until its job starts ([`Reader::sliced_running`]).
     sliced_planned: Option<std::time::Instant>,
     /// Frames below this one (file index) are given up already ([`Engine::give_up`]).
@@ -1357,6 +1359,7 @@ impl Reader {
             if done > 0 {
                 s.ahead_until = s.ahead_until.max(done);
                 s.after_start = true;
+                s.slice_until = done.saturating_add(START_AHEAD_FRAMES);
             }
             return None;
         } else if !sequential {
@@ -1648,13 +1651,15 @@ impl Reader {
         }
         // The first window after the start-of-track decode-ahead goes in slices too (#481): a
         // player still filling its buffer reads right behind it, and would wait for the whole
-        // window, a second on a slow CPU. So does the next while a reader not reading for
-        // throughput is still within a slice of what is decoded (#456): on a CPU that decodes
-        // little faster than real time, a player stays that close for seconds after the
-        // decode-ahead's end. *Why not a copy:* it reads as fast as frames are decoded, so it is
-        // always that close, and in slices a whole 6-channel file read 9 % slower.
+        // window, a second on a slow CPU. So does the next while the reader is still within a
+        // slice of what is decoded (#456), for up to START_AHEAD_FRAMES more: on a CPU that
+        // decodes little faster than real time, a player stays that close for seconds after the
+        // decode-ahead's end. *Why bounded:* a copy reads as fast as frames are decoded, so it
+        // is always that close, and in slices to its end a whole 6-channel file read 9 % slower.
+        // *Why not only for players:* a player filling its buffer at 1.5 times real time or more
+        // counts as a reader for throughput.
         let sliced = std::mem::take(&mut s.after_start)
-            || s.slicing && !throughput && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
+            || s.slicing && k1 < s.slice_until && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
         s.slicing = sliced;
         let start = s.ahead_until.max(k1);
         let stop = frames.min(k1 + window);
@@ -2353,6 +2358,7 @@ mod tests {
             let mut s = r.seq.lock().unwrap();
             s.after_start = true;
             s.ahead_until = slice;
+            s.slice_until = slice + START_AHEAD_FRAMES;
         }
         let a = read(slice - 1).expect("the window after the start-ahead");
         assert!(a.sliced && a.first == slice, "{a:?}");
@@ -2375,6 +2381,17 @@ mod tests {
         assert!(!c.sliced && c.first == b.end, "{c:?}");
         let d = read(c.end - 5).expect("the window after");
         assert!(!d.sliced, "{d:?}");
+
+        // Close behind again, but past START_AHEAD_FRAMES after the start-ahead (a copy is
+        // always that close): in one batch.
+        let until = {
+            let mut s = r.seq.lock().unwrap();
+            s.slicing = true;
+            s.ahead_until = s.slice_until + 4;
+            s.slice_until
+        };
+        let e = read(until + 3).expect("a window past the bound");
+        assert!(!e.sliced, "{e:?}");
     }
 
     /// A read of a DSF file's last frame after a jump (a player reading the tag before it
