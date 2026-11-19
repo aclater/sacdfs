@@ -1602,7 +1602,7 @@ decoding them twice.
   the reader jumps or closes, when no read comes for 0.5 s once it is ahead, or on an error;
   the read-ahead then goes on from where it got, and its first window goes in slices too; while
   that window is planned or runs no other is planned, and the next goes in slices too while the
-  reader is within a slice of what is decoded (#456). At
+  reader is within a slice of what is decoded and reads at less than 4 times real time (#456). At
   most two run at once per mount, and none starts while another reader plays (#363) or without a
   cache that holds its lead and a slice. *Why:* a player starting a track from stopped reads its
   first seconds as fast as it can, to fill its buffer. Before, its first 1 MiB was decoded read by
@@ -1624,8 +1624,13 @@ decoding them twice.
   when it ended at a quarter of the cache (5.3 s of audio with 64 MiB). A read halfway through
   the window in slices planned the next window as usual, decoded in one batch beside it; that
   batch took the decoder threads and the demultiplexer, and two reads waited about 1 s each for
-  it. *Alternatives:* letting the decode-ahead go on past its end while the reader is close (it
-  would hold more of the cache than its bound says).
+  it. *Why the pace:* a copy on a fast CPU is always that close too, and in slices it read a
+  whole 6-channel file 9 % slower; a player filling its buffer on a slow CPU reads no faster than
+  it decodes. *Alternatives:* slicing only for readers not reading for throughput (a player
+  filling its buffer at 1.5 times real time counts as one, and its wait came back on DSF);
+  slicing for a fixed 8 s more (the wait moved to where that ended); letting the decode-ahead go
+  on past its end while the reader is close (it would hold more of the cache than its bound
+  says).
   *Why a look at the tag is not a jump (#456):* a player may read a DSF file's tag, after the
   last frame, between its head and the rest. Counted, it moved the reader's place to the end, so
   no later read was in order: neither the decode-ahead nor any read-ahead ran for that open file.

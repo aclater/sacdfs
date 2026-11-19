@@ -779,6 +779,25 @@ and 0.191 s with #456 (0.183 to 0.219 s over all runs), and the 6-channel and st
 WAV 7.29, 7.03 and 7.05 s and 1.98, 1.90 and 1.95 s. The bytes served are unchanged: 910 corpus files and 94 files
 of 3 real discs, DSF and WAV, hash the same as on main.
 
+**Right behind the decode-ahead (#456).** A second trace from the NAS, with #489, had four
+6-channel WAV starts and no DSF one. The decode-ahead started on all four; the NAS made that WAV at
+1.06 to 1.09 times real time and 6-channel DSF at 1.8 to 1.9, so the player read right behind it
+for its first 5 s, each second read waiting 0.15 to 0.35 s. When it ended, at a quarter of the
+64 MiB cache (5.3 s of audio), the next window went in slices, but a read halfway through it
+planned another, decoded in one batch beside it, and two reads waited about 1 s. Three of the
+starts came while the player re-read the heads of all 24 files of the album (11 to 26 MB of
+audio to decode); during those the player read its playing file slowly itself. Since #502 one
+window in slices runs at a time there, and the windows stay in slices while the player is that
+close and reads at less than 4 times real time. On the same E-cores at 0.45 of a CPU (6-channel
+WAV at 1.05 times real time) and 0.52 (DSF at 1.7), `--threads 4`, `--cache-mb 64`, a reader
+taking each 128 KiB as soon as the last arrived, from the start of a 6-channel track, for 15 s of
+audio, 3 runs each, main against #502: WAV worst read 1.02 to 1.23 → 0.39 to 0.42 s (main's always
+at 6.1 s of audio, then 2 to 5 more over 0.5 s; none over 0.5 s with #502), 15 s of audio in 14.1
+→ 14.5 s (median); DSF worst read 0.72 to 0.76 → 0.21 to 0.23 s (main's at 9.2 s). A whole
+6-channel track read as WAV and DSF on 4 P-cores took 18.2 to 18.3 s on both. The 6-channel WAV
+starts on such a CPU still read at the speed it decodes: that is the CPU's limit, not the
+read-ahead's.
+
 ## Running it
 
 ### Docker or Podman

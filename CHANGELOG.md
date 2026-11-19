@@ -30,9 +30,10 @@ All notable changes to sacdfs are recorded here. The format follows
   4-thread Atom that converts 6-channel DST to WAV at about 1.07 times real time, a player
   starting a track reads right behind the decode-ahead. When it ended, a read halfway through the
   next window planned another, decoded in one batch beside it, and the player's reads waited for
-  that whole batch: about 1 s twice, some 6 s into the track. Now one window in slices runs at a
-  time there, and the next goes in slices too while the player is still that close. Output bytes
-  are unchanged. The first seconds of 6-channel WAV on such a CPU still glitch: it decodes barely
+  that whole batch: about 1 s, some 6 s into the track (9 s for DSF). Now one window in slices
+  runs at a time there, and the windows go on in slices while the player is still that close and
+  reads at less than 4 times real time (a copy on a fast CPU keeps its batches). Output bytes are
+  unchanged. The first seconds of 6-channel WAV on such a CPU still glitch: it decodes barely
   faster than it plays.
 
 ## [0.7.0] - 2026-11-19
