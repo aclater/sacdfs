@@ -1648,11 +1648,13 @@ impl Reader {
         }
         // The first window after the start-of-track decode-ahead goes in slices too (#481): a
         // player still filling its buffer reads right behind it, and would wait for the whole
-        // window, a second on a slow CPU. So does the next while the reader is still within a
-        // slice of what is decoded (#456): on a CPU that decodes little faster than real time,
-        // the player stays that close for seconds after the decode-ahead's end.
+        // window, a second on a slow CPU. So does the next while a reader not reading for
+        // throughput is still within a slice of what is decoded (#456): on a CPU that decodes
+        // little faster than real time, a player stays that close for seconds after the
+        // decode-ahead's end. *Why not a copy:* it reads as fast as frames are decoded, so it is
+        // always that close, and in slices a whole 6-channel file read 9 % slower.
         let sliced = std::mem::take(&mut s.after_start)
-            || s.slicing && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
+            || s.slicing && !throughput && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
         s.slicing = sliced;
         let start = s.ahead_until.max(k1);
         let stop = frames.min(k1 + window);
