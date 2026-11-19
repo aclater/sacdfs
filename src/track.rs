@@ -1150,9 +1150,9 @@ impl Reader {
                 st.active = false;
                 let done = st.done;
                 drop(st);
-                crate::trace_line!("start-ahead r={} stop: {} at {done}", self.0.id, self.2);
                 self.0.start_more.notify_all();
                 self.1.starting.fetch_sub(1, Ordering::Relaxed);
+                crate::trace_line!("start-ahead r={} stop: {} at {done}", self.0.id, self.2);
             }
         }
         // The job takes its place here, not when planned: a plan may be dropped unrun (`sacdfs

@@ -1046,7 +1046,7 @@ turns on only the trace. Off, it costs one comparison per request. Each line sta
 milliseconds since the mount started; times in a line are milliseconds too.
 
 ```text
-[... DEBUG sacdfs::trace] 100.3 open fh=1 r=0 pid=3925367 size=750993795 "SICX-10020 HD.iso #1 6ch .dsf"
+[... DEBUG sacdfs::trace] 100.3 open fh=1 r=0 pid=3925367 size=750993795 "Example.iso #1 6ch .dsf"
 [... DEBUG sacdfs::trace] 114.2 read fh=1 off=0 len=131072 miss q=0.0 sw=0.0 dec=16.2
 [... DEBUG sacdfs::trace] 320.2 start-ahead r=0 start: frames 42-297
 [... DEBUG sacdfs::trace] 279.5 read fh=1 off=1048576 len=131072 miss q=8.7 sw=0.0 dec=32.1 ahead=start 42-74
