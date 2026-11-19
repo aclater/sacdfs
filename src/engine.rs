@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 use std::io;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -673,9 +673,89 @@ pub struct Stream {
     pub carry: Carry,
 }
 
+/// How fast this machine decodes, per kind of frame and channel count, measured from real
+/// decodes (#504): times real time, as a moving average of batches of `RATE_BATCH` frames or
+/// more.
+///
+/// *Why measured, not configured:* the same build runs on a 32-thread desktop and on a 4-thread
+/// Atom that decodes 6-channel DST at 1.8 times real time and converts it to PCM at 1.07 times;
+/// only the slow one needs to change how it starts a track ([`crate::track`]). *Why wall time,
+/// with the other readers' work in it:* that is what a player starting a track gets. *Why only
+/// batches with DST frames for DSF:* plain DSD costs nothing to serve, and an area of it would
+/// make a DST area of the same channel count look fast.
+#[derive(Debug, Default)]
+pub struct DecodeRates {
+    /// Times real time x 1000 per [DSD, PCM] and channel count (index 0 unused); 0: not measured.
+    rates: [[AtomicU32; 7]; 2],
+}
+
+/// Fewest frames a batch has to decode to be measured ([`DecodeRates`]): a read's few frames
+/// leave most threads idle and say little about what a window of them takes.
+const RATE_BATCH: u32 = 4;
+
+impl DecodeRates {
+    fn slot(&self, kind: Kind, channels: u8) -> Option<&AtomicU32> {
+        self.rates[usize::from(kind == Kind::Pcm)].get(usize::from(channels)).filter(|_| channels > 0)
+    }
+
+    /// Notes that `frames` frames of `kind` and `channels` channels took `took`.
+    fn note(&self, kind: Kind, channels: u8, frames: u32, took: Duration) {
+        if frames < RATE_BATCH {
+            return;
+        }
+        let Some(slot) = self.slot(kind, channels) else { return };
+        let x =
+            (f64::from(frames) / 75.0 / took.as_secs_f64().max(1e-6) * 1000.0).min(f64::from(u32::MAX / 2));
+        let old = f64::from(slot.load(Ordering::Relaxed));
+        let new = if old == 0.0 { x } else { old * 0.75 + x * 0.25 };
+        slot.store((new as u32).max(1), Ordering::Relaxed);
+    }
+
+    /// Times real time this machine decodes DSF files (`pcm` false) or converts WAV files'
+    /// frames of `channels` channels at, if measured. A WAV file's frames not measured yet are
+    /// no faster than its DST frames.
+    pub fn rate(&self, pcm: bool, channels: u8) -> Option<f64> {
+        let get = |kind| {
+            self.slot(kind, channels)
+                .map(|s| s.load(Ordering::Relaxed))
+                .filter(|&r| r > 0)
+                .map(|r| f64::from(r) / 1000.0)
+        };
+        if pcm { get(Kind::Pcm).or_else(|| get(Kind::Dsd)) } else { get(Kind::Dsd) }
+    }
+
+    /// Sets a rate, for tests.
+    #[cfg(test)]
+    pub fn set(&self, pcm: bool, channels: u8, rate: f64) {
+        let kind = if pcm { Kind::Pcm } else { Kind::Dsd };
+        if let Some(s) = self.slot(kind, channels) {
+            s.store((rate * 1000.0) as u32, Ordering::Relaxed);
+        }
+    }
+}
+
+/// What players starting a track ask of it (#504): `rate` times real time for its first `secs`
+/// seconds (`--start-burst`, `--start-burst-secs`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StartBurst {
+    /// Times real time; 0 turns the help for slow machines off.
+    pub rate: f64,
+    /// Seconds of audio decoded ahead at the start of a track (the start-of-track
+    /// decode-ahead's end).
+    pub secs: u32,
+}
+
+impl Default for StartBurst {
+    fn default() -> Self {
+        StartBurst { rate: 3.5, secs: 8 }
+    }
+}
+
 /// The decoder: a frame cache and a thread pool for DST decoding and PCM conversion.
 pub struct Engine {
     cache: FrameCache,
+    rates: DecodeRates,
+    burst: StartBurst,
     traffic: Arc<crate::track::Traffic>,
     pool: rayon::ThreadPool,
     pcm: PcmConfig,
@@ -731,7 +811,32 @@ impl Engine {
             .build()
             .map_err(io::Error::other)?;
         let id = NEXT_ENGINE.fetch_add(1, Ordering::Relaxed);
-        Ok(Engine { cache: FrameCache::new(cache_bytes), traffic: Arc::default(), pool, pcm, id })
+        Ok(Engine {
+            cache: FrameCache::new(cache_bytes),
+            rates: DecodeRates::default(),
+            burst: StartBurst::default(),
+            traffic: Arc::default(),
+            pool,
+            pcm,
+            id,
+        })
+    }
+
+    /// The engine with players' start-up bursts taken as `burst` (#504).
+    #[must_use]
+    pub fn with_start_burst(mut self, burst: StartBurst) -> Engine {
+        self.burst = burst;
+        self
+    }
+
+    /// What players starting a track ask of it.
+    pub fn start_burst(&self) -> StartBurst {
+        self.burst
+    }
+
+    /// How fast this machine decodes, as measured so far.
+    pub fn rates(&self) -> &DecodeRates {
+        &self.rates
     }
 
     /// Gives back what an idle engine holds (#150), if its cache has not been used for
@@ -874,6 +979,7 @@ impl Engine {
         let frame_bytes = self.pcm_frame_bytes(channels);
         let wanted: Vec<bool> = (t0..t1).map(|t| out[(t - first) as usize].is_none()).collect();
         let converted: Mutex<Vec<(u32, Result<Frame, ReadError>)>> = Mutex::new(Vec::new());
+        let began = Instant::now();
         // A pipeline: this request thread demultiplexes the DSD frames in chunks, the pool
         // decodes them, and each PCM frame is converted on the pool as soon as its next
         // neighbour is decoded, so that demultiplexing (serial) and conversion overlap.
@@ -935,6 +1041,7 @@ impl Engine {
             Ok(())
         })?;
         let converted = converted.into_inner().unwrap_or_else(|p| p.into_inner());
+        self.rates.note(Kind::Pcm, channels, converted.len() as u32, began.elapsed());
         for (t, r) in converted {
             let frame = Arc::new(r?);
             self.cache.insert(Self::pcm_key(disc, area, t), frame.clone());
@@ -1169,6 +1276,8 @@ impl Engine {
             decoded.lock().unwrap_or_else(|p| p.into_inner()).extend(r);
         };
         let mut failed = None;
+        let mut dst = false;
+        let began = Instant::now();
         // This thread demultiplexes while the pool decodes what it has found so far; the pool
         // has until the scope's end, so the open file's cursor stays held (see `Reader`) and
         // a read of these frames waits instead of decoding them twice. *Why not demultiplex
@@ -1195,6 +1304,7 @@ impl Engine {
                 left -= 1;
                 let job = TrackFrame::new(t, content);
                 let buf = spare.pop();
+                dst |= matches!(job.content, FrameContent::Dst(_));
                 if !matches!(job.content, FrameContent::Dst(_)) {
                     add(vec![decode(job, channels, buf)]);
                     continue;
@@ -1219,7 +1329,11 @@ impl Engine {
             *cursor = None;
             return Err(e);
         }
-        for r in decoded.into_inner().unwrap_or_else(|p| p.into_inner()) {
+        let decoded = decoded.into_inner().unwrap_or_else(|p| p.into_inner());
+        if dst {
+            self.rates.note(Kind::Dsd, channels, decoded.len() as u32, began.elapsed());
+        }
+        for r in decoded {
             let (t, frame) = r?;
             let frame = Arc::new(frame);
             self.cache.insert(Self::key(disc, area, t), frame.clone());
@@ -1560,6 +1674,26 @@ mod tests {
         assert_eq!(z.buffers(8, 2).len(), 2);
         z.insert(key(0), frame(1));
         assert_eq!(z.bytes(), 0);
+    }
+
+    /// Decoding speed is a moving average of batches long enough to tell, per kind and channel
+    /// count; a WAV file's not yet measured is its DST frames'.
+    #[test]
+    fn decode_rates_are_measured() {
+        let r = DecodeRates::default();
+        assert_eq!(r.rate(false, 6), None);
+        r.note(Kind::Dsd, 6, 2, Duration::from_millis(1));
+        assert_eq!(r.rate(false, 6), None, "too short a batch");
+        r.note(Kind::Dsd, 6, 75, Duration::from_millis(500));
+        assert_eq!(r.rate(false, 6), Some(2.0));
+        assert_eq!(r.rate(true, 6), Some(2.0), "WAV, from DSF");
+        r.note(Kind::Dsd, 6, 75, Duration::from_secs(1));
+        assert_eq!(r.rate(false, 6), Some(1.75));
+        r.note(Kind::Pcm, 6, 75, Duration::from_secs(1));
+        assert_eq!(r.rate(true, 6), Some(1.0));
+        assert_eq!(r.rate(false, 2), None);
+        r.note(Kind::Dsd, 0, 75, Duration::from_secs(1));
+        r.note(Kind::Dsd, 9, 75, Duration::from_secs(1));
     }
 
     /// Frames of the pool: the mapping stays within the cap, slots are reused once their

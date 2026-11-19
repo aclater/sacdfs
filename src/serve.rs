@@ -44,6 +44,15 @@ pub struct Options {
     /// of the memory limit under one).
     #[arg(long, value_name = "N")]
     pub listing_mb: Option<usize>,
+    /// How fast players read a track they start, in times real time (#504). Where this machine
+    /// decodes a format slower than that (measured as it serves), a starting track is decoded
+    /// ahead without waiting for the player's reads. 0: off.
+    #[arg(long, default_value_t = 3.5, value_name = "X", value_parser = parse_burst)]
+    pub start_burst: f64,
+    /// Seconds of audio decoded ahead when a track starts playing, within a quarter of the cache.
+    #[arg(long, default_value_t = 8, value_name = "SECS",
+          value_parser = clap::builder::RangedU64ValueParser::<u32>::new().range(1..=60))]
+    pub start_burst_secs: u32,
     /// Which files to show: dsf, wav, or both (dsf,wav).
     #[arg(long, default_value = "dsf,wav", value_name = "LIST", value_parser = parse_formats)]
     pub format: Formats,
@@ -156,6 +165,14 @@ fn parse_rate(s: &str) -> Result<u32, String> {
         .ok()
         .filter(|&hz| pcm_rate(hz).is_some())
         .ok_or_else(|| "use 88200, 176400 or 352800".to_owned())
+}
+
+fn parse_burst(s: &str) -> Result<f64, String> {
+    s.trim_end_matches(['x', 'X'])
+        .parse::<f64>()
+        .ok()
+        .filter(|x| x.is_finite() && (*x == 0.0 || (1.0..=32.0).contains(x)))
+        .ok_or_else(|| "use 0 (off) or a number from 1 to 32".to_owned())
 }
 
 fn parse_cutoff(s: &str) -> Result<Cutoff, String> {
@@ -403,8 +420,13 @@ pub fn build(options: &Options, parts: Parts<'_>) -> io::Result<(Arc<Tree>, Arc<
         .thread_name(|i| format!("sacdfs-toc-{i}"))
         .build_global();
     let output = options.output();
-    let engine =
-        Arc::new(Engine::with_pcm(threads, parts.sizing.cache_mb.saturating_mul(1 << 20), parts.pcm)?);
+    let engine = Arc::new(
+        Engine::with_pcm(threads, parts.sizing.cache_mb.saturating_mul(1 << 20), parts.pcm)?
+            .with_start_burst(crate::engine::StartBurst {
+                rate: options.start_burst,
+                secs: options.start_burst_secs,
+            }),
+    );
     // An idle mount gives its cache and decoders back (#150).
     engine.start_idle_release()?;
     let mut tree = Tree::with_options(parts.root, Tuning::default(), output)

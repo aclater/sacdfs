@@ -1679,6 +1679,62 @@ decoding them twice.
   it may not read; a second player starting beside one that plays is not helped; a reader that
   stops reading without closing holds a request thread for 0.5 s.
 
+- **Players' start-up bursts on slow CPUs (#504, #503).** The decision: sacdfs recognises the
+  situation and responds in general, rather than waiting for one player's log. It measures its
+  own decoding speed, per kind of frame (DST for DSF files, DST and conversion for WAV) and
+  channel count, from real decodes: the wall time of every batch of 4 frames or more, as a
+  moving average (a quarter per batch). A WAV file's speed not yet measured is taken as its DST
+  frames'. Where that speed is below `--start-burst` (3.5 times real time by default, mpv's rate
+  while it fills its buffer), the machine is *slow* for that file, and:
+  - the start-of-track decode-ahead decodes to its end (`--start-burst-secs`, 8 s by default,
+    within a quarter of the cache) at once, instead of a slice past the furthest read: from its
+    start for a reader that began past the start (a player's handle after its probe, #456), and
+    once past the file's first 2 MiB of audio (`HEAD_SCAN`) for a reader from the start. It stops
+    at a close or a jump as before, or when no read comes for 2 s.
+  The heads themselves stay decoded on every machine since #508 (kept heads, above).
+
+  On any machine, a reader whose reads all end within the file's first 2 MiB gets no read-ahead
+  while another file's decode-ahead runs or another reader plays, and a reader from the start of
+  a file does not start its decode-ahead within that head while another file's runs; it may once
+  the other's ends, or once past the head.
+  *Why:* in the user's traces from a 32-bit Atom NAS (#456), the player re-read the heads of an
+  album's 24 files (1.6 MB of each DSF, 0.6 MB of each WAV, and the tag) whenever it started a
+  track. Each head of a file not yet playing started a decode-ahead (decoding up to 3 s of that
+  file's audio until the close) or, beside a playing track, read-ahead of 16 to 150 frames (up to
+  1.5 s of CPU): the 20 refusals marked "another reader plays" in the first trace were all such
+  heads of other files while a track played, correctly refused under #363, and none was the start
+  of a track played. A rescan decoded 11 to 26 MB again (3 to 7 s of the whole CPU) while the
+  track starting needed it (#508 keeps those heads; a mount's first start still decodes each
+  once). *Why measured and not a setting:* the same build runs on
+  desktops that decode 6-channel DST many times faster than it plays and on the Atom at 1.8 times
+  (1.07 for 6-channel WAV); a machine fast enough changes nothing but the head rule, and a
+  measured rate follows the load it is under. *Why 3.5:* the fastest sustained start the player research
+  traced (mpv, 30 s at 3.5 times real time); FFmpeg's `-re` bursts 0.5 s. It is an option because
+  other players' bursts are not measured yet. *Why the decode-ahead goes to its end at once on a
+  slow machine:* a player that fills its buffer faster than the machine decodes waits for every
+  frame not decoded ahead, and in the traces a player busy with its rescan read its track slowly at
+  first and asked for more later, when the decode-ahead had stopped a slice ahead. Measured, it is
+  neutral: replays of the traces and players reading at 3.5 times real time did as well with
+  `--start-burst 0`, since a CPU slower than the player can only serve it at its own speed; the
+  head rule is what saved CPU (16 to 27 % in the replays with re-reads). It stays, bounded, as the
+  place for the burst sizes still being measured on real players. *Why not
+  within the head of a reader from the start:* that is how the rescans and the probes read, and
+  they close a moment later.
+  *Alternatives:* decoding the first seconds of a file at its probe (the probe of the file about
+  to play reads exactly like the rescans of the 23 others; in the traces of an album's start it
+  came 1.7 s and two files before the play handle, and at the next track the play handle came 0.08
+  to 0.4 s after the probe's close, so keeping the probe's decode-ahead going through that gap
+  gains at most that, against up to 8 s of decoding for every head); requiring the longer head
+  before a reader from the start begins its decode-ahead on a slow machine (measured: worse for a
+  DSF probe followed by its play handle, whose first reads the probe's decode-ahead had decoded;
+  audio held after 2 s fell from 3.2 to 2.7 s); keeping decoded heads in a file on disk, so that
+  a mount's first start finds them too (not done: [deployment](deployment.md#starting-playback-on-a-slow-cpu));
+  rules per player.
+  *Trade-off:* a second player starting beside one that plays reads its first 2 MiB without
+  read-ahead; on a slow machine a reader that reads past 2 MiB and stops without closing has up to 8 s decoded for nothing
+  (it stops after 2 s without reads); the speed is only known after the first decodes, so a
+  mount's first start is served as on a fast machine.
+
 **What a DSF header read still costs, and why it stays.** The 256 KiB the kernel reads hold
 the track's first frames (about 28 in stereo), and the first page itself holds 4004 bytes of
 the first frame, so a DSF tag walk reads audio sectors: 3.7 calls to the image per file on
