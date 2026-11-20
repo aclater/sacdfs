@@ -1821,6 +1821,9 @@ mod tests {
         assert!(c.release_idle(Duration::ZERO));
         assert_eq!(c.lock().head_bytes, 40 * 9408);
         assert_eq!(c.bytes(), 40 * 9408);
+        assert!(!c.release_idle(Duration::ZERO), "not used since");
+        // Used again (a millisecond later, the stamp's unit).
+        std::thread::sleep(Duration::from_millis(5));
         assert!(c.get(&key(1)).is_none());
         let f = c.get(&key(139)).unwrap();
         assert!(f.data.iter().all(|&b| b == 139));
