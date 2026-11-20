@@ -1,0 +1,11 @@
+{
+ "name": "vlc-dsf",
+ "note": "VLC: a preparser handle reads 16 KiB, then the player's handle goes on from there.",
+ "source": "scripts/trace-replay.py tests/fixtures/traces/player-vlc-dsf.trace.gz --play 5 --profile --before 3 --secs 15",
+ "file": {"ext": "dsf", "channels": 6},
+ "probes": [[["h", 0, 16384]], [["a", 32676, 4096]]],
+ "play_after_s": 0.14,
+ "play": {"from": ["a", 16292], "read": 131072, "rate": 1.0, "lead": 0.5},
+ "rescan": null,
+ "trace_audio": 92
+}
