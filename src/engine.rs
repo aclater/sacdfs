@@ -406,6 +406,10 @@ fn heads_cap(cap: usize) -> usize {
     cap / 2
 }
 
+/// Most bytes of heads an idle release keeps ([`FrameCache::release_idle`]): those of a
+/// 12-track 6-channel album as DSF and WAV (about 27 MiB), however large the cache.
+const IDLE_HEADS: usize = 32 << 20;
+
 /// A least-recently-used cache of decoded DSD frames and converted PCM frames, bounded in
 /// bytes: one budget for both, so a mount that serves only one format spends all of it on
 /// that format.
@@ -420,6 +424,8 @@ pub struct FrameCache {
     cap: usize,
     /// When the cache was last used, in ms since `epoch` ([`FrameCache::release_if_idle`]).
     used: AtomicU64,
+    /// `used` as it was at the last idle release that kept heads ([`FrameCache::release_idle`]).
+    released: AtomicU64,
     epoch: Instant,
 }
 
@@ -442,6 +448,7 @@ impl FrameCache {
             pool: Arc::new(Pool { inner: Mutex::new(PoolInner::default()), cap }),
             cap,
             used: AtomicU64::new(0),
+            released: AtomicU64::new(u64::MAX),
             epoch: Instant::now(),
         }
     }
@@ -510,6 +517,62 @@ impl FrameCache {
         let any = !frames.is_empty() || self.pool.mapped() > 0;
         drop(frames);
         self.pool.unmap_empty();
+        any
+    }
+
+    /// Like [`FrameCache::release_if_idle`], but keeps the most recently read heads, up to
+    /// [`IDLE_HEADS`] bytes of them, copied into slots packed together so that the slabs left
+    /// empty can go (#510). Nothing happens again until the cache is used again.
+    ///
+    /// *Why:* a player that re-reads the heads of every file of the album at each track start
+    /// (#456) found them decoded only if it came back within the minute before the idle
+    /// release; people take longer between albums, so every start was a first start, and on a
+    /// 32-bit Atom each decoded the album's heads again, 3.5 to 4 s of CPU while the track
+    /// started.
+    pub fn release_idle(&self, idle: Duration) -> bool {
+        let now = self.epoch.elapsed().as_millis() as u64;
+        let used = self.used.load(Ordering::Relaxed);
+        if now.saturating_sub(used) < idle.as_millis() as u64 || self.released.load(Ordering::Relaxed) == used
+        {
+            return false;
+        }
+        let budget = heads_cap(self.cap).min(IDLE_HEADS);
+        let (kept, frames) = {
+            let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            // Most recently read first.
+            let mut kept = Vec::new();
+            let mut bytes = 0;
+            for (k, f) in g.heads.iter() {
+                if bytes + f.data.len() > budget {
+                    break;
+                }
+                bytes += f.data.len();
+                kept.push((*k, f.data.to_vec(), f.fill, f.clips));
+            }
+            let mut v = Vec::with_capacity(g.lru.len() + g.heads.len());
+            while let Some(f) = g.pop_lru() {
+                v.push(f);
+            }
+            (kept, v)
+        };
+        let any = !frames.is_empty() || self.pool.mapped() > 0;
+        drop(frames);
+        self.pool.unmap_empty();
+        // Back among the heads, least recently read first, so their order stays.
+        for (k, data, fill, clips) in kept.into_iter().rev() {
+            let mut out = Vec::with_capacity(1);
+            if cfg!(unix) {
+                self.pool.alloc_into(data.len(), 1, &mut out);
+            }
+            let mut buf = out.pop().unwrap_or_else(|| FrameBuf::heap(data.len()));
+            buf.copy_from_slice(&data);
+            let len = buf.len();
+            let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            g.heads.put(k, Arc::new(Frame { data: buf, fill, clips }));
+            g.bytes += len;
+            g.head_bytes += len;
+        }
+        self.released.store(used, Ordering::Relaxed);
         any
     }
 
@@ -850,14 +913,30 @@ impl Engine {
         if !self.cache.release_if_idle(idle) {
             return false;
         }
+        self.release_the_rest();
+        true
+    }
+
+    /// Like [`Engine::release_if_idle`], keeping the most recently read heads
+    /// ([`FrameCache::release_idle`], #510): what the idle thread does. Memory pressure
+    /// ([`crate::memory`]) still drops them all.
+    pub fn release_idle(&self, idle: Duration) -> bool {
+        if !self.cache.release_idle(idle) {
+            return false;
+        }
+        self.release_the_rest();
+        true
+    }
+
+    /// The decoders, converters and reply buffers an idle engine drops.
+    fn release_the_rest(&self) {
         drop(std::mem::take(&mut *DECODERS.lock().unwrap_or_else(|p| p.into_inner())));
         drop_converters(self.id);
         crate::track::drop_read_buffers();
         trim_heap();
-        true
     }
 
-    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_if_idle`] with
+    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_idle`] with
     /// [`IDLE_RELEASE`] every 15 s, for as long as the engine lives.
     pub fn start_idle_release(self: &Arc<Self>) -> io::Result<()> {
         let weak = Arc::downgrade(self);
@@ -866,8 +945,8 @@ impl Engine {
                 std::thread::sleep(Duration::from_secs(15));
                 match weak.upgrade() {
                     Some(e) => {
-                        if e.release_if_idle(IDLE_RELEASE) {
-                            log::debug!("idle: cache and decoders released");
+                        if e.release_idle(IDLE_RELEASE) {
+                            log::debug!("idle: cache and decoders released, heads kept");
                         }
                     }
                     None => return,
@@ -1723,6 +1802,43 @@ mod tests {
         let b = c.buffer(9408);
         c.insert(key(1), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
         assert!(c.get(&key(1)).is_some());
+    }
+
+    /// An idle release keeps the most recently read heads (#510), packed into as few slabs as
+    /// they need, and drops the rest; it does nothing more until the cache is used again. A
+    /// release for memory pressure drops the heads too.
+    #[cfg(unix)]
+    #[test]
+    fn an_idle_release_keeps_the_heads() {
+        let c = FrameCache::new(16 << 20);
+        let frame_of = |c: &FrameCache, i: u32| {
+            let mut b = c.buffer(9408);
+            b.fill(i as u8);
+            Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 })
+        };
+        for i in 0..400 {
+            c.insert(key(i), frame_of(&c, i));
+        }
+        // Heads: every tenth frame, scattered over the slabs.
+        c.keep((0..400).step_by(10).map(key));
+        let mapped = c.mapped();
+        assert!(!c.release_idle(Duration::from_secs(60)), "just used");
+        assert!(c.release_idle(Duration::ZERO));
+        assert_eq!(c.lock().head_bytes, 40 * 9408);
+        assert_eq!(c.bytes(), 40 * 9408);
+        assert!(c.get(&key(1)).is_none());
+        let f = c.get(&key(390)).unwrap();
+        assert!(f.data.iter().all(|&b| b == 390u32 as u8));
+        drop(f);
+        // 40 frames of 9408 bytes fill one slab of 55 slots.
+        assert!(c.mapped() <= Pool::slab_shape(9408).0 && c.mapped() < mapped, "{}", c.mapped());
+        // The get above used the cache: one more release, then nothing until it is used.
+        assert!(c.release_idle(Duration::ZERO));
+        assert!(!c.release_idle(Duration::ZERO));
+        assert_eq!(c.bytes(), 40 * 9408);
+        // Memory pressure: all of it.
+        assert!(c.release_if_idle(Duration::ZERO));
+        assert_eq!((c.bytes(), c.mapped()), (0, 0));
     }
 
     #[test]
