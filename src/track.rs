@@ -228,8 +228,10 @@ pub struct Traffic {
     /// Readers whose start-of-track decode-ahead is active, and when that was last noted
     /// ([`Traffic::others_starting`]).
     started: Mutex<Vec<(u64, std::time::Instant)>>,
-    /// Readers that read a file's head, and when they last did ([`Traffic::others_reading_heads`]).
-    heads: Mutex<Vec<(u64, std::time::Instant)>>,
+    /// Readers that read a file's head: the reader, its file ([`TrackFile::key`]), when it last
+    /// did, and whether it is still open ([`Traffic::others_reading_heads`],
+    /// [`Traffic::other_files_heads_read`]).
+    heads: Mutex<Vec<HeadRead>>,
 }
 
 impl Default for Traffic {
@@ -271,21 +273,40 @@ impl Traffic {
         v.iter().any(|&(r, at)| r != id && at.elapsed() < START_WAIT)
     }
 
-    /// Notes that reader `id` read within a file's head (`true`) or is gone.
-    fn note_head_reader(&self, id: u64, reading: bool) {
+    /// Notes that reader `id` of `file` read within the file's head (`true`), or read past it
+    /// (`false`).
+    fn note_head_reader(&self, id: u64, file: usize, reading: bool) {
         let mut v = self.heads.lock().unwrap_or_else(|p| p.into_inner());
-        v.retain(|&(r, at)| r != id && at.elapsed() < HEADS_BUSY);
+        v.retain(|h| h.reader != id && h.at.elapsed() < HEADS_SEQUENCE);
         if reading {
-            v.push((id, std::time::Instant::now()));
+            v.push(HeadRead { reader: id, file, at: std::time::Instant::now(), open: true });
         }
     }
 
-    /// Whether a reader other than `id` read a file's head within [`HEADS_BUSY`]: a player
-    /// re-reading an album's heads as it starts a track, whose next read of the track waits for
-    /// those reads (#512).
+    /// Notes that reader `id` is gone. Its last read of a head still counts for
+    /// [`Traffic::other_files_heads_read`] until [`HEADS_SEQUENCE`] has passed.
+    fn head_reader_gone(&self, id: u64) {
+        let mut v = self.heads.lock().unwrap_or_else(|p| p.into_inner());
+        v.retain(|h| h.at.elapsed() < HEADS_SEQUENCE);
+        for h in v.iter_mut().filter(|h| h.reader == id) {
+            h.open = false;
+        }
+    }
+
+    /// Whether a reader other than `id`, still open, read a file's head within [`HEADS_BUSY`]: a
+    /// player re-reading an album's heads as it starts a track, whose next read of the track
+    /// waits for those reads (#512).
     fn others_reading_heads(&self, id: u64) -> bool {
         let v = self.heads.lock().unwrap_or_else(|p| p.into_inner());
-        v.iter().any(|&(r, at)| r != id && at.elapsed() < HEADS_BUSY)
+        v.iter().any(|h| h.open && h.reader != id && h.at.elapsed() < HEADS_BUSY)
+    }
+
+    /// Whether the head of a file other than `file` was read within [`HEADS_SEQUENCE`], by a
+    /// reader open or closed since: a player going through an album's heads one file at a time,
+    /// each closed before the next is opened (#456, round 5).
+    fn other_files_heads_read(&self, file: usize) -> bool {
+        let v = self.heads.lock().unwrap_or_else(|p| p.into_inner());
+        v.iter().any(|h| h.file != file && h.at.elapsed() < HEADS_SEQUENCE)
     }
 
     /// Marks a player's decoding until the guard drops.
@@ -293,6 +314,15 @@ impl Traffic {
         *self.decoding.lock().unwrap_or_else(|p| p.into_inner()) += 1;
         Decoding(self)
     }
+}
+
+/// A read of a file's head ([`Traffic::note_head_reader`]).
+#[derive(Debug)]
+struct HeadRead {
+    reader: u64,
+    file: usize,
+    at: std::time::Instant,
+    open: bool,
 }
 
 /// See [`Traffic::decoding`].
@@ -401,6 +431,14 @@ const START_IDLE_SLOW: std::time::Duration = std::time::Duration::from_secs(2);
 /// 0.3 times real time for 5 s: seconds of silence at each start. *Why 1 s:* that player re-reads
 /// a head every 50 to 600 ms while a track starts.
 const HEADS_BUSY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A read of another file's head this recent holds back a reader of a file's head from its start
+/// ([`Traffic::other_files_heads_read`], #456 round 5): a player going through an album's heads
+/// one file at a time. *Why 2 s:* that player opens the next file 20 to 100 ms after closing the
+/// last, and reaches its second MiB 0.5 s later on its Atom when the heads are not decoded; on
+/// cores held to the Atom's speed a cold head took up to 1.4 s, and a window of 1 s let every
+/// other file start a decode-ahead anyway.
+const HEADS_SEQUENCE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Most frames the start-of-track decode-ahead decodes past the furthest frame read
 /// ([`Reader::start_ahead`]), and less with fewer than 4 decoder threads: a slice. *Why bounded:*
@@ -712,6 +750,15 @@ impl TrackFile {
             });
         }
         frames
+    }
+
+    /// Which audio the file holds, to tell the files of a folder apart ([`Traffic`]): its disc,
+    /// area and first frame. A track's DSF and WAV files are one.
+    fn key(&self) -> usize {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (Arc::as_ptr(&self.disc) as usize, self.area, self.start_frame).hash(&mut h);
+        h.finish() as usize
     }
 
     /// Length of everything before the first audio byte.
@@ -1080,7 +1127,7 @@ impl Drop for Reader {
             traffic.fast.forget(self.id);
             traffic.players.forget(self.id);
             traffic.set_started(self.id, false);
-            traffic.note_head_reader(self.id, false);
+            traffic.head_reader_gone(self.id);
         }
     }
 }
@@ -1382,7 +1429,17 @@ impl Reader {
     /// [`START_WAIT`] at most. *Why:* the reads of a player starting a track come faster than
     /// decoding; each decoding its own few frames used the decoder threads poorly and took
     /// turns with the decode-ahead's slices for the open file's demultiplexer.
+    ///
+    /// Not a read of frames in the cache already (kept heads, #456): those take no decoding. On
+    /// the Atom of #456 such reads waited up to 2 s for a decode-ahead held up by others' work.
     fn wait_for_start(&self, engine: &Engine, k0: u32, k1: u32) {
+        let running = {
+            let st = self.start.lock().unwrap_or_else(|p| p.into_inner());
+            st.active && st.running
+        };
+        if !running || self.in_cache(engine, k0, k1) {
+            return;
+        }
         let mut st = self.start.lock().unwrap_or_else(|p| p.into_inner());
         let lead = start_lead(engine);
         // A read far past what it was asked for (a seek) decodes its own frames.
@@ -1469,11 +1526,20 @@ impl Reader {
                 return None;
             }
             // Nor, for now, a reader of a file's head from its start while another file starts
-            // (#503): it is most likely a player re-reading the album's heads, which would take
-            // turns with the track starting. It may start once that one has, or once past the
-            // head. *Why not one that began past the start:* that is how a player's handle
-            // begins after its probe (#456), and it must not wait for a scanner's.
-            if st.from == 0 && self.head_only(s) && engine.traffic().others_starting(self.id) {
+            // (#503), or while another file's head was read a moment ago: it is most likely a
+            // player re-reading the album's heads, which would take turns with the track starting.
+            // It may start once that one has, or once past the head. *Why the other heads too:*
+            // the player of #456 re-reads them one file at a time, each closed before the next
+            // opens, and from a second start on most come before its track's handle does, so
+            // no file was starting yet; each started a decode-ahead the re-read then waited for,
+            // a quarter of a second per file on its Atom, though the kept heads held every frame.
+            // *Why not one that began past the start:* that is how a player's handle begins
+            // after its probe (#456), and it must not wait for a scanner's.
+            if st.from == 0
+                && self.head_only(s)
+                && (engine.traffic().others_starting(self.id)
+                    || engine.traffic().other_files_heads_read(self.file.key()))
+            {
                 return None;
             }
             st.eligible = false;
@@ -1579,7 +1645,7 @@ impl Reader {
         }
     }
 
-    /// Whether frames `[k0, k1)` of the file are all in the cache (for the trace only).
+    /// Whether frames `[k0, k1)` of the file are all in the cache.
     fn in_cache(&self, engine: &Engine, k0: u32, k1: u32) -> bool {
         let f = &self.file;
         let (t0, t1) = (f.start_frame + k0, f.start_frame + k1);
@@ -1704,6 +1770,10 @@ impl Reader {
         // reads a DSF file's tag before it plays (#456): the reads go on from where they were.
         // Counted, it was a jump, and no later read was in order with it: no read-ahead at all.
         if k0 > 0 && k1 >= self.file.layout.frames && offset > s.max_end.saturating_add(SEQ_GAP_AHEAD) {
+            // A reader of the head that looks at the tag is still going through the heads.
+            if self.head_only(&s) && s.started.is_some() {
+                engine.traffic().note_head_reader(self.id, self.file.key(), true);
+            }
             return None;
         }
         // The first read of audio never starts read-ahead: a tagger walking a WAV file's
@@ -1755,7 +1825,7 @@ impl Reader {
         }
         let now = std::time::Instant::now();
         let traffic = engine.traffic();
-        traffic.note_head_reader(self.id, self.head_only(&s));
+        traffic.note_head_reader(self.id, self.file.key(), self.head_only(&s));
         // An unsure reader behind a network client may be a copy starting or a player whose
         // client read ahead: it plays only if no player has been reading since before it (#271).
         // So does a slow one whose client has not paused, once it has read enough to judge: on a
@@ -1799,7 +1869,14 @@ impl Reader {
         // re-reading the heads of an album's files as a track starts. Its read-ahead (2 s of each
         // file on a slow machine, 1.5 to 3 s of the whole CPU per rescan) came when the track
         // starting needed the CPU.
-        if self.head_only(&s) && (traffic.others_starting(self.id) || traffic.players.any_but(self.id, now)) {
+        // Nor one from the file's start while another file's head was read a moment ago, for the
+        // same reason as its start-of-track decode-ahead ([`Reader::plan_start`]).
+        let from_start = s.started.is_some_and(|(_, at)| at <= self.file.header_len());
+        if self.head_only(&s)
+            && (traffic.others_starting(self.id)
+                || traffic.players.any_but(self.id, now)
+                || from_start && traffic.other_files_heads_read(self.file.key()))
+        {
             return None;
         }
         let frames = self.file.layout.frames;
@@ -2425,7 +2502,7 @@ mod tests {
         let engine = slow_or_fast(true);
         engine.rates().set(false, f.layout.channels, 1.5);
         // Another file's head, read just now.
-        engine.traffic().note_head_reader(u64::MAX, true);
+        engine.traffic().note_head_reader(u64::MAX, 0, true);
         let reader = Reader::new(f.clone());
         let at = 1536 << 10;
         assert!(reader.plan_read_ahead(&engine, at, at + (128 << 10), 1, 2).is_none());
@@ -2440,7 +2517,7 @@ mod tests {
         assert!(!st.race && st.target < st.end, "{st:?}");
         drop(st);
         // The re-reads end (the other reader closes): the next read runs it to the end.
-        engine.traffic().note_head_reader(u64::MAX, false);
+        engine.traffic().head_reader_gone(u64::MAX);
         reader.plan_read_ahead(&engine, off, off + (128 << 10), 3, 4);
         let st = reader.start.lock().unwrap();
         assert!(st.race && st.target == st.end, "{st:?}");
@@ -2480,6 +2557,86 @@ mod tests {
         assert!(head.is_none(), "{head:?}");
         let past = reader.plan_read_ahead(&engine, HEAD_SCAN, HEAD_SCAN + (128 << 10), 3, 4);
         assert!(past.is_some_and(|a| !a.start), "{past:?}");
+    }
+
+    /// A player re-reading an album's heads one file at a time, each closed before the next
+    /// opens (#456, round 5): once one file's head was read, the next file's head reader neither
+    /// starts its decode-ahead nor reads ahead, though no file is starting; it may once past the
+    /// head. A reader of the same file, and one that began past the start (the playing handle
+    /// after its probe), are not held back.
+    #[test]
+    fn a_head_reader_after_another_files_head_waits() {
+        let tree = corpus();
+        let mut dsf: Vec<_> =
+            tree.all_files().into_iter().map(|(_, f)| f).filter(|f| f.format() == Format::Dsf).collect();
+        dsf.sort_by_key(|f| std::cmp::Reverse(f.layout.frames));
+        let (x, y) = (dsf[0].clone(), dsf[1].clone());
+        assert_ne!(x.key(), y.key());
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        // The first file's head: read, then closed.
+        let a = Reader::new(x.clone());
+        assert!(
+            plan_start_past_the_head(&engine, &a).is_some_and(|r| r.start),
+            "the first head is not held back"
+        );
+        a.close();
+        drop(a);
+        assert!(!engine.traffic().others_reading_heads(u64::MAX), "gone, for the slow start (#512)");
+        assert!(engine.traffic().other_files_heads_read(y.key()), "still counts for the next file's head");
+        assert!(!engine.traffic().other_files_heads_read(x.key()), "not for its own file");
+
+        // The next file's head reader.
+        let b = Reader::new(y.clone());
+        assert!(plan_start_past_the_head(&engine, &b).is_none(), "deferred");
+        let next = b.plan_read_ahead(&engine, HEAD_WINDOW + (128 << 10), HEAD_WINDOW + (256 << 10), 2, 3);
+        assert!(next.is_none(), "no read-ahead within the head either: {next:?}");
+        assert!(b.start.lock().unwrap().eligible, "not refused");
+        // Past the head it is a player starting the track.
+        let past = b.plan_read_ahead(&engine, HEAD_SCAN, HEAD_SCAN + (128 << 10), 3, 4);
+        assert!(past.is_some_and(|r| r.start), "{past:?}");
+
+        // Another reader of the first file from its start is not held back by its own file's head.
+        let c = Reader::new(x.clone());
+        let engine2 = Engine::new(2, 32 << 20).unwrap();
+        engine2.traffic().note_head_reader(u64::MAX, x.key(), true);
+        assert!(plan_start_past_the_head(&engine2, &c).is_some_and(|r| r.start));
+
+        // A playing handle that began past the start, after another file's head was read.
+        let engine3 = Engine::new(2, 32 << 20).unwrap();
+        engine3.traffic().note_head_reader(u64::MAX, y.key(), true);
+        let p = Reader::new(x.clone());
+        let at = 1536 << 10;
+        assert!(p.plan_read_ahead(&engine3, at, at + (128 << 10), 1, 2).is_none());
+        let mut off = at + (128 << 10);
+        let mut started = None;
+        while started.is_none() && off < at + KERNEL_FIRST_WINDOW + (256 << 10) {
+            started = p.plan_read_ahead(&engine3, off, off + (128 << 10), 2, 3);
+            off += 128 << 10;
+        }
+        assert!(started.is_some_and(|r| r.start), "{started:?}");
+        assert!(
+            off <= at + KERNEL_FIRST_WINDOW + (128 << 10),
+            "right after the kernel's first window: {off}"
+        );
+    }
+
+    /// A read of frames in the cache already does not wait for the start-of-track decode-ahead
+    /// (#456, round 5): on the Atom such a read of the kept head waited 2 s for a decode-ahead
+    /// held up by other files' work.
+    #[test]
+    fn a_read_of_cached_frames_does_not_wait_for_the_start_ahead() {
+        let tree = corpus();
+        let f = longest(&tree, Format::Dsf);
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        let reader = Reader::new(f.clone());
+        reader.decoded(&engine, 0, 8, false).unwrap();
+        assert!(reader.in_cache(&engine, 0, 8));
+        // A decode-ahead running that has decoded nothing yet, and will not without its job.
+        *reader.start.lock().unwrap() =
+            StartAhead { active: true, running: true, next: 0, target: 8, end: 600, ..StartAhead::default() };
+        let t = std::time::Instant::now();
+        reader.wait_for_start(&engine, 2, 6);
+        assert!(t.elapsed() < START_WAIT / 4, "waited {:?}", t.elapsed());
     }
 
     /// The decode-ahead's end: its frames, within the file, and none if a quarter of the cache

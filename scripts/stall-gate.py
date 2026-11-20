@@ -7,7 +7,9 @@ base in the first seconds of a track.
   scripts/stall-gate.py --base BIN --head BIN --source DIR [--rounds 5] SCENARIO...
 
 SCENARIO is a profile (tests/fixtures/players/NAME.json, acted out by
-`scripts/trace-replay.py --player`) or TRACE:R (reader R of a trace, replayed). Each round mounts
+`scripts/trace-replay.py --player`) or TRACE:R (reader R of a trace, replayed). PROFILE@idle acts
+the profile out twice on one mount, IDLE_S apart, and measures the second: a start after the idle
+release, with the kept heads (#510; #456 round 5). Each round mounts
 SOURCE afresh for each scenario and build (`--threads 4 --cache-mb 64`, no index cache), with the
 builds alternating and the order swapping every round. sacdfs runs on CPUS under a CPU quota,
 the client on the other CPUs. The quota is either given (--quota) or found from base (--target):
@@ -21,7 +23,9 @@ worst read 1.25 times and 250 ms, stall 1.25 times and 1 s, and for a player tha
 folder's heads, the mean time of those re-reads in its first 6 s, 1.2 times and 20 ms (#512: a
 player that takes turns with them gets its track no faster). It also fails when the audio the
 player held 5 s after its first read is below base's lowest by 1.25 times and 0.5 s: a silence at
-the start that the 15 s stall total hides when the player catches up later. *Why base's highest, not its
+the start that the 15 s stall total hides when the player catches up later; and when a player
+that opens its track after re-reading some heads (`play_after_heads`) opened it later than base's
+latest by 1.25 times and 0.5 s. *Why base's highest, not its
 median:* some scenarios' worst read is bimodal on shared runners (0.6 or 1.5 s for the same
 build), and comparing medians failed a build against itself. docs/performance.md, "The CI stall
 gate", says how the margins were chosen. The table goes to standard output, and to the job
@@ -99,7 +103,15 @@ def client(a):
 
 def run(a, binary, quota, scenario, label=None):
     mount = Mount(a, binary, quota, label)
+    idle = scenario.endswith("@idle")
+    scenario = scenario.removesuffix("@idle")
     with mount as m:
+        if idle:
+            warm = subprocess.run(client(a) + ["--player", scenario, m, "--secs", str(a.secs)],
+                                  capture_output=True, text=True, check=False)
+            if warm.returncode:
+                sys.exit(f"{scenario} with {binary} failed:\n{warm.stdout}{warm.stderr}")
+            time.sleep(a.idle_s)
         if scenario.endswith(".json"):
             cmd = client(a) + ["--player", scenario, m]
         else:
@@ -144,9 +156,20 @@ def calibrate(a, binary):
     return q, x
 
 
+def opens_after_heads(scenario):
+    """Whether the scenario is a profile whose player opens its track after re-reading heads."""
+    path = scenario.removesuffix("@idle")
+    if not path.endswith(".json"):
+        return False
+    with open(path) as f:
+        return json.load(f).get("play_after_heads") is not None
+
+
 def name(scenario):
-    s = os.path.basename(scenario)
-    return s[:-5] if s.endswith(".json") else s.replace(".trace.gz", "")
+    idle = scenario.endswith("@idle")
+    s = os.path.basename(scenario.removesuffix("@idle"))
+    s = s[:-5] if s.endswith(".json") else s.replace(".trace.gz", "")
+    return s + "-idle" if idle else s
 
 
 def main():
@@ -171,6 +194,10 @@ def main():
     ap.add_argument("--rescan-ms", type=float, default=20.0)
     ap.add_argument("--audio-ratio", type=float, default=1.25)
     ap.add_argument("--audio-s", type=float, default=0.5)
+    ap.add_argument("--open-ratio", type=float, default=1.25)
+    ap.add_argument("--open-s", type=float, default=0.5)
+    ap.add_argument("--idle-s", type=float, default=80.0,
+                    help="wait between the two starts of PROFILE@idle: past sacdfs's idle release (60 to 75 s)")
     ap.add_argument("--json", help="write every run's numbers here")
     ap.add_argument("--log-dir", help="keep each run's sacdfs log, with the read trace, here")
     ap.add_argument("scenarios", nargs="+")
@@ -192,6 +219,7 @@ def main():
                 n = run(a, builds[b], a.quota, s, f"{name(s)}-{b}-{r + 1}")
                 res[s][b].append(n)
                 re = "" if n.get("rescan_ms") is None else f", re-reads {n['rescan_ms']:.0f} ms"
+                re += "" if n.get("play_open_s") is None else f", opened at {n['play_open_s']:.2f} s"
                 print(f"round {r + 1} {name(s)} {b}: worst {n['worst_ms']:.0f} ms, stalled {n['stalled_s']:.2f} s{re},"
                       f" sacdfs CPU {n['sacdfs_cpu_s']:.1f} s", flush=True)
     if a.json:
@@ -227,6 +255,12 @@ def main():
             re = f"{br:.0f} → {hr:.0f} ({rng('base', 'rescan_ms')} / {rng('head', 'rescan_ms')})"
         else:
             re = "-"
+        # A player that opens its track after re-reading heads: how long it took to get there.
+        if opens_after_heads(s):
+            bo, ho = top(res[s]["base"], "play_open_s"), med(res[s]["head"], "play_open_s")
+            if ho > bo * a.open_ratio and ho > bo + a.open_s:
+                bad.append("track opened later")
+            re += f"; opened {med(res[s]['base'], 'play_open_s'):.2f} → {ho:.2f} s"
         if bad:
             failed.append(f"{name(s)} ({', '.join(bad)})")
         lines.append(f"| {name(s)} | {bw:.0f} → {hw:.0f} ({rng('base', 'worst_ms')} / {rng('head', 'worst_ms')}) "
@@ -239,7 +273,8 @@ def main():
               f"highest by more than {a.worst_ratio}x and {a.worst_ms:g} ms (worst read) or {a.stall_ratio}x and "
               f"{a.stall_s:g} s (stall), or the mean time of the re-reads in a player's first 6 s by "
               f"{a.rescan_ratio}x and {a.rescan_ms:g} ms; or where the audio it held after 5 s is below base's "
-              f"lowest by {a.audio_ratio}x and {a.audio_s:g} s."]
+              f"lowest by {a.audio_ratio}x and {a.audio_s:g} s; or where a player that opens its track after "
+              f"re-reading heads opened it later than base's latest by {a.open_ratio}x and {a.open_s:g} s."]
     text = "\n".join(lines) + "\n"
     print(text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):

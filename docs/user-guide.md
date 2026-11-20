@@ -183,7 +183,10 @@ slice ahead of the reads, and runs on once the re-reads stop. The decoded heads 
 players read again stay in the cache on any machine (#456).
 
 On any machine, a reader of a file's head gets no read-ahead while another file starts or plays,
-and does not start its own decode-ahead while another file starts. A machine that decodes faster
+and does not start its own decode-ahead while another file starts. A reader of a file's head from
+its start does neither while another file's head was read in the last 2 s either: a player
+re-reading the album's heads one file at a time, which opens its track only after several of them
+(#456). A read of frames already in the cache never waits for a decode-ahead. A machine that decodes faster
 than `--start-burst` changes nothing else. `--start-burst 0` turns the slow-machine part off. The
 log's read trace (`-vv`) shows `slow: to frame N at once` when it applies, and `slow: paused at N,
 heads read` when re-reads hold it back. What it measured:
