@@ -1826,6 +1826,11 @@ player starting a track wait or stall clearly longer than base did, on a CPU abo
   turn-taking DSF player's audio after 5 s 4.02 → 2.48 s and its re-reads 86 → 119 ms, the WAV
   player's re-reads 105 → 147 ms: it fails. On a real 6-channel disc at 0.45 of a CPU with
   `--format dsf` it fails on the audio after 5 s (4.21 → 2.72 s). The other way round, it passes.
+  The start after the idle release (#518), on the real disc at 0.45 of an E-core, 4 rounds: the
+  build before the fix opened the track 2.32 s after the probe and the fix 0.28 s (ranges 2.07 to
+  2.52 and 0.27 to 0.29 s); in CI on the synthetic disc 1.74 → 0.22 s, 5 rounds, the job taking
+  20 minutes. With the fix as head it passes; with the order swapped it would fail on "track
+  opened later" by the margins above (not run that way).
 
 To run it by hand (needs `fusermount3` and systemd's user session for the CPU quota):
 

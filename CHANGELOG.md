@@ -43,8 +43,9 @@ All notable changes to sacdfs are recorded here. The format follows
   start now neither reads ahead nor starts its decode-ahead while another file's head was read in
   the last 2 s, and a read whose frames are all in the cache never waits for a decode-ahead.
   With the player's profile on cores limited to an Atom's speed, a start after the idle release
-  opened its track 0.3 s after the probe instead of 2.4 s; the first start after a mount opened it
-  3 s sooner too. The stall gate now also replays that player starting after the idle release.
+  opened its track 0.28 s after the probe instead of 2.32 s, and the first start after a mount
+  reached it 5.0 s after the probe instead of 8.0 to 8.4 s. The stall gate now also replays that
+  player starting after the idle release, and fails when its track opens later.
 - **Seconds of silence at each track start on slow CPUs with players that re-read the album
   (#512).** On a 32-bit Atom NAS, the slow-machine decode-ahead of #504 decoded a starting track's
   first 7 s at once, while the player re-read the heads of the album's other files. That player

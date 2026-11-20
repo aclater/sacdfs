@@ -882,6 +882,25 @@ the process held 72 MiB once idle on main and 107 MiB with #510 (the bound is ha
 32 MiB; at the default 32 MiB cache, 16). Bytes are unchanged: 910 corpus files and 94 files of 3
 real discs, i686 and x86_64.
 
+**Starts after the idle release (#518).** With the heads kept, the user's next log still showed about 2 s of
+silence at each later start, though every head the player re-read was in the cache. From its second start on, the
+player re-reads the other files' heads one file at a time, each closed before the next opens, and opens its track
+only after five to seven of them. Each re-read past the first MiB started a decode-ahead of that file and then
+waited for it, about 250 ms per file on the Atom (3.6 to 3.7 s per start in all), and each decode-ahead decoded on
+past the kept head after its file closed. The track opened 1.5 to 1.9 s after the probe; in one start, two plain
+read-aheads of re-read files ran on after they closed and the track's own read of a kept head waited 2 s. Now a
+reader of a file's head from its start does not start a decode-ahead or read ahead within its first 2 MiB while
+another file's head was read in the last 2 s, and a read of cached frames never waits for a decode-ahead.
+Replayed on two E-cores of an i9-13900H at 0.45 of a CPU, `--threads 4 --cache-mb 64 --format dsf`, i686 builds,
+the real 6-channel disc, 4 rounds of the stall gate, medians, main → this change: the player's profile opening its
+track after five heads (`zidoo-turns-warm-dsf`), started again 80 s after a first start on the same mount, opened
+its track 2.32 → 0.28 s after the probe, with re-reads of 25 → 14 ms and no stall either way; the first start on
+the mount reached its track's first read 8.0 to 8.4 → 5.0 s after the probe. The first-start profile with a fixed
+open (`zidoo-turns-dsf`): stalled in its first 15 s 6.25 → 4.62 s, audio held after 5 s 3.34 → 3.62 s, re-reads
+115 → 101 ms. ffprobe-then-ffmpeg and mpv: unchanged. A window of 1 s (as for #512) was not enough: cold heads took
+up to 1.4 s each there, and the first-start profile got slightly worse (stalled 6.03 → 6.58 s). Bytes are unchanged:
+910 corpus files and 94 files of 3 real discs, i686 and x86_64.
+
 Machines that decode fast are unchanged: on 4 cores of the Ryzen with no limit, a whole
 6-channel track read as WAV and DSF took 12.71 s (main before #508), 12.76 s (#508) and 12.68 s
 (#504), medians of 5; on all 32 threads 3.80, 3.82 and 3.82 s. The CPU of library scans of the 3
