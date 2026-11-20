@@ -39,6 +39,7 @@ runs beside it. Offsets are kept as in a replay: header reads in the header, aud
 same byte of the audio (`a`), tail reads at the same distance from the end (`e`).
 """
 import argparse
+import bisect
 import collections
 import gzip
 import json
@@ -317,6 +318,10 @@ def replay(hs, t0, t1, mapping):
 # Bytes after the audio start that a read may end within and still be a re-read of a head
 # (#503's HEAD_SCAN is 2 MiB; the Zidoo's DSF heads end at 1.6 MiB).
 RESCAN_HEAD = 5 << 19
+# A read of the playing file this soon after a reply to a re-read came in turn with it, and a
+# rescan takes turns if this share of the playing file's reads during it did (--profile).
+TURN_MS = 20.0
+TURN_SHARE = 0.75
 # Reads this close to a file's end are reads of its tail (the DSF tag, the bytes after WAV data).
 TAIL = 1 << 16
 
@@ -381,9 +386,15 @@ def profile(handles, play, before, secs, wav_start):
         for h in heads:
             ends[h.ext].append(max(off + n - audio_of(h) for _, off, n, _ in h.reads if off < h.size - TAIL))
         lens = collections.Counter(n for h in heads for _, _, n, _ in h.reads)
-        # Turns: no rescan read arrived while a read of the playing file was in progress.
-        busy = [(t, t + lat) for t, _, _, lat in reads]
-        overlap = sum(1 for h in heads for t, _, _, _ in h.reads if any(a < t < b for a, b in busy))
+        # Turns: while the rescan went on, most reads of the playing file came right after a reply
+        # to a re-read (TURN_MS), as from a client that sends its track's next read only then. Up
+        # to two re-reads may be in flight, so overlapping requests don't tell (#510).
+        replies = sorted(t + lat for h in heads for t, _, _, lat in h.reads)
+        span = (min(t for h in heads for t, _, _, _ in h.reads), replies[-1])
+        during = [t for t, _, _, _ in reads if span[0] <= t <= span[1]]
+        after_reply = sum(1 for t in during
+                          if any(t - TURN_MS <= r <= t for r in replies[max(0, bisect.bisect_right(replies, t) - 3):
+                                                                     bisect.bisect_right(replies, t)]))
         rescan = {
             "files": len({h.name for h in heads}),
             "exts": sorted(ends),
@@ -392,7 +403,7 @@ def profile(handles, play, before, secs, wav_start):
                         default=0),
             "read": lens.most_common(1)[0][0],
             "start_s": round((min(h.t_open for h in heads) - p.t_open) / 1000, 2),
-            "turns": overlap <= 0.05 * sum(len(h.reads) for h in heads),
+            "turns": bool(during) and after_reply >= TURN_SHARE * len(during),
         }
     return {
         "file": {"ext": p.ext, "channels": p.channels},

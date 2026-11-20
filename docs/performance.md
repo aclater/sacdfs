@@ -1780,6 +1780,47 @@ python3 -I scripts/bench_compare.py --base OLD_SACDFS --head NEW_SACDFS \
 `scripts/bench_compare.py` is the same file in pysacd, whose `benchmark` job has the same design
 with `pysacd-extract` on synthetic discs (pysacd's #123). Only `scripts/bench_workload.py` differs.
 
+## The CI stall gate
+
+A pull request that touches `src/`, `Cargo.toml`, `Cargo.lock`, the replay scripts or their
+fixtures runs the `stall-gate` workflow (#506). Unlike the benchmark it fails: when head lets a
+player starting a track wait or stall clearly longer than base did, on a CPU about as slow as a
+4-thread Atom NAS.
+
+- **What it does:** one job builds base (the pull request's target branch) and head. Two more each
+  make a synthetic disc (`scripts/play-disc.py`: a 6-channel DST area of 12 tracks, built from the
+  35 DST frames of the corpus's `dst-features-2ch-6ch` image, so decoding costs about what a real
+  6-channel DST disc does) and run `scripts/stall-gate.py`. sacdfs runs on two CPUs under a CPU
+  quota, `--threads 4 --cache-mb 64`, and the client on the other two. The quota is found at the
+  start of the job: the share of a CPU at which base makes 6-channel WAV at about 1.25 times real
+  time (an Atom makes it at 1.07, and DSF at 1.8); on GitHub's runners that was 14 to 17 %.
+  Each scenario mounts the disc afresh, so each is a first start after a mount: the player
+  profiles in `tests/fixtures/players` (`scripts/trace-replay.py --player`) and two #456 traces
+  replayed. Builds alternate, the order swaps every round, 5 rounds.
+- **What fails it:** for each scenario, head's median over the rounds of the playing file's worst
+  read in its first 15 s, or of the time playback stalled in them, above the highest base had in
+  any round by more than 1.25 times and 250 ms (worst read) or 1.25 times and 1 s (stall). The job
+  summary has the table of medians and ranges.
+- **How the margins were chosen:** a build compared with itself (the pull request that added the
+  gate changes no code, so its runs compare identical binaries) on GitHub's runners, twice, and 3
+  rounds on a lab host's E-cores. The playing file's worst read varied most in the Zidoo-like
+  scenario: 0.37 to 1.8 s for the same build, two clusters around 0.6 and 1.5 s, and its median
+  over 5 rounds was 0.65 s in one run and 1.4 s in the other for the same binary. Comparing medians
+  with any margin under about 0.8 s would have failed that build against itself; comparing head's
+  median with base's highest, no scenario came within 250 ms of failing in either direction.
+  Elsewhere worst reads stayed within 0.12 to 0.52 s and medians within 0.1 s of each other.
+  Stalls: 0 s for every profile but the Zidoo-like ones (0.2 to 1.9 s), and 6.8 to 8.2 s for the
+  trace replays, whose players keep the traced client's own slow pace.
+- **What it caught:** VALIDATION
+
+To run it by hand (needs `fusermount3` and systemd's user session for the CPU quota):
+
+```sh
+scripts/play-disc.py /tmp/disc/play.iso
+scripts/stall-gate.py --base OLD_SACDFS --head NEW_SACDFS --source /tmp/disc --cpus 0,1 --client-cpus 2,3 \
+    tests/fixtures/players/zidoo-wav.json tests/fixtures/traces/session-456-c.trace.gz:14
+```
+
 ## Reproducing
 
 ```sh

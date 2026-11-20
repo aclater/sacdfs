@@ -6,6 +6,6 @@
  "probes": [[["h", 0, 131072], ["h", 262144, 36864], ["e", -452, 4096], ["a", 30144, 131072], ["a", 161216, 131072], ["a", 292288, 131072]]],
  "play_after_s": 1.88,
  "play": {"from": ["h", 131072], "read": 131072, "rate": 3.5, "lead": 4.0},
- "rescan": {"files": 18, "exts": ["dsf", "wav"], "head": {"dsf": 1572772, "wav": 423360}, "tail": 4096, "read": 131072, "start_s": -2.5, "turns": false},
+ "rescan": {"files": 18, "exts": ["dsf", "wav"], "head": {"dsf": 1572772, "wav": 423360}, "tail": 4096, "read": 131072, "start_s": -2.5, "turns": true},
  "trace_audio": 268864
 }
