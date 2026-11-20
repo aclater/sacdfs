@@ -24,6 +24,14 @@ All notable changes to sacdfs are recorded here. The format follows
   Why and what was measured: docs/design.md, "Players' start-up bursts on slow CPUs".
 
 ### Fixed
+- **Seconds of silence at each track start on slow CPUs with players that re-read the album
+  (#512).** On a 32-bit Atom NAS, the slow-machine decode-ahead of #504 decoded a starting track's
+  first 7 s at once, while the player re-read the heads of the album's other files. That player
+  sends its track's next read only when a re-read is answered, and the re-reads took 250 to 610 ms
+  instead of 60 to 130, so the track came at about 0.3 times real time for 5 s. The decode-ahead
+  now runs ahead at once only while no other file's head was read in the last second, and stays
+  paced otherwise. Players starting a track alone are unchanged. On test builds since #509,
+  `--start-burst 0` avoids it.
 - **Folder rescans no longer take the CPU from a track starting (#503).** A player that re-reads
   the heads of every file in the folder as it starts a track (seen on a Zidoo) made sacdfs decode
   each of those files ahead too: up to 3 s of audio per file, or 16 to 150 frames beside the

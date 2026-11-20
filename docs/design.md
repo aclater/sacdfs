@@ -1690,7 +1690,11 @@ decoding them twice.
     within a quarter of the cache) at once, instead of a slice past the furthest read: from its
     start for a reader that began past the start (a player's handle after its probe, #456), and
     once past the file's first 2 MiB of audio (`HEAD_SCAN`) for a reader from the start. It stops
-    at a close or a jump as before, or when no read comes for 2 s.
+    at a close or a jump as before, or when no read comes for 2 s. It does so only while no other
+    reader has read a file's head in the last second (#512), and drops back to a slice past the
+    furthest read when one does: a player that re-reads the album's heads as it starts a track and
+    takes turns (its track's next read only after a re-read's reply) gets its track no faster
+    than those re-reads, and on the Atom the run to the end made them 2 to 5 times slower.
   The heads themselves stay decoded on every machine since #508 (kept heads, above).
 
   On any machine, a reader whose reads all end within the file's first 2 MiB gets no read-ahead
