@@ -14,12 +14,14 @@ the client on the other CPUs. The quota is either given (--quota) or found from 
 the share of CPUS at which base converts a 6-channel WAV file at TARGET times real time, as a
 4-thread Atom does at about 1.07 to 1.1.
 
-For each scenario and build the gate takes the medians over the rounds of the playing file's
-worst read and of the time playback stalled, in the first SECS seconds after it opened. It
-fails when head's median is above base's by more than both a relative and an absolute margin:
-worst read 1.5 times and 250 ms, stall 1.5 times and 1 s (docs/performance.md, "The CI stall
-gate", says how they were chosen). The table goes to standard output, and to the job summary
-in CI.
+For each scenario and build the gate takes, over the rounds, the playing file's worst read and
+the time playback stalled in the first SECS seconds after it opened. It fails when head's median
+is above the highest base had in any round by more than both a relative and an absolute margin:
+worst read 1.25 times and 250 ms, stall 1.25 times and 1 s. *Why base's highest, not its
+median:* some scenarios' worst read is bimodal on shared runners (0.6 or 1.5 s for the same
+build), and comparing medians failed a build against itself. docs/performance.md, "The CI stall
+gate", says how the margins were chosen. The table goes to standard output, and to the job
+summary in CI.
 """
 import argparse
 import json
@@ -41,16 +43,17 @@ DEFAULT_WRAP = ("systemd-run --user --scope -q -p CPUQuota={quota}% -p CPUQuotaP
 class Mount:
     """SOURCE mounted with BIN under the CPU limit, for a `with` block."""
 
-    def __init__(self, a, binary, quota):
-        self.a, self.binary, self.quota = a, binary, quota
+    def __init__(self, a, binary, quota, keep=None):
+        self.a, self.binary, self.quota, self.keep = a, binary, quota, keep
 
     def __enter__(self):
         self.dir = tempfile.mkdtemp(prefix="stall-gate.")
         self.log = open(self.dir + ".log", "w")
+        env = dict(os.environ, RUST_LOG="info,sacdfs::trace=debug") if self.a.log_dir else None
         wrap = self.a.wrap.format(quota=self.quota, cpus=self.a.cpus, uid=os.getuid(), gid=os.getgid()).split()
         cmd = wrap + [self.binary, "-f", "--no-index-cache", "--threads", "4", "--cache-mb", "64",
                       *self.a.sacdfs_arg, self.a.source, self.dir]
-        self.proc = subprocess.Popen(cmd, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        self.proc = subprocess.Popen(cmd, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
         deadline = time.monotonic() + 30
         while not os.path.ismount(self.dir):
             if self.proc.poll() is not None or time.monotonic() > deadline:
@@ -80,15 +83,18 @@ class Mount:
             time.sleep(0.05)
         self.log.close()
         os.rmdir(self.dir)
-        os.unlink(self.dir + ".log")
+        if self.a.log_dir and self.keep:
+            os.replace(self.dir + ".log", os.path.join(self.a.log_dir, self.keep + ".log"))
+        else:
+            os.unlink(self.dir + ".log")
 
 
 def client(a):
     return ["taskset", "-c", a.client_cpus, sys.executable, "-I", REPLAY] if a.client_cpus else [sys.executable, "-I", REPLAY]
 
 
-def run(a, binary, quota, scenario):
-    mount = Mount(a, binary, quota)
+def run(a, binary, quota, scenario, label=None):
+    mount = Mount(a, binary, quota, label)
     with mount as m:
         if scenario.endswith(".json"):
             cmd = client(a) + ["--player", scenario, m]
@@ -153,11 +159,12 @@ def main():
     ap.add_argument("--wrap", default=DEFAULT_WRAP, help="command sacdfs runs under ({quota} {cpus} {uid} {gid})")
     ap.add_argument("--sacdfs-arg", action="append", default=[], help="more sacdfs options")
     ap.add_argument("--wav-audio-start", type=int, default=268864, help="for trace replays (#456 traces)")
-    ap.add_argument("--worst-ratio", type=float, default=1.5)
+    ap.add_argument("--worst-ratio", type=float, default=1.25)
     ap.add_argument("--worst-ms", type=float, default=250.0)
-    ap.add_argument("--stall-ratio", type=float, default=1.5)
+    ap.add_argument("--stall-ratio", type=float, default=1.25)
     ap.add_argument("--stall-s", type=float, default=1.0)
     ap.add_argument("--json", help="write every run's numbers here")
+    ap.add_argument("--log-dir", help="keep each run's sacdfs log, with the read trace, here")
     ap.add_argument("scenarios", nargs="+")
     a = ap.parse_args()
     # A stopped gate unmounts what it mounted: SIGTERM ends it as an exception would.
@@ -174,7 +181,7 @@ def main():
         order = ("base", "head") if r % 2 == 0 else ("head", "base")
         for s in a.scenarios:
             for b in order:
-                n = run(a, builds[b], a.quota, s)
+                n = run(a, builds[b], a.quota, s, f"{name(s)}-{b}-{r + 1}")
                 res[s][b].append(n)
                 print(f"round {r + 1} {name(s)} {b}: worst {n['worst_ms']:.0f} ms, stalled {n['stalled_s']:.2f} s,"
                       f" sacdfs CPU {n['sacdfs_cpu_s']:.1f} s", flush=True)
@@ -183,16 +190,18 @@ def main():
             json.dump({"quota": a.quota, "results": res}, f)
 
     med = lambda runs, k: statistics.median(x[k] for x in runs)
+    top = lambda runs, k: max(x[k] for x in runs)
     lines = [f"## Player stall gate ({a.rounds} rounds, sacdfs at {a.quota}% of one CPU on CPUs {a.cpus})", "",
              "| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | |", "|---|---|---|---|"]
     failed = []
     for s in a.scenarios:
         bw, hw = med(res[s]["base"], "worst_ms"), med(res[s]["head"], "worst_ms")
         bs, hs = med(res[s]["base"], "stalled_s"), med(res[s]["head"], "stalled_s")
+        bwt, bst = top(res[s]["base"], "worst_ms"), top(res[s]["base"], "stalled_s")
         bad = []
-        if hw > bw * a.worst_ratio and hw > bw + a.worst_ms:
+        if hw > bwt * a.worst_ratio and hw > bwt + a.worst_ms:
             bad.append("worst read")
-        if hs > bs * a.stall_ratio and hs > bs + a.stall_s:
+        if hs > bst * a.stall_ratio and hs > bst + a.stall_s:
             bad.append("stall")
         if bad:
             failed.append(f"{name(s)} ({', '.join(bad)})")
@@ -201,8 +210,9 @@ def main():
                      f"| {bs:.2f} → {hs:.2f} ({rng('base', 'stalled_s')} / {rng('head', 'stalled_s')}) "
                      f"| {'**WORSE**: ' + ', '.join(bad) if bad else 'ok'} |")
     lines += ["", f"Medians (ranges base / head) of the first {a.secs:g} s after the playing file opened; "
-              f"measured in {time.monotonic() - started:.0f} s. Head fails where it is above base by more than "
-              f"{a.worst_ratio}x and {a.worst_ms:g} ms (worst read) or {a.stall_ratio}x and {a.stall_s:g} s (stall)."]
+              f"measured in {time.monotonic() - started:.0f} s. Head fails where its median is above base's "
+              f"highest by more than {a.worst_ratio}x and {a.worst_ms:g} ms (worst read) or {a.stall_ratio}x and "
+              f"{a.stall_s:g} s (stall)."]
     text = "\n".join(lines) + "\n"
     print(text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
