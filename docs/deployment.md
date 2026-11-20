@@ -901,6 +901,24 @@ open (`zidoo-turns-dsf`): stalled in its first 15 s 6.25 → 4.62 s, audio held 
 up to 1.4 s each there, and the first-start profile got slightly worse (stalled 6.03 → 6.58 s). Bytes are unchanged:
 910 corpus files and 94 files of 3 real discs, i686 and x86_64.
 
+**The first start after a mount (#510).** The #456 player probes the track it shows when it lists the album, and the
+user starts playback later; that first start re-read every other file's head, all misses, before the track opened.
+Now, once one file's head was probed and the mount has had no read for 2 s, the folder's other heads are decoded in
+the background as far as the probe read, until the next read. Replayed on two E-cores of an i9-13900H at 0.45 of a
+CPU, `--threads 4 --cache-mb 64 --format dsf`, i686 builds, the real 6-channel disc, 4 rounds of the stall gate,
+medians, main → this change, the player's probe at the listing and its start (`zidoo-turns-warm-dsf@probe:D`) D s
+later on the same mount: D = 30 s: track opened 4.27 → 0.44 s after its probe, stalled in its first 15 s
+2.54 → 0 s, audio held after 5 s 3.83 → 7.64 s, re-reads 80 → 15 ms; D = 120 s (past the idle release): 4.09 →
+0.26 s, 4.04 → 0 s, 2.04 → 6.31 s, 103 → 17 ms; D = 4 s (warming stopped by the start after 2 of 13 files): opened
+4.17 → 2.16 s, stall 2.66 → 2.55 s; D = 1 s and the first-start profile with a fixed open (`zidoo-turns-dsf`):
+unchanged, no warming. The start after the idle release, ffprobe-then-ffmpeg and mpv: unchanged. sacdfs CPU per run
+9.3 → 12.2 s at D = 30 s (the heads of the album's 13 other files, about 3 s). Library scans (ffprobe, TagLib,
+Audio::Scan and MPD patterns, and one reading 1.6 MiB of every file) over three real discs: no warming, CPU
+unchanged. Paced scans with 3 s between files: ffprobe and Audio::Scan patterns did not warm; the 1.6 MiB-per-file
+one did, and took less CPU (18.8 to 19.1 → 16.8 to 17.0 s), since what it warmed was what it read next. On 4
+P-cores without a quota nothing warms and nothing changed. Bytes are unchanged: 910 corpus files and 94 files of 3
+real discs, i686 and x86_64.
+
 Machines that decode fast are unchanged: on 4 cores of the Ryzen with no limit, a whole
 6-channel track read as WAV and DSF took 12.71 s (main before #508), 12.76 s (#508) and 12.68 s
 (#504), medians of 5; on all 32 threads 3.80, 3.82 and 3.82 s. The CPU of library scans of the 3

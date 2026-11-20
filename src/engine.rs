@@ -648,6 +648,12 @@ impl FrameCache {
         self.lock().bytes
     }
 
+    /// Most bytes of heads the cache keeps through an idle release: half the cache, at most
+    /// `IDLE_HEADS`.
+    pub fn heads_budget(&self) -> usize {
+        heads_cap(self.cap).min(IDLE_HEADS)
+    }
+
     /// The cache's cap in bytes.
     pub fn cap(&self) -> usize {
         self.cap

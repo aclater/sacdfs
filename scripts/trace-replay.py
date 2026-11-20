@@ -40,7 +40,9 @@ mean time of the re-reads sent in the playing handle's first 6 s: for a player t
 its speed. With `play_after_heads` N, a rescan that takes turns starts right after the probes and
 the playing handle opens once N files' heads are re-read, as the #456 player does from its second
 start on, so slow re-reads hold up the track itself; `rescan_ms` then counts the re-reads from the
-probes on. `play_open_s` is when the playing handle opened, after the probes began. Offsets are
+probes on. `play_open_s` is when the playing handle opened, after the probes began. With
+`--probe-only`, only the probe a player makes when it lists the album is acted out: the profile's
+`browse` reads, or its first probe, on one handle. Offsets are
 kept as in a replay: header reads in the header, audio reads at the same byte of the audio (`a`),
 tail reads at the same distance from the end (`e`).
 """
@@ -427,6 +429,24 @@ def profile(handles, play, before, secs, wav_start):
     }
 
 
+def probe_only(prof, mount):
+    """Acts out only the probe a player makes when it lists the album: one handle reading the
+    profile's `browse` reads (or its first probe) of the file it would play."""
+    want = (prof["file"]["channels"], prof["file"]["ext"])
+    local = local_files(mount)
+    if not local[want]:
+        raise SystemExit(f"no {want[0]}ch .{want[1]} file under the mount")
+    path, size, audio, _ = max(local[want], key=lambda c: c[1])
+    buf = mmap.mmap(-1, 1 << 20)
+    start = time.monotonic()
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
+    for where in prof.get("browse") or prof["probes"][0]:
+        off, n = located(where, size, audio, prof.get("trace_audio", audio))
+        os.preadv(fd, [memoryview(buf)[:n]], off)
+    os.close(fd)
+    return {"probe_s": round(time.monotonic() - start, 3)}
+
+
 def act(prof, mount, secs, prebuf):
     """Acts out a profile on a mount; returns the playing handle's numbers, and the rescan's."""
     want = (prof["file"]["channels"], prof["file"]["ext"])
@@ -558,6 +578,7 @@ def main():
     ap.add_argument("--reads", help="write the played file's reads here (TSV)")
     ap.add_argument("--profile", action="store_true", help="print R's player profile (JSON) and stop")
     ap.add_argument("--player", metavar="PROFILE", help="act out the player of a profile on MOUNT")
+    ap.add_argument("--probe-only", action="store_true", help="with --player: only the probe at the album's listing")
     a = ap.parse_args()
     if a.player:
         mount = a.mount or a.trace
@@ -566,6 +587,10 @@ def main():
         with open(a.player) as f:
             prof = json.load(f)
         out = {"player": prof.get("name", os.path.basename(a.player)), "secs": a.secs}
+        if a.probe_only:
+            out["probe"] = probe_only(prof, mount)
+            print(json.dumps(out))
+            return
         out["replay"] = act(prof, mount, a.secs, a.prebuf)
         print(json.dumps(out))
         return

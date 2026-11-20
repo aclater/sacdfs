@@ -81,6 +81,11 @@ jobs:
           - group: zidoo-idle
             scenarios: >-
               tests/fixtures/players/zidoo-turns-warm-dsf.json@idle
+          # The first start after a mount, 20 s after the player probed the track as it listed
+          # the album (#510).
+          - group: zidoo-probe
+            scenarios: >-
+              tests/fixtures/players/zidoo-turns-warm-dsf.json@probe:20
           - group: players
             scenarios: >-
               tests/fixtures/players/mpv-wav.json

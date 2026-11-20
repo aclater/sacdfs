@@ -9,7 +9,9 @@ base in the first seconds of a track.
 SCENARIO is a profile (tests/fixtures/players/NAME.json, acted out by
 `scripts/trace-replay.py --player`) or TRACE:R (reader R of a trace, replayed). PROFILE@idle acts
 the profile out twice on one mount, IDLE_S apart, and measures the second: a start after the idle
-release, with the kept heads (#510; #456 round 5). Each round mounts
+release, with the kept heads (#510; #456 round 5). PROFILE@probe:D first only probes the track, as
+a player does when it lists the album (the profile's `browse` probe), and starts playback D seconds
+later on the same mount: the first start after a mount (#510). Each round mounts
 SOURCE afresh for each scenario and build (`--threads 4 --cache-mb 64`, no index cache), with the
 builds alternating and the order swapping every round. sacdfs runs on CPUS under a CPU quota,
 the client on the other CPUs. The quota is either given (--quota) or found from base (--target):
@@ -101,11 +103,26 @@ def client(a):
     return ["taskset", "-c", a.client_cpus, sys.executable, "-I", REPLAY] if a.client_cpus else [sys.executable, "-I", REPLAY]
 
 
+def split(scenario):
+    """A scenario's profile or trace, and its suffix: "idle", "probe:D" or None."""
+    base, at, suffix = scenario.rpartition("@")
+    if at and (suffix == "idle" or suffix.startswith("probe:")):
+        return base, suffix
+    return scenario, None
+
+
 def run(a, binary, quota, scenario, label=None):
     mount = Mount(a, binary, quota, label)
-    idle = scenario.endswith("@idle")
-    scenario = scenario.removesuffix("@idle")
+    scenario, suffix = split(scenario)
+    idle = suffix == "idle"
     with mount as m:
+        if suffix and suffix.startswith("probe:"):
+            # The player probed the track when it listed the album; playback starts D s later.
+            probe = subprocess.run(client(a) + ["--player", scenario, m, "--probe-only"],
+                                   capture_output=True, text=True, check=False)
+            if probe.returncode:
+                sys.exit(f"{scenario} with {binary} failed:\n{probe.stdout}{probe.stderr}")
+            time.sleep(float(suffix.split(":", 1)[1]))
         if idle:
             warm = subprocess.run(client(a) + ["--player", scenario, m, "--secs", str(a.secs)],
                                   capture_output=True, text=True, check=False)
@@ -158,7 +175,7 @@ def calibrate(a, binary):
 
 def opens_after_heads(scenario):
     """Whether the scenario is a profile whose player opens its track after re-reading heads."""
-    path = scenario.removesuffix("@idle")
+    path = split(scenario)[0]
     if not path.endswith(".json"):
         return False
     with open(path) as f:
@@ -166,10 +183,10 @@ def opens_after_heads(scenario):
 
 
 def name(scenario):
-    idle = scenario.endswith("@idle")
-    s = os.path.basename(scenario.removesuffix("@idle"))
+    path, suffix = split(scenario)
+    s = os.path.basename(path)
     s = s[:-5] if s.endswith(".json") else s.replace(".trace.gz", "")
-    return s + "-idle" if idle else s
+    return s + "-" + suffix.replace(":", "") if suffix else s
 
 
 def main():

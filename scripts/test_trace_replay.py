@@ -56,6 +56,14 @@ class Profiles(unittest.TestCase):
                 if not p["name"].startswith("zidoo"):
                     self.assertEqual(p["play"], d["play"])
 
+    def test_browse_is_the_probe_of_a_first_start(self):
+        # The probe the #456 player makes when it lists the album (#510): its round-4 first start's.
+        players = ROOT / "tests" / "fixtures" / "players"
+        warm = json.loads((players / "zidoo-turns-warm-dsf.json").read_text())
+        first = json.loads((players / "zidoo-turns-dsf.json").read_text())
+        self.assertEqual(warm["browse"], first["probes"][0])
+        self.assertEqual(warm["browse"][0], ["h", 0, 131072])
+
     def test_zidoo_rereads_the_album(self):
         p = json.loads((ROOT / "tests" / "fixtures" / "players" / "zidoo-wav.json").read_text())
         self.assertGreaterEqual(p["rescan"]["files"], 15)

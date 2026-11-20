@@ -160,6 +160,14 @@ pub struct Volume {
     image_reads: Arc<ImageReads>,
     /// The size `statfs` reports, and when it was read: see [`Volume::statfs`].
     size: Arc<Mutex<ShareSize>>,
+    /// Decodes a folder's heads after a player's probe, while the mount is idle (#510).
+    warm: Arc<crate::warm::Warmer>,
+}
+
+impl Drop for Volume {
+    fn drop(&mut self) {
+        self.warm.close();
+    }
 }
 
 /// What the request threads share with the filesystem.
@@ -235,6 +243,7 @@ impl Volume {
         // Read now, while the source has just been walked.
         let size = Arc::new(Mutex::new(ShareSize::of_images(tree.image_bytes(), tree.source())));
         crate::trace::mark_start();
+        let warm = crate::warm::Warmer::new(&engine, &tree);
         Ok(Volume {
             shared: Arc::new(Shared {
                 tree,
@@ -249,6 +258,7 @@ impl Volume {
             watchdog: Watchdog::new(Some(watchdog::DEFAULT_TIMEOUT))?,
             image_reads: ImageReads::new(Some(watchdog::DEFAULT_TIMEOUT)),
             size,
+            warm,
         })
     }
 
@@ -375,6 +385,7 @@ impl Volume {
         let reader = match self.shared.handle(fh) {
             Some(Open::Track(r)) => r,
             Some(Open::Sidecar(file, sidecar)) => {
+                self.warm.read(None);
                 // The source may be slow (a network filesystem): read on a request thread.
                 let pending = self.watchdog.watch(What::new("sidecar read", Ino(ino)), reply);
                 self.requests.spawn(move || {
@@ -425,6 +436,12 @@ impl Volume {
         };
         // In progress from now, while it may wait for a thread, until after its reply (#357).
         let arrival = reader.arrived();
+        // Only reads of audio make a burst a probe's or a scan's: a look at headers and tags
+        // decodes nothing.
+        let (k0, k1) = reader.file.frames_for(offset, offset.saturating_add(u64::from(size)));
+        let audio = k0 < k1;
+        self.warm.read(audio.then_some(&reader.file));
+        let warm = self.warm.clone();
         // The read trace (#456): timed only while it is on.
         let came = crate::trace::enabled().then(std::time::Instant::now);
         let engine = self.engine.clone();
@@ -445,6 +462,9 @@ impl Volume {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 reader.read_traced(&engine, offset, u64::from(size), trace.as_mut())
             }));
+            if audio {
+                warm.done(&reader, &engine);
+            }
             drop(counted);
             let reply = pending.take();
             if let (Some(t), Some(came), Some(ran)) = (trace.as_mut(), came, ran) {

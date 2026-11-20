@@ -1702,6 +1702,25 @@ decoding them twice.
     than those re-reads, and on the Atom the run to the end made them 2 to 5 times slower.
   The heads themselves stay decoded on every machine since #508 (kept heads, above).
 
+  On such a slow machine, a folder's heads are also decoded before the first start (#510,
+  `src/warm.rs`): once the audio reads since the mount was last quiet were all of one file, from
+  its start, past the kernel's read-ahead of a first read (256 KiB) and within its head (2 MiB),
+  and the mount then has no read for 2 s, the other files of the same area in the same format have
+  their first frames decoded as far as that probe read, one decoder batch (a frame per thread) at
+  a time, and kept as heads, the probed file's last so that it is the most recent. Any read stops
+  it after the batch in progress, and it does not start again until another probe. It stays within
+  the heads an idle release keeps (`FrameCache::heads_budget`), and does nothing while the mount
+  is short of memory. *Why:* the #456 player probes the track it shows as it lists the album, and
+  the user starts playback minutes later; that first start then re-read every other head, all
+  misses, about 4.5 s of the Atom's CPU before the track's handle opened. *Why only after quiet,
+  and stop at once:* decoding heads beside a track starting made the player's stalls 0.7 to 1.3 s
+  worse on Atom-speed cores (lane measurements for #510), so a start within 2 s of the probe is
+  left as it was. *Why one file and past 256 KiB:* library scanners read every file of a folder in
+  turn, and taggers (ffprobe, TagLib, Audio::Scan, MPD's scan) read less than the kernel's first
+  read-ahead; Roon's import also reads the middle of the file, past the head. *Why as far as the
+  probe read:* that is what the same player re-reads of the other files. *Trade-off:* about 3 s of
+  an Atom-speed CPU per album probed and not played, and the heads stay in memory as before.
+
   On any machine, a reader whose reads all end within the file's first 2 MiB gets no read-ahead
   while another file's decode-ahead runs or another reader plays, and a reader from the start of
   a file does not start its decode-ahead within that head while another file's runs; it may once
