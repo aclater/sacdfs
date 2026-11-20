@@ -20,6 +20,7 @@
 //!   next read, of any file, after the frames it is decoding (one per decoder thread). *Why
 //!   stop rather than go on beside it (#510, s071d's measurements):* decoding heads beside a
 //!   player starting a track made its stalls 0.7 to 1.3 s longer on Atom-speed cores.
+//! - **Not while the mount is short of memory** ([`Tree::refusing`]).
 //! - **Within the heads an idle release keeps** ([`crate::engine::FrameCache::heads_budget`]),
 //!   with the probed file's head kept the most recent, so they are there minutes later.
 
@@ -224,6 +225,10 @@ impl Warmer {
     /// stopped it.
     fn warm(&self, engine: &Engine, tree: &Tree, probe: &Probe, reads: u64) -> (usize, bool) {
         let (file, extent) = (&probe.file, probe.extent);
+        // Short of memory (#237): nothing more is decoded for later.
+        if tree.refusing() {
+            return (0, false);
+        }
         let files = tree.files_beside(file);
         let Some(at) = files.iter().position(|f| Arc::ptr_eq(f, file) || f.number == file.number) else {
             return (0, false);

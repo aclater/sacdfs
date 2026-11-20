@@ -1799,7 +1799,10 @@ player starting a track wait or stall clearly longer than base did, on a CPU abo
   replayed. One more, `zidoo-turns-warm-dsf.json@idle`, acts its profile out twice on one mount
   80 s apart and measures the second start: after the idle release, with the kept heads (#510). Its
   player opens its track only after re-reading five files' heads (`play_after_heads`), as the
-  #456 player does from its second start on. Builds alternate, the order swaps every round, 5 rounds.
+  #456 player does from its second start on. `zidoo-turns-warm-dsf.json@probe:20` first makes only
+  the probe the player makes when it lists the album (the profile's `browse` reads), then starts
+  20 s later on the same mount: the first start after a mount (#510). Builds alternate, the order
+  swaps every round, 5 rounds.
 - **What fails it:** for each scenario, head's median over the rounds, against the worst base had
   in any round, beyond both margins: the playing file's worst read in its first 15 s (1.25 times
   and 250 ms), the time playback stalled in them (1.25 times and 1 s), the audio the player held
