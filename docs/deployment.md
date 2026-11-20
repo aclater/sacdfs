@@ -862,8 +862,7 @@ real time), `--threads 4 --cache-mb 64 --format dsf`, a fresh mount each, the pl
 that trace with its turns (`tests/fixtures/players/zidoo-turns-dsf.json`), 5 runs each, medians,
 main against #512: re-reads in its first 6 s 104 → 79 ms, audio it held after 2 s 1.49 → 2.17 s
 and after 5 s 2.72 → 4.21 s (0.74 s of it from the probe), stalled in the first 15 s 2.34 → 2.42 s.
-With the profile as first built from the trace (the playing handle opening 1 s sooner), the
-re-reads took 335 → 190 ms. On the stall gate's synthetic disc at 0.39 of a CPU: 119 → 86 ms
+On the stall gate's synthetic disc at 0.39 of a CPU: 119 → 86 ms
 for this player, 147 → 105 ms for the WAV one. A whole 6-channel track read as WAV and DSF on 4
 P-cores took the same time (15.06 → 15.08 s, medians of 5). Bytes are unchanged: 910 corpus files
 and 94 files of 3 real discs, i686 and x86_64.
