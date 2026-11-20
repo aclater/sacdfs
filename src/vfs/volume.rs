@@ -439,7 +439,9 @@ impl Volume {
         // Only reads of audio make a burst a probe's or a scan's: a look at headers and tags
         // decodes nothing.
         let (k0, k1) = reader.file.frames_for(offset, offset.saturating_add(u64::from(size)));
-        self.warm.read((k0 < k1).then_some(&reader));
+        let audio = k0 < k1;
+        self.warm.read(audio.then_some(&reader.file));
+        let warm = self.warm.clone();
         // The read trace (#456): timed only while it is on.
         let came = crate::trace::enabled().then(std::time::Instant::now);
         let engine = self.engine.clone();
@@ -460,6 +462,9 @@ impl Volume {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 reader.read_traced(&engine, offset, u64::from(size), trace.as_mut())
             }));
+            if audio {
+                warm.done(&reader, &engine);
+            }
             drop(counted);
             let reply = pending.take();
             if let (Some(t), Some(came), Some(ran)) = (trace.as_mut(), came, ran) {

@@ -28,7 +28,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use crate::engine::Engine;
-use crate::track::Reader;
+use crate::track::{Reader, TrackFile};
 use crate::tree::Tree;
 
 /// How long the mount goes without a read before warming starts. *Why 2 s:* a player starting a
@@ -51,6 +51,14 @@ pub struct Warmer {
     wake: Condvar,
 }
 
+/// A probe of a file: the file, the reader's number and how far into the audio it read.
+#[derive(Debug)]
+struct Probe {
+    file: Arc<TrackFile>,
+    reader: u64,
+    extent: u64,
+}
+
 #[derive(Debug, Default)]
 struct State {
     /// The track files read since the mount was last quiet.
@@ -63,8 +71,12 @@ struct State {
 
 #[derive(Debug)]
 struct Burst {
-    /// The last reader of the first file read.
-    reader: Arc<Reader>,
+    /// The first file read.
+    file: Arc<TrackFile>,
+    /// After its last read: the reader, and how far it read as a probe, if it is one
+    /// ([`Reader::probe_extent`]). *Why not the reader itself:* held here, a closed reader would
+    /// still count as open where others look ([`crate::track::Traffic`]).
+    probe: Option<(u64, u64)>,
     /// Another file was read too.
     others: bool,
     /// Taken by the thread already.
@@ -99,10 +111,10 @@ impl Warmer {
         self.epoch.elapsed().as_millis() as u64 + 1
     }
 
-    /// Notes that a read arrived: of a track file's audio through `reader`, or of something else
-    /// (`None`: a sidecar, or a track file's header or tag). Any read stops warming; only reads of
-    /// audio make the reads since the mount was last quiet a probe's (one file) or not.
-    pub fn read(self: &Arc<Self>, reader: Option<&Arc<Reader>>) {
+    /// Notes that a read arrived: of a track file's audio (`file`), or of something else (`None`:
+    /// a sidecar, or a track file's header or tag). Any read stops warming; only reads of audio
+    /// make the reads since the mount was last quiet a probe's (one file) or not.
+    pub fn read(self: &Arc<Self>, file: Option<&Arc<TrackFile>>) {
         self.reads.fetch_add(1, Ordering::SeqCst);
         let now = self.now_ms();
         let last = self.last.swap(now, Ordering::SeqCst);
@@ -111,15 +123,10 @@ impl Warmer {
         if quiet_before {
             st.burst = None;
         }
-        let Some(reader) = reader else { return };
+        let Some(file) = file else { return };
         match &mut st.burst {
-            None => st.burst = Some(Burst { reader: reader.clone(), others: false, taken: false }),
-            Some(b) if b.others => return,
-            Some(b) if Arc::ptr_eq(&b.reader.file, &reader.file) => {
-                if !Arc::ptr_eq(&b.reader, reader) {
-                    b.reader = reader.clone();
-                }
-            }
+            None => st.burst = Some(Burst { file: file.clone(), probe: None, others: false, taken: false }),
+            Some(b) if b.others || Arc::ptr_eq(&b.file, file) => return,
             Some(b) => {
                 b.others = true;
                 return;
@@ -143,6 +150,18 @@ impl Warmer {
         }
     }
 
+    /// Notes, after `reader` read the file's audio, how far it read as a probe, if it is one.
+    pub fn done(&self, reader: &Reader, engine: &Engine) {
+        let mut st = self.lock();
+        let Some(b) = st.burst.as_mut().filter(|b| !b.others && Arc::ptr_eq(&b.file, &reader.file)) else {
+            return;
+        };
+        b.probe = reader.probe_extent(engine).map(|x| (reader.id(), x));
+        if b.probe.is_some() {
+            self.wake.notify_all();
+        }
+    }
+
     /// Ends the thread.
     pub fn close(&self) {
         self.lock().closed = true;
@@ -152,19 +171,19 @@ impl Warmer {
     /// Waits for a probe followed by quiet, and warms its folder; `false` when closed. Waits at
     /// most a few seconds without one, so that the thread lets go of the warmer in between.
     fn next(&self) -> bool {
-        let Some((reader, reads)) = self.wait_for_probe(Duration::from_secs(10)) else {
+        let Some((probe, reads)) = self.wait_for_probe(Duration::from_secs(10)) else {
             return !self.lock().closed;
         };
         let (Some(engine), Some(tree)) = (self.engine.upgrade(), self.tree.upgrade()) else {
             return false;
         };
-        self.warm(&engine, &tree, &reader, reads);
+        self.warm(&engine, &tree, &probe, reads);
         true
     }
 
-    /// The reader of a burst of reads of one file, once the mount has been quiet since for
+    /// The probe of a burst of reads of one file, once the mount has been quiet since for
     /// `quiet`, and the reads so far then; `None` if there is none within `wait`, or closed.
-    fn wait_for_probe(&self, wait: Duration) -> Option<(Arc<Reader>, u64)> {
+    fn wait_for_probe(&self, wait: Duration) -> Option<(Probe, u64)> {
         let deadline = Instant::now() + wait;
         let mut st = self.lock();
         loop {
@@ -173,7 +192,7 @@ impl Warmer {
             }
             let now = Instant::now();
             let left = deadline.saturating_duration_since(now);
-            let pending = st.burst.as_ref().is_some_and(|b| !b.others && !b.taken);
+            let pending = st.burst.as_ref().is_some_and(|b| !b.others && !b.taken && b.probe.is_some());
             if pending {
                 let since = self.now_ms().saturating_sub(self.last.load(Ordering::SeqCst));
                 let quiet = self.quiet.as_millis() as u64;
@@ -181,7 +200,8 @@ impl Warmer {
                     let reads = self.reads.load(Ordering::SeqCst);
                     let b = st.burst.as_mut()?;
                     b.taken = true;
-                    return Some((b.reader.clone(), reads));
+                    let (reader, extent) = b.probe?;
+                    return Some((Probe { file: b.file.clone(), reader, extent }, reads));
                 }
                 let more = Duration::from_millis(quiet - since);
                 st = self.wake.wait_timeout(st, more).unwrap_or_else(|p| p.into_inner()).0;
@@ -202,9 +222,8 @@ impl Warmer {
     /// Decodes the heads of the files beside `probe`'s, as far as it read, until a read comes
     /// (the reads were `reads` before). How many files it went through, and whether a read
     /// stopped it.
-    fn warm(&self, engine: &Engine, tree: &Tree, probe: &Reader, reads: u64) -> (usize, bool) {
-        let Some(extent) = probe.probe_extent(engine) else { return (0, false) };
-        let file = &probe.file;
+    fn warm(&self, engine: &Engine, tree: &Tree, probe: &Probe, reads: u64) -> (usize, bool) {
+        let (file, extent) = (&probe.file, probe.extent);
         let files = tree.files_beside(file);
         let Some(at) = files.iter().position(|f| Arc::ptr_eq(f, file) || f.number == file.number) else {
             return (0, false);
@@ -217,7 +236,7 @@ impl Warmer {
         let began = Instant::now();
         crate::trace_line!(
             "warm r={} start: {} files beside, {} bytes of audio each",
-            probe.id(),
+            probe.reader,
             order.len() - 1,
             extent
         );
@@ -242,7 +261,7 @@ impl Warmer {
                 if self.interrupted(reads) {
                     crate::trace_line!(
                         "warm r={} stopped: a read, after {done} files, took={}",
-                        probe.id(),
+                        probe.reader,
                         crate::trace::Ms(began.elapsed())
                     );
                     return (done, true);
@@ -260,7 +279,7 @@ impl Warmer {
         }
         crate::trace_line!(
             "warm r={} done: {done} files, took={}",
-            probe.id(),
+            probe.reader,
             crate::trace::Ms(began.elapsed())
         );
         log::debug!("warm: decoded the heads of {done} files beside a probed one");
@@ -315,15 +334,16 @@ mod tests {
         let r = Arc::new(Reader::new(f.clone()));
         let mut off = 0;
         while off < len.min(f.size) {
-            w.read(Some(&r));
+            w.read(Some(f));
             r.read(engine, off, 128 << 10).unwrap();
-            off += 128 << 10;
-        }
-        if let Some(rate) = rate {
-            for ch in 1..=6 {
-                engine.rates().set(false, ch, rate);
-                engine.rates().set(true, ch, rate);
+            if let Some(rate) = rate {
+                for ch in 1..=6 {
+                    engine.rates().set(false, ch, rate);
+                    engine.rates().set(true, ch, rate);
+                }
             }
+            w.done(&r, engine);
+            off += 128 << 10;
         }
         r
     }
@@ -352,10 +372,10 @@ mod tests {
         assert!(!cached(&engine, &files[1], n));
         // Not before the mount has been quiet.
         let early = Instant::now();
-        let (reader, reads) = w.wait_for_probe(Duration::from_secs(2)).expect("quiet after the probe");
+        let (p, reads) = w.wait_for_probe(Duration::from_secs(2)).expect("quiet after the probe");
         assert!(early.elapsed() >= Duration::from_millis(40));
-        assert!(Arc::ptr_eq(&reader, &r));
-        let (done, stopped) = w.warm(&engine, &tree, &reader, reads);
+        assert_eq!((p.reader, p.extent), (r.id(), extent));
+        let (done, stopped) = w.warm(&engine, &tree, &p, reads);
         assert!(!stopped);
         assert_eq!(done, files.len() - 1);
         for f in &files {
@@ -406,9 +426,9 @@ mod tests {
         let files = folder(&tree, 3);
         let w = driven(&engine, &tree);
         let r = probe(&w, &engine, &files[0], PROBE);
-        let (reader, reads) = w.wait_for_probe(Duration::from_secs(2)).unwrap();
-        w.read(Some(&r));
-        let (done, stopped) = w.warm(&engine, &tree, &reader, reads);
+        let (p, reads) = w.wait_for_probe(Duration::from_secs(2)).unwrap();
+        w.read(Some(&files[0]));
+        let (done, stopped) = w.warm(&engine, &tree, &p, reads);
         assert!(stopped);
         assert_eq!(done, 0);
         let extent = r.probe_extent(&engine).unwrap();
@@ -426,8 +446,8 @@ mod tests {
         let extent = r.probe_extent(&engine).unwrap();
         let per = files[1].head_frames(extent) as usize * files[1].cached_frame_bytes(&engine);
         assert!(per > engine.cache().heads_budget() / 2, "the test needs heads of {per} bytes");
-        let (reader, reads) = w.wait_for_probe(Duration::from_secs(2)).unwrap();
-        assert_eq!(w.warm(&engine, &tree, &reader, reads), (0, false));
+        let (p, reads) = w.wait_for_probe(Duration::from_secs(2)).unwrap();
+        assert_eq!(w.warm(&engine, &tree, &p, reads), (0, false));
     }
 
     #[test]
