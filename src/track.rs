@@ -761,6 +761,28 @@ impl TrackFile {
         h.finish() as usize
     }
 
+    /// The frames (file indices from 0) that the first `audio` bytes of the file's audio need,
+    /// within what a read keeps as its head ([`HEAD_KEEP`]).
+    pub fn head_frames(&self, audio: u64) -> u32 {
+        let head = ((HEAD_KEEP / (self.byte_rate() as u64 / 75).max(1)) as u32).min(self.layout.frames);
+        let h = self.header_len();
+        self.frames_for(h, h.saturating_add(audio)).1.min(head)
+    }
+
+    /// Bytes a decoded frame of the file takes in the cache: DSD, or PCM with `engine`'s rate.
+    pub fn cached_frame_bytes(&self, engine: &Engine) -> usize {
+        match self.audio {
+            Audio::Dsf(_) => usize::from(self.layout.channels) * crate::dsf::FRAME_BYTES as usize,
+            Audio::Wav(l) => engine.pcm_frame_bytes(l.channels),
+        }
+    }
+
+    /// Whether `other` is a file of the same area in the same format: one of the files a
+    /// folder shows beside it.
+    pub fn beside(&self, other: &TrackFile) -> bool {
+        Arc::ptr_eq(&self.disc, &other.disc) && self.area == other.area && self.format() == other.format()
+    }
+
     /// Length of everything before the first audio byte.
     pub fn header_len(&self) -> u64 {
         self.header.len()
@@ -1200,6 +1222,30 @@ impl Reader {
     /// Whether the reader has read only the file's head so far ([`HEAD_SCAN`]).
     fn head_only(&self, s: &Seq) -> bool {
         s.max_end <= self.file.header_len().saturating_add(HEAD_SCAN)
+    }
+
+    /// How far into the audio a probe of the file read, if the reader is one whose head a
+    /// folder's other files are worth decoding like ([`crate::warm`], #510): its reads began at
+    /// the file's start, went past the kernel's read-ahead of a first read (a tagger's or a
+    /// library scanner's look at the header stops within it) and stayed within the head; and this
+    /// machine decodes the file's format slower than players read at the start of a track
+    /// (`--start-burst`). The bytes of audio it read.
+    pub fn probe_extent(&self, engine: &Engine) -> Option<u64> {
+        let s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
+        let (_, at) = s.started?;
+        let header = self.file.header_len();
+        (at <= header
+            && self.head_only(&s)
+            && s.max_end > at.saturating_add(KERNEL_FIRST_WINDOW)
+            && self.slow(engine))
+        .then(|| s.max_end - header)
+    }
+
+    /// Decodes frames `[k0, k1)` of the file into the cache and keeps them as its head, as a read
+    /// of them would ([`crate::warm`], #510); frames cached already only become the most recently
+    /// read heads.
+    pub fn warm(&self, engine: &Engine, k0: u32, k1: u32) -> Result<(), ReadError> {
+        self.decoded(engine, k0, k1, true).map(drop)
     }
 
     /// Bytes `[offset, offset + len)` of the file (fewer at its end), and the frames (file
@@ -2526,6 +2572,36 @@ mod tests {
     /// A reader of a file's head from its start (#503) does not start its decode-ahead while
     /// another file starts, and reads ahead nothing beside a file starting or a player; it starts
     /// once the other has.
+    /// A probe (#510): reads from the file's start, past the kernel's first window, within the
+    /// head, on a machine slower than the start burst.
+    #[test]
+    fn a_probe_reads_the_head_from_the_start_on_a_slow_machine() {
+        let f = longest_dsf(&corpus());
+        let engine = Engine::new(2, 32 << 20).unwrap();
+        let r = Reader::new(f.clone());
+        let h = f.header_len();
+        let set = |start: u64, end: u64| {
+            let mut s = r.seq.lock().unwrap();
+            s.started = Some((std::time::Instant::now(), start));
+            s.max_end = end;
+        };
+        set(0, h + (1536 << 10));
+        assert_eq!(r.probe_extent(&engine), None, "not measured: not slow");
+        engine.rates().set(false, f.layout.channels, 1.5);
+        assert_eq!(r.probe_extent(&engine), Some(1536 << 10));
+        set(0, h + (200 << 10));
+        assert_eq!(r.probe_extent(&engine), None, "a tagger's read and the kernel's read-ahead");
+        set(0, h + HEAD_SCAN + 1);
+        assert_eq!(r.probe_extent(&engine), None, "past the head: a player");
+        set(h + (1 << 20), h + (1536 << 10));
+        assert_eq!(r.probe_extent(&engine), None, "began past the start");
+        engine.rates().set(false, f.layout.channels, 5.0);
+        set(0, h + (1536 << 10));
+        assert_eq!(r.probe_extent(&engine), None, "a fast machine");
+        assert_eq!(f.head_frames(0), 0);
+        assert!(f.head_frames(u64::MAX) <= f.layout.frames);
+    }
+
     #[test]
     fn a_head_reader_beside_a_file_starting_waits() {
         let tree = corpus();
