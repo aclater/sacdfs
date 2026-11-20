@@ -1,0 +1,11 @@
+{
+ "name": "vlc-wav",
+ "note": "VLC on a 6-channel WAV file.",
+ "source": "scripts/trace-replay.py tests/fixtures/traces/player-vlc-wav.trace.gz --play 5 --profile --before 3 --secs 15 --wav-audio-start 264000",
+ "file": {"ext": "wav", "channels": 6},
+ "probes": [[["h", 0, 16384]], [["h", 32768, 4096]]],
+ "play_after_s": 0.11,
+ "play": {"from": ["h", 16384], "read": 131072, "rate": 1.0, "lead": 0.5},
+ "rescan": null,
+ "trace_audio": 264000
+}

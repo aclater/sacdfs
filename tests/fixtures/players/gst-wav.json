@@ -1,0 +1,11 @@
+{
+ "name": "gst-wav",
+ "note": "GStreamer playbin (typefind, then wavparse) playing a 6-channel WAV file.",
+ "source": "scripts/trace-replay.py tests/fixtures/traces/player-gst-wav.trace.gz --play 2 --profile --before 3 --secs 15 --wav-audio-start 264000",
+ "file": {"ext": "wav", "channels": 6},
+ "probes": [],
+ "play_after_s": 0.0,
+ "play": {"from": ["h", 0], "read": 131072, "rate": 1.0, "lead": 0.5},
+ "rescan": null,
+ "trace_audio": 264000
+}

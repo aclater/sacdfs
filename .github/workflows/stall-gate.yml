@@ -1,0 +1,118 @@
+# The player stall gate (#506): base and head replay player profiles and traces on a synthetic
+# 6-channel DST disc, with sacdfs on two CPUs under a quota that makes it about as slow as a
+# 4-thread Atom NAS, builds alternating (scripts/stall-gate.py). It fails when head's worst read
+# or stall in the first 15 s is clearly above base's. See docs/performance.md, "The CI stall gate".
+# Run by hand, it compares the commit with itself: that is how its margins were chosen.
+name: stall-gate
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/trace-replay.py"
+      - "scripts/stall-gate.py"
+      - "scripts/play-disc.py"
+      - "tests/fixtures/players/**"
+      - "tests/fixtures/traces/**"
+      - ".github/workflows/stall-gate.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true  # a new push supersedes the old run
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_STABLE: 1.99.1
+
+jobs:
+  build:
+    name: build base and head
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2  # a pull request's checkout is its merge commit: the first parent is the base
+      - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+      - name: Build head
+        run: |
+          cargo build --locked --release
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp target/release/sacdfs "$RUNNER_TEMP/bin/sacdfs-head"
+      - name: Build base
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            cp "$RUNNER_TEMP/bin/sacdfs-head" "$RUNNER_TEMP/bin/sacdfs-base"
+          else
+            git worktree add -q "$RUNNER_TEMP/base" HEAD^1
+            CARGO_TARGET_DIR="$PWD/target" cargo build --locked --release --manifest-path "$RUNNER_TEMP/base/Cargo.toml"
+            cp target/release/sacdfs "$RUNNER_TEMP/bin/sacdfs-base"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: stall-gate-builds
+          path: ${{ runner.temp }}/bin
+          retention-days: 3
+
+  gate:
+    name: stall gate (${{ matrix.group }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: zidoo
+            scenarios: >-
+              tests/fixtures/players/zidoo-wav.json
+              tests/fixtures/players/zidoo-dsf.json
+              tests/fixtures/traces/session-456-c.trace.gz:14
+          - group: players
+            scenarios: >-
+              tests/fixtures/players/mpv-wav.json
+              tests/fixtures/players/ffprobe-ffmpeg-dsf.json
+              tests/fixtures/players/vlc-wav.json
+              tests/fixtures/traces/session-456-b.trace.gz:18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: stall-gate-builds
+          path: ${{ runner.temp }}/bin
+      - name: Install fusermount3
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fuse3
+      - name: Synthetic disc
+        run: |
+          mkdir -p "$RUNNER_TEMP/disc"
+          python3 -I scripts/play-disc.py "$RUNNER_TEMP/disc/play.iso"
+      - name: Gate
+        env:
+          SCENARIOS: ${{ matrix.scenarios }}
+        run: |
+          chmod +x "$RUNNER_TEMP"/bin/*
+          nproc
+          # shellcheck disable=SC2086  # SCENARIOS is a list of paths
+          python3 -I scripts/stall-gate.py --base "$RUNNER_TEMP/bin/sacdfs-base" --head "$RUNNER_TEMP/bin/sacdfs-head" \
+            --source "$RUNNER_TEMP/disc" --rounds 5 --cpus 0,1 --client-cpus 2,3 \
+            --wrap "sudo systemd-run --scope -q --uid={uid} --gid={gid} -p CPUQuota={quota}% -p CPUQuotaPeriodSec=10ms taskset -c {cpus}" \
+            --json "$RUNNER_TEMP/stall-gate.json" $SCENARIOS
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: stall-gate-${{ matrix.group }}
+          path: ${{ runner.temp }}/stall-gate.json
+          retention-days: 14
+          if-no-files-found: ignore

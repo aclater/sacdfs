@@ -23,6 +23,15 @@ All notable changes to sacdfs are recorded here. The format follows
   the container takes `SACDFS_START_BURST` and `SACDFS_START_BURST_SECS`. Output bytes are unchanged.
   Why and what was measured: docs/design.md, "Players' start-up bursts on slow CPUs".
 
+- **A CI gate for player stalls on slow CPUs (#506).** `scripts/trace-replay.py` derives a
+  player's profile from a read trace (`--profile`: probe reads, read size, start-up rate and lead,
+  rescans of the folder) and acts it out against a mount (`--player`). Profiles of ffmpeg, mpv,
+  GStreamer, VLC and the #456 network player are in tests/fixtures/players. The new `stall-gate`
+  workflow replays them and two #456 traces with base and head on a synthetic 6-channel DST disc
+  (`scripts/play-disc.py`, built from the conformance corpus's frames), with sacdfs held to about a
+  4-thread Atom's speed, and fails when head's worst read or stall time in the first 15 s is clearly
+  above base's. See docs/performance.md, "The CI stall gate".
+
 ### Fixed
 - **Folder rescans no longer take the CPU from a track starting (#503).** A player that re-reads
   the heads of every file in the folder as it starts a track (seen on a Zidoo) made sacdfs decode
