@@ -850,6 +850,22 @@ on that CPU 6-channel WAV held 15.2 to 15.6 s of audio after 15 s and DSF 27.4 t
 #504 alike. A CPU that decodes slower than a player asks can only serve it at its own speed;
 what sacdfs can do there is spend nothing else.
 
+**A player that takes turns with its re-reads (#512).** A fourth trace (with #509, `--format dsf`)
+showed a few seconds of silence at each start of a 6-channel DSF track. The player sends its
+track's next read only after a re-read of another file's head is answered (75 to 99 % of its track
+reads came within 20 ms of such a reply), so it gets its track no faster than the re-reads. The
+run to the end above decoded 7 s of the track at once just then, and the re-reads took 250 to
+610 ms instead of 60 to 130; the track came at about 0.3 times real time for 5 s. The run to the
+end now waits while another file's head was read in the last second, and the decode-ahead stays
+paced. Replayed on two E-cores of an i9-13900H at 0.45 of a CPU (6-channel DSF at about 1.7 times
+real time), `--threads 4 --cache-mb 64 --format dsf`, a fresh mount each, the player's profile from
+that trace with its turns (`tests/fixtures/players/zidoo-turns-dsf.json`), 5 runs each, medians,
+main against #512: re-reads in its first 6 s 104 → 79 ms, audio it held after 2 s 1.49 → 2.17 s
+and after 5 s 2.72 → 4.21 s (0.74 s of it from the probe), stalled in the first 15 s 2.34 → 2.42 s.
+On the stall gate's synthetic disc at 0.39 of a CPU: 119 → 86 ms
+for this player, 147 → 105 ms for the WAV one. A whole 6-channel track read as WAV and DSF on 4
+P-cores took the same time (15.06 → 15.08 s, medians of 5). Bytes are unchanged: 910 corpus files
+and 94 files of 3 real discs, i686 and x86_64.
 **Heads kept through the idle release (#510).** The kept heads went with the rest of the cache
 when a mount had been idle for a minute (#150). The #456 player re-reads the album's heads at each
 track start, and people take longer than a minute between albums or before picking a track

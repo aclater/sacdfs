@@ -5,6 +5,8 @@
   scripts/trace-replay.py TRACE MOUNT --play R [--before 3] [--secs 20] [--prebuf 0.5]
   scripts/trace-replay.py TRACE --play R            # the trace's own numbers, no replay
   scripts/trace-replay.py TRACE --anonymise OUT.gz  # without names, paths or process ids
+  scripts/trace-replay.py TRACE --play R --profile  # R's player profile, as JSON
+  scripts/trace-replay.py --player PROFILE MOUNT    # a player that profile describes, on a mount
 
 TRACE is a log with the read trace on (`-vv`, docs/user-guide.md "Tracing reads"). R is the
 reader number (`r=`) of the playing file. The replay takes every file opened from BEFORE seconds
@@ -23,8 +25,23 @@ the audio (the trace's WAV header is inferred from its `start-ahead` lines, or g
 For R it prints its reads' latency and a simulated player: the bytes before R's first read are
 in the player's buffer already (an earlier open read them into the page cache), playback starts
 once PREBUF seconds of audio are there, and it stalls whenever it has played all it got.
+
+A profile (#506, tests/fixtures/players) is what a trace shows of one player's start: its probe
+handles' reads of the file it then plays, where the playing handle's first read lands, its read
+size, how fast it reads at the start (`rate`, times real time) and how far ahead of playback it
+fills its buffer (`lead`, seconds), and the heads and tails of the folder's other files it
+re-reads while it starts (`rescan`). `--player` acts it out against a mount as a closed loop:
+the playing handle asks for its next read when it holds less than `lead` seconds more than it
+has played and less than `rate` times the time since its first read, so a slower mount gets
+fewer requests, as a player would send. A rescan that takes `turns` with the playing handle
+sends one request at a time over the same connection, as the #456 player does (it sends its
+track's next read when a re-read is answered); otherwise it runs beside it. `rescan_ms` is the
+mean time of the re-reads sent in the playing handle's first 6 s: for a player that takes turns,
+its speed. Offsets are kept as in a replay: header reads in the header, audio reads at the
+same byte of the audio (`a`), tail reads at the same distance from the end (`e`).
 """
 import argparse
+import bisect
 import collections
 import gzip
 import json
@@ -300,9 +317,224 @@ def replay(hs, t0, t1, mapping):
     return results
 
 
+# Bytes after the audio start that a read may end within and still be a re-read of a head
+# (#503's HEAD_SCAN is 2 MiB; the Zidoo's DSF heads end at 1.6 MiB).
+RESCAN_HEAD = 5 << 19
+# A read of the playing file this soon after a reply to a re-read came in turn with it, and a
+# rescan takes turns if this share of the playing file's reads during it did (--profile).
+TURN_MS = 20.0
+# --player reports the mean time of the re-reads sent in the playing handle's first seconds.
+RESCAN_EARLY_S = 6.0
+TURN_SHARE = 0.75
+# Reads this close to a file's end are reads of its tail (the DSF tag, the bytes after WAV data).
+TAIL = 1 << 16
+
+
+def place(off, n, size, audio):
+    """A traced read as [kind, offset, length]: in the header (`h`), in the audio from its
+    start (`a`), or from the file's end (`e`, offset negative)."""
+    if off >= size - TAIL:
+        return ["e", off - size, n]
+    if off >= audio:
+        return ["a", off - audio, n]
+    return ["h", off, n]
+
+
+def located(where, size, audio, trace_audio):
+    """The local offset of a [kind, offset, length] for a file of `size` bytes whose audio
+    starts at `audio` (the trace's at `trace_audio`)."""
+    kind, off, n = where
+    if kind == "e":
+        lo = size + off
+    elif kind == "a":
+        lo = audio + off
+    else:
+        lo = off * audio // max(trace_audio, 1)
+    return max(0, min(lo, size)), n
+
+
+def profile(handles, play, before, secs, wav_start):
+    """What the trace shows of the player of reader `play`, as a profile for --player."""
+    p = handles[play]
+    hs, t0, t1 = window(handles, play, before, secs)
+    audio_of = lambda h: 92 if h.ext == "dsf" else wav_start
+    first = p.reads[0][0]
+    probes = []
+    for h in hs:
+        if h is p or h.name != p.name or h.t_open > p.t_open or not h.reads:
+            continue
+        probes.append([place(off, n, h.size, audio_of(h)) for _, off, n, _ in h.reads])
+    reads = [x for x in p.reads if x[0] <= t1]
+    rate = trace_rate(p)
+    # Audio held over time, by request arrival: the player's demand where the mount kept up.
+    audio = audio_of(p)
+    held0 = max(0.0, (reads[0][1] - audio) / rate)
+    have, pending, ev = reads[0][1], [], []
+    for t, off, n, _ in sorted(reads, key=lambda x: x[0]):
+        if off >= p.size - TAIL:
+            continue
+        pending.append((off, off + n))
+        pending.sort()
+        while pending and pending[0][0] <= have:
+            have = max(have, pending.pop(0)[1])
+        ev.append(((t - first) / 1000, max(0.0, (have - audio) / rate) - held0))
+    # Its rate over the first 5 s, and the furthest it got ahead of real time.
+    burst = max([a for t, a in ev if t <= 5.0] + [0.0]) / 5.0
+    lead = max((a - t for t, a in ev), default=0.0)
+    others = [h for h in hs if h.name != p.name and h.reads]
+    rescan = None
+    heads = [h for h in others if all(off >= h.size - TAIL or off + n <= audio_of(h) + RESCAN_HEAD
+                                      for _, off, n, _ in h.reads)]
+    if heads:
+        ends = collections.defaultdict(list)
+        for h in heads:
+            ends[h.ext].append(max(off + n - audio_of(h) for _, off, n, _ in h.reads if off < h.size - TAIL))
+        lens = collections.Counter(n for h in heads for _, _, n, _ in h.reads)
+        # Turns: while the rescan went on, most reads of the playing file came right after a reply
+        # to a re-read (TURN_MS), as from a client that sends its track's next read only then. Up
+        # to two re-reads may be in flight, so overlapping requests don't tell (#510).
+        replies = sorted(t + lat for h in heads for t, _, _, lat in h.reads)
+        span = (min(t for h in heads for t, _, _, _ in h.reads), replies[-1])
+        during = [t for t, _, _, _ in reads if span[0] <= t <= span[1]]
+        after_reply = sum(1 for t in during
+                          if any(t - TURN_MS <= r <= t for r in replies[max(0, bisect.bisect_right(replies, t) - 3):
+                                                                     bisect.bisect_right(replies, t)]))
+        rescan = {
+            "files": len({h.name for h in heads}),
+            "exts": sorted(ends),
+            "head": {e: int(sorted(v)[len(v) // 2]) for e, v in ends.items()},
+            "tail": max((n for h in heads for off, n in ((o, n) for _, o, n, _ in h.reads) if off >= h.size - TAIL),
+                        default=0),
+            "read": lens.most_common(1)[0][0],
+            "start_s": round((min(h.t_open for h in heads) - p.t_open) / 1000, 2),
+            "turns": bool(during) and after_reply >= TURN_SHARE * len(during),
+        }
+    return {
+        "file": {"ext": p.ext, "channels": p.channels},
+        "probes": probes,
+        "play_after_s": round((p.t_open - min([p.t_open] + [h.t_open for h in hs if h.name == p.name])) / 1000, 2),
+        "play": {
+            "from": place(reads[0][1], 0, p.size, audio)[:2],
+            "read": collections.Counter(n for _, _, n, _ in reads).most_common(1)[0][0],
+            "rate": round(max(burst, 1.0), 2),
+            "lead": round(max(lead, 0.5), 1),
+        },
+        "rescan": rescan,
+    }
+
+
+def act(prof, mount, secs, prebuf):
+    """Acts out a profile on a mount; returns the playing handle's numbers, and the rescan's."""
+    want = (prof["file"]["channels"], prof["file"]["ext"])
+    local = local_files(mount)
+    if not local[want]:
+        raise SystemExit(f"no {want[0]}ch .{want[1]} file under the mount")
+    path, size, audio, rate = max(local[want], key=lambda c: c[1])
+    trace_audio = prof.get("trace_audio", audio)
+    buf = mmap.mmap(-1, 1 << 20)
+
+    def pread(fd, off, n):
+        return os.preadv(fd, [memoryview(buf)[:n]], off)
+
+    scan = []
+    rs = prof.get("rescan")
+    if rs:
+        d = os.path.dirname(path)
+        names = [f for f in sorted(os.listdir(d))
+                 if f.endswith(tuple("." + e for e in rs["exts"])) and os.path.join(d, f) != path]
+        for f in names[:rs["files"]]:
+            q = os.path.join(d, f)
+            qs, head = os.path.getsize(q), chunks(q)["audio"] + rs["head"].get(f[-3:], 0)
+            scan += [(q, o, rs["read"]) for o in range(0, min(head, qs), rs["read"])]
+            if rs["tail"]:
+                scan.append((q, (qs - rs["tail"]) & ~4095, rs["tail"]))
+    play = prof["play"]
+    play_at = prof.get("play_after_s", 0.0)
+    turns = bool(scan) and rs["turns"]
+    sbuf = mmap.mmap(-1, 1 << 20)
+    scan_fds, scan_done = {}, [None]
+    reads, rescans = [], []
+    start = time.monotonic()
+    end_at = start + play_at + secs
+
+    def scan_one():
+        q, o, n = scan.pop(0)
+        f = scan_fds.get(q) or scan_fds.setdefault(q, os.open(q, os.O_RDONLY | os.O_DIRECT))
+        a = time.monotonic()
+        os.preadv(f, [memoryview(sbuf)[:n]], o)
+        rescans.append((a - start - play_at, time.monotonic() - a))
+        # Each file is closed after its last re-read, as the player does: an open one would count
+        # as a reader still at its head, and keep its decode-ahead going.
+        if not scan or scan[0][0] != q:
+            os.close(scan_fds.pop(q))
+        if not scan:
+            scan_done[0] = time.monotonic() - start - play_at
+
+    def side():
+        time.sleep(max(0.0, start + play_at + rs.get("start_s", 0.0) - time.monotonic()))
+        while scan and time.monotonic() < end_at:
+            scan_one()
+
+    t_scan = None
+    if scan and not turns:
+        t_scan = threading.Thread(target=side)
+        t_scan.start()
+    for probe in prof["probes"]:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
+        for where in probe:
+            pread(fd, *located(where, size, audio, trace_audio))
+        os.close(fd)
+    while turns and scan and time.monotonic() < start + play_at:
+        if time.monotonic() >= start + play_at + rs.get("start_s", 0.0):
+            scan_one()
+        else:
+            time.sleep(0.005)
+    time.sleep(max(0.0, start + play_at - time.monotonic()))
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
+    p0 = time.monotonic()
+    off = located(play["from"] + [0], size, audio, trace_audio)[0]
+    first_off, held0 = off, max(0.0, (off - audio) / rate)
+    begun = [None]
+
+    def wants(now):
+        held = max(0.0, (off - audio) / rate)
+        if begun[0] is None:
+            if held < prebuf + held0:
+                return True
+            begun[0] = now
+        return held - held0 < play["rate"] * (now - p0) + prebuf and held < held0 + (now - begun[0]) + play["lead"]
+
+    while True:
+        now = time.monotonic()
+        if now >= end_at:
+            break
+        if wants(now):
+            a = time.monotonic()
+            n = pread(fd, off, play["read"])
+            reads.append((a - p0, time.monotonic() - p0, off, play["read"]))
+            if n <= 0:
+                break
+            off += n
+        elif not turns or not scan:
+            time.sleep(0.005)
+        if turns and scan:
+            scan_one()
+    os.close(fd)
+    if t_scan:
+        t_scan.join()
+    for f in scan_fds.values():
+        os.close(f)
+    out = numbers(reads, first_off, audio, rate, prebuf)
+    out["rescan_done_s"] = None if scan_done[0] is None else round(scan_done[0], 2)
+    # How long the re-reads took while the track started: the speed of a player that takes turns.
+    early = [lat for t, lat in rescans if 0 <= t < RESCAN_EARLY_S]
+    out["rescan_ms"] = round(1000 * sum(early) / len(early), 1) if early else None
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("trace")
+    ap.add_argument("trace", nargs="?")
     ap.add_argument("mount", nargs="?")
     ap.add_argument("--play", type=int, help="the playing reader's number (r=)")
     ap.add_argument("--anonymise", metavar="OUT", help="write TRACE without names, paths or pids to OUT (.gz: gzip)")
@@ -311,7 +543,19 @@ def main():
     ap.add_argument("--prebuf", type=float, default=0.5, help="seconds of audio before playback starts")
     ap.add_argument("--wav-audio-start", type=int, help="bytes before the audio of the traced WAV files")
     ap.add_argument("--reads", help="write the played file's reads here (TSV)")
+    ap.add_argument("--profile", action="store_true", help="print R's player profile (JSON) and stop")
+    ap.add_argument("--player", metavar="PROFILE", help="act out the player of a profile on MOUNT")
     a = ap.parse_args()
+    if a.player:
+        mount = a.mount or a.trace
+        if not mount or (a.mount and a.trace):
+            ap.error("--player PROFILE takes a MOUNT and no TRACE")
+        with open(a.player) as f:
+            prof = json.load(f)
+        out = {"player": prof.get("name", os.path.basename(a.player)), "secs": a.secs}
+        out["replay"] = act(prof, mount, a.secs, a.prebuf)
+        print(json.dumps(out))
+        return
     if a.anonymise:
         anonymise(a.trace, a.anonymise)
         return
@@ -322,6 +566,11 @@ def main():
     hs, t0, t1 = window(handles, a.play, a.before, a.secs)
     p = handles[a.play]
     wav_start = a.wav_audio_start or wav_audio_start(handles, trace_rate) or 0
+    if a.profile:
+        prof = profile(handles, a.play, a.before, a.secs, wav_start)
+        prof["trace_audio"] = 92 if p.ext == "dsf" else wav_start
+        print(json.dumps(prof))
+        return
     trace_start = lambda h: 92 if h.ext == "dsf" else wav_start
     out = {"play": f"{p.channels}ch .{p.ext}", "files": len({h.name for h in hs}), "opens": len(hs),
            "reads": sum(len(h.reads) for h in hs), "wav_audio_start": wav_start}

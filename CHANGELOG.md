@@ -23,7 +23,24 @@ All notable changes to sacdfs are recorded here. The format follows
   the container takes `SACDFS_START_BURST` and `SACDFS_START_BURST_SECS`. Output bytes are unchanged.
   Why and what was measured: docs/design.md, "Players' start-up bursts on slow CPUs".
 
+- **A CI gate for player stalls on slow CPUs (#506).** `scripts/trace-replay.py` derives a
+  player's profile from a read trace (`--profile`: probe reads, read size, start-up rate and lead,
+  rescans of the folder) and acts it out against a mount (`--player`). Profiles of ffmpeg, mpv,
+  GStreamer, VLC and the #456 network player are in tests/fixtures/players. The new `stall-gate`
+  workflow replays them and two #456 traces with base and head on a synthetic 6-channel DST disc
+  (`scripts/play-disc.py`, built from the conformance corpus's frames), with sacdfs held to about a
+  4-thread Atom's speed, and fails when head's worst read or stall time in the first 15 s is clearly
+  above base's. See docs/performance.md, "The CI stall gate".
+
 ### Fixed
+- **Seconds of silence at each track start on slow CPUs with players that re-read the album
+  (#512).** On a 32-bit Atom NAS, the slow-machine decode-ahead of #504 decoded a starting track's
+  first 7 s at once, while the player re-read the heads of the album's other files. That player
+  sends its track's next read only when a re-read is answered, and the re-reads took 250 to 610 ms
+  instead of 60 to 130, so the track came at about 0.3 times real time for 5 s. The decode-ahead
+  now runs ahead at once only while no other file's head was read in the last second, and stays
+  paced otherwise. Players starting a track alone are unchanged. On test builds since #509,
+  `--start-burst 0` avoids it.
 - **Kept heads survive the idle release (#510).** A mount idle for a minute dropped its whole
   cache (#150), the heads of #508 included, so a player that re-reads the album's heads at each
   track start found them decoded only if it came back within that minute: in practice every
