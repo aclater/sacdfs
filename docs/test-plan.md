@@ -217,7 +217,8 @@ Run on the release they describe, following the docs as written, in a clean envi
 - **crates.io:** `cargo install --locked sacdfs` in a clean container. 0.4.1 is the first release
   published by the workflow rather than by hand, so also confirm the published version and its
   source.
-- **NAS guides:** TrueNAS SCALE and OpenMediaVault are re-run. Synology, QNAP, Unraid and UGOS stay
+- **NAS guides:** TrueNAS SCALE (the catalog app from Apps, Discover Apps, once the catalog
+  carries the release, and the YAML) and OpenMediaVault are re-run. Synology, QNAP, Unraid and UGOS stay
   marked "not yet validated" until someone runs them on that system.
 - **fstab and systemd** recipes in a VM.
 
