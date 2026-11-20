@@ -982,6 +982,10 @@ that already serves SMB or NFS), `deploy/nas-compose.yaml` runs the published im
 
 ### TrueNAS SCALE
 
+sacdfs is in the community train of the TrueNAS apps catalog: install it from Apps, Discover
+Apps ([guide](install/truenas-scale.md#install-from-the-apps-screen)). The steps below are the
+custom-app route, for settings the catalog form doesn't have.
+
 These steps follow TrueNAS SCALE 24.10 ("Electric Eel") and later, whose apps run on Docker.
 They were tested on TrueNAS SCALE 25.10 with the published 0.1.0 image (#21). The app was
 installed through the API call behind "Install via YAML", with the YAML below and other ports
