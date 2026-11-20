@@ -1108,4 +1108,26 @@ a later one on the same NAS with #489: four 6-channel WAV starts, three of them 
 re-read the heads of all 24 files of the album. Its WAV header length can't be inferred from it;
 replay it with `--wav-audio-start 268864`. `session-456-c.trace.gz` is a third, with #502:
 three starts of the same 6-channel WAV file, each while the player re-read the heads and tails of
-the album's other files (`--wav-audio-start 268864` too).
+the album's other files (`--wav-audio-start 268864` too). `session-456-d.trace.gz` is a fourth, with `--format dsf` and #509: a
+6-channel DSF start while the player re-read the other 11 files' heads, taking turns with them
+(#512).
+
+**Player profiles.** `--profile` prints what a trace shows of one player's start, as JSON: its
+probe handles' reads, where its playing handle's first read lands and how big its reads are, how
+fast it reads at first (`rate`, times real time) and how far ahead of playback (`lead`, seconds),
+and the heads and tails of the folder's other files it re-reads meanwhile (`rescan`), and
+whether it takes turns with those re-reads (`turns`: most of its track's reads come right after a
+re-read's reply, so it gets its track no faster than they are answered; `--player` then reports
+`rescan_ms`, their mean time in its first 6 s).
+`--player PROFILE MOUNT` acts that player out against a mount: it reads as fast as the mount
+answers, up to its rate and lead, so a slower mount gets fewer requests, as from a real player.
+`tests/fixtures/players` holds profiles of ffmpeg, ffprobe then ffmpeg, mpv, GStreamer, VLC and the
+network player of #456, each with the command that derives it from a trace in
+`tests/fixtures/traces` (the `player-*` traces are the read research of #456, recorded on a fast
+CPU and anonymised). The CI stall gate replays them
+([performance.md](performance.md#the-ci-stall-gate)).
+
+```sh
+scripts/trace-replay.py tests/fixtures/traces/player-mpv-wav.trace.gz --play 0 --profile --wav-audio-start 264000
+scripts/trace-replay.py --player tests/fixtures/players/zidoo-wav.json /mnt/sacd
+```

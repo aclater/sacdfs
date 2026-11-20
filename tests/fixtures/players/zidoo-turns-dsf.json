@@ -1,0 +1,11 @@
+{
+ "name": "zidoo-turns-dsf",
+ "note": "The network player of #456 starting a 6-channel DSF track (--format dsf), first start after a mount, from the round-4 trace (#512): a probe of the track, then the playing handle from where the probe stopped, taking turns with re-reads of the other 11 files' heads and tails: it sends its track's next read when a re-read is answered. Rate 3.5 and lead 4 s are the player's demand as modelled for #508; the trace's own are those of a CPU too slow for it.",
+ "source": "scripts/trace-replay.py tests/fixtures/traces/session-456-d.trace.gz --play 15 --profile --before 4 --secs 15",
+ "file": {"ext": "dsf", "channels": 6},
+ "probes": [[["h", 0, 131072], ["e", -405, 4096], ["a", 130980, 131072], ["a", 262052, 131072], ["a", 393124, 131072], ["a", 524196, 131072], ["a", 655268, 131072], ["a", 786340, 131072], ["a", 917412, 131072], ["a", 1048484, 131072], ["a", 1179556, 131072], ["a", 1441700, 131072], ["a", 1310628, 131072]]],
+ "play_after_s": 3.25,
+ "play": {"from": ["a", 1572772], "read": 131072, "rate": 3.5, "lead": 4.0},
+ "rescan": {"files": 11, "exts": ["dsf"], "head": {"dsf": 1572772}, "tail": 4096, "read": 131072, "start_s": -2.65, "turns": true},
+ "trace_audio": 92
+}
