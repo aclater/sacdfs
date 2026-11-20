@@ -304,7 +304,7 @@ under 64 MiB at the smallest, on the import replay, with straight reads and seek
   unmapped, pooled decoders and converters dropped and the heap trimmed (`malloc_trim`).
   After a WAV import and a 300 MB read at the default cache, RSS went from 57 to 11 MiB.
   The kept heads (#456) stay, the most recently read up to half the cache and at most 32 MiB,
-  copied into as few slabs as they need (#510): a player that re-reads an album's heads at
+  in the slabs they are in (#510): a player that re-reads an album's heads at
   each track start found them gone whenever more than a minute passed between starts, so on a
   32-bit Atom every start decoded them again (3.5 to 4 s of CPU while the track started). A
   release for memory pressure still drops everything.

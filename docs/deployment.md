@@ -850,6 +850,22 @@ on that CPU 6-channel WAV held 15.2 to 15.6 s of audio after 15 s and DSF 27.4 t
 #504 alike. A CPU that decodes slower than a player asks can only serve it at its own speed;
 what sacdfs can do there is spend nothing else.
 
+**Heads kept through the idle release (#510).** The kept heads went with the rest of the cache
+when a mount had been idle for a minute (#150). The #456 player re-reads the album's heads at each
+track start, and people take longer than a minute between albums or before picking a track
+again: in the user's round-4 log every start found them gone, and decoded them again while the
+track started. The idle release now keeps the most recently read heads, up to half the cache and
+at most 32 MiB; memory pressure still drops them. Replayed on two E-cores of an i9-13900H at 0.45 of
+a CPU, `--threads 4 --cache-mb 64 --format dsf`, i686 builds, the turn-taking player's profile
+(`zidoo-turns-dsf`) on a fresh mount, then again after 90 s idle, 5 runs each over two builds of
+this change, main against #510. The start after the idle release: stalled in its first 15 s
+5.7 to 6.6 → 0 s, audio held after 5 s 2.8 to 3.4 → 6.2 to 6.6 s, its re-reads 112 to 132 → 23
+to 32 ms. The first start after the mount is unchanged (stalled 5.8 to 6.7 s on both): its heads
+are not decoded yet. An idle mount holds the kept heads: after that start, at `--cache-mb 64`,
+the process held 72 MiB once idle on main and 107 MiB with #510 (the bound is half the cache and
+32 MiB; at the default 32 MiB cache, 16). Bytes are unchanged: 910 corpus files and 94 files of 3
+real discs, i686 and x86_64.
+
 Machines that decode fast are unchanged: on 4 cores of the Ryzen with no limit, a whole
 6-channel track read as WAV and DSF took 12.71 s (main before #508), 12.76 s (#508) and 12.68 s
 (#504), medians of 5; on all 32 threads 3.80, 3.82 and 3.82 s. The CPU of library scans of the 3
