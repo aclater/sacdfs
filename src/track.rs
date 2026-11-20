@@ -762,7 +762,7 @@ impl TrackFile {
     }
 
     /// The frames (file indices from 0) that the first `audio` bytes of the file's audio need,
-    /// within what a read keeps as its head ([`HEAD_KEEP`]).
+    /// within what a read keeps as its head (`HEAD_KEEP`).
     pub fn head_frames(&self, audio: u64) -> u32 {
         let head = ((HEAD_KEEP / (self.byte_rate() as u64 / 75).max(1)) as u32).min(self.layout.frames);
         let h = self.header_len();
@@ -1238,7 +1238,7 @@ impl Reader {
             && self.head_only(&s)
             && s.max_end > at.saturating_add(KERNEL_FIRST_WINDOW)
             && self.slow(engine))
-        .then(|| s.max_end - header)
+        .then(|| s.max_end.saturating_sub(header))
     }
 
     /// Decodes frames `[k0, k1)` of the file into the cache and keeps them as its head, as a read

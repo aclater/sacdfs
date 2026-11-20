@@ -136,6 +136,17 @@ impl Warmer {
         if !st.thread && !st.closed {
             let me = Arc::downgrade(self);
             let spawned = std::thread::Builder::new().name("sacdfs-warm".to_owned()).spawn(move || {
+                // Says when it ends, also by a panic: warming is then off for the mount.
+                struct Ends;
+                impl Drop for Ends {
+                    fn drop(&mut self) {
+                        log::debug!(
+                            "warm: thread ended{}",
+                            if std::thread::panicking() { " by a panic" } else { "" }
+                        );
+                    }
+                }
+                let _ends = Ends;
                 while let Some(w) = me.upgrade() {
                     if !w.next() {
                         return;
