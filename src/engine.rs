@@ -521,7 +521,7 @@ impl FrameCache {
     }
 
     /// Like [`FrameCache::release_if_idle`], but keeps the most recently read heads, up to
-    /// [`IDLE_HEADS`] bytes of them, where they are; the slabs left empty go (#510). Nothing
+    /// `IDLE_HEADS` bytes of them, where they are; the slabs left empty go (#510). Nothing
     /// happens again until the cache is used again.
     ///
     /// *Why:* a player that re-reads the heads of every file of the album at each track start
@@ -1819,9 +1819,9 @@ mod tests {
         let mapped = c.mapped();
         assert!(!c.release_idle(Duration::from_secs(60)), "just used");
         assert!(c.release_idle(Duration::ZERO));
+        assert!(!c.release_idle(Duration::ZERO), "not used since");
         assert_eq!(c.lock().head_bytes, 40 * 9408);
         assert_eq!(c.bytes(), 40 * 9408);
-        assert!(!c.release_idle(Duration::ZERO), "not used since");
         // Used again (a millisecond later, the stamp's unit).
         std::thread::sleep(Duration::from_millis(5));
         assert!(c.get(&key(1)).is_none());
@@ -1833,7 +1833,7 @@ mod tests {
         // The get above used the cache: one more release, then nothing until it is used.
         assert!(c.release_idle(Duration::ZERO));
         assert!(!c.release_idle(Duration::ZERO));
-        assert_eq!(c.bytes(), 40 * 9408);
+        assert_eq!(c.lock().bytes, 40 * 9408);
         // Memory pressure: all of it.
         assert!(c.release_if_idle(Duration::ZERO));
         assert_eq!((c.bytes(), c.mapped()), (0, 0));
