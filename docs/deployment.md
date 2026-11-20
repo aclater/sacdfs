@@ -51,7 +51,9 @@ shares. The clients tested so far, with the settings that worked for each, are i
   Docker or Podman. The mount can be made visible on the host and to other containers with
   shared mount propagation (it works on TrueNAS SCALE 25.10), which is how players on the
   same host read it without SMB: see [Players on the same host](#players-on-the-same-host-no-smb-hop).
-  Sharing it through the NAS's own SMB or NFS service that way was not tested.
+  TrueNAS SCALE 25.10's own SMB service shares it that way, on port 445, for clients that
+  can't name a port ([truenas-scale.md](install/truenas-scale.md#share-through-truenass-own-smb-port-445));
+  its NFS service can't (#522).
 - Everything logs to standard output (`docker logs sacdfs`).
 - A health check (`/usr/local/bin/healthcheck.sh`) passes while the mount answers and every
   server is running and listening. If sacdfs, smbd or NFS-Ganesha stops, the container stops
@@ -1172,6 +1174,11 @@ the host:
   host path (Docker's default propagation) and on Podman.
 - **SMB and NFS still work** from the same container, for other clients; turn them off with
   `SMB=0` and `NFS=0` if only same-host players read it.
+- **The NAS's own SMB share** of the host directory serves the mount on port 445 (TrueNAS:
+  [truenas-scale.md](install/truenas-scale.md#share-through-truenass-own-smb-port-445)). While sacdfs is not
+  mounted, the entry point leaves the mount point `sacd` with mode 000, so a share or player that
+  starts first (a NAS's SMB at boot) gets an access error there, not an empty folder that a player
+  could take for an empty library (#522).
 - **Permissions.** The container's sacdfs runs with `--allow-other`, and every file is
   `r--r--r--` and every folder `r-xr-xr-x`, so a player running as any user can read them: tested
   as root, uid 1000 and TrueNAS's apps user (568).

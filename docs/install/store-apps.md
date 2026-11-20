@@ -29,7 +29,11 @@ Directory: [deploy/truenas/sacdfs/](../../deploy/truenas/sacdfs/), in the layout
 `ix-dev/community/<app>` folders of the TrueNAS apps catalog (`app.yaml`, `ix_values.yaml`,
 `questions.yaml`, `templates/docker-compose.yaml`, test values). The form asks for the folder
 that holds your images (read-only), the ports, an optional SMB user and password, NFS clients,
-formats, and storage for the index cache.
+formats, and storage for the index cache. **Mount Folder** (off by default) binds a dataset over
+`/srv` with `rshared`, so sacdfs's files appear in it for TrueNAS's own SMB share on port 445
+([guide](truenas-scale.md#share-through-truenass-own-smb-port-445)); **SMB Share From The App** and
+**NFS Export From The App** (on by default) turn the app's own servers, their ports and their
+capabilities off. These three are not in the listed catalog app yet (#522).
 
 **Install from the catalog, not from this directory.** TrueNAS installs catalog apps only
 from its catalog: Apps, Discover Apps, search `sacdfs` ([guide](truenas-scale.md#install-from-the-apps-screen)).
