@@ -18,8 +18,10 @@ For each scenario and build the gate takes, over the rounds, the playing file's 
 the time playback stalled in the first SECS seconds after it opened. It fails when head's median
 is above the highest base had in any round by more than both a relative and an absolute margin:
 worst read 1.25 times and 250 ms, stall 1.25 times and 1 s, and for a player that re-reads the
-folder's heads, the mean time of those re-reads in its first 6 s, 1.25 times and 50 ms (#512: a
-player that takes turns with them gets its track no faster). *Why base's highest, not its
+folder's heads, the mean time of those re-reads in its first 6 s, 1.2 times and 20 ms (#512: a
+player that takes turns with them gets its track no faster). It also fails when the audio the
+player held 5 s after its first read is below base's lowest by 1.25 times and 0.5 s: a silence at
+the start that the 15 s stall total hides when the player catches up later. *Why base's highest, not its
 median:* some scenarios' worst read is bimodal on shared runners (0.6 or 1.5 s for the same
 build), and comparing medians failed a build against itself. docs/performance.md, "The CI stall
 gate", says how the margins were chosen. The table goes to standard output, and to the job
@@ -165,8 +167,10 @@ def main():
     ap.add_argument("--worst-ms", type=float, default=250.0)
     ap.add_argument("--stall-ratio", type=float, default=1.25)
     ap.add_argument("--stall-s", type=float, default=1.0)
-    ap.add_argument("--rescan-ratio", type=float, default=1.25)
-    ap.add_argument("--rescan-ms", type=float, default=50.0)
+    ap.add_argument("--rescan-ratio", type=float, default=1.2)
+    ap.add_argument("--rescan-ms", type=float, default=20.0)
+    ap.add_argument("--audio-ratio", type=float, default=1.25)
+    ap.add_argument("--audio-s", type=float, default=0.5)
     ap.add_argument("--json", help="write every run's numbers here")
     ap.add_argument("--log-dir", help="keep each run's sacdfs log, with the read trace, here")
     ap.add_argument("scenarios", nargs="+")
@@ -195,10 +199,11 @@ def main():
             json.dump({"quota": a.quota, "results": res}, f)
 
     med = lambda runs, k: statistics.median(x[k] for x in runs)
-    top = lambda runs, k: max(x[k] for x in runs)
+    top = lambda runs, k, f=max: f(x[k] for x in runs)
     lines = [f"## Player stall gate ({a.rounds} rounds, sacdfs at {a.quota}% of one CPU on CPUs {a.cpus})", "",
-             "| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | Re-reads, base → head (ms) | |",
-             "|---|---|---|---|---|"]
+             "| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | Audio by 5 s, base → head (s) "
+             "| Re-reads, base → head (ms) | |",
+             "|---|---|---|---|---|---|"]
     failed = []
     for s in a.scenarios:
         bw, hw = med(res[s]["base"], "worst_ms"), med(res[s]["head"], "worst_ms")
@@ -210,6 +215,9 @@ def main():
         if hs > bst * a.stall_ratio and hs > bst + a.stall_s:
             bad.append("stall")
         rng = lambda b, k: f"{min(x[k] for x in res[s][b]):g}-{max(x[k] for x in res[s][b]):g}"
+        ba, ha = top(res[s]["base"], "audio_by_5s", min), med(res[s]["head"], "audio_by_5s")
+        if ha < ba / a.audio_ratio and ha < ba - a.audio_s:
+            bad.append("audio by 5 s")
         rescans = all(x.get("rescan_ms") is not None for b in ("base", "head") for x in res[s][b])
         if rescans:
             br, hr = med(res[s]["base"], "rescan_ms"), med(res[s]["head"], "rescan_ms")
@@ -222,13 +230,16 @@ def main():
         if bad:
             failed.append(f"{name(s)} ({', '.join(bad)})")
         lines.append(f"| {name(s)} | {bw:.0f} → {hw:.0f} ({rng('base', 'worst_ms')} / {rng('head', 'worst_ms')}) "
-                     f"| {bs:.2f} → {hs:.2f} ({rng('base', 'stalled_s')} / {rng('head', 'stalled_s')}) | {re} "
+                     f"| {bs:.2f} → {hs:.2f} ({rng('base', 'stalled_s')} / {rng('head', 'stalled_s')}) "
+                     f"| {med(res[s]['base'], 'audio_by_5s'):.2f} → {ha:.2f} ({rng('base', 'audio_by_5s')} / "
+                     f"{rng('head', 'audio_by_5s')}) | {re} "
                      f"| {'**WORSE**: ' + ', '.join(bad) if bad else 'ok'} |")
     lines += ["", f"Medians (ranges base / head) of the first {a.secs:g} s after the playing file opened; "
               f"measured in {time.monotonic() - started:.0f} s. Head fails where its median is above base's "
               f"highest by more than {a.worst_ratio}x and {a.worst_ms:g} ms (worst read) or {a.stall_ratio}x and "
               f"{a.stall_s:g} s (stall), or the mean time of the re-reads in a player's first 6 s by "
-              f"{a.rescan_ratio}x and {a.rescan_ms:g} ms."]
+              f"{a.rescan_ratio}x and {a.rescan_ms:g} ms; or where the audio it held after 5 s is below base's "
+              f"lowest by {a.audio_ratio}x and {a.audio_s:g} s."]
     text = "\n".join(lines) + "\n"
     print(text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):

@@ -1797,21 +1797,28 @@ player starting a track wait or stall clearly longer than base did, on a CPU abo
   Each scenario mounts the disc afresh, so each is a first start after a mount: the player
   profiles in `tests/fixtures/players` (`scripts/trace-replay.py --player`) and two #456 traces
   replayed. Builds alternate, the order swaps every round, 5 rounds.
-- **What fails it:** for each scenario, head's median over the rounds of the playing file's worst
-  read in its first 15 s, or of the time playback stalled in them, above the highest base had in
-  any round by more than 1.25 times and 250 ms (worst read) or 1.25 times and 1 s (stall). The job
-  summary has the table of medians and ranges.
+- **What fails it:** for each scenario, head's median over the rounds, against the worst base had
+  in any round, beyond both margins: the playing file's worst read in its first 15 s (1.25 times
+  and 250 ms), the time playback stalled in them (1.25 times and 1 s), the audio the player held
+  5 s after its first read (below base's lowest by 1.25 times and 0.5 s), and for a player that
+  re-reads the folder's heads, the mean time of those re-reads in its first 6 s (1.2 times and
+  20 ms). *Why the last two:* the #456 player takes turns, sending its track's next read only when
+  a re-read is answered (#512); slower re-reads leave it silent for seconds at the start, and it
+  catches up later, so the 15 s stall total hid that. The job summary has the table.
 - **How the margins were chosen:** a build compared with itself (the pull request that added the
-  gate changes no code, so its runs compare identical binaries) on GitHub's runners, twice, and 3
-  rounds on a lab host's E-cores. The playing file's worst read varied most in the Zidoo-like
-  scenario: 0.37 to 1.8 s for the same build, two clusters around 0.6 and 1.5 s, and its median
-  over 5 rounds was 0.65 s in one run and 1.4 s in the other for the same binary. Comparing medians
-  with any margin under about 0.8 s would have failed that build against itself; comparing head's
-  median with base's highest, no scenario came within 250 ms of failing in either direction.
-  Elsewhere worst reads stayed within 0.12 to 0.52 s and medians within 0.1 s of each other.
-  Stalls: 0 s for every profile but the Zidoo-like ones (0.2 to 1.9 s), and 6.8 to 8.2 s for the
-  trace replays, whose players keep the traced client's own slow pace.
-- **What it caught:** VALIDATION
+  gate changes no code, so its runs compare identical binaries) on GitHub's runners three times,
+  and on a lab host's E-cores. The playing file's worst read varied most in the Zidoo-like
+  scenarios: 0.37 to 1.8 s for the same build, in two clusters around 0.6 and 1.5 s, and its
+  median over 5 rounds was 0.65 s in one run and 1.4 s in another. Comparing medians with any
+  margin under about 0.8 s would have failed that build against itself; against base's worst,
+  no scenario came within 250 ms of failing either way. The re-reads took 128 to 255 ms on one
+  runner (the quota there was 9 % of a faster CPU) and 71 to 89 ms on the lab host, and the medians
+  stayed 50 ms or more below the limit; the audio held after 5 s stayed within 0.25 s.
+- **What it catches:** with the #512 fix as base and the build before it as head (the start run
+  to the end beside the re-reads), on the synthetic disc at 0.39 of an E-core, 5 rounds: the
+  turn-taking DSF player's audio after 5 s 4.02 → 2.48 s and its re-reads 86 → 119 ms, the WAV
+  player's re-reads 105 → 147 ms: it fails. On a real 6-channel disc at 0.45 of a CPU with
+  `--format dsf` it fails on the audio after 5 s (4.21 → 2.72 s). The other way round, it passes.
 
 To run it by hand (needs `fusermount3` and systemd's user session for the CPU quota):
 
