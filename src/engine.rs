@@ -521,14 +521,15 @@ impl FrameCache {
     }
 
     /// Like [`FrameCache::release_if_idle`], but keeps the most recently read heads, up to
-    /// [`IDLE_HEADS`] bytes of them, copied into slots packed together so that the slabs left
-    /// empty can go (#510). Nothing happens again until the cache is used again.
+    /// [`IDLE_HEADS`] bytes of them, where they are; the slabs left empty go (#510). Nothing
+    /// happens again until the cache is used again.
     ///
     /// *Why:* a player that re-reads the heads of every file of the album at each track start
     /// (#456) found them decoded only if it came back within the minute before the idle
     /// release; people take longer between albums, so every start was a first start, and on a
     /// 32-bit Atom each decoded the album's heads again, 3.5 to 4 s of CPU while the track
-    /// started.
+    /// started. *Why not copied into fewer slabs:* the copies' heap stayed with the process on
+    /// a musl build, more than the slabs it would have saved.
     pub fn release_idle(&self, idle: Duration) -> bool {
         let now = self.epoch.elapsed().as_millis() as u64;
         let used = self.used.load(Ordering::Relaxed);
@@ -537,41 +538,35 @@ impl FrameCache {
             return false;
         }
         let budget = heads_cap(self.cap).min(IDLE_HEADS);
-        let (kept, frames) = {
+        let frames: Vec<Arc<Frame>> = {
             let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            // Most recently read first.
+            // The most recently read first, within the budget.
             let mut kept = Vec::new();
             let mut bytes = 0;
-            for (k, f) in g.heads.iter() {
+            while let Some((k, f)) = g.heads.pop_mru() {
                 if bytes + f.data.len() > budget {
+                    g.heads.push(k, f);
                     break;
                 }
                 bytes += f.data.len();
-                kept.push((*k, f.data.to_vec(), f.fill, f.clips));
+                g.bytes -= f.data.len();
+                g.head_bytes -= f.data.len();
+                kept.push((k, f));
             }
             let mut v = Vec::with_capacity(g.lru.len() + g.heads.len());
             while let Some(f) = g.pop_lru() {
                 v.push(f);
             }
-            (kept, v)
+            for (k, f) in kept.into_iter().rev() {
+                g.bytes += f.data.len();
+                g.head_bytes += f.data.len();
+                g.heads.put(k, f);
+            }
+            v
         };
         let any = !frames.is_empty() || self.pool.mapped() > 0;
         drop(frames);
         self.pool.unmap_empty();
-        // Back among the heads, least recently read first, so their order stays.
-        for (k, data, fill, clips) in kept.into_iter().rev() {
-            let mut out = Vec::with_capacity(1);
-            if cfg!(unix) {
-                self.pool.alloc_into(data.len(), 1, &mut out);
-            }
-            let mut buf = out.pop().unwrap_or_else(|| FrameBuf::heap(data.len()));
-            buf.copy_from_slice(&data);
-            let len = buf.len();
-            let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            g.heads.put(k, Arc::new(Frame { data: buf, fill, clips }));
-            g.bytes += len;
-            g.head_bytes += len;
-        }
         self.released.store(used, Ordering::Relaxed);
         any
     }
@@ -1804,9 +1799,9 @@ mod tests {
         assert!(c.get(&key(1)).is_some());
     }
 
-    /// An idle release keeps the most recently read heads (#510), packed into as few slabs as
-    /// they need, and drops the rest; it does nothing more until the cache is used again. A
-    /// release for memory pressure drops the heads too.
+    /// An idle release keeps the most recently read heads (#510) and drops the rest, with the
+    /// slabs left empty; it does nothing more until the cache is used again. A release for
+    /// memory pressure drops the heads too.
     #[cfg(unix)]
     #[test]
     fn an_idle_release_keeps_the_heads() {
@@ -1819,19 +1814,19 @@ mod tests {
         for i in 0..400 {
             c.insert(key(i), frame_of(&c, i));
         }
-        // Heads: every tenth frame, scattered over the slabs.
-        c.keep((0..400).step_by(10).map(key));
+        // Heads: frames 100 to 139.
+        c.keep((100..140).map(key));
         let mapped = c.mapped();
         assert!(!c.release_idle(Duration::from_secs(60)), "just used");
         assert!(c.release_idle(Duration::ZERO));
         assert_eq!(c.lock().head_bytes, 40 * 9408);
         assert_eq!(c.bytes(), 40 * 9408);
         assert!(c.get(&key(1)).is_none());
-        let f = c.get(&key(390)).unwrap();
-        assert!(f.data.iter().all(|&b| b == 390u32 as u8));
+        let f = c.get(&key(139)).unwrap();
+        assert!(f.data.iter().all(|&b| b == 139));
         drop(f);
-        // 40 frames of 9408 bytes fill one slab of 55 slots.
-        assert!(c.mapped() <= Pool::slab_shape(9408).0 && c.mapped() < mapped, "{}", c.mapped());
+        // Only the slabs that hold them stay.
+        assert!(c.mapped() < mapped, "{} of {mapped}", c.mapped());
         // The get above used the cache: one more release, then nothing until it is used.
         assert!(c.release_idle(Duration::ZERO));
         assert!(!c.release_idle(Duration::ZERO));

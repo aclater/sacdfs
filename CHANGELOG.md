@@ -24,6 +24,12 @@ All notable changes to sacdfs are recorded here. The format follows
   Why and what was measured: docs/design.md, "Players' start-up bursts on slow CPUs".
 
 ### Fixed
+- **Kept heads survive the idle release (#510).** A mount idle for a minute dropped its whole
+  cache (#150), the heads of #508 included, so a player that re-reads the album's heads at each
+  track start found them decoded only if it came back within that minute: in practice every
+  start was a first start, and on a 32-bit Atom each decoded the album's heads again. The idle
+  release now keeps the most recently read heads, up to half the cache and 32 MiB, packed into as
+  few slabs as they need; a release for memory pressure still drops them. RESULTS
 - **Folder rescans no longer take the CPU from a track starting (#503).** A player that re-reads
   the heads of every file in the folder as it starts a track (seen on a Zidoo) made sacdfs decode
   each of those files ahead too: up to 3 s of audio per file, or 16 to 150 frames beside the
