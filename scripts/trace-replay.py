@@ -37,8 +37,12 @@ fewer requests, as a player would send. A rescan that takes `turns` with the pla
 sends one request at a time over the same connection, as the #456 player does (it sends its
 track's next read when a re-read is answered); otherwise it runs beside it. `rescan_ms` is the
 mean time of the re-reads sent in the playing handle's first 6 s: for a player that takes turns,
-its speed. Offsets are kept as in a replay: header reads in the header, audio reads at the
-same byte of the audio (`a`), tail reads at the same distance from the end (`e`).
+its speed. With `play_after_heads` N, a rescan that takes turns starts right after the probes and
+the playing handle opens once N files' heads are re-read, as the #456 player does from its second
+start on, so slow re-reads hold up the track itself; `rescan_ms` then counts the re-reads from the
+probes on. `play_open_s` is when the playing handle opened, after the probes began. Offsets are
+kept as in a replay: header reads in the header, audio reads at the same byte of the audio (`a`),
+tail reads at the same distance from the end (`e`).
 """
 import argparse
 import bisect
@@ -451,8 +455,9 @@ def act(prof, mount, secs, prebuf):
     play = prof["play"]
     play_at = prof.get("play_after_s", 0.0)
     turns = bool(scan) and rs["turns"]
+    after_heads = prof.get("play_after_heads") if turns else None
     sbuf = mmap.mmap(-1, 1 << 20)
-    scan_fds, scan_done = {}, [None]
+    scan_fds, scan_done, files_done = {}, [None], [0]
     reads, rescans = [], []
     start = time.monotonic()
     end_at = start + play_at + secs
@@ -462,13 +467,14 @@ def act(prof, mount, secs, prebuf):
         f = scan_fds.get(q) or scan_fds.setdefault(q, os.open(q, os.O_RDONLY | os.O_DIRECT))
         a = time.monotonic()
         os.preadv(f, [memoryview(sbuf)[:n]], o)
-        rescans.append((a - start - play_at, time.monotonic() - a))
+        rescans.append((a - start, time.monotonic() - a))
         # Each file is closed after its last re-read, as the player does: an open one would count
         # as a reader still at its head, and keep its decode-ahead going.
         if not scan or scan[0][0] != q:
             os.close(scan_fds.pop(q))
+            files_done[0] += 1
         if not scan:
-            scan_done[0] = time.monotonic() - start - play_at
+            scan_done[0] = time.monotonic() - start
 
     def side():
         time.sleep(max(0.0, start + play_at + rs.get("start_s", 0.0) - time.monotonic()))
@@ -484,6 +490,11 @@ def act(prof, mount, secs, prebuf):
         for where in probe:
             pread(fd, *located(where, size, audio, trace_audio))
         os.close(fd)
+    if after_heads is not None:
+        while scan and files_done[0] < after_heads:
+            scan_one()
+        play_at = time.monotonic() - start
+        end_at = start + play_at + secs
     while turns and scan and time.monotonic() < start + play_at:
         if time.monotonic() >= start + play_at + rs.get("start_s", 0.0):
             scan_one()
@@ -525,9 +536,11 @@ def act(prof, mount, secs, prebuf):
     for f in scan_fds.values():
         os.close(f)
     out = numbers(reads, first_off, audio, rate, prebuf)
-    out["rescan_done_s"] = None if scan_done[0] is None else round(scan_done[0], 2)
+    out["rescan_done_s"] = None if scan_done[0] is None else round(scan_done[0] - play_at, 2)
+    out["play_open_s"] = round(p0 - start, 2)
     # How long the re-reads took while the track started: the speed of a player that takes turns.
-    early = [lat for t, lat in rescans if 0 <= t < RESCAN_EARLY_S]
+    lo = 0.0 if after_heads is not None else play_at
+    early = [lat for t, lat in rescans if lo <= t < play_at + RESCAN_EARLY_S]
     out["rescan_ms"] = round(1000 * sum(early) / len(early), 1) if early else None
     return out
 

@@ -4,7 +4,8 @@
 
 - Each profile in tests/fixtures/players comes from its trace as its `source` says: the probes,
   the playing handle's first read and read size, and the rescan are what --profile derives (the
-  rate and lead of the Zidoo profiles are set by hand, as their notes say).
+  rate and lead of the Zidoo profiles are set by hand, as their notes say, and so are the turns
+  of one whose playing handle opens after the heads).
 - A read keeps its place from trace to local file: header, audio and tail.
 - The simulated player stalls when replies come later than it plays, and not otherwise.
 """
@@ -46,7 +47,12 @@ class Profiles(unittest.TestCase):
                 self.assertEqual(p["play"]["from"], d["play"]["from"])
                 self.assertEqual(p["play"]["read"], d["play"]["read"])
                 if "rescan from" not in p["source"]:
-                    self.assertEqual(p["rescan"], d["rescan"])
+                    want = d["rescan"]
+                    # Most re-reads come before a playing handle opened after the heads, so the
+                    # trace cannot show turns: set by hand (zidoo-turns-warm-dsf).
+                    if "play_after_heads" in p:
+                        want = dict(want, turns=p["rescan"]["turns"])
+                    self.assertEqual(p["rescan"], want)
                 if not p["name"].startswith("zidoo"):
                     self.assertEqual(p["play"], d["play"])
 

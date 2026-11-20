@@ -33,6 +33,18 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Fixed
+- **A silence of about 2 s when a track starts again with players that re-read the album (#456).**
+  With the heads kept (#510), a start minutes after the last one found every head decoded, yet the
+  #456 player still waited: it re-reads the other files' heads one file at a time, each closed
+  before the next opens, and opens its track only after several of them. Each re-read started a
+  decode-ahead of that file's next seconds and then waited for it, about a quarter of a second
+  per file on a 32-bit Atom, and those decode-aheads kept the CPU after the files closed; once
+  the track's own read of a kept head waited 2 s behind them. A reader of a file's head from its
+  start now neither reads ahead nor starts its decode-ahead while another file's head was read in
+  the last second, and a read whose frames are all in the cache never waits for a decode-ahead.
+  With the player's profile on cores limited to an Atom's speed, a start after the idle release
+  opened its track 0.3 s after the probe instead of 2.4 s; the first start after a mount opened it
+  3 s sooner too. The stall gate now also replays that player starting after the idle release.
 - **Seconds of silence at each track start on slow CPUs with players that re-read the album
   (#512).** On a 32-bit Atom NAS, the slow-machine decode-ahead of #504 decoded a starting track's
   first 7 s at once, while the player re-read the heads of the album's other files. That player

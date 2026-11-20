@@ -1796,7 +1796,10 @@ player starting a track wait or stall clearly longer than base did, on a CPU abo
   time (an Atom makes it at 1.07, and DSF at 1.8); on GitHub's runners that was 14 to 17 %.
   Each scenario mounts the disc afresh, so each is a first start after a mount: the player
   profiles in `tests/fixtures/players` (`scripts/trace-replay.py --player`) and two #456 traces
-  replayed. Builds alternate, the order swaps every round, 5 rounds.
+  replayed. One more, `zidoo-turns-warm-dsf.json@idle`, acts its profile out twice on one mount
+  80 s apart and measures the second start: after the idle release, with the kept heads (#510). Its
+  player opens its track only after re-reading five files' heads (`play_after_heads`), as the
+  #456 player does from its second start on. Builds alternate, the order swaps every round, 5 rounds.
 - **What fails it:** for each scenario, head's median over the rounds, against the worst base had
   in any round, beyond both margins: the playing file's worst read in its first 15 s (1.25 times
   and 250 ms), the time playback stalled in them (1.25 times and 1 s), the audio the player held
@@ -1804,7 +1807,11 @@ player starting a track wait or stall clearly longer than base did, on a CPU abo
   re-reads the folder's heads, the mean time of those re-reads in its first 6 s (1.2 times and
   20 ms). *Why the last two:* the #456 player takes turns, sending its track's next read only when
   a re-read is answered (#512); slower re-reads leave it silent for seconds at the start, and it
-  catches up later, so the 15 s stall total hid that. The job summary has the table.
+  catches up later, so the 15 s stall total hid that. For a player that opens its track after
+  re-reading heads, also when it opened it (from its probe): later than base's latest by 1.25
+  times and 0.5 s. *Why:* the stall and audio numbers count from the track's first read, so time
+  lost before it was invisible: a start after the idle release scored no stall while the #456
+  player opened its track 2 s late (#456, round 5). The job summary has the table.
 - **How the margins were chosen:** a build compared with itself (the pull request that added the
   gate changes no code, so its runs compare identical binaries) on GitHub's runners three times,
   and on a lab host's E-cores. The playing file's worst read varied most in the Zidoo-like

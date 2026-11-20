@@ -66,7 +66,7 @@ jobs:
     name: stall gate (${{ matrix.group }})
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +76,11 @@ jobs:
               tests/fixtures/players/zidoo-turns-dsf.json
               tests/fixtures/players/zidoo-wav.json
               tests/fixtures/traces/session-456-c.trace.gz:14
+          # A start after the idle release (#510, #456 round 5): each run waits 80 s between its
+          # two starts, so it has a job of its own.
+          - group: zidoo-idle
+            scenarios: >-
+              tests/fixtures/players/zidoo-turns-warm-dsf.json@idle
           - group: players
             scenarios: >-
               tests/fixtures/players/mpv-wav.json
