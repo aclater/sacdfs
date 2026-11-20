@@ -73,6 +73,62 @@ The catalog takes a new sacdfs release through its maintainers' automated update
 4. **Save.** *You should see* the app turn **Running** within about 10 seconds.
 5. **Stop it cleanly when you need to.** Use the app's Stop button, never a forced kill: stop and start take about 2 seconds, and a forced kill can leave a dead mount.
 
+## Share through TrueNAS's own SMB (port 445)
+
+Windows drive mapping, Roon's "Add network share" and the SMB storage of other TrueNAS apps (Plex) have no port field: they need SMB on port 445, which TrueNAS's own SMB service holds. Instead of the app's share on 10445, sacdfs can show its files in a dataset, and TrueNAS shares that dataset on 445 like any other. No network changes. About 10 more minutes.
+
+1. **Make an empty dataset.** Datasets, Add Dataset, name `sacdfs`, preset **Generic**. *You should see* `/mnt/pool/sacdfs`.
+2. **Share it, before sacdfs runs.** Shares, SMB, Add: path `/mnt/pool/sacdfs`, name `sacd`, **Export Read Only** on; under Advanced Options turn on **Use Apple-style Character Encoding** (track titles with `:` or `?` then keep their names). Turn the SMB service on if asked. TrueNAS refuses to save a share whose dataset holds a running sacdfs mount ("child mount is not a ZFS dataset"): to edit the share later, stop the sacdfs app first.
+3. **Give SMB a user,** if you have none: Credentials, Users, Add, with SMB access.
+4. **Install sacdfs with YAML,** as above, with these changes: no `ports`, `SMB: "0"`, and the dataset bound over `/srv` with shared propagation. The catalog app's form doesn't offer this yet.
+
+   ```yaml
+   services:
+     sacdfs:
+       image: ghcr.io/aclater/sacdfs:0.7.0
+       restart: unless-stopped
+       devices:
+         - /dev/fuse
+       cap_drop:
+         - ALL
+       cap_add:
+         - SYS_ADMIN
+         - DAC_OVERRIDE
+         - DAC_READ_SEARCH
+         - SETPCAP
+       security_opt:
+         - no-new-privileges:true
+         - apparmor=unconfined
+       ports:
+         - "12049:2049"
+       volumes:
+         - /mnt/pool/music:/images:ro
+         - sacdfs-cache:/cache
+         - type: bind
+           source: /mnt/pool/sacdfs
+           target: /srv
+           bind:
+             propagation: rshared
+       environment:
+         SACDFS_FLATTEN: "1"
+         SMB: "0"
+         NFS_CLIENTS: 192.0.2.0/24
+       healthcheck:
+         test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+         interval: 30s
+         timeout: 10s
+         start_period: 300s
+   volumes:
+     sacdfs-cache:
+   ```
+
+   *You should see* the app **Running**, and in Datasets nothing new: the files are in the folder `sacd` of `/mnt/pool/sacdfs`.
+5. **Connect on port 445.** Windows: map `\\nas\sacd`; Roon: Add network share, `\\nas\sacd\sacd`; macOS: `smb://nas/sacd`. Log in as the user of step 3. The discs are in the folder `sacd`.
+
+- **NFS:** TrueNAS's own NFS cannot export the mount (the kernel's NFS server needs options TrueNAS doesn't set), so NFS stays on the app, on 12049. Leave out `DAC_READ_SEARCH`, the NFS port and set `NFS: "0"` if nothing uses NFS.
+- **Other apps on the same NAS:** a catalog app (Plex) reads it through its **SMB share** storage type: server = the NAS's own address, path `sacd`, the user of step 3, read-only; the discs are then in the folder `sacd` of that storage's mount path. Don't give a catalog app the dataset as a Host Path: the form binds it without `rslave`, so the app keeps an empty or dead folder after sacdfs restarts or starts later. A custom (YAML) app can bind it with `rslave`: [deployment guide](../deployment.md#players-on-the-same-host-no-smb-hop).
+- **At boot**, TrueNAS's SMB starts before the apps. Until sacdfs has mounted (seconds), the folder `sacd` refuses access, so a player scanning then sees an error, not an empty library (from the next sacdfs release; 0.7.0 shows an empty folder).
+
 ## Check it worked
 
 Open the app's Logs. *You should see* the number of image files, `mounted`, the SMB share and `NFS SERVER INITIALIZED`. Then mount it from a computer, naming the ports: [linux-client.md](linux-client.md#on-other-ports) (Windows: `net use ... /TCPPORT:10445`; macOS: see the [deployment guide](../deployment.md#truenas-scale)). Open a folder and play a DSF or WAV file.
@@ -86,6 +142,8 @@ Open the app's Logs. *You should see* the number of image files, `mounted`, the 
 ## Details
 
 ### What was checked
+
+**TrueNAS's own SMB share, on 0.7.0 (#522):** TrueNAS SCALE 25.10.8 in a VM, through the API calls behind the screens (not the web screens). sacdfs installed from a lab copy of the catalog app with the Mount Folder option of [deploy/truenas/sacdfs](../../deploy/truenas/sacdfs/), rendered by TrueNAS itself, which binds the dataset over `/srv` with `rshared` as the YAML above does; the 136 conformance-corpus images. The SMB share was created while sacdfs was stopped; with the mount present TrueNAS refused it. Over TrueNAS's SMB on 445, as a TrueNAS user with a user-space Linux client (not Windows, Roon or a kernel mount), all 910 DSF and WAV files were identical to a reference, with the Apple-style encoding on (without it, one title holding `:` had a mangled name); writes were refused. Throughput through the VM's user-mode network: 52 to 62 MB/s against 43 to 51 MB/s from the app's own share on 10445, same files. The same 910 files after an app stop and start, a redeploy (the container replaced, as in an update) and two TrueNAS restarts (all files on 445 83 s after the restart call); TrueNAS raised no alert. The Plex catalog app (stable train) with an SMB share storage to the NAS's own address read all 910 files identical, also after sacdfs restarts and TrueNAS restarts; with the dataset as a Host Path it saw `Transport endpoint is not connected` after a sacdfs restart, and an empty folder after a TrueNAS restart. A custom app binding the dataset with `rslave` (uid 568) read them all throughout. TrueNAS's NFS export of the dataset showed `sacd` empty, and of `sacd` itself was refused (NFSv3) or empty (NFSv4.2). The YAML of step 4, with the lab's paths and network, installed through the call behind Install via YAML: healthy, NFS on 12049 started, and the same 910 files identical over 445, in the `rslave` app and in Plex. The mode-000 mount point (above) was run with the entry point of this change bound into the 0.7.0 image. Not run: Windows, Roon or a real Plex scan, macOS, the web screens, a kernel NFS mount of the app's export.
 
 **Catalog app, on 0.7.0:** TrueNAS SCALE 25.10.8 in a VM, not on a TrueNAS appliance, with its standard catalog (no local copy). After a catalog sync, sacdfs was listed in the community train at 0.7.0 (app version 1.0.1), image pinned by digest. It was installed through the API calls behind Apps, Discover Apps, Install (the web screens were not clicked through), as a guest, with the 136 conformance-corpus images in a host-path dataset and SMB on 10445. The app was healthy 11.7 s after the install call, image pull included, with all capabilities dropped but the seven it needs, no new privileges and the images read-only. Over SMB, read as a guest with a user-space client (not a kernel mount), all 910 DSF and WAV files were identical to a reference made with the same image, and a write was refused. A stop took 1.2 s, a start 0.8 s, and the app was healthy 2.9 s after the start, with the same 910 files. Uninstalling, with images and volumes removed, took 1.6 s and left the images unchanged. Not run on 0.7.0: the web screens, NFS, an SMB user, a TrueNAS restart, an update through the catalog, a Windows or macOS client.
 
@@ -102,4 +160,4 @@ Open the app's Logs. *You should see* the number of image files, `mounted`, the 
 ### More problems
 
 - **Harmless log lines:** a few NFS-Ganesha `CRIT` lines about D-Bus and `Cannot register NFS V4 on UDP`, and Samba's `parse_dfs_path_strict: Hostname <address> is not ours.` (logged when a client connects by IP address instead of by name).
-- **Another app on the same NAS can mount sacdfs through TrueNAS's "SMB share" (`cifs`) storage type on port 445 only:** that type has no port field (read from the Plex app's catalog schema on 25.10.7), so it can't reach 10445. Plex could mount sacdfs only on 445 and a container address on a custom bridge network worked ([roon.md](roon.md)); observed with the 0.4.0-rc.2 image, not re-run with 0.4.0.
+- **Another app on the same NAS can mount sacdfs through TrueNAS's "SMB share" (`cifs`) storage type on port 445 only:** that type has no port field, so it can't reach 10445. Use [TrueNAS's own SMB share](#share-through-truenass-own-smb-port-445) of sacdfs's dataset.

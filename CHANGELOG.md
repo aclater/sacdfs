@@ -7,6 +7,15 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Port 445 on TrueNAS without network changes (part of #522).** sacdfs can show its files in a
+  dataset (bound over `/srv` with shared propagation), and TrueNAS's own SMB service shares that
+  dataset on port 445, for Windows drive mapping, Roon's "Add network share" and the SMB storage
+  of other TrueNAS apps (Plex), none of which can name another port. While sacdfs is not mounted,
+  the container leaves the mount point in that folder unreadable (mode 000) instead of an empty
+  folder, so a share that starts first, as at boot, never shows players an empty library. The
+  TrueNAS app definition in deploy/truenas gains Mount Folder and switches for the app's own SMB
+  and NFS, which then drop their ports and capabilities. TrueNAS's own NFS cannot export the mount.
+  See docs/install/truenas-scale.md, "Share through TrueNAS's own SMB".
 - **Release builds for 32-bit x86 (#488).** Each release has `sacdfs-<version>-i686-linux.tar.gz`,
   a static build for Pentium 4, Atom and later (SSE2), with its `.sha256`, attestation and
   `SHA256SUMS` line, for 32-bit NAS units such as the ASUSTOR AS-302T (#456). It needs no C library.

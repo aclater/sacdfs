@@ -12,7 +12,7 @@ Not tested on 0.6.0. Roon was last checked on 0.4.1-rc.1 (Roon 2.74) as an app o
 
 ## Steps
 
-1. **Give sacdfs its own address.** Roon's "Add network share" has no port field: it needs SMB on port 445, and a NAS's own SMB service (TrueNAS) already holds 445. In the sacdfs app's YAML ([truenas-scale.md](truenas-scale.md)) add this, with a subnet nothing else on the NAS uses:
+1. **Put sacdfs on port 445.** Roon's "Add network share" has no port field: it needs SMB on port 445, and a NAS's own SMB service (TrueNAS) already holds 445. On TrueNAS, let TrueNAS share sacdfs's files on 445: [truenas-scale.md](truenas-scale.md#share-through-truenass-own-smb-port-445); the share is then `\\nas\sacd\sacd` with that TrueNAS user (checked with a Linux SMB client, not yet with Roon). Or give sacdfs its own address: in the sacdfs app's YAML add this, with a subnet nothing else on the NAS uses:
 
    ```yaml
    services:
@@ -32,7 +32,7 @@ Not tested on 0.6.0. Roon was last checked on 0.4.1-rc.1 (Roon 2.74) as an app o
 
 2. **Let Roon mount shares.** In the **Roon** app's YAML add `cap_add: [SYS_ADMIN, DAC_READ_SEARCH]` and `security_opt: [apparmor=unconfined]`: Roon mounts network shares itself, inside its container. Restart Roon.
 
-3. **Add the share in Roon.** Settings, Storage, **Add Folder**, **Add network share**. Type `\\172.29.42.10\sacd` and the `SMB_USER` name and password.
+3. **Add the share in Roon.** Settings, Storage, **Add Folder**, **Add network share**. Type `\\172.29.42.10\sacd` and the `SMB_USER` name and password (with TrueNAS's own share: `\\` and the NAS's address, then `\sacd\sacd`, and the TrueNAS user).
    *You should see:* the share listed as watched.
 
 ## Check it worked
@@ -59,7 +59,7 @@ Roon's log shows `[roon/cifs] Connected`, and the albums appear as Roon imports 
 - **`SACDFS_FLATTEN=1`.** Each disc's `Stereo` and `Multichannel` folders then sit under the album.
 - **`SMB_USER` and `SMB_PASSWORD`.** Roon asks for a user name and password.
 - **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit below 256 MiB); the tests ran with 16, which also works.
-- **A Docker network of its own for sacdfs.** Roon needs port 445; see step 1.
+- **Port 445.** Roon needs it; see step 1. TrueNAS's own share needs no network change; the Docker network gives the share an address that only apps on the same NAS reach.
 - **Playlists.** Write entries as paths relative to the share.
 - **Multichannel areas.** Roon shows them as separate albums under its own canonical titles, so the "(Multichannel)" suffix is not visible there.
 

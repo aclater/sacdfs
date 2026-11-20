@@ -45,6 +45,20 @@ questions:
       schema:
         type: boolean
         default: false
+    - variable: share_smb
+      label: SMB Share From The App
+      description: The app's own SMB share, on the SMB port below. Turn it off when TrueNAS shares the
+        Mount Folder (Storage) itself, on port 445.
+      schema:
+        type: boolean
+        default: true
+    - variable: share_nfs
+      label: NFS Export From The App
+      description: The app's own NFS export, on the NFS port below. TrueNAS's own NFS cannot export
+        the Mount Folder; keep this on for NFS clients.
+      schema:
+        type: boolean
+        default: true
     - variable: smb_user
       label: SMB User (Optional)
       description: User name for the SMB share. Leave empty for open, read-only guest access to everyone
@@ -317,6 +331,27 @@ questions:
                   - '='
                   - false
                 required: true
+    - variable: host_mount
+      label: Mount Folder
+      description: An empty dataset of its own. sacdfs's files appear in its folder sacd, read-only,
+        for TrueNAS's own SMB share of the dataset and for other apps.
+      schema:
+        type: dict
+        attrs:
+        - variable: enabled
+          label: Show The Files In A Dataset
+          schema:
+            type: boolean
+            default: false
+        - variable: path
+          label: Dataset Path
+          schema:
+            type: hostpath
+            show_if:
+            - - enabled
+              - '='
+              - true
+            required: true
     - variable: additional_storage
       label: Additional Storage
       schema:

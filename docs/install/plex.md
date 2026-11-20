@@ -59,7 +59,7 @@ Each multichannel disc is listed twice, as "Album" and "Album (Multichannel)", a
 - **Cache.** The Plex tests ran with `SACDFS_CACHE_MB=16`; the default (32 MiB, or 16 under a memory limit below 256 MiB) is close, measured at 48 MiB peak for a Plex-like scan.
 - **Prefer local metadata.** Without it Plex's default agent gives both copies of a multichannel disc the online release's title ([#138](https://github.com/aclater/sacdfs/issues/138)); the "Plex Personal Media" agent also works.
 - **Share the folder that holds the mount, with `ro,rslave`.** Sharing the mount point itself leaves the container on a dead mount after sacdfs restarts.
-- **Plex as an app on the same TrueNAS.** In the Plex app's storage add an SMB (CIFS) entry, read-only, with sacdfs's address, share `sacd`, and `SMB_USER` and its password. Plex reaches port 445 on sacdfs's own Docker network address, as in [roon.md](roon.md). Mount it at, say, `/data/sacd`, then do steps 4 onward.
+- **Plex as an app on the same TrueNAS.** Let TrueNAS share sacdfs's files on port 445 ([truenas-scale.md](truenas-scale.md#share-through-truenass-own-smb-port-445)). In the Plex app's storage add an SMB share entry, read-only: server = the NAS's own address, path `sacd`, the TrueNAS user and password. Mount it at, say, `/data/sacd`; the library folder is then `/data/sacd/sacd`. Do steps 4 onward. Checked with the Plex app's container reading every file, after sacdfs restarts and TrueNAS restarts; not with a Plex scan. Not a Host Path entry: the Plex form binds it so that Plex loses the folder when sacdfs restarts.
 
 ### More problems
 
