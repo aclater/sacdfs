@@ -303,6 +303,11 @@ under 64 MiB at the smallest, on the import replay, with straight reads and seek
   has gone unused for 60 s (`IDLE_RELEASE`), the cached frames are dropped, empty slabs
   unmapped, pooled decoders and converters dropped and the heap trimmed (`malloc_trim`).
   After a WAV import and a 300 MB read at the default cache, RSS went from 57 to 11 MiB.
+  The kept heads (#456) stay, the most recently read up to half the cache and at most 32 MiB,
+  in the slabs they are in (#510): a player that re-reads an album's heads at
+  each track start found them gone whenever more than a minute passed between starts, so on a
+  32-bit Atom every start decoded them again (3.5 to 4 s of CPU while the track started). A
+  release for memory pressure still drops everything.
   *Why:* a mount spends most of its life idle between scans and playback. *Why 60 s:* longer
   than any gap between a client's reads; a reader that comes back decodes its next frames
   again (a few ms), and the kernel's page cache usually still holds what it read.
