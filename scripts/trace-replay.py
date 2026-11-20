@@ -34,8 +34,10 @@ re-reads while it starts (`rescan`). `--player` acts it out against a mount as a
 the playing handle asks for its next read when it holds less than `lead` seconds more than it
 has played and less than `rate` times the time since its first read, so a slower mount gets
 fewer requests, as a player would send. A rescan that takes `turns` with the playing handle
-sends one request at a time over the same connection, as the Zidoo trace shows; otherwise it
-runs beside it. Offsets are kept as in a replay: header reads in the header, audio reads at the
+sends one request at a time over the same connection, as the #456 player does (it sends its
+track's next read when a re-read is answered); otherwise it runs beside it. `rescan_ms` is the
+mean time of the re-reads sent in the playing handle's first 6 s: for a player that takes turns,
+its speed. Offsets are kept as in a replay: header reads in the header, audio reads at the
 same byte of the audio (`a`), tail reads at the same distance from the end (`e`).
 """
 import argparse
@@ -321,6 +323,8 @@ RESCAN_HEAD = 5 << 19
 # A read of the playing file this soon after a reply to a re-read came in turn with it, and a
 # rescan takes turns if this share of the playing file's reads during it did (--profile).
 TURN_MS = 20.0
+# --player reports the mean time of the re-reads sent in the playing handle's first seconds.
+RESCAN_EARLY_S = 6.0
 TURN_SHARE = 0.75
 # Reads this close to a file's end are reads of its tail (the DSF tag, the bytes after WAV data).
 TAIL = 1 << 16
@@ -449,14 +453,20 @@ def act(prof, mount, secs, prebuf):
     turns = bool(scan) and rs["turns"]
     sbuf = mmap.mmap(-1, 1 << 20)
     scan_fds, scan_done = {}, [None]
-    reads = []
+    reads, rescans = [], []
     start = time.monotonic()
     end_at = start + play_at + secs
 
     def scan_one():
         q, o, n = scan.pop(0)
         f = scan_fds.get(q) or scan_fds.setdefault(q, os.open(q, os.O_RDONLY | os.O_DIRECT))
+        a = time.monotonic()
         os.preadv(f, [memoryview(sbuf)[:n]], o)
+        rescans.append((a - start - play_at, time.monotonic() - a))
+        # Each file is closed after its last re-read, as the player does: an open one would count
+        # as a reader still at its head, and keep its decode-ahead going.
+        if not scan or scan[0][0] != q:
+            os.close(scan_fds.pop(q))
         if not scan:
             scan_done[0] = time.monotonic() - start - play_at
 
@@ -516,6 +526,9 @@ def act(prof, mount, secs, prebuf):
         os.close(f)
     out = numbers(reads, first_off, audio, rate, prebuf)
     out["rescan_done_s"] = None if scan_done[0] is None else round(scan_done[0], 2)
+    # How long the re-reads took while the track started: the speed of a player that takes turns.
+    early = [lat for t, lat in rescans if 0 <= t < RESCAN_EARLY_S]
+    out["rescan_ms"] = round(1000 * sum(early) / len(early), 1) if early else None
     return out
 
 

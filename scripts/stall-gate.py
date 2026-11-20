@@ -17,7 +17,9 @@ the share of CPUS at which base converts a 6-channel WAV file at TARGET times re
 For each scenario and build the gate takes, over the rounds, the playing file's worst read and
 the time playback stalled in the first SECS seconds after it opened. It fails when head's median
 is above the highest base had in any round by more than both a relative and an absolute margin:
-worst read 1.25 times and 250 ms, stall 1.25 times and 1 s. *Why base's highest, not its
+worst read 1.25 times and 250 ms, stall 1.25 times and 1 s, and for a player that re-reads the
+folder's heads, the mean time of those re-reads in its first 6 s, 1.25 times and 50 ms (#512: a
+player that takes turns with them gets its track no faster). *Why base's highest, not its
 median:* some scenarios' worst read is bimodal on shared runners (0.6 or 1.5 s for the same
 build), and comparing medians failed a build against itself. docs/performance.md, "The CI stall
 gate", says how the margins were chosen. The table goes to standard output, and to the job
@@ -163,6 +165,8 @@ def main():
     ap.add_argument("--worst-ms", type=float, default=250.0)
     ap.add_argument("--stall-ratio", type=float, default=1.25)
     ap.add_argument("--stall-s", type=float, default=1.0)
+    ap.add_argument("--rescan-ratio", type=float, default=1.25)
+    ap.add_argument("--rescan-ms", type=float, default=50.0)
     ap.add_argument("--json", help="write every run's numbers here")
     ap.add_argument("--log-dir", help="keep each run's sacdfs log, with the read trace, here")
     ap.add_argument("scenarios", nargs="+")
@@ -183,7 +187,8 @@ def main():
             for b in order:
                 n = run(a, builds[b], a.quota, s, f"{name(s)}-{b}-{r + 1}")
                 res[s][b].append(n)
-                print(f"round {r + 1} {name(s)} {b}: worst {n['worst_ms']:.0f} ms, stalled {n['stalled_s']:.2f} s,"
+                re = "" if n.get("rescan_ms") is None else f", re-reads {n['rescan_ms']:.0f} ms"
+                print(f"round {r + 1} {name(s)} {b}: worst {n['worst_ms']:.0f} ms, stalled {n['stalled_s']:.2f} s{re},"
                       f" sacdfs CPU {n['sacdfs_cpu_s']:.1f} s", flush=True)
     if a.json:
         with open(a.json, "w") as f:
@@ -192,7 +197,8 @@ def main():
     med = lambda runs, k: statistics.median(x[k] for x in runs)
     top = lambda runs, k: max(x[k] for x in runs)
     lines = [f"## Player stall gate ({a.rounds} rounds, sacdfs at {a.quota}% of one CPU on CPUs {a.cpus})", "",
-             "| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | |", "|---|---|---|---|"]
+             "| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | Re-reads, base → head (ms) | |",
+             "|---|---|---|---|---|"]
     failed = []
     for s in a.scenarios:
         bw, hw = med(res[s]["base"], "worst_ms"), med(res[s]["head"], "worst_ms")
@@ -203,16 +209,26 @@ def main():
             bad.append("worst read")
         if hs > bst * a.stall_ratio and hs > bst + a.stall_s:
             bad.append("stall")
+        rng = lambda b, k: f"{min(x[k] for x in res[s][b]):g}-{max(x[k] for x in res[s][b]):g}"
+        rescans = all(x.get("rescan_ms") is not None for b in ("base", "head") for x in res[s][b])
+        if rescans:
+            br, hr = med(res[s]["base"], "rescan_ms"), med(res[s]["head"], "rescan_ms")
+            brt = top(res[s]["base"], "rescan_ms")
+            if hr > brt * a.rescan_ratio and hr > brt + a.rescan_ms:
+                bad.append("re-reads")
+            re = f"{br:.0f} → {hr:.0f} ({rng('base', 'rescan_ms')} / {rng('head', 'rescan_ms')})"
+        else:
+            re = "-"
         if bad:
             failed.append(f"{name(s)} ({', '.join(bad)})")
-        rng = lambda b, k: f"{min(x[k] for x in res[s][b]):g}-{max(x[k] for x in res[s][b]):g}"
         lines.append(f"| {name(s)} | {bw:.0f} → {hw:.0f} ({rng('base', 'worst_ms')} / {rng('head', 'worst_ms')}) "
-                     f"| {bs:.2f} → {hs:.2f} ({rng('base', 'stalled_s')} / {rng('head', 'stalled_s')}) "
+                     f"| {bs:.2f} → {hs:.2f} ({rng('base', 'stalled_s')} / {rng('head', 'stalled_s')}) | {re} "
                      f"| {'**WORSE**: ' + ', '.join(bad) if bad else 'ok'} |")
     lines += ["", f"Medians (ranges base / head) of the first {a.secs:g} s after the playing file opened; "
               f"measured in {time.monotonic() - started:.0f} s. Head fails where its median is above base's "
               f"highest by more than {a.worst_ratio}x and {a.worst_ms:g} ms (worst read) or {a.stall_ratio}x and "
-              f"{a.stall_s:g} s (stall)."]
+              f"{a.stall_s:g} s (stall), or the mean time of the re-reads in a player's first 6 s by "
+              f"{a.rescan_ratio}x and {a.rescan_ms:g} ms."]
     text = "\n".join(lines) + "\n"
     print(text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):

@@ -73,8 +73,8 @@ jobs:
         include:
           - group: zidoo
             scenarios: >-
+              tests/fixtures/players/zidoo-turns-dsf.json
               tests/fixtures/players/zidoo-wav.json
-              tests/fixtures/players/zidoo-dsf.json
               tests/fixtures/traces/session-456-c.trace.gz:14
           - group: players
             scenarios: >-
