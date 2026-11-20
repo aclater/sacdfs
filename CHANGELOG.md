@@ -41,7 +41,7 @@ All notable changes to sacdfs are recorded here. The format follows
   per file on a 32-bit Atom, and those decode-aheads kept the CPU after the files closed; once
   the track's own read of a kept head waited 2 s behind them. A reader of a file's head from its
   start now neither reads ahead nor starts its decode-ahead while another file's head was read in
-  the last second, and a read whose frames are all in the cache never waits for a decode-ahead.
+  the last 2 s, and a read whose frames are all in the cache never waits for a decode-ahead.
   With the player's profile on cores limited to an Atom's speed, a start after the idle release
   opened its track 0.3 s after the probe instead of 2.4 s; the first start after a mount opened it
   3 s sooner too. The stall gate now also replays that player starting after the idle release.

@@ -1706,7 +1706,7 @@ decoding them twice.
   while another file's decode-ahead runs or another reader plays, and a reader from the start of
   a file does not start its decode-ahead within that head while another file's runs; it may once
   the other's ends, or once past the head. A reader from the start of a file also gets neither
-  within its head while another file's head was read in the last second, by a reader open or
+  within its head while another file's head was read in the last 2 s, by a reader open or
   closed since; and a read whose frames are all in the cache does not wait for the file's
   decode-ahead.
   *Why the other heads (#456, round 5):* from its second start on, the user's player re-read the
@@ -1716,7 +1716,10 @@ decoding them twice.
   though the kept heads held every frame it read, and each of those decoded 24 frames past the
   head after its file closed. The track opened 1.5 to 1.9 s after the probe, and once its own read
   of a kept head waited 2 s behind two such decode-aheads. *Why closed readers count:* the next
-  file is opened 20 to 100 ms after the last one closes.
+  file is opened 20 to 100 ms after the last one closes. *Why 2 s, not the 1 s of #512:* with the
+  heads not decoded, a file's head took up to 1.4 s on cores held to the Atom's speed, and with
+  1 s the next file's reader started its decode-ahead anyway, early enough to escape the rule
+  for a file starting. A look at a file's tag counts as a read of its head.
   *Why:* in the user's traces from a 32-bit Atom NAS (#456), the player re-read the heads of an
   album's 24 files (1.6 MB of each DSF, 0.6 MB of each WAV, and the tag) whenever it started a
   track. Each head of a file not yet playing started a decode-ahead (decoding up to 3 s of that

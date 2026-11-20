@@ -277,17 +277,17 @@ impl Traffic {
     /// (`false`).
     fn note_head_reader(&self, id: u64, file: usize, reading: bool) {
         let mut v = self.heads.lock().unwrap_or_else(|p| p.into_inner());
-        v.retain(|h| h.reader != id && h.at.elapsed() < HEADS_BUSY);
+        v.retain(|h| h.reader != id && h.at.elapsed() < HEADS_SEQUENCE);
         if reading {
             v.push(HeadRead { reader: id, file, at: std::time::Instant::now(), open: true });
         }
     }
 
     /// Notes that reader `id` is gone. Its last read of a head still counts for
-    /// [`Traffic::other_files_heads_read`] until [`HEADS_BUSY`] has passed.
+    /// [`Traffic::other_files_heads_read`] until [`HEADS_SEQUENCE`] has passed.
     fn head_reader_gone(&self, id: u64) {
         let mut v = self.heads.lock().unwrap_or_else(|p| p.into_inner());
-        v.retain(|h| h.at.elapsed() < HEADS_BUSY);
+        v.retain(|h| h.at.elapsed() < HEADS_SEQUENCE);
         for h in v.iter_mut().filter(|h| h.reader == id) {
             h.open = false;
         }
@@ -301,12 +301,12 @@ impl Traffic {
         v.iter().any(|h| h.open && h.reader != id && h.at.elapsed() < HEADS_BUSY)
     }
 
-    /// Whether the head of a file other than `file` was read within [`HEADS_BUSY`], by a reader
-    /// open or closed since: a player going through an album's heads one file at a time, each
-    /// closed before the next is opened (#456, round 5).
+    /// Whether the head of a file other than `file` was read within [`HEADS_SEQUENCE`], by a
+    /// reader open or closed since: a player going through an album's heads one file at a time,
+    /// each closed before the next is opened (#456, round 5).
     fn other_files_heads_read(&self, file: usize) -> bool {
         let v = self.heads.lock().unwrap_or_else(|p| p.into_inner());
-        v.iter().any(|h| h.file != file && h.at.elapsed() < HEADS_BUSY)
+        v.iter().any(|h| h.file != file && h.at.elapsed() < HEADS_SEQUENCE)
     }
 
     /// Marks a player's decoding until the guard drops.
@@ -431,6 +431,14 @@ const START_IDLE_SLOW: std::time::Duration = std::time::Duration::from_secs(2);
 /// 0.3 times real time for 5 s: seconds of silence at each start. *Why 1 s:* that player re-reads
 /// a head every 50 to 600 ms while a track starts.
 const HEADS_BUSY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A read of another file's head this recent holds back a reader of a file's head from its start
+/// ([`Traffic::other_files_heads_read`], #456 round 5): a player going through an album's heads
+/// one file at a time. *Why 2 s:* that player opens the next file 20 to 100 ms after closing the
+/// last, and reaches its second MiB 0.5 s later on its Atom when the heads are not decoded; on
+/// cores held to the Atom's speed a cold head took up to 1.4 s, and a window of 1 s let every
+/// other file start a decode-ahead anyway.
+const HEADS_SEQUENCE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Most frames the start-of-track decode-ahead decodes past the furthest frame read
 /// ([`Reader::start_ahead`]), and less with fewer than 4 decoder threads: a slice. *Why bounded:*
@@ -1762,6 +1770,10 @@ impl Reader {
         // reads a DSF file's tag before it plays (#456): the reads go on from where they were.
         // Counted, it was a jump, and no later read was in order with it: no read-ahead at all.
         if k0 > 0 && k1 >= self.file.layout.frames && offset > s.max_end.saturating_add(SEQ_GAP_AHEAD) {
+            // A reader of the head that looks at the tag is still going through the heads.
+            if self.head_only(&s) && s.started.is_some() {
+                engine.traffic().note_head_reader(self.id, self.file.key(), true);
+            }
             return None;
         }
         // The first read of audio never starts read-ahead: a tagger walking a WAV file's
