@@ -176,13 +176,17 @@ folder at the same moment. sacdfs measures, as it serves, how fast it decodes ea
 channel count. Where that is slower than `--start-burst` (3.5 times real time by default), as for
 multichannel DST on a 32-bit Atom NAS, it decodes the start of a playing track
 (`--start-burst-secs`, 8 s by default, within a quarter of the cache) without waiting for the
-player's reads. The decoded heads of files that players read again stay in the cache on any
-machine (#456).
+player's reads, unless another file's head was read in the last second: a player that re-reads
+the album's heads as it starts a track (seen on a Zidoo) asks for its track only as fast as those
+re-reads are answered, so they must not wait behind it (#512). The decode-ahead then stays a
+slice ahead of the reads, and runs on once the re-reads stop. The decoded heads of files that
+players read again stay in the cache on any machine (#456).
 
 On any machine, a reader of a file's head gets no read-ahead while another file starts or plays,
 and does not start its own decode-ahead while another file starts. A machine that decodes faster
 than `--start-burst` changes nothing else. `--start-burst 0` turns the slow-machine part off. The
-log's read trace (`-vv`) shows `slow: to frame N at once` when it applies. What it measured:
+log's read trace (`-vv`) shows `slow: to frame N at once` when it applies, and `slow: paused at N,
+heads read` when re-reads hold it back. What it measured:
 [deployment guide](deployment.md#starting-playback-on-a-slow-cpu).
 
 ## Formats
