@@ -456,23 +456,7 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
         if let Some((status, reason)) = with_pauses(&mut row, &audio, &mut src, &same_ch, ctx) {
             return row.with(status, reason);
         }
-        let why = match same_ch.iter().min_by_key(|c| c.file.layout.samples().abs_diff(audio.samples)) {
-            None => format!("no area of the images in {where_} has {} channels", audio.channels),
-            Some(c) => {
-                let d = c.file.layout.samples() as f64 - audio.samples as f64;
-                format!(
-                    "no {}-channel track has {} samples; the nearest, {} track {} of {}, is {:+.3} s {}",
-                    audio.channels,
-                    audio.samples,
-                    c.area,
-                    c.file.number,
-                    c.image().display(),
-                    d.abs() / f64::from(SACD_RATE),
-                    if d > 0.0 { "longer" } else { "shorter" },
-                )
-            }
-        };
-        return row.with(Status::NoMatch, why);
+        return row.with(Status::NoMatch, nearest_length_reason(&same_ch, &audio, &where_));
     }
     // The track the name points at first: usually the only one decoded.
     let n = leading_number(&item.path);
@@ -513,6 +497,27 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
     cand.fill(&mut row);
     row.loses = losses(&audio, &mut src, cand.tag(ctx.engine), cand.area_tracks);
     row.with(status, reason)
+}
+
+/// Why an extract of `audio`'s length is no track's: the track of `same_ch` (the tracks of its
+/// channel count in the images of `where_`) nearest to it in length, or that there is none.
+fn nearest_length_reason(same_ch: &[&Arc<Candidate>], audio: &container::Audio, where_: &str) -> String {
+    match same_ch.iter().min_by_key(|c| c.file.layout.samples().abs_diff(audio.samples)) {
+        None => format!("no area of the images in {where_} has {} channels", audio.channels),
+        Some(c) => {
+            let d = c.file.layout.samples() as f64 - audio.samples as f64;
+            format!(
+                "no {}-channel track has {} samples; the nearest, {} track {} of {}, is {:+.3} s {}",
+                audio.channels,
+                audio.samples,
+                c.area,
+                c.file.number,
+                c.image().display(),
+                d.abs() / f64::from(SACD_RATE),
+                if d > 0.0 { "longer" } else { "shorter" },
+            )
+        }
+    }
 }
 
 /// An extract of the right channel count whose length is no track's (#93): the served track
@@ -757,15 +762,38 @@ fn check_caught(item: &Item, ctx: &Ctx<'_>, check: &(dyn Fn(&Item, &Ctx<'_>) -> 
     })
 }
 
-/// [`run`] with `check` as the check of a DSF or DFF file.
-fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io::Result<Summary> {
-    let with = |e: io::Error, p: &Path| io::Error::new(e.kind(), format!("{}: {e}", p.display()));
-    let source = args.source.canonicalize().map_err(|e| with(e, &args.source))?;
+/// `io::Error` `e` with the path `p` it is about in front of its message.
+fn with_path(e: io::Error, p: &Path) -> io::Error {
+    io::Error::new(e.kind(), format!("{}: {e}", p.display()))
+}
+
+/// The paths a run works on, resolved from its arguments.
+struct Inputs {
+    /// The sacdfs mounts of the system, which are no extracts.
+    mounts: Vec<PathBuf>,
+    /// Where to look for extracts.
+    roots: Vec<PathBuf>,
+    /// The `--map` pairs, FROM and TO.
+    maps: Vec<(PathBuf, PathBuf)>,
+    /// The images of SOURCE.
+    scanned: SourceDir,
+    /// SOURCE as scanned.
+    root: PathBuf,
+    /// The folders of SOURCE that hold images.
+    folders: HashSet<PathBuf>,
+}
+
+/// SOURCE, EXTRACTS and `--map` resolved and checked, and SOURCE's images scanned.
+fn resolve_inputs(args: &Args) -> io::Result<Inputs> {
+    let source = args.source.canonicalize().map_err(|e| with_path(e, &args.source))?;
     let mounts = crate::platform::sacdfs_mounts();
     let roots: Vec<PathBuf> = if args.extracts.is_empty() {
         vec![source.clone()]
     } else {
-        args.extracts.iter().map(|p| p.canonicalize().map_err(|e| with(e, p))).collect::<io::Result<_>>()?
+        args.extracts
+            .iter()
+            .map(|p| p.canonicalize().map_err(|e| with_path(e, p)))
+            .collect::<io::Result<_>>()?
     };
     for r in &roots {
         if let Some(m) = mounts.iter().find(|m| r.starts_with(m)) {
@@ -784,7 +812,7 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         let [from, to] = pair else { continue };
         // FROM may be given as it is written in the extract paths, canonical or not.
         let from = from.canonicalize().unwrap_or_else(|_| from.clone());
-        let to = to.canonicalize().map_err(|e| with(e, to))?;
+        let to = to.canonicalize().map_err(|e| with_path(e, to))?;
         if !to.starts_with(&source) && !source.starts_with(&to) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -793,26 +821,37 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         }
         maps.push((from, to));
     }
-    let scanned = SourceDir::scan(&source).map_err(|e| with(e, &source))?;
+    let scanned = SourceDir::scan(&source).map_err(|e| with_path(e, &source))?;
     let root = scanned.path.clone();
     let mut folders = HashSet::new();
     image_folders(&scanned, &mut folders);
+    Ok(Inputs { mounts, roots, maps, scanned, root, folders })
+}
 
+/// Extracts found: each one's path, kind and metadata.
+type Extracts = Vec<(PathBuf, ExtractKind, fs::Metadata)>;
+
+/// Every extract under `roots`, sorted by path, once each, and the count of other files.
+fn find_extracts(roots: &[PathBuf], mounts: &[PathBuf]) -> io::Result<(Extracts, usize)> {
     let mut found = Vec::new();
     let mut ignored = 0;
-    for r in &roots {
-        walk(r, &mounts, &mut found, &mut ignored).map_err(|e| with(e, r))?;
+    for r in roots {
+        walk(r, mounts, &mut found, &mut ignored).map_err(|e| with_path(e, r))?;
     }
     found.sort_by(|a, b| a.0.cmp(&b.0));
     found.dedup_by(|a, b| a.0 == b.0);
+    Ok((found, ignored))
+}
 
-    let earlier = match (&args.output, args.resume) {
-        (Some(p), true) => report::read_earlier(p)?,
-        _ => HashMap::new(),
-    };
-    // A row checked with the other `--pauses`, or by a version that didn't say which (#479), is
-    // checked again: the mode decides what IDENTICAL means.
-    let mode = report::Pauses::of_option(&args.pauses);
+/// The rows of `earlier` kept as they are, and the extracts of `found` to check.
+fn select_items(
+    found: &[(PathBuf, ExtractKind, fs::Metadata)],
+    earlier: &HashMap<PathBuf, Row>,
+    mode: report::Pauses,
+    maps: &[(PathBuf, PathBuf)],
+    root: &Path,
+    folders: &HashSet<PathBuf>,
+) -> (Vec<Row>, Vec<Item>) {
     let unchanged = |path: &Path, meta: &fs::Metadata, mtime: &str| {
         earlier.get(path).filter(|r| {
             r.bytes == meta.len() && r.mtime == mtime && r.status != Status::Error && r.pauses == Some(mode)
@@ -829,25 +868,25 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         |r: &Row| r.status.chain_may_change() && r.path.parent().is_some_and(|d| changed_dirs.contains(d));
     let mut kept = Vec::new();
     let mut items = Vec::new();
-    for (path, kind, meta) in &found {
+    for (path, kind, meta) in found {
         let mtime = mtime_text(meta);
         if let Some(r) = unchanged(path, meta, &mtime).filter(|r| !chain_may_change(r)) {
             kept.push(r.clone());
             continue;
         }
-        let of = folder_of(path, &maps, &root, &folders);
+        let of = folder_of(path, maps, root, folders);
         items.push(Item { path: path.clone(), kind: *kind, bytes: meta.len(), mtime, folders: of });
     }
-    drop(changed_dirs);
+    (kept, items)
+}
 
-    let threads = if args.threads == 0 { default_threads() } else { args.threads };
-    let engine = Engine::new(threads, args.cache_mb.saturating_mul(1 << 20))?;
-    let tree = Tree::with_options(
-        scanned.clone(),
-        Tuning::default(),
-        Output { pauses_kept: mode.kept(), ..Output::dsf_only() },
-    );
-
+/// The served tracks of every folder of images that `items` need.
+fn open_candidates(
+    items: &[Item],
+    tree: &Tree,
+    root: &Path,
+    progress: bool,
+) -> HashMap<PathBuf, Vec<Arc<Candidate>>> {
     // The images of every folder needed, opened up front, on this thread: a worker never
     // waits for another to open them.
     let needed: Vec<PathBuf> = {
@@ -861,30 +900,41 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         f.sort();
         f
     };
-    let progress = !args.quiet;
     let mut candidates = HashMap::new();
     for (i, f) in needed.iter().enumerate() {
         if progress && io::stderr().is_terminal() {
             eprint!("\rsacdfs verify: opening images, folder {}/{}", i + 1, needed.len());
         }
-        candidates.insert(f.clone(), folder_candidates(&tree, &root, f));
+        candidates.insert(f.clone(), folder_candidates(tree, root, f));
     }
     if progress && io::stderr().is_terminal() && !needed.is_empty() {
         eprintln!();
     }
+    candidates
+}
 
-    let out = Mutex::new(report::Writer::create(args.output.as_deref(), &kept)?);
-    let ctx = Ctx { engine: &engine, candidates: &candidates, read: AtomicU64::new(0) };
+/// Checks `items` on `workers` threads, writing to `out` each row no chain can change; the
+/// rows in the order they were finished.
+#[expect(clippy::too_many_arguments, reason = "the worker pool's inputs, each passed through once")]
+fn check_all(
+    items: &[Item],
+    ctx: &Ctx<'_>,
+    check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync),
+    out: &Mutex<report::Writer>,
+    mode: report::Pauses,
+    workers: usize,
+    kept_len: usize,
+    progress: bool,
+) -> io::Result<Vec<Row>> {
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
     let stop = AtomicBool::new(false);
     let rows = Mutex::new(Vec::with_capacity(items.len()));
     let write_err: Mutex<Option<io::Error>> = Mutex::new(None);
     let total = items.len();
-    let workers = threads.clamp(1, total.max(1));
     std::thread::scope(|s| {
         if progress {
-            s.spawn(|| progress_loop(&done, total, kept.len(), &ctx.read, &stop));
+            s.spawn(|| progress_loop(&done, total, kept_len, &ctx.read, &stop));
         }
         let handles: Vec<_> = (0..workers)
             .map(|_| {
@@ -893,7 +943,7 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(item) = items.get(i) else { break };
                         let mut row = match item.kind {
-                            ExtractKind::Dsd => check_caught(item, &ctx, check),
+                            ExtractKind::Dsd => check_caught(item, ctx, check),
                             ExtractKind::Pcm(what) => {
                                 Row::new(item.path.clone(), item.bytes, item.mtime.clone())
                                     .with(Status::NotComparable, pcm_reason(what))
@@ -921,7 +971,7 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
     if let Some(e) = write_err.into_inner().unwrap_or_else(|p| p.into_inner()) {
         return Err(e);
     }
-    let mut rows = rows.into_inner().unwrap_or_else(|p| p.into_inner());
+    let rows = rows.into_inner().unwrap_or_else(|p| p.into_inner());
     // A worker gone (its panic is caught above, so this is for what is not): the report stays
     // partial, and this is no clean exit (#196).
     if rows.len() != total {
@@ -930,6 +980,38 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
             total - rows.len()
         )));
     }
+    Ok(rows)
+}
+
+/// [`run`] with `check` as the check of a DSF or DFF file.
+fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io::Result<Summary> {
+    let Inputs { mounts, roots, maps, scanned, root, folders } = resolve_inputs(args)?;
+    let (found, ignored) = find_extracts(&roots, &mounts)?;
+
+    let earlier = match (&args.output, args.resume) {
+        (Some(p), true) => report::read_earlier(p)?,
+        _ => HashMap::new(),
+    };
+    // A row checked with the other `--pauses`, or by a version that didn't say which (#479), is
+    // checked again: the mode decides what IDENTICAL means.
+    let mode = report::Pauses::of_option(&args.pauses);
+    let (kept, items) = select_items(&found, &earlier, mode, &maps, &root, &folders);
+
+    let threads = if args.threads == 0 { default_threads() } else { args.threads };
+    let engine = Engine::new(threads, args.cache_mb.saturating_mul(1 << 20))?;
+    let tree = Tree::with_options(
+        scanned.clone(),
+        Tuning::default(),
+        Output { pauses_kept: mode.kept(), ..Output::dsf_only() },
+    );
+
+    let progress = !args.quiet;
+    let candidates = open_candidates(&items, &tree, &root, progress);
+
+    let out = Mutex::new(report::Writer::create(args.output.as_deref(), &kept)?);
+    let ctx = Ctx { engine: &engine, candidates: &candidates, read: AtomicU64::new(0) };
+    let workers = threads.clamp(1, items.len().max(1));
+    let mut rows = check_all(&items, &ctx, check, &out, mode, workers, kept.len(), progress)?;
     let fresh = rows.len();
     rows.extend(kept);
     let item_folders: HashMap<&Path, &[PathBuf]> =
