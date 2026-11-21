@@ -16,7 +16,12 @@ shift 2
 cd "$(dirname "$0")/.." || exit 2
 
 fuzz_args=()
-[ -n "${FUZZ_TRIPLE:-}" ] && fuzz_args=(--target "$FUZZ_TRIPLE" --sanitizer none)
+if [ -n "${FUZZ_TRIPLE:-}" ]; then
+    fuzz_args=(--target "$FUZZ_TRIPLE" --sanitizer none)
+    # libFuzzer's C++ (cc-rs): the host's gcc and g++, which add -m32 for i686, unless set.
+    t=${FUZZ_TRIPLE//-/_}
+    export "CC_$t=$(printenv "CC_$t" || echo gcc)" "CXX_$t=$(printenv "CXX_$t" || echo g++)"
+fi
 
 cargo run --locked --quiet --example fuzz_seeds -- fuzz/corpus || exit 2
 cargo fuzz build "${fuzz_args[@]}" || exit 2
