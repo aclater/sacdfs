@@ -239,20 +239,25 @@ struct Mounted<'a> {
     dev: u64,
 }
 
-/// `true` if `m`'s path still names the mount made, by its device number.
-fn still_mounted(m: Mounted<'_>) -> bool {
-    std::fs::metadata(m.at).map(|x| x.dev()).ok() == Some(m.dev)
+/// Why [`unmount`] did not unmount.
+#[derive(Debug)]
+enum UnmountError {
+    /// The path no longer names the mount made: nothing was tried.
+    NotOurs(io::Error),
+    /// The plain and the forced unmount both failed: the mount is still there.
+    Failed(io::Error),
 }
 
 /// Unmounts `m`: a plain unmount (a few tries: a file closed just now keeps the mount busy for
 /// a moment), then a forced one. An error, and nothing unmounted, if the path is no longer
 /// this mount.
-fn unmount(m: Mounted<'_>) -> io::Result<()> {
-    if !still_mounted(m) {
-        return Err(io::Error::other(format!(
+fn unmount(m: Mounted<'_>) -> Result<(), UnmountError> {
+    let dev = std::fs::metadata(m.at).map(|x| x.dev());
+    if dev.as_ref().ok() != Some(&m.dev) {
+        return Err(UnmountError::NotOurs(io::Error::other(format!(
             "{} is no longer this mount: not unmounting it",
             m.at.display()
-        )));
+        ))));
     }
     let mut last = None;
     for i in 0..3 {
@@ -271,19 +276,26 @@ fn unmount(m: Mounted<'_>) -> io::Result<()> {
     }
     let mut c = umount_program();
     c.arg("-f").arg(m.at);
-    run_command(c, "umount -f", UMOUNT_TIMEOUT)
+    run_command(c, "umount -f", UMOUNT_TIMEOUT).map_err(UnmountError::Failed)
 }
 
 /// [`unmount`], with its outcome logged. Only a mount that is still there is said to need
 /// unmounting by hand.
 fn unmount_and_log(m: Mounted<'_>) -> io::Result<()> {
-    let r = unmount(m);
-    match &r {
-        Ok(()) => log::info!("unmounted {}", m.at.display()),
-        Err(e) if still_mounted(m) => log::error!("{e}: unmount {} by hand", m.at.display()),
-        Err(e) => log::error!("{e}"),
+    match unmount(m) {
+        Ok(()) => {
+            log::info!("unmounted {}", m.at.display());
+            Ok(())
+        }
+        Err(UnmountError::Failed(e)) => {
+            log::error!("{e}: unmount {} by hand", m.at.display());
+            Err(e)
+        }
+        Err(UnmountError::NotOurs(e)) => {
+            log::error!("{e}");
+            Err(e)
+        }
     }
-    r
 }
 
 /// The runtime's threads. They decode calls and frame replies; reads are done by the core's
