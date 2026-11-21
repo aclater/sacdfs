@@ -26,9 +26,10 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sha2::{Digest, Sha256};
-
-use super::{Client, Failure, MAX_FAILED_IN_A_ROW, Options, Outcome, Transport, WRITING, fetch_image};
+use super::{
+    Client, Failure, MAX_FAILED_IN_A_ROW, Options, Outcome, Transport, WRITING, fetch_image, now_secs, path_hash,
+    stamp,
+};
 
 /// Wait after the mount before the first pass, so that a scanner's first look at a new mount
 /// doesn't share the source with it.
@@ -124,20 +125,6 @@ struct State {
     dirty: bool,
 }
 
-fn path_hash(p: &Path) -> String {
-    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_encoded_bytes())[..16])
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
-}
-
-/// An image's size and mtime in ns, if it can be read.
-fn stamp(image: &Path) -> Option<(u64, u64)> {
-    let meta = fs::metadata(image).ok()?;
-    let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-    Some((meta.len(), u64::try_from(mtime.as_nanos()).unwrap_or(u64::MAX)))
-}
 
 impl State {
     fn load(file: Option<PathBuf>) -> State {
