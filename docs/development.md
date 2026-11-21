@@ -316,6 +316,8 @@ As a normal user with FUSE, this gives the `tests` job's result. On a machine wi
 out `SACDFS_FUSE_TESTS=1` to see which tests skip; the check then reports each as unexpected.
 `python3 -I scripts/test_check_skips.py` tests the script itself. `python3 -I scripts/test_soak.py`
 tests the soak's verdict on built series (a step, a leak, a thread spike).
+`python3 -I scripts/test_stall_gate.py` and `python3 -I scripts/test_bench_compare.py` test the stall
+gate's verdict and the benchmark's report on given numbers.
 
 *Why it reads cargo's output rather than a report file, as pysacd does:* the reasons of `#[ignore]`
 tests are only there, and the output needs nothing passed through `sudo` (the `nfs export` job) or
