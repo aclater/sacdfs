@@ -360,6 +360,13 @@ mountpoint -q "$MNT" && fusermount3 -u -z "$MNT" 2>/dev/null || true
 # A dead mount left there by a sacdfs that was killed fails the mkdir ("Transport endpoint is
 # not connected"); sacdfs detaches that one itself (#57), so the error is not fatal.
 mkdir -p "$MNT" 2>/dev/null || true
+# In a host folder, the mount point itself stays visible while sacdfs is not mounted (before it
+# starts, after it stops). A NAS's own SMB share of that folder starts before the app, at boot,
+# and would show an empty folder there, which a player scanning then takes for an empty library
+# (#522). Mode 000 makes it an access error instead; the mount, once there, has its own modes.
+if mountpoint -q /srv && ! mountpoint -q "$MNT"; then
+    chmod 000 "$MNT" 2>/dev/null || log "warning: could not make $MNT unreadable while unmounted (its owner on the host is not root?)"
+fi
 log "sacdfs ${args[*]} $SOURCE $MNT"
 with_caps "$CAPS_SACDFS" sacdfs "${args[@]}" "$SOURCE" "$MNT" &
 pids+=($!)

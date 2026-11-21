@@ -5,10 +5,22 @@
 {# FUSE needs /dev/fuse. Capabilities: the library drops ALL and sets no-new-privileges; these are added back, and
    the entry point gives each program only its own share (docs/deployment.md, "Capabilities"):
    SYS_ADMIN (sacdfs mounts), DAC_OVERRIDE (sacdfs reads the images whatever their owner; useradd for an SMB user),
-   DAC_READ_SEARCH (NFS-Ganesha: open_by_handle_at), SETUID and SETGID (smbd acts as the connecting user or guest),
-   NET_BIND_SERVICE (smbd: port 445), SETPCAP (the entry point drops what each program does not need). #}
+   SETPCAP (the entry point drops what each program does not need); with the app's SMB share, SETUID and SETGID
+   (smbd acts as the connecting user or guest) and NET_BIND_SERVICE (smbd: port 445); with its NFS export,
+   DAC_READ_SEARCH (NFS-Ganesha: open_by_handle_at). #}
 {% do c1.devices.add_device("/dev/fuse", "/dev/fuse", allow_disallowed=True) %}
-{% do c1.add_caps(["SYS_ADMIN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "SETUID", "SETGID", "NET_BIND_SERVICE", "SETPCAP"]) %}
+{% set caps = ["SYS_ADMIN", "DAC_OVERRIDE", "SETPCAP"] %}
+{% if values.sacdfs.get("share_smb", true) %}
+  {% do caps.extend(["SETUID", "SETGID", "NET_BIND_SERVICE"]) %}
+{% else %}
+  {% do c1.environment.add_env("SMB", "0") %}
+{% endif %}
+{% if values.sacdfs.get("share_nfs", true) %}
+  {% do caps.append("DAC_READ_SEARCH") %}
+{% else %}
+  {% do c1.environment.add_env("NFS", "0") %}
+{% endif %}
+{% do c1.add_caps(caps) %}
 {# Docker's default AppArmor profile forbids mount(2) even with CAP_SYS_ADMIN. #}
 {% do c1.add_security_opt("apparmor", "unconfined") %}
 {% do c1.set_grace_period(20) %}
@@ -30,8 +42,12 @@
 {% endif %}
 {% do c1.environment.add_user_envs(values.sacdfs.additional_envs) %}
 
-{% do c1.add_port(values.network.smb_port, {"container_port": values.consts.smb_container_port}) %}
-{% do c1.add_port(values.network.nfs_port, {"container_port": values.consts.nfs_container_port}) %}
+{% if values.sacdfs.get("share_smb", true) %}
+  {% do c1.add_port(values.network.smb_port, {"container_port": values.consts.smb_container_port}) %}
+{% endif %}
+{% if values.sacdfs.get("share_nfs", true) %}
+  {% do c1.add_port(values.network.nfs_port, {"container_port": values.consts.nfs_container_port}) %}
+{% endif %}
 
 {# The images are always read-only, whatever the form says. #}
 {% set images_storage = {"type": "host_path", "read_only": true, "host_path_config": values.storage.images.host_path_config} %}
@@ -41,6 +57,13 @@
 {% set perms_config = {"uid": 0, "gid": 0, "mode": "check"} %}
 {% do c1.add_storage(values.consts.cache_path, values.storage.cache) %}
 {% do perm_container.add_or_skip_action("cache", values.storage.cache, perms_config) %}
+
+{# Mount Folder: sacdfs mounts at /srv/sacd; bound with rshared, that mount appears in the dataset as sacd, for
+   TrueNAS's own SMB share and other apps (docs/install/truenas-scale.md, "Share through TrueNAS"). #}
+{% if values.storage.get("host_mount", {}).get("enabled") %}
+  {% set mount_storage = {"type": "host_path", "host_path_config": {"path": values.storage.host_mount.path, "propagation": "rshared"}} %}
+  {% do c1.add_storage(values.consts.mount_parent_path, mount_storage) %}
+{% endif %}
 
 {% for store in values.storage.additional_storage %}
   {% do c1.add_storage(store.mount_path, store) %}

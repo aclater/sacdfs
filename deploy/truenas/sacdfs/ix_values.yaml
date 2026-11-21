@@ -11,6 +11,7 @@ consts:
   perms_container_name: permissions
   images_path: /images
   cache_path: /cache
+  mount_parent_path: /srv
   smb_container_port: 445
   nfs_container_port: 2049
   healthcheck_script: /usr/local/bin/healthcheck.sh
