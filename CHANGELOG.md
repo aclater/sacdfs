@@ -41,6 +41,12 @@ All notable changes to sacdfs are recorded here. The format follows
   4-thread Atom's speed, and fails when head's worst read or stall time in the first 15 s is clearly
   above base's. See docs/performance.md, "The CI stall gate".
 
+### Changed
+- **The installer on 32-bit x86 (#500)** (an `i686` kernel, or an x86-64 kernel with 32-bit
+  programs) still stops before downloading anything, but now names the release's `i686` archive
+  with its download link and links docs/install/binary.md, "32-bit x86", instead of the
+  unsupported-system report and form.
+
 ### Fixed
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
