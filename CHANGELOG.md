@@ -7,6 +7,11 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Fuzzing on 32-bit x86 (#498).** The fuzz workflow now also runs every target as a 32-bit x86
+  program (`i686-unknown-linux-gnu`, without AddressSanitizer, which Rust doesn't offer there),
+  for the same time as the 64-bit job, so that overflows of a 32-bit `usize` such as #457 are
+  searched for. `FUZZ_TRIPLE=i686-unknown-linux-gnu fuzz/run.sh` does it locally; see
+  fuzz/README.md.
 - **Port 445 on TrueNAS without network changes (part of #522).** sacdfs can show its files in a
   dataset (bound over `/srv` with shared propagation), and TrueNAS's own SMB service shares that
   dataset on port 445, for Windows drive mapping, Roon's "Add network share" and the SMB storage
@@ -48,6 +53,10 @@ All notable changes to sacdfs are recorded here. The format follows
   unsupported-system report and form.
 
 ### Fixed
+- **32-bit only: an ID3v2.3 extended header near 4 GiB (#498).** The fix for #457 checked the
+  header's size, but the frame header after it could still end past a 32-bit `usize`, which
+  panicked `sacdfs verify` and `sacdfs tags import` on such a tag in the i686 build. Found by the
+  new i686 fuzz job. Mounting is not affected, and released builds are 64-bit.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
