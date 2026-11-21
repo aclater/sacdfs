@@ -486,7 +486,8 @@ const KEPT_PICTURES: usize = 16;
 /// its first bytes, and its bytes.
 pub fn read_picture(dir: &Path, name: &str) -> io::Result<Picture> {
     let bad = |m: &str| io::Error::new(io::ErrorKind::InvalidInput, m.to_owned());
-    if name.contains('/') || name.starts_with('.') || name.contains('\0') {
+    // A single plain file name on every platform: no `/` or `\`, no drive (`C:`), no NUL.
+    if name.contains(['/', '\\', ':', '\0']) || name.starts_with('.') {
         return Err(bad("not a file name in the tags directory"));
     }
     let path = dir.join(name);
@@ -990,6 +991,13 @@ TIT2 = "Three (stereo)"
         assert_eq!(read_picture(d.path(), "a.jpg").unwrap().0, "image/jpeg");
         assert!(read_picture(d.path(), "b.gif").is_err());
         assert!(read_picture(d.path(), "../a.jpg").is_err());
+        // Refused on every platform, although `\` and `:` are ordinary characters here.
+        for name in ["a\\b.jpg", "C:x.jpg", "..\\x.jpg"] {
+            fs::write(d.path().join(name), b"\xFF\xD8\xFFrest").unwrap();
+            assert!(read_picture(d.path(), name).is_err(), "{name}");
+        }
+        fs::write(d.path().join("cover (1) - b&w.jpg"), b"\xFF\xD8\xFFrest").unwrap();
+        assert!(read_picture(d.path(), "cover (1) - b&w.jpg").is_ok());
         std::os::unix::fs::symlink(d.path().join("a.jpg"), d.path().join("l.jpg")).unwrap();
         assert!(read_picture(d.path(), "l.jpg").is_err());
     }

@@ -410,7 +410,8 @@ album = "Album Name (5.1)"
   Levels apply in the order `[album]`, `[<area>.album]`, `[track.N]`, `[<area>.track.N]`; the
   later wins. A file with an unknown key or section is ignored, with a warning in the log.
 - **Art** is embedded only when the file names a picture with `art`, up to 960 KiB (the
-  tag's limit is 1 MiB). Folder art passes through either way ([Sidecar
+  tag's limit is 1 MiB). The name is a plain file name, with no folder or drive, in the tags
+  directory. Folder art passes through either way ([Sidecar
   files](#sidecar-files-art-scans-playlists)).
 - **Album name:** an `album` the file sets gets no ` (Multichannel)` suffix: you named it. Put
   a name for the multichannel copy in `[multichannel.album]`.

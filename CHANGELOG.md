@@ -47,6 +47,10 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Changed
+- **A picture name in a tags file (`art`) is a plain file name, with no folder or drive, on every
+  platform.** A name containing `\` or `:` was accepted on Linux, where those are ordinary
+  characters; such a name is now refused everywhere, and the picture is not embedded, with a
+  warning in the log.
 - **The installer on 32-bit x86 (#500)** (an `i686` kernel, or an x86-64 kernel with 32-bit
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
