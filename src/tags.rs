@@ -27,7 +27,8 @@
 //! them: a text frame id (`TBPM`), `TXXX:description`, `COMM:description` or `UFID:owner`.
 //! An empty value removes the item. Levels apply in the order album, area album, track, area
 //! track; a later one wins. A track is named by its number, 1 to 255, with no sign or leading
-//! zeros (`[track.3]`, not `[track.03]`): any other spelling is refused, with the whole file.
+//! zeros (`[track.3]`, not `[track.03]`): a section that writes it another way is not applied,
+//! and is reported ([`TagsFile::unapplied_sections`]); the rest of the file applies.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
@@ -135,12 +136,9 @@ impl TagsFile {
             }
         }
         for t in f.track.keys().chain(f.stereo.track.keys()).chain(f.multichannel.track.keys()) {
-            // Only the number as sacdfs writes it: `03` or `+3` would parse, but a track's
-            // fields are looked up by `3`, so such a section would never apply.
-            if t.parse::<u8>().ok().filter(|&n| n > 0 && n.to_string() == *t).is_none() {
-                return Err(format!(
-                    "track {t:?} is not a number from 1 to 255, written without sign or leading zeros"
-                ));
+            // A number written another way (`03`, `+3`) is no error: see `unapplied_sections`.
+            if t.parse::<u8>().ok().filter(|&n| n > 0).is_none() {
+                return Err(format!("track {t:?} is not a number from 1 to 255"));
             }
         }
         Ok(f)
@@ -172,6 +170,26 @@ impl TagsFile {
             }
         }
         v
+    }
+
+    /// The track sections that are never applied, because their key is a track number not written
+    /// as a track's fields are looked up (`03` or `+3` for `3`): each with the section to write
+    /// instead, as `("track.03", "track.3")`. *Why not an error:* the rest of such a file is
+    /// good, and refusing it whole would take every other override of the disc away for one
+    /// mis-keyed section. *Why not read as `3`:* that would hide two sections for one track.
+    /// Whoever reads a tags file reports these.
+    pub fn unapplied_sections(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (prefix, tracks) in
+            [("", &self.track), ("stereo.", &self.stereo.track), ("multichannel.", &self.multichannel.track)]
+        {
+            for key in tracks.keys() {
+                if let Some(n) = key.parse::<u8>().ok().filter(|n| n.to_string() != *key) {
+                    out.push((format!("{prefix}track.{key}"), format!("{prefix}track.{n}")));
+                }
+            }
+        }
+        out
     }
 
     /// The album-level fields of the area in `slot`, both levels merged.
@@ -593,6 +611,13 @@ impl Store {
             .and_then(|(s, m)| TagsFile::parse(&s).map(|f| (f, m)))
         {
             Ok((f, m)) => {
+                // Once per read of the file: it is cached until it changes.
+                for (section, canonical) in f.unapplied_sections() {
+                    log::warn!(
+                        "tags: {}: section [{section}] is not applied: write it as [{canonical}]",
+                        safe_file::shown(&path)
+                    );
+                }
                 let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
                 let tags = (!f.is_empty()).then(|| Arc::new(DiscTags::new(f, mtime, &self.dir)));
                 ((mtime, m.len()), tags)
@@ -933,18 +958,35 @@ TIT2 = "Three (stereo)"
         }
     }
 
-    /// A track section whose number is not written as sacdfs looks it up (`3`) is refused, not
-    /// accepted and never applied, as `[track.03]` was.
+    /// A track section whose number is not written as sacdfs looks it up (`3`) is not applied,
+    /// and is named with the section to write instead; the rest of the file applies, and the
+    /// section is still there when the file is written again.
     #[test]
-    fn track_keys_are_canonical_numbers() {
-        for bad in ["[track.03]", "[track.\"+3\"]", "[stereo.track.007]", "[multichannel.track.\"+1\"]"] {
-            let e = TagsFile::parse(&format!("{bad}\ntitle = 'x'\n")).unwrap_err();
-            assert!(e.contains("without sign or leading zeros"), "{bad}: {e}");
-        }
-        for good in ["3", "10", "255"] {
-            let f = TagsFile::parse(&format!("[track.{good}]\ntitle = 'x'\n")).unwrap();
-            assert_eq!(f.fields_for(Slot::TwoChannel, good.parse().unwrap())["title"], "x");
-        }
+    fn track_sections_keyed_another_way_are_reported() {
+        let text = "[album]\ngenre = 'Jazz'\n[track.03]\ntitle = 'x'\n[track.4]\ntitle = 'four'\n\
+                    [track.\"+3\"]\ntitle = 'y'\n[stereo.track.007]\ntitle = 'z'\n\
+                    [multichannel.track.\"+1\"]\ntitle = 'w'\n";
+        let f = TagsFile::parse(text).unwrap();
+        let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+        assert_eq!(
+            f.unapplied_sections(),
+            [
+                pair("track.+3", "track.3"),
+                pair("track.03", "track.3"),
+                pair("stereo.track.007", "stereo.track.7"),
+                pair("multichannel.track.+1", "multichannel.track.1"),
+            ]
+        );
+        // Those sections set nothing; everything else applies.
+        let three = f.fields_for(Slot::TwoChannel, 3);
+        assert_eq!((three.get("title"), three["genre"].as_str()), (None, "Jazz"));
+        assert_eq!(f.fields_for(Slot::TwoChannel, 4)["title"], "four");
+        assert!(!f.fields_for(Slot::TwoChannel, 7).contains_key("title"));
+        // Written and read again: the same, the sections kept.
+        assert_eq!(TagsFile::parse(&f.to_text()).unwrap(), f);
+        // A file keyed as sacdfs looks tracks up has none; what is no track number is refused.
+        assert!(TagsFile::parse("[track.3]\ntitle = 'x'\n").unwrap().unapplied_sections().is_empty());
+        assert!(TagsFile::parse("[track.0]\ntitle = 'x'\n").is_err());
     }
 
     #[test]

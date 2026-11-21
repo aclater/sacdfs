@@ -279,6 +279,9 @@ pub struct ImportSummary {
     pub report: Option<PathBuf>,
     /// Frame keys that were lost but cannot be kept (binary frames).
     pub skipped: BTreeSet<String>,
+    /// Sections of the tags files read that the mount does not apply
+    /// ([`TagsFile::unapplied_sections`]), each with its file and the section to write instead.
+    pub not_applied: Vec<String>,
 }
 
 impl ImportSummary {
@@ -317,13 +320,19 @@ impl ImportSummary {
         if !self.not_kept.is_empty() {
             s.push_str("keep those extracts: their tags files lack what is listed as not kept\n");
         }
+        for n in &self.not_applied {
+            s.push_str(&format!("not applied: {n}\n"));
+        }
         s
     }
 
     /// Whether every extract was handled, which is exit status 0: the same rule as `sacdfs
     /// verify`'s, plus what the import itself could not do (#198).
     pub fn all_handled(&self) -> bool {
-        self.failed.is_empty() && self.not_imported == 0 && self.not_kept.is_empty()
+        self.failed.is_empty()
+            && self.not_imported == 0
+            && self.not_kept.is_empty()
+            && self.not_applied.is_empty()
     }
 }
 
@@ -551,6 +560,9 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", shown(&path)))),
     };
+    for (section, canonical) in existing.iter().flat_map(TagsFile::unapplied_sections) {
+        sum.not_applied.push(format!("{}: section [{section}]: write it as [{canonical}]", shown(&path)));
+    }
     let created = existing.is_none();
     let mut merged = existing.unwrap_or_default();
     let added = merge(&mut merged, &file);
