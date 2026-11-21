@@ -51,6 +51,8 @@ All notable changes to sacdfs are recorded here. The format follows
   header's size, but the frame header after it could still end past a 32-bit `usize`, which
   panicked `sacdfs verify` and `sacdfs tags import` on such a tag in the i686 build. Found by the
   new i686 fuzz job. Mounting is not affected, and released builds are 64-bit.
+- **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
+  reported the guarded test as no longer skipping and failed the job, at random.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
   it lists the album, and when playback starts, often minutes later, re-reads the head of every
   other file of the album before it opens the track. On a 32-bit Atom the first start after a
