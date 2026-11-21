@@ -10,6 +10,9 @@ set -euo pipefail
 MNT=/srv/sacd
 log() { printf '%s entrypoint: %s\n' "$(date -u +%FT%TZ)" "$*"; }
 die() { log "error: $*"; exit 1; }
+# A warning about a setting, on the first run only: the entry point runs itself again once with
+# fewer capabilities (SACDFS_CAPS_SET, below), and that run reads the same settings.
+warn_setting() { [ -n "${SACDFS_CAPS_SET:-}" ] || log "warning: $*"; }
 on() { case "${1,,}" in 1 | yes | true | on) return 0 ;; *) return 1 ;; esac; }
 
 # --- sacdfs options ---------------------------------------------------------------------
@@ -61,12 +64,18 @@ MOUNT_TIMEOUT=${SACDFS_MOUNT_TIMEOUT:-300}
 # --- SMB settings -----------------------------------------------------------------------
 SHARE=${SHARE_NAME:-sacd}
 [[ $SHARE =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "SHARE_NAME must be 1 to 64 of A-Z a-z 0-9 . _ -"
+# A value these don't take is ignored with a warning, and the container starts with the default.
+SMB_LEVEL=${SMB_LOG_LEVEL:-1}
+SMB_EXTRA=${SMB_EXTRA_GLOBAL:-}
 if on "${SMB:-1}"; then
-    [[ ${SMB_LOG_LEVEL:-1} =~ ^[0-9]{1,2}$ ]] ||
-        die "SMB_LOG_LEVEL must be a number from 0 to 99"
+    if ! [[ $SMB_LEVEL =~ ^[0-9]{1,2}$ ]]; then
+        warn_setting "SMB_LOG_LEVEL takes a number from 0 to 99; ignoring it and using 1"
+        SMB_LEVEL=1
+    fi
     # One line of the [global] section: no line break, and no new section ([...]).
-    if [[ ${SMB_EXTRA_GLOBAL:-} == *[$'\n\r']* || ${SMB_EXTRA_GLOBAL:-} =~ ^[[:space:]]*\[ ]]; then
-        die "SMB_EXTRA_GLOBAL must be a single smb.conf line for the [global] section, such as 'server min protocol = SMB3': no line break, and not starting with ["
+    if [[ $SMB_EXTRA == *[$'\n\r']* || $SMB_EXTRA =~ ^[[:space:]]*\[ ]]; then
+        warn_setting "SMB_EXTRA_GLOBAL takes a single smb.conf line for the [global] section, such as 'server min protocol = SMB3', with no line break and not starting with [; ignoring it"
+        SMB_EXTRA=
     fi
 fi
 write_smb_conf() {
@@ -117,7 +126,7 @@ write_smb_conf() {
    disable netbios = yes
    smb ports = 445
    # Logs to standard output (smbd --debug-stdout), level from SMB_LOG_LEVEL.
-   log level = ${SMB_LOG_LEVEL:-1}
+   log level = $SMB_LEVEL
    # sacdfs has no extended attributes or DOS attributes: don't ask for them.
    ea support = no
    store dos attributes = no
@@ -136,7 +145,7 @@ write_smb_conf() {
    # The size and free space don't change while mounted: ask sacdfs once a minute, not for
    # every client's volume query (#205).
    dfree cache time = 60
-   ${SMB_EXTRA_GLOBAL:-}
+   $SMB_EXTRA
 
 [$SHARE]
    path = $MNT
@@ -157,8 +166,10 @@ CONF
 # --- NFS settings -----------------------------------------------------------------------
 # NFS_LOG_LEVEL: one of the names NFS-Ganesha's Default_Log_Level takes, in any case.
 NFS_LEVEL=${NFS_LOG_LEVEL:-EVENT}
+# Any other value is ignored with a warning, and the container starts with EVENT.
 if on "${NFS:-1}" && ! [[ ${NFS_LEVEL^^} =~ ^(NULL|FATAL|MAJ|CRIT|WARN|EVENT|INFO|DEBUG|MID_DEBUG|M_DBG|FULL_DEBUG|F_DBG)$ ]]; then
-    die "NFS_LOG_LEVEL must be one of NULL, FATAL, MAJ, CRIT, WARN, EVENT, INFO, DEBUG, MID_DEBUG (or M_DBG), FULL_DEBUG (or F_DBG)"
+    warn_setting "NFS_LOG_LEVEL takes one of NULL, FATAL, MAJ, CRIT, WARN, EVENT, INFO, DEBUG, MID_DEBUG (or M_DBG), FULL_DEBUG (or F_DBG); ignoring it and using EVENT"
+    NFS_LEVEL=EVENT
 fi
 # Under a memory limit, NFS-Ganesha's cache of entries is kept to what an eighth of the limit holds,
 # at about 2 KiB each. Its default of 100,000 entries takes about 200 MiB of the limit when a client
