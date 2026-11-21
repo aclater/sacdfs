@@ -46,7 +46,11 @@ jobs:
             # Fedora 44, pinned by digest: UBI 10 has no 32-bit C and C++ libraries.
             image: registry.fedoraproject.org/fedora@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
             triple: i686-unknown-linux-gnu
-            packages: shadow-utils util-linux glibc-devel.i686 libstdc++-devel.i686 libgcc.i686
+            # libstdc++-devel for x86_64 too: g++ -m32 reads its 32/ headers, and the .i686 one
+            # alone satisfies gcc-c++.
+            packages: >-
+              shadow-utils util-linux libstdc++-devel.x86_64
+              glibc-devel.i686 libstdc++-devel.i686 libgcc.i686 libatomic.i686
             cache: v0-rust-fedora44-i686
             artifact: fuzz-crashes-i686
     container:

@@ -42,7 +42,8 @@ fuzz/run.sh 600 2 tags_toml names # these two, for 10 minutes each
 ```
 
 On 32-bit x86 (#498), with the i686 standard library (`rustup target add i686-unknown-linux-gnu`)
-and 32-bit C and C++ libraries (Fedora: `glibc-devel.i686 libstdc++-devel.i686 libgcc.i686`):
+and 32-bit C and C++ libraries (Fedora: `libstdc++-devel.x86_64 glibc-devel.i686 libstdc++-devel.i686 libgcc.i686
+libatomic.i686`):
 
 ```sh
 FUZZ_TRIPLE=i686-unknown-linux-gnu fuzz/run.sh 60 4
