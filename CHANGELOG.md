@@ -69,6 +69,11 @@ All notable changes to sacdfs are recorded here. The format follows
   sacdfs-win compared the core's code for its limit on open sidecar files with the C library's
   `EMFILE` (24) where the core sends Windows's `ERROR_TOO_MANY_OPEN_FILES` (4). The limit itself
   was reported correctly before and still is (`STATUS_TOO_MANY_OPENED_FILES`).
+- **`sacdfs tags import` lists a cover it cannot read as not kept.** An extract whose embedded
+  picture import cannot read (anything but a plain JPEG or PNG: a GIF, a compressed frame, an
+  ID3v2.2 or unsynchronised tag) was passed over in silence, and import could exit 0 with that
+  extract's art in no tags directory. It is now listed as `not kept:` with its extract and disc,
+  and the exit status is 2, as the user guide says of every picture left out.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **CI: the folder-warming tests failed on busy runners (#563).** They took wall-clock gaps
