@@ -408,7 +408,9 @@ album = "Album Name (5.1)"
   `TIT2`, `TCON` ...), and any ID3 frame as `sacdfs verify` names it: a text frame (`TBPM`),
   `TXXX:description`, `COMM:description`, `UFID:owner`. An empty value removes the item.
   Levels apply in the order `[album]`, `[<area>.album]`, `[track.N]`, `[<area>.track.N]`; the
-  later wins. A file with an unknown key or section is ignored, with a warning in the log.
+  later wins. `N` is the track's number, 1 to 255, with no sign or leading zeros (`[track.3]`,
+  not `[track.03]`). A file with an unknown key or section, or a track written another way, is
+  ignored, with a warning in the log.
 - **Art** is embedded only when the file names a picture with `art`, up to 960 KiB (the
   tag's limit is 1 MiB). Folder art passes through either way ([Sidecar
   files](#sidecar-files-art-scans-playlists)).

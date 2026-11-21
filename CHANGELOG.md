@@ -48,6 +48,11 @@ All notable changes to sacdfs are recorded here. The format follows
   unsupported-system report and form.
 
 ### Fixed
+- **A tags file's track sections must name the track as sacdfs does.** `[track.03]` or
+  `[track."+3"]` was accepted and then never applied, because a track's fields are looked up by
+  its plain number (`3`). Such a file is now refused with a message that names the section, like
+  any other tags file that does not parse: the mount logs and ignores it, and `sacdfs tags
+  import` lists its disc as failed. Write the number without sign or leading zeros.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when

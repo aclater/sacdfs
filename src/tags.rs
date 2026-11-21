@@ -26,7 +26,8 @@
 //! Keys are the names below ([`ITEMS`]) or ID3 frames written as `sacdfs verify` reports
 //! them: a text frame id (`TBPM`), `TXXX:description`, `COMM:description` or `UFID:owner`.
 //! An empty value removes the item. Levels apply in the order album, area album, track, area
-//! track; a later one wins.
+//! track; a later one wins. A track is named by its number, 1 to 255, with no sign or leading
+//! zeros (`[track.3]`, not `[track.03]`): any other spelling is refused, with the whole file.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
@@ -134,8 +135,12 @@ impl TagsFile {
             }
         }
         for t in f.track.keys().chain(f.stereo.track.keys()).chain(f.multichannel.track.keys()) {
-            if t.parse::<u8>().ok().filter(|&n| n > 0).is_none() {
-                return Err(format!("track {t:?} is not a number from 1 to 255"));
+            // Only the number as sacdfs writes it: `03` or `+3` would parse, but a track's
+            // fields are looked up by `3`, so such a section would never apply.
+            if t.parse::<u8>().ok().filter(|&n| n > 0 && n.to_string() == *t).is_none() {
+                return Err(format!(
+                    "track {t:?} is not a number from 1 to 255, written without sign or leading zeros"
+                ));
             }
         }
         Ok(f)
@@ -925,6 +930,20 @@ TIT2 = "Three (stereo)"
         for bad in ["[albm]\ngenre='x'", "[album]\nfoo = 'x'", "[track.0]\ntitle='x'", "[track.x]\ntitle='x'"]
         {
             assert!(TagsFile::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// A track section whose number is not written as sacdfs looks it up (`3`) is refused, not
+    /// accepted and never applied, as `[track.03]` was.
+    #[test]
+    fn track_keys_are_canonical_numbers() {
+        for bad in ["[track.03]", "[track.\"+3\"]", "[stereo.track.007]", "[multichannel.track.\"+1\"]"] {
+            let e = TagsFile::parse(&format!("{bad}\ntitle = 'x'\n")).unwrap_err();
+            assert!(e.contains("without sign or leading zeros"), "{bad}: {e}");
+        }
+        for good in ["3", "10", "255"] {
+            let f = TagsFile::parse(&format!("[track.{good}]\ntitle = 'x'\n")).unwrap();
+            assert_eq!(f.fields_for(Slot::TwoChannel, good.parse().unwrap())["title"], "x");
         }
     }
 
