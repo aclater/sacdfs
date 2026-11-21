@@ -51,6 +51,13 @@ All notable changes to sacdfs are recorded here. The format follows
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
   unsupported-system report and form.
+- **The container checks three more settings before it writes its configuration.**
+  `SMB_LOG_LEVEL` must be a number from 0 to 99, `NFS_LOG_LEVEL` one of NFS-Ganesha's level
+  names (`EVENT`, `INFO`, `DEBUG` ...; docs/deployment.md lists them), and `SMB_EXTRA_GLOBAL` a
+  single line that does not start with `[`. Any other value stops the container at start-up with
+  a message that names the setting, as `SHARE_NAME` and `NFS_CLIENTS` already did. The SMB
+  password is removed from the entry point's environment once `smbpasswd` has it, so smbd and
+  NFS-Ganesha start without it.
 
 ### Fixed
 - **32-bit only: an ID3v2.3 extended header near 4 GiB (#498).** The fix for #457 checked the

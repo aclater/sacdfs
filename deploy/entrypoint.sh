@@ -61,6 +61,14 @@ MOUNT_TIMEOUT=${SACDFS_MOUNT_TIMEOUT:-300}
 # --- SMB settings -----------------------------------------------------------------------
 SHARE=${SHARE_NAME:-sacd}
 [[ $SHARE =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "SHARE_NAME must be 1 to 64 of A-Z a-z 0-9 . _ -"
+if on "${SMB:-1}"; then
+    [[ ${SMB_LOG_LEVEL:-1} =~ ^[0-9]{1,2}$ ]] ||
+        die "SMB_LOG_LEVEL must be a number from 0 to 99"
+    # One line of the [global] section: no line break, and no new section ([...]).
+    if [[ ${SMB_EXTRA_GLOBAL:-} == *[$'\n\r']* || ${SMB_EXTRA_GLOBAL:-} =~ ^[[:space:]]*\[ ]]; then
+        die "SMB_EXTRA_GLOBAL must be a single smb.conf line for the [global] section, such as 'server min protocol = SMB3': no line break, and not starting with ["
+    fi
+fi
 write_smb_conf() {
     local access
     if [ -n "${SMB_USER:-}" ]; then
@@ -70,6 +78,8 @@ write_smb_conf() {
         [ -n "$pw" ] || die "SMB_USER needs SMB_PASSWORD or SMB_PASSWORD_FILE"
         id "$SMB_USER" >/dev/null 2>&1 || useradd -M -N -s /sbin/nologin "$SMB_USER"
         printf '%s\n%s\n' "$pw" "$pw" | smbpasswd -s -a "$SMB_USER" >/dev/null
+        # Nothing after this reads the password, and the servers started next don't inherit it.
+        unset SMB_PASSWORD
         access="valid users = $SMB_USER
    guest ok = no"
         log "SMB: share '$SHARE', user '$SMB_USER'"
@@ -145,6 +155,11 @@ CONF
 }
 
 # --- NFS settings -----------------------------------------------------------------------
+# NFS_LOG_LEVEL: one of the names NFS-Ganesha's Default_Log_Level takes, in any case.
+NFS_LEVEL=${NFS_LOG_LEVEL:-EVENT}
+if on "${NFS:-1}" && ! [[ ${NFS_LEVEL^^} =~ ^(NULL|FATAL|MAJ|CRIT|WARN|EVENT|INFO|DEBUG|MID_DEBUG|M_DBG|FULL_DEBUG|F_DBG)$ ]]; then
+    die "NFS_LOG_LEVEL must be one of NULL, FATAL, MAJ, CRIT, WARN, EVENT, INFO, DEBUG, MID_DEBUG (or M_DBG), FULL_DEBUG (or F_DBG)"
+fi
 # Under a memory limit, NFS-Ganesha's cache of entries is kept to what an eighth of the limit holds,
 # at about 2 KiB each. Its default of 100,000 entries takes about 200 MiB of the limit when a client
 # goes through a large library, and sacdfs can't free any of that. No limit: its defaults.
@@ -212,7 +227,7 @@ EXPORT {
     }
 }
 LOG {
-    Default_Log_Level = ${NFS_LOG_LEVEL:-EVENT};
+    Default_Log_Level = $NFS_LEVEL;
     Facility { name = STDOUT; destination = STDOUT; enable = active; }
 }
 CONF
