@@ -59,6 +59,11 @@ All notable changes to sacdfs are recorded here. The format follows
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
   unsupported-system report and form.
+- **Clearer log lines for tags files and pauses.** The warnings about a tags file that is not
+  applied, or whose frames and art do not fit, now name the image and read
+  `IMAGE: AREA track N: ...` like the other listing lines. The line for a track shown without its
+  pause (`--pauses kept`) says that with the pause it overlaps another track or does not fit the
+  image; it named only the first cause.
 
 ### Fixed
 - **32-bit only: an ID3v2.3 extended header near 4 GiB (#498).** The fix for #457 checked the

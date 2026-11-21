@@ -230,6 +230,11 @@ pub struct Tagged {
 /// mtime and generation are those without the tag layer.
 pub fn tagged(toc: &Toc, area: &Area, track: &Track, image: Option<&Path>) -> Option<Tagged> {
     let options = options(area, track);
+    // For the log: the image, when known, and the track.
+    let whose = || {
+        let image = image.map_or_else(String::new, |p| format!("{}: ", p.display()));
+        format!("{image}{} track {}", area.slot, track.number)
+    };
     let (default, filled) = tag_set(toc, area, track, &options, image);
     let make = |tags: Tags| {
         LibLayout::new(
@@ -264,23 +269,20 @@ pub fn tagged(toc: &Toc, area: &Area, track: &Track, image: Option<&Path>) -> Op
                                 tag = raw;
                             }
                             _ => log::warn!(
-                                "{:?} area track {}: the tags file's frames and art do not fit in the tag; left out",
-                                area.slot,
-                                track.number
+                                "{}: the tags file's frames and art do not fit in the tag; left out",
+                                whose()
                             ),
                         }
                     }
                     return Some(Tagged { layout: l, set, stamp: Some(Stamp::new(mtime, &tag)), filled });
                 }
                 Err(e) => {
-                    log::warn!("{:?} area track {}: tags file not applied: {e}", area.slot, track.number)
+                    log::warn!("{}: tags file not applied: {e}", whose())
                 }
             }
         }
     }
-    let layout = make(of_set(&default))
-        .inspect_err(|e| log::debug!("{:?} area track {}: no DSF file: {e}", area.slot, track.number))
-        .ok()?;
+    let layout = make(of_set(&default)).inspect_err(|e| log::debug!("{}: no DSF file: {e}", whose())).ok()?;
     Some(Tagged { layout, set: default, stamp: None, filled })
 }
 

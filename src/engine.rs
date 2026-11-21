@@ -407,7 +407,7 @@ fn heads_cap(cap: usize) -> usize {
     cap / 2
 }
 
-/// Most bytes of heads an idle release keeps ([`FrameCache::release_idle`]): those of a
+/// Most bytes of heads an idle release keeps ([`FrameCache::release_idle_keeping_heads`]): those of a
 /// 12-track 6-channel album as DSF and WAV (about 27 MiB), however large the cache.
 const IDLE_HEADS: usize = 32 << 20;
 
@@ -425,7 +425,7 @@ pub struct FrameCache {
     cap: usize,
     /// When the cache was last used, in ms since `epoch` ([`FrameCache::release_if_idle`]).
     used: AtomicU64,
-    /// `used` as it was at the last idle release that kept heads ([`FrameCache::release_idle`]).
+    /// `used` as it was at the last idle release that kept heads ([`FrameCache::release_idle_keeping_heads`]).
     released: AtomicU64,
     epoch: Instant,
 }
@@ -531,7 +531,7 @@ impl FrameCache {
     /// 32-bit Atom each decoded the album's heads again, 3.5 to 4 s of CPU while the track
     /// started. *Why not copied into fewer slabs:* the copies' heap stayed with the process on
     /// a musl build, more than the slabs it would have saved.
-    pub fn release_idle(&self, idle: Duration) -> bool {
+    pub fn release_idle_keeping_heads(&self, idle: Duration) -> bool {
         let now = self.epoch.elapsed().as_millis() as u64;
         let used = self.used.load(Ordering::Relaxed);
         if now.saturating_sub(used) < idle.as_millis() as u64 || self.released.load(Ordering::Relaxed) == used
@@ -920,10 +920,10 @@ impl Engine {
     }
 
     /// Like [`Engine::release_if_idle`], keeping the most recently read heads
-    /// ([`FrameCache::release_idle`], #510): what the idle thread does. Memory pressure
+    /// ([`FrameCache::release_idle_keeping_heads`], #510): what the idle thread does. Memory pressure
     /// ([`crate::memory`]) still drops them all.
-    pub fn release_idle(&self, idle: Duration) -> bool {
-        if !self.cache.release_idle(idle) {
+    pub fn release_idle_keeping_heads(&self, idle: Duration) -> bool {
+        if !self.cache.release_idle_keeping_heads(idle) {
             return false;
         }
         self.release_the_rest();
@@ -938,7 +938,7 @@ impl Engine {
         trim_heap();
     }
 
-    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_idle`] with
+    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_idle_keeping_heads`] with
     /// [`IDLE_RELEASE`] every 15 s, for as long as the engine lives.
     pub fn start_idle_release(self: &Arc<Self>) -> io::Result<()> {
         let weak = Arc::downgrade(self);
@@ -947,7 +947,7 @@ impl Engine {
                 std::thread::sleep(Duration::from_secs(15));
                 match weak.upgrade() {
                     Some(e) => {
-                        if e.release_idle(IDLE_RELEASE) {
+                        if e.release_idle_keeping_heads(IDLE_RELEASE) {
                             log::debug!("idle: cache and decoders released, heads kept");
                         }
                     }
@@ -1436,8 +1436,11 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
     let bad = |m: &str| Err(ReadError::Io(io::Error::other(m.to_owned())));
     let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
     let mut buf = buf.unwrap_or_else(|| FrameBuf::heap(len));
-    if !(1..=MAX_CHANNELS).contains(&channels) || buf.len() != len {
+    if !(1..=MAX_CHANNELS).contains(&channels) {
         return bad("bad channel count");
+    }
+    if buf.len() != len {
+        return bad("a frame buffer of the wrong size");
     }
     let fill = match job.content {
         FrameContent::Dsd(d) => {
@@ -1824,9 +1827,9 @@ mod tests {
         // Heads: frames 100 to 139.
         c.keep((100..140).map(key));
         let mapped = c.mapped();
-        assert!(!c.release_idle(Duration::from_secs(60)), "just used");
-        assert!(c.release_idle(Duration::ZERO));
-        assert!(!c.release_idle(Duration::ZERO), "not used since");
+        assert!(!c.release_idle_keeping_heads(Duration::from_secs(60)), "just used");
+        assert!(c.release_idle_keeping_heads(Duration::ZERO));
+        assert!(!c.release_idle_keeping_heads(Duration::ZERO), "not used since");
         assert_eq!(c.lock().head_bytes, 40 * 9408);
         assert_eq!(c.bytes(), 40 * 9408);
         // Used again (a millisecond later, the stamp's unit).
@@ -1838,8 +1841,8 @@ mod tests {
         // Only the slabs that hold them stay.
         assert!(c.mapped() < mapped, "{} of {mapped}", c.mapped());
         // The get above used the cache: one more release, then nothing until it is used.
-        assert!(c.release_idle(Duration::ZERO));
-        assert!(!c.release_idle(Duration::ZERO));
+        assert!(c.release_idle_keeping_heads(Duration::ZERO));
+        assert!(!c.release_idle_keeping_heads(Duration::ZERO));
         assert_eq!(c.lock().bytes, 40 * 9408);
         // Memory pressure: all of it.
         assert!(c.release_if_idle(Duration::ZERO));
