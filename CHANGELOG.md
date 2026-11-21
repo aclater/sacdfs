@@ -7,6 +7,11 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Fuzzing on 32-bit x86 (#498).** The fuzz workflow now also runs every target as a 32-bit x86
+  program (`i686-unknown-linux-gnu`, without AddressSanitizer, which Rust doesn't offer there),
+  for the same time as the 64-bit job, so that overflows of a 32-bit `usize` such as #457 are
+  searched for. `FUZZ_TRIPLE=i686-unknown-linux-gnu fuzz/run.sh` does it locally; see
+  fuzz/README.md.
 - **Port 445 on TrueNAS without network changes (part of #522).** sacdfs can show its files in a
   dataset (bound over `/srv` with shared propagation), and TrueNAS's own SMB service shares that
   dataset on port 445, for Windows drive mapping, Roon's "Add network share" and the SMB storage

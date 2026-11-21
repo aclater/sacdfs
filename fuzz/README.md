@@ -41,6 +41,15 @@ fuzz/run.sh 60 4                  # every target for 60 s, four at a time
 fuzz/run.sh 600 2 tags_toml names # these two, for 10 minutes each
 ```
 
+On 32-bit x86 (#498), with the i686 standard library (`rustup target add i686-unknown-linux-gnu`)
+and 32-bit C and C++ libraries (Fedora: `glibc-devel.i686 libstdc++-devel.i686 libgcc.i686`):
+
+```sh
+FUZZ_TRIPLE=i686-unknown-linux-gnu fuzz/run.sh 60 4
+```
+
+That build has no AddressSanitizer, which Rust doesn't offer for i686; overflow checks stay on.
+
 `fuzz/run.sh` makes the seeds first (`examples/fuzz_seeds.rs`, into `fuzz/corpus/`): the test
 corpus's images, what sacdfs serves for them, and hand-made files of the kinds the readers tell
 apart. No seed is checked in. It prints one line per target and exits non-zero if a target
@@ -66,5 +75,6 @@ libFuzzer leaves no time to remove them.
 
 `.github/workflows/fuzz.yml` runs every target for about 60 s on pull requests and pushes to
 main, four at a time, and for 20 minutes each on Tuesdays, starting from the corpus the last
-weekly run left. A failed run keeps the crashing inputs as an artifact for 30 days. It is not a
-required check.
+weekly run left. The job `fuzz (i686)` does the same with the 32-bit x86 build above, so that
+overflows of a 32-bit `usize` (#457) are searched for too. A failed run keeps the crashing inputs
+as an artifact (`fuzz-crashes`, or `fuzz-crashes-i686`) for 30 days. It is not a required check.
