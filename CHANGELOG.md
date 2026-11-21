@@ -55,6 +55,12 @@ All notable changes to sacdfs are recorded here. The format follows
   uses none of them and downloads the release, as the one-liner does. A copy of `install.sh`
   from the repository has no such checksums and always downloads. Unpacking as yourself and
   running `sudo sh install.sh` works as before. See docs/install/README.md.
+- **install.sh uses local release files only for this machine, and downloads when a local
+  binary doesn't start.** The installer published on its own takes only the files of the
+  archive it would download for this machine; another architecture's files next to it are not
+  used. The copy inside an archive still takes its own archive's files (the x86-64-v3 archive's
+  installer uses its v3 binary). If a verified local binary doesn't start here, the installer
+  says so and downloads the release for this machine instead of stopping.
 - **The installer on 32-bit x86 (#500)** (an `i686` kernel, or an x86-64 kernel with 32-bit
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
