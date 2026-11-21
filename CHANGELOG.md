@@ -48,6 +48,10 @@ All notable changes to sacdfs are recorded here. The format follows
   unsupported-system report and form.
 
 ### Fixed
+- **Windows: a source file's error 24 is no longer reported as "too many open files".**
+  sacdfs-win compared the core's code for its limit on open sidecar files with the C library's
+  `EMFILE` (24) where the core sends Windows's `ERROR_TOO_MANY_OPEN_FILES` (4). The limit itself
+  was reported correctly before and still is (`STATUS_TOO_MANY_OPENED_FILES`).
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
