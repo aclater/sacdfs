@@ -17,16 +17,16 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 
 use super::serve::{self, DEFAULT_LISTEN, Mount};
 use super::{Callers, NfsFront, handle};
-use crate::serve::{self as core, with_path};
+use crate::serve::{self as shared, with_path};
 use crate::vfs::Volume;
 
 /// Serve the audio of SACD disc images as DSF and WAV files over NFSv3 (version 3 of the
 /// Network File System), for this computer's own NFS client, and mount it on MOUNTPOINT.
 ///
 /// SOURCE is an image file or a folder searched recursively for *.iso files. It runs in the
-/// foreground until SIGINT, SIGTERM or SIGHUP, then unmounts and stops. Without MOUNTPOINT it
-/// only serves; on macOS, mount it with
-/// `mount_nfs -o vers=3,tcp,port=PORT,mountport=PORT,rdonly,nfc,locallocks,hard,intr,deadtimeout=60,nosuid,nodev,noexec localhost:/ MOUNTPOINT`.
+/// foreground until SIGINT, SIGTERM, SIGHUP or SIGQUIT, then unmounts and stops. Without
+/// MOUNTPOINT it only serves; on macOS, mount it with
+/// `mount_nfs -o vers=3,tcp,port=PORT,mountport=PORT,nfc,locallocks,hard,intr,deadtimeout=60,rsize=1048576,rdirplus,rdonly,nosuid,nodev,noexec localhost:/ MOUNTPOINT`.
 #[derive(Debug, Parser)]
 #[command(name = "sacdfs-nfs", version, about)]
 pub struct Args {
@@ -35,7 +35,7 @@ pub struct Args {
     /// A folder to mount on (on Linux, mounting needs root). Without it, nothing is mounted.
     pub mountpoint: Option<PathBuf>,
     #[command(flatten)]
-    pub serve: core::Options,
+    pub serve: shared::Options,
     /// Address to listen on. The default, 127.0.0.1, takes connections from this computer
     /// only; any other address serves the files to whoever can reach it.
     #[arg(long, default_value_t = DEFAULT_LISTEN, value_name = "ADDR")]
@@ -58,7 +58,7 @@ pub struct Args {
     #[arg(short = 'o', long = "mount-options", value_name = "LIST", value_delimiter = ',')]
     pub mount_options: Vec<String>,
     #[command(flatten)]
-    pub limits: core::Limits,
+    pub limits: shared::Limits,
     /// macOS: instead of serving, write a launchd agent that runs this same command (without
     /// this option) at each login, to ~/Library/LaunchAgents/io.github.aclater.sacdfs-nfs.plist,
     /// and say how to start and stop it.
@@ -81,11 +81,13 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Ok(a) => a,
         Err(e) => e.exit(),
     };
+    // An error on standard error, under the name the program was started by.
+    let complain = |e: &dyn std::fmt::Display| eprintln!("{name}: {}", crate::safe_file::printable(&e.to_string()));
     if args.launch_agent {
         return match super::agent::write(&argv) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("sacdfs-nfs: {}", crate::safe_file::printable(&e.to_string()));
+                complain(&e);
                 ExitCode::FAILURE
             }
         };
@@ -99,12 +101,12 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     if let Err(e) = crate::printable::install(
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).build(),
     ) {
-        eprintln!("sacdfs-nfs: {}", crate::safe_file::printable(&e.to_string()));
+        complain(&e);
     }
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("sacdfs-nfs: {}", crate::safe_file::printable(&e.to_string()));
+            complain(&e);
             ExitCode::FAILURE
         }
     }
@@ -143,12 +145,12 @@ pub fn run(args: Args) -> io::Result<()> {
     args.serve.log_scan(&source, &root);
     let sizing = args.serve.sizing(&root);
     if let Some(dir) = &cache_dir {
-        core::open_index_cache(dir);
+        shared::open_index_cache(dir);
     }
     let threads = sizing.threads;
-    let (tree, engine) = core::build(
+    let (tree, engine) = shared::build(
         &args.serve,
-        core::Parts {
+        shared::Parts {
             source: &source,
             root,
             pcm,
@@ -158,7 +160,7 @@ pub fn run(args: Args) -> io::Result<()> {
             open_files: open_files_budget(nofile, args.limits.max_open_images),
         },
     )?;
-    let volume = Volume::new(tree.clone(), engine.clone(), core::request_threads(threads), uid, gid)?
+    let volume = Volume::new(tree.clone(), engine.clone(), shared::request_threads(threads), uid, gid)?
         .with_request_timeout(args.limits.request_timeout())?;
     let callers = if args.allow_other || (uid == 0 && !args.no_allow_other) {
         log::info!("every caller is answered (--no-allow-other answers only this user)");
@@ -169,7 +171,7 @@ pub fn run(args: Args) -> io::Result<()> {
     let front = NfsFront::new(Arc::new(volume), handle::volume_id(&source), callers);
     let addr = SocketAddr::new(args.listen, args.port.unwrap_or_else(|| serve::default_port(uid)));
     let mount = mountpoint.map(|at| Mount { at, extra: args.mount_options.clone() });
-    let mut background = core::start_background(&args.serve, sizing, &tree, &engine, cache_dir.as_deref())?;
+    let mut background = shared::start_background(&args.serve, sizing, &tree, &engine, cache_dir.as_deref())?;
     let what = source.display().to_string();
     let result = serve::run(front, addr, mount, |bound| log::info!("serving {what} on {bound}"));
     background.stop();

@@ -75,7 +75,7 @@ const REFUSED: [&str; 4] = ["rw", "suid", "dev", "exec"];
 ///   the folder itself. (`soft` failed every read after 6 to 8 s on macOS 27.2, whatever
 ///   `timeo` and `retrans` said, so a restart broke open files.) `intr` lets Control-C stop a
 ///   waiting program;
-/// - `rsize=1048576`: reads as large as sacdfs answers ([`crate::vfs::MAX_READ`]);
+/// - `rsize`: reads as large as sacdfs answers ([`crate::vfs::MAX_READ`], 1 MiB);
 /// - `rdirplus`: listings with attributes (READDIRPLUS), one call per page instead of one
 ///   per entry.
 ///
@@ -87,13 +87,20 @@ const REFUSED: [&str; 4] = ["rw", "suid", "dev", "exec"];
 ///   waits while the server restarts but not for good for one that is gone. How long the
 ///   30 tries take in all has not been measured.
 pub fn mount_options(port: u16, extra: &[String]) -> io::Result<Vec<String>> {
+    options_for(cfg!(target_os = "macos"), port, extra)
+}
+
+/// [`mount_options`] for macOS's client (`macos`) or Linux's, whichever system this runs on:
+/// so that both lists are tested everywhere.
+fn options_for(macos: bool, port: u16, extra: &[String]) -> io::Result<Vec<String>> {
     if let Some(bad) = extra.iter().find(|e| REFUSED.contains(&e.trim().to_ascii_lowercase().as_str())) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("-o {bad}: the mount is always read-only, nosuid, nodev and noexec"),
         ));
     }
-    let mut o: Vec<String> = if cfg!(target_os = "macos") {
+    let rsize = format!("rsize={}", crate::vfs::MAX_READ);
+    let mut o: Vec<String> = if macos {
         vec![
             "vers=3".into(),
             "tcp".into(),
@@ -104,7 +111,7 @@ pub fn mount_options(port: u16, extra: &[String]) -> io::Result<Vec<String>> {
             "hard".into(),
             "intr".into(),
             "deadtimeout=60".into(),
-            "rsize=1048576".into(),
+            rsize,
             "rdirplus".into(),
         ]
     } else {
@@ -118,11 +125,11 @@ pub fn mount_options(port: u16, extra: &[String]) -> io::Result<Vec<String>> {
             "soft".into(),
             "timeo=10".into(),
             "retrans=30".into(),
-            "rsize=1048576".into(),
+            rsize,
         ]
     };
     o.extend(extra.iter().cloned());
-    o.push(if cfg!(target_os = "macos") { "rdonly" } else { "ro" }.into());
+    o.push(if macos { "rdonly" } else { "ro" }.into());
     o.extend(["nosuid", "nodev", "noexec"].map(String::from));
     Ok(o)
 }
@@ -474,6 +481,25 @@ mod tests {
         let n = o.len();
         assert_eq!(&o[n - 3..], ["nosuid", "nodev", "noexec"]);
         assert!(o[n - 4] == "rdonly" || o[n - 4] == "ro");
+    }
+
+    #[test]
+    fn reads_are_as_large_as_the_core_answers() {
+        for macos in [true, false] {
+            let o = options_for(macos, 20501, &[]).unwrap();
+            assert!(o.contains(&"rsize=1048576".to_owned()), "{o:?}");
+        }
+    }
+
+    /// The command in `sacdfs-nfs --help` for mounting by hand on macOS is the one sacdfs-nfs
+    /// itself runs there.
+    #[test]
+    fn the_help_shows_the_macos_options() {
+        use clap::CommandFactory;
+        let help = crate::nfs::cli::Args::command().render_long_help().to_string();
+        let help: String = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        let ours = options_for(true, 1, &[]).unwrap().join(",").replace("port=1,", "port=PORT,");
+        assert!(help.contains(&format!("mount_nfs -o {ours} localhost:/ MOUNTPOINT")), "{ours}\n{help}");
     }
 
     #[test]

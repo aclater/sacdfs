@@ -264,6 +264,17 @@ impl NfsFront {
     }
 }
 
+/// The first `max` items of `items` (at least one), and whether they are the last: one more
+/// than `max` is taken to see. `max` is at most 1024 (`LIST_ENTRIES`, which the protocol layer
+/// applies to what a client asks), so `max + 1` cannot overflow.
+fn page<T>(items: impl Iterator<Item = T>, max: usize) -> (Vec<T>, bool) {
+    let max = max.max(1);
+    let mut page: Vec<T> = items.take(max + 1).collect();
+    let end = page.len() <= max;
+    page.truncate(max);
+    (page, end)
+}
+
 /// `true` if `callers` may be answered for a call with credentials `auth` (`None`: not
 /// AUTH_SYS).
 pub fn permitted(callers: Callers, auth: Option<&auth_unix>) -> bool {
@@ -362,15 +373,10 @@ impl NFSFileSystem for NfsFront {
         max_entries: usize,
     ) -> Result<ReadDirResult, nfsstat3> {
         let (from, listing) = self.window(dirid, start_after).await?;
-        let max = max_entries.max(1);
-        let page: Vec<(u64, Vec<u8>)> = listing
-            .entries(from)
-            .take(max + 1)
-            .map(|(_, ino, _, name)| (ino, name.as_bytes().to_vec()))
-            .collect();
-        let end = page.len() <= max;
-        let mut entries = Vec::with_capacity(page.len().min(max));
-        for (ino, name) in page.into_iter().take(max) {
+        let names = listing.entries(from).map(|(_, ino, _, name)| (ino, name.as_bytes().to_vec()));
+        let (listed, end) = page(names, max_entries);
+        let mut entries = Vec::with_capacity(listed.len());
+        for (ino, name) in listed {
             match self.attr(ino).await {
                 Ok(a) => {
                     entries.push(DirEntry { fileid: ino, name: name.into(), attr: fattr(&a, self.volume_id) })
@@ -392,14 +398,10 @@ impl NFSFileSystem for NfsFront {
         count: usize,
     ) -> Result<ReadDirSimpleResult, nfsstat3> {
         let (from, listing) = self.window(dirid, start_after).await?;
-        let max = count.max(1);
-        let mut entries: Vec<DirEntrySimple> = listing
+        let names = listing
             .entries(from)
-            .take(max + 1)
-            .map(|(_, ino, _, name)| DirEntrySimple { fileid: ino, name: name.as_bytes().to_vec().into() })
-            .collect();
-        let end = entries.len() <= max;
-        entries.truncate(max);
+            .map(|(_, ino, _, name)| DirEntrySimple { fileid: ino, name: name.as_bytes().to_vec().into() });
+        let (entries, end) = page(names, count);
         Ok(ReadDirSimpleResult { entries, end })
     }
 
