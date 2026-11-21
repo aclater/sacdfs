@@ -13,7 +13,7 @@
 #   1   a test failed, or fewer than three ran
 # SACDFS_PCM_RATE=88200 (or 352800) picks the WAV rate; CARGO_FLAGS adds cargo options.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 dir="${1:-${SACDFS_REAL_IMAGES:-}}"
 if [ -z "$dir" ]; then
     echo "SKIPPED real-discs: no image directory (usage: scripts/real-discs.sh DIR)" >&2

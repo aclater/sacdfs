@@ -13,7 +13,7 @@ from unittest import mock
 sys.dont_write_bytecode = True  # leaves no __pycache__ in the checkout
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import check_skips  # noqa: E402
+import check_skips
 
 # As cargo prints it with CARGO_TERM_COLOR=always: the codes must not hide anything.
 OUTPUT = """\

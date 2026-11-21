@@ -43,7 +43,7 @@ pub struct Warmer {
     engine: Weak<Engine>,
     tree: Weak<Tree>,
     quiet: Duration,
-    epoch: Instant,
+    clock: Clock,
     /// Reads so far: warming stops when this moves.
     reads: AtomicU64,
     /// When the last read came, in ms since `epoch` plus one (0: none yet).
@@ -58,6 +58,38 @@ struct Probe {
     file: Arc<TrackFile>,
     reader: u64,
     extent: u64,
+}
+
+/// The warmer's time, in ms plus one (0 stands for "no read yet"). *Why not `Instant` directly:*
+/// the tests set it, so that what counts as quiet does not hang on a busy machine's scheduling
+/// (#563).
+#[derive(Debug)]
+enum Clock {
+    /// Time since the warmer was made.
+    Real(Instant),
+    /// Time the test sets.
+    #[cfg(test)]
+    Manual(AtomicU64),
+}
+
+impl Clock {
+    fn now_ms(&self) -> u64 {
+        match self {
+            Clock::Real(epoch) => epoch.elapsed().as_millis() as u64 + 1,
+            #[cfg(test)]
+            Clock::Manual(ms) => ms.load(Ordering::SeqCst) + 1,
+        }
+    }
+}
+
+/// What a burst of reads gives the warming thread now.
+enum Ready {
+    /// A probe, quiet since, and the reads so far.
+    Probe(Probe, u64),
+    /// A probe, not yet quiet for this many ms.
+    NotYet(u64),
+    /// No probe to warm from.
+    Nothing,
 }
 
 #[derive(Debug, Default)]
@@ -92,11 +124,15 @@ impl Warmer {
     }
 
     fn with_quiet(engine: &Arc<Engine>, tree: &Arc<Tree>, quiet: Duration) -> Arc<Warmer> {
+        Self::with_clock(engine, tree, quiet, Clock::Real(Instant::now()))
+    }
+
+    fn with_clock(engine: &Arc<Engine>, tree: &Arc<Tree>, quiet: Duration, clock: Clock) -> Arc<Warmer> {
         Arc::new(Warmer {
             engine: Arc::downgrade(engine),
             tree: Arc::downgrade(tree),
             quiet,
-            epoch: Instant::now(),
+            clock,
             reads: AtomicU64::new(0),
             last: AtomicU64::new(0),
             state: Mutex::default(),
@@ -109,7 +145,7 @@ impl Warmer {
     }
 
     fn now_ms(&self) -> u64 {
-        self.epoch.elapsed().as_millis() as u64 + 1
+        self.clock.now_ms()
     }
 
     /// Notes that a read arrived: of a track file's audio (`file`), or of something else (`None`:
@@ -204,26 +240,39 @@ impl Warmer {
             }
             let now = Instant::now();
             let left = deadline.saturating_duration_since(now);
-            let pending = st.burst.as_ref().is_some_and(|b| !b.others && !b.taken && b.probe.is_some());
-            if pending {
-                let since = self.now_ms().saturating_sub(self.last.load(Ordering::SeqCst));
-                let quiet = self.quiet.as_millis() as u64;
-                if since >= quiet {
-                    let reads = self.reads.load(Ordering::SeqCst);
-                    let b = st.burst.as_mut()?;
-                    b.taken = true;
-                    let (reader, extent) = b.probe?;
-                    return Some((Probe { file: b.file.clone(), reader, extent }, reads));
+            match self.ready(&mut st) {
+                Ready::Probe(probe, reads) => return Some((probe, reads)),
+                Ready::NotYet(ms) => {
+                    let more = Duration::from_millis(ms);
+                    st = self.wake.wait_timeout(st, more).unwrap_or_else(|p| p.into_inner()).0;
+                    continue;
                 }
-                let more = Duration::from_millis(quiet - since);
-                st = self.wake.wait_timeout(st, more).unwrap_or_else(|p| p.into_inner()).0;
-                continue;
+                Ready::Nothing => {}
             }
             if left.is_zero() {
                 return None;
             }
             st = self.wake.wait_timeout(st, left).unwrap_or_else(|p| p.into_inner()).0;
         }
+    }
+
+    /// Takes the burst's probe if the mount has been quiet since for `quiet`; says how much longer
+    /// it has to be quiet if not yet.
+    fn ready(&self, st: &mut State) -> Ready {
+        let Some(b) = st.burst.as_mut().filter(|b| !b.others && !b.taken) else {
+            return Ready::Nothing;
+        };
+        let Some((reader, extent)) = b.probe else {
+            return Ready::Nothing;
+        };
+        let since = self.now_ms().saturating_sub(self.last.load(Ordering::SeqCst));
+        let quiet = self.quiet.as_millis() as u64;
+        if since < quiet {
+            return Ready::NotYet(quiet - since);
+        }
+        let reads = self.reads.load(Ordering::SeqCst);
+        b.taken = true;
+        Ready::Probe(Probe { file: b.file.clone(), reader, extent }, reads)
     }
 
     /// Whether a read came since there were `reads`.
@@ -368,11 +417,35 @@ mod tests {
         engine.cached(&f.disc, f.area, f.start_frame, f.start_frame + n).is_some()
     }
 
-    /// A warmer whose thread the test is: `read` starts none.
+    /// The tests' quiet, in ms of the warmer's clock.
+    const QUIET_MS: u64 = 50;
+
+    /// A warmer on a clock that only the test moves (#563): reads, however long they take on a busy
+    /// machine, come at the same instant unless the test moves the clock between them.
+    fn manual(engine: &Arc<Engine>, tree: &Arc<Tree>) -> Arc<Warmer> {
+        Warmer::with_clock(engine, tree, Duration::from_millis(QUIET_MS), Clock::Manual(AtomicU64::new(0)))
+    }
+
+    /// A warmer on the test's clock whose thread the test is: `read` starts none.
     fn driven(engine: &Arc<Engine>, tree: &Arc<Tree>) -> Arc<Warmer> {
-        let w = Warmer::with_quiet(engine, tree, Duration::from_millis(50));
+        let w = manual(engine, tree);
         w.lock().thread = true;
         w
+    }
+
+    impl Warmer {
+        /// Moves the test's clock on by `ms`, and wakes the thread.
+        fn advance(&self, ms: u64) {
+            let Clock::Manual(t) = &self.clock else { panic!("not the test's clock") };
+            t.fetch_add(ms, Ordering::SeqCst);
+            let _st = self.lock();
+            self.wake.notify_all();
+        }
+
+        /// Whether the thread would take a probe now (and takes it), without waiting.
+        fn take(&self) -> bool {
+            matches!(self.ready(&mut self.lock()), Ready::Probe(..))
+        }
     }
 
     #[test]
@@ -386,10 +459,13 @@ mod tests {
         let n = files[1].head_frames(extent);
         assert!(n > 0);
         assert!(!cached(&engine, &files[1], n));
-        // Not before the mount has been quiet.
-        let early = Instant::now();
-        let (p, reads) = w.wait_for_probe(Duration::from_secs(2)).expect("quiet after the probe");
-        assert!(early.elapsed() >= Duration::from_millis(40));
+        // Not before the mount has been quiet for `QUIET`.
+        assert!(matches!(w.ready(&mut w.lock()), Ready::NotYet(QUIET_MS)));
+        w.advance(QUIET_MS - 1);
+        assert!(matches!(w.ready(&mut w.lock()), Ready::NotYet(1)));
+        w.advance(1);
+        // Quiet now: no waiting.
+        let (p, reads) = w.wait_for_probe(Duration::ZERO).expect("quiet after the probe");
         assert_eq!((p.reader, p.extent), (r.id(), extent));
         let (done, stopped) = w.warm(&engine, &tree, &p, reads);
         assert!(!stopped);
@@ -398,7 +474,8 @@ mod tests {
             assert!(cached(&engine, f, f.head_frames(extent)), "track {} not warmed", f.number);
         }
         // Once per burst.
-        assert!(w.wait_for_probe(Duration::from_millis(200)).is_none());
+        w.advance(10 * QUIET_MS);
+        assert!(w.wait_for_probe(Duration::ZERO).is_none());
     }
 
     #[test]
@@ -407,15 +484,22 @@ mod tests {
         let engine = slow_engine(64 << 20);
         let files = folder(&tree, 3);
         let w = driven(&engine, &tree);
+        // Each file read 1 ms of the clock after the last, well within the quiet.
         for f in &files {
             probe(&w, &engine, f, PROBE);
+            w.advance(1);
         }
-        assert!(w.wait_for_probe(Duration::from_millis(300)).is_none());
-        // A sidecar's read neither makes nor breaks a burst.
+        w.advance(10 * QUIET_MS);
+        assert!(w.wait_for_probe(Duration::ZERO).is_none());
+        // A sidecar's read neither makes nor breaks a burst, but the mount is not quiet after it.
         let w = driven(&engine, &tree);
         probe(&w, &engine, &files[0], PROBE);
+        w.advance(QUIET_MS - 1);
         w.read(None);
-        assert!(w.wait_for_probe(Duration::from_secs(2)).is_some());
+        w.advance(QUIET_MS - 1);
+        assert!(!w.take());
+        w.advance(1);
+        assert!(w.wait_for_probe(Duration::ZERO).is_some());
     }
 
     #[test]
@@ -433,6 +517,8 @@ mod tests {
         }
         let r = probe(&w, &fast, &files[0], PROBE);
         assert_eq!(r.probe_extent(&fast), None);
+        w.advance(10 * QUIET_MS);
+        assert!(w.wait_for_probe(Duration::ZERO).is_none());
     }
 
     #[test]
@@ -442,7 +528,8 @@ mod tests {
         let files = folder(&tree, 3);
         let w = driven(&engine, &tree);
         let r = probe(&w, &engine, &files[0], PROBE);
-        let (p, reads) = w.wait_for_probe(Duration::from_secs(2)).unwrap();
+        w.advance(QUIET_MS);
+        let (p, reads) = w.wait_for_probe(Duration::ZERO).unwrap();
         w.read(Some(&files[0]));
         let (done, stopped) = w.warm(&engine, &tree, &p, reads);
         assert!(stopped);
@@ -462,18 +549,23 @@ mod tests {
         let extent = r.probe_extent(&engine).unwrap();
         let per = files[1].head_frames(extent) as usize * files[1].cached_frame_bytes(&engine);
         assert!(per > engine.cache().heads_budget() / 2, "the test needs heads of {per} bytes");
-        let (p, reads) = w.wait_for_probe(Duration::from_secs(2)).unwrap();
+        w.advance(QUIET_MS);
+        let (p, reads) = w.wait_for_probe(Duration::ZERO).unwrap();
         assert_eq!(w.warm(&engine, &tree, &p, reads), (0, false));
     }
 
+    /// The deadlines here only keep a broken thread from hanging the test; nothing waits on them.
     #[test]
     fn the_thread_warms_after_quiet_and_ends_when_closed() {
         let tree = corpus();
         let engine = slow_engine(64 << 20);
         let files = folder(&tree, 2);
-        let w = Warmer::with_quiet(&engine, &tree, Duration::from_millis(50));
+        let w = manual(&engine, &tree);
         let r = probe(&w, &engine, &files[0], PROBE);
         let n = files[1].head_frames(r.probe_extent(&engine).unwrap());
+        // The clock has not moved: the mount is not quiet, so the thread cannot have warmed.
+        assert!(!cached(&engine, &files[1], n));
+        w.advance(QUIET_MS);
         let deadline = Instant::now() + Duration::from_secs(20);
         while !cached(&engine, &files[1], n) {
             assert!(Instant::now() < deadline, "not warmed");

@@ -22,7 +22,6 @@ path = "src/main.rs"
 sacdfs = { path = ".." }
 clap = { version = "4.5", features = ["derive"] }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
-libc = "0.2"
 log = "0.4"
 
 [target.'cfg(windows)'.dependencies]
