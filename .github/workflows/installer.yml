@@ -5,11 +5,14 @@
 #     (the script must refuse before changing anything), Fedora 44, and UBI 7 (glibc 2.17);
 #   - on the runner as root: with the systemd unit, and with Docker Compose;
 #   - in the BusyBox and Fedora containers, a failed or cut-short download must fail loudly (#352);
-#   - unsupported systems (#382), with a fake uname, getconf and ldd: i686, armv7l, aarch64 with
-#     32-bit programs, glibc 2.12, musl, the container route on such a processor, no Compose
-#     engine, no FUSE: each must stop with the report and download nothing; and --report.
+#   - unsupported systems (#382), with a fake uname, getconf and ldd: armv7l, aarch64 with 32-bit
+#     programs, glibc 2.12, musl, the container route on such a processor, no Compose engine, no
+#     FUSE: each must stop with the report and download nothing; 32-bit x86 (i686, x86-64 with
+#     32-bit programs) must stop and name the i686 archive instead (#500); and --report.
 #   - security, in the BusyBox and Fedora containers (deploy/ci-install-security-steps.sh):
-#     a prefix or mount folder that other users can change is refused; folder names with &,
+#     a prefix or mount folder that other users can change is refused; install.sh verifies
+#     release files beside it against built-in checksums (used when they match, otherwise the
+#     release is downloaded); folder names with &,
 #     spaces and brackets install and run; a name that is a command is refused and never runs;
 #     sacdfs-ctl reads older settings files as data and, as root, refuses files other users can
 #     change; a wrong or missing built-in checksum stops the download; an install of 0.6.3 in a
@@ -23,12 +26,14 @@ on:
     paths:
       - ".github/workflows/installer.yml"
       - ".github/scripts/stamp-installer.sh"
+      - ".github/scripts/stamp-members.sh"
       - "deploy/**"
   push:
     branches: [main]
     paths:
       - ".github/workflows/installer.yml"
       - ".github/scripts/stamp-installer.sh"
+      - ".github/scripts/stamp-members.sh"
       - "deploy/**"
   workflow_dispatch:
 
@@ -51,7 +56,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends devscripts busybox-static dash
-          sh_files="deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/ci-install-unsupported-steps.sh deploy/ci-install-security-steps.sh deploy/sacdfs-ctl .github/scripts/stamp-installer.sh"
+          sh_files="deploy/install.sh deploy/ci-install-steps.sh deploy/ci-install-fetch-steps.sh deploy/ci-install-unsupported-steps.sh deploy/ci-install-security-steps.sh deploy/sacdfs-ctl .github/scripts/stamp-installer.sh .github/scripts/stamp-members.sh"
           # shellcheck disable=SC2086 # a list of files
           shellcheck -s sh $sh_files
           # shellcheck disable=SC2086
@@ -59,14 +64,14 @@ jobs:
           dash -n deploy/install.sh
           busybox sh -n deploy/install.sh
           # No terminal, no --iso-dir: an error that shows the usage, never a prompt.
-          ! dash deploy/install.sh </dev/null 2>err.txt
+          if dash deploy/install.sh </dev/null 2>err.txt; then echo "::error::install.sh without --iso-dir did not fail"; exit 1; fi
           grep -q 'Usage: sh install.sh --iso-dir' err.txt
           busybox sh deploy/install.sh --help | grep -q -- '--dry-run'
           # Not Linux (macOS reports Darwin): stop before any download or change, root or not.
           mkdir -p fakebin && printf '#!/bin/sh\necho Darwin\n' >fakebin/uname && chmod +x fakebin/uname
-          ! PATH="$PWD/fakebin:$PATH" dash deploy/install.sh --iso-dir . 2>err.txt
+          if PATH="$PWD/fakebin:$PATH" dash deploy/install.sh --iso-dir . 2>err.txt; then echo "::error::install.sh did not stop on Darwin"; exit 1; fi
           grep -q 'runs on Linux only, and this system is Darwin: nothing was changed' err.txt
-          ! grep -q 'downloading' err.txt
+          if grep -q 'downloading' err.txt; then echo "::error::install.sh downloaded something on Darwin"; exit 1; fi
 
   run:
     name: ${{ matrix.mode }}
