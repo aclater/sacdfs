@@ -304,7 +304,7 @@ jobs:
             -v "/tmp/check/$PKG:/d:ro" -v "$PWD/tests/corpus/images:/images:ro" -v /tmp:/out \
             "$UBI7" bash -euc '
               rpm -q glibc
-              ! command -v fusermount3 && ! command -v fusermount
+              if command -v fusermount3 || command -v fusermount; then echo "this image has fusermount: the mount below would not show that sacdfs mounts without it"; exit 1; fi
               /d/sacdfs --version
               mkdir -p /mnt/s
               /d/sacdfs /images /mnt/s 2> /out/ubi7.log
