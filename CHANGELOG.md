@@ -7,6 +7,11 @@ All notable changes to sacdfs are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Fuzzing on 32-bit x86 (#498).** The fuzz workflow now also runs every target as a 32-bit x86
+  program (`i686-unknown-linux-gnu`, without AddressSanitizer, which Rust doesn't offer there),
+  for the same time as the 64-bit job, so that overflows of a 32-bit `usize` such as #457 are
+  searched for. `FUZZ_TRIPLE=i686-unknown-linux-gnu fuzz/run.sh` does it locally; see
+  fuzz/README.md.
 - **Port 445 on TrueNAS without network changes (part of #522).** sacdfs can show its files in a
   dataset (bound over `/srv` with shared propagation), and TrueNAS's own SMB service shares that
   dataset on port 445, for Windows drive mapping, Roon's "Add network share" and the SMB storage
@@ -41,9 +46,39 @@ All notable changes to sacdfs are recorded here. The format follows
   4-thread Atom's speed, and fails when head's worst read or stall time in the first 15 s is clearly
   above base's. See docs/performance.md, "The CI stall gate".
 
+### Changed
+- **install.sh verifies release files beside it against built-in checksums.** Run from an
+  unpacked release archive, it copies `sacdfs`, `sacdfs-ctl`, `sacdfs.service` and
+  `nas-compose.yaml` into its temporary folder and uses those copies only when each matches the
+  SHA-256 the release workflow built into it (the copy in each archive carries that archive's,
+  the installer published on its own every archive's); if one is missing or doesn't match, it
+  uses none of them and downloads the release, as the one-liner does. A copy of `install.sh`
+  from the repository has no such checksums and always downloads. Unpacking as yourself and
+  running `sudo sh install.sh` works as before. See docs/install/README.md.
+- **The installer on 32-bit x86 (#500)** (an `i686` kernel, or an x86-64 kernel with 32-bit
+  programs) still stops before downloading anything, but now names the release's `i686` archive
+  with its download link and links docs/install/binary.md, "32-bit x86", instead of the
+  unsupported-system report and form.
+
 ### Fixed
+- **32-bit only: an ID3v2.3 extended header near 4 GiB (#498).** The fix for #457 checked the
+  header's size, but the frame header after it could still end past a 32-bit `usize`, which
+  panicked `sacdfs verify` and `sacdfs tags import` on such a tag in the i686 build. Found by the
+  new i686 fuzz job. Mounting is not affected, and released builds are 64-bit.
+- **Windows: a source file's error 24 is no longer reported as "too many open files".**
+  sacdfs-win compared the core's code for its limit on open sidecar files with the C library's
+  `EMFILE` (24) where the core sends Windows's `ERROR_TOO_MANY_OPEN_FILES` (4). The limit itself
+  was reported correctly before and still is (`STATUS_TOO_MANY_OPENED_FILES`).
+- **`sacdfs tags import` lists a cover it cannot read as not kept.** An extract whose embedded
+  picture import cannot read (anything but a plain JPEG or PNG: a GIF, a compressed frame, an
+  ID3v2.2 or unsynchronised tag) was passed over in silence, and import could exit 0 with that
+  extract's art in no tags directory. It is now listed as `not kept:` with its extract and disc,
+  and the exit status is 2, as the user guide says of every picture left out.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
+- **CI: the folder-warming tests failed on busy runners (#563).** They took wall-clock gaps
+  between reads as the mount's quiet; they now set the warmer's clock themselves. Tests only; the
+  warmer behaves as before.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
   it lists the album, and when playback starts, often minutes later, re-reads the head of every
   other file of the album before it opens the track. On a 32-bit Atom the first start after a

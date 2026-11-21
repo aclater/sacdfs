@@ -149,6 +149,10 @@ struct Entry {
 /// Folders not used for this long are let go of (and so are no longer watched).
 const UNUSED: Duration = Duration::from_secs(600);
 
+/// A name missing from a folder's listing lists the folder again only if the listing is at
+/// least this old.
+const RELIST_AFTER: Duration = Duration::from_secs(1);
+
 impl<L: Lister> Paths<L> {
     pub fn new(lister: L) -> Paths<L> {
         Paths { lister, folders: Mutex::default(), changes: Mutex::default(), warned: Mutex::default() }
@@ -203,42 +207,46 @@ impl<L: Lister> Paths<L> {
     /// The entry `path` names (a Windows path from the volume's root, `\`-separated, any case).
     pub fn resolve(&self, path: &str) -> Result<Found, Missing> {
         let parts: Vec<&str> = path.split('\\').filter(|p| !p.is_empty()).collect();
-        if parts.is_empty() {
+        let Some((last, folders)) = parts.split_last() else {
             let attr = self.lister.attr(ROOT).map_err(Missing::Core)?;
             return Ok(Found { attr, path: "\\".to_owned() });
-        }
+        };
         let (mut ino, mut at) = (ROOT, "\\".to_owned());
-        for (i, part) in parts.iter().enumerate() {
-            let last = i + 1 == parts.len();
-            let folder = self.folder(ino, &at, true).map_err(|e| match e {
-                vfs::Error::NotDir | vfs::Error::NotFound => Missing::Path,
-                e => Missing::Core(e),
-            })?;
-            // A name not in a listing kept may have appeared since: list again, once.
-            let child = match folder.get(part) {
-                Some(c) => c.clone(),
-                None if folder.keep_for.is_some() => {
-                    let again = self.folder_again(ino, &folder)?;
-                    again.get(part).cloned().ok_or(if last { Missing::Name } else { Missing::Path })?
-                }
-                None => return Err(if last { Missing::Name } else { Missing::Path }),
-            };
-            let path = folder.child_path(&child.name);
-            if last {
-                return Ok(Found { attr: child.attr, path });
-            }
+        for part in folders {
+            let (child, path) = self.child(ino, &at, part)?.ok_or(Missing::Path)?;
             if child.attr.kind != Kind::Dir {
                 return Err(Missing::Path);
             }
             ino = child.attr.ino;
             at = path;
         }
-        unreachable!("the loop returns at the last name")
+        let (child, path) = self.child(ino, &at, last)?.ok_or(Missing::Name)?;
+        Ok(Found { attr: child.attr, path })
     }
 
-    /// `folder` listed again now, unless it was listed under a second ago.
+    /// The entry `name` (any case) of folder `ino`, at `at`, with its path in stored case;
+    /// `None` if the folder has no such name.
+    fn child(&self, ino: u64, at: &str, name: &str) -> Result<Option<(Child, String)>, Missing> {
+        let folder = self.folder(ino, at, true).map_err(|e| match e {
+            vfs::Error::NotDir | vfs::Error::NotFound => Missing::Path,
+            e => Missing::Core(e),
+        })?;
+        // A name not in a listing kept may have appeared since: list again, once.
+        let child = match folder.get(name) {
+            Some(c) => c.clone(),
+            None if folder.keep_for.is_some() => match self.folder_again(ino, &folder)?.get(name) {
+                Some(c) => c.clone(),
+                None => return Ok(None),
+            },
+            None => return Ok(None),
+        };
+        let path = folder.child_path(&child.name);
+        Ok(Some((child, path)))
+    }
+
+    /// `folder` listed again now, unless it was listed less than [`RELIST_AFTER`] ago.
     fn folder_again(&self, ino: u64, folder: &Folder) -> Result<Arc<Folder>, Missing> {
-        if folder.listed.elapsed() < Duration::from_secs(1) {
+        if folder.listed.elapsed() < RELIST_AFTER {
             return self.folder(ino, &folder.path, false).map_err(Missing::Core);
         }
         // Listed again with the old listing kept to compare: what changed is queued.
@@ -285,20 +293,9 @@ fn diff(old: &Folder, new: &Folder) -> Vec<Change> {
                 kind: c.attr.kind,
                 what: ChangeKind::Removed,
             }),
-            // Renamed to another case: Windows sees the old name go and the new one come.
-            Some(n) if n.name != c.name => {
-                out.push(Change {
-                    path: old.child_path(&c.name),
-                    kind: c.attr.kind,
-                    what: ChangeKind::Removed,
-                });
-                out.push(Change {
-                    path: new.child_path(&n.name),
-                    kind: n.attr.kind,
-                    what: ChangeKind::Added,
-                });
-            }
-            Some(n) if n.attr.ino != c.attr.ino || n.attr.kind != c.attr.kind => {
+            // Renamed to another case, or another file or folder under the name: Windows sees
+            // the old name go and the new one come.
+            Some(n) if n.name != c.name || n.attr.ino != c.attr.ino || n.attr.kind != c.attr.kind => {
                 out.push(Change {
                     path: old.child_path(&c.name),
                     kind: c.attr.kind,
@@ -445,7 +442,12 @@ mod tests {
         let f = fake(Some(Duration::from_secs(3600)));
         let p = Paths::new(&f);
         p.resolve("\\readme.txt").unwrap();
-        std::thread::sleep(Duration::from_millis(1100));
+        // The root's listing is made old enough to be listed again.
+        {
+            let mut folders = p.folders.lock().unwrap();
+            let root = Arc::get_mut(&mut folders.get_mut(&ROOT).unwrap().folder).unwrap();
+            root.listed = root.listed.checked_sub(RELIST_AFTER).unwrap();
+        }
         f.dirs.lock().unwrap().get_mut(&ROOT).unwrap().push(("New.iso".to_owned(), 9, Kind::Dir, 0));
         assert_eq!(p.resolve("\\NEW.iso").unwrap().path, "\\New.iso");
         assert_eq!(

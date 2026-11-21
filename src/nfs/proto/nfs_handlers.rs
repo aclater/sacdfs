@@ -609,6 +609,7 @@ pub async fn nfsproc3_pathconf(
     };
     let res = PATHCONF3resok {
         obj_attributes: obj_attr,
+        // sacdfs: 1 link, not nfsserve's 0.
         linkmax: 1,
         // sacdfs: names are at most 255 bytes, as on Linux.
         name_max: 255,

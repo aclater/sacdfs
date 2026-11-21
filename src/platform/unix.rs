@@ -37,6 +37,10 @@ pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
     Ok((m, id))
 }
 
+pub fn plain_text(text: &str) -> std::borrow::Cow<'_, str> {
+    std::borrow::Cow::Borrowed(text)
+}
+
 pub fn cache_home() -> Option<PathBuf> {
     let abs = |v: OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
     std::env::var_os("XDG_CACHE_HOME")
@@ -121,7 +125,8 @@ pub fn open_regular(path: &Path) -> io::Result<File> {
 
 fn seek(file: &File, at: u64, whence: nix::unistd::Whence) -> Result<u64, nix::errno::Errno> {
     use std::os::fd::AsFd;
-    let at = i64::try_from(at).map_err(|_| nix::errno::Errno::EOVERFLOW)?;
+    // off_t: 32 bits on 32-bit glibc (the i686 fuzz build, #498), 64 everywhere else.
+    let at = libc::off_t::try_from(at).map_err(|_| nix::errno::Errno::EOVERFLOW)?;
     nix::unistd::lseek(file.as_fd(), at, whence).map(|p| u64::try_from(p).unwrap_or(0))
 }
 
@@ -293,13 +298,6 @@ fn unescape_octal(s: &str) -> OsString {
     os_from_bytes(out)
 }
 
-#[cfg(test)]
-#[test]
-fn mountinfo_escapes() {
-    assert_eq!(unescape_octal(r"/a\040b"), OsString::from("/a b"));
-    assert_eq!(unescape_octal(r"/a\04"), OsString::from(r"/a\04"));
-}
-
 #[cfg(target_os = "linux")]
 pub fn fd_dir() -> Option<PathBuf> {
     Some(Path::new("/proc").join(std::process::id().to_string()).join("fd"))
@@ -327,20 +325,21 @@ pub fn fs_size(path: &Path) -> io::Result<(u64, u32)> {
 #[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 pub fn lower_thread_priority() -> Vec<(&'static str, io::Error)> {
+    // ioprio_set(IOPRIO_WHO_PROCESS, tid, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0)).
+    const IOPRIO_WHO_PROCESS: libc::c_int = 1;
+    const IOPRIO_CLASS_IDLE: libc::c_int = 3;
     let mut failed = Vec::new();
-    // SAFETY: plain system calls on the calling thread, with no pointers.
-    unsafe {
-        // The raw call: glibc before 2.30 (the release's oldest baseline) has no gettid().
-        let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
-        if libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, 19) != 0 {
-            failed.push(("nice", io::Error::last_os_error()));
-        }
-        // ioprio_set(IOPRIO_WHO_PROCESS, tid, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0)).
-        const IOPRIO_WHO_PROCESS: libc::c_int = 1;
-        const IOPRIO_CLASS_IDLE: libc::c_int = 3;
-        if libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid, IOPRIO_CLASS_IDLE << 13) != 0 {
-            failed.push(("ioprio", io::Error::last_os_error()));
-        }
+    // The raw call: glibc before 2.30 (the release's oldest baseline) has no gettid(). A
+    // thread ID is positive and fits `pid_t` and `id_t`.
+    // SAFETY: a system call with no arguments, which cannot fail.
+    let tid = unsafe { libc::syscall(libc::SYS_gettid) } as libc::pid_t;
+    // SAFETY: a system call on the calling thread, with integer arguments only.
+    if unsafe { libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, 19) } != 0 {
+        failed.push(("nice", io::Error::last_os_error()));
+    }
+    // SAFETY: a system call on the calling thread, with integer arguments only.
+    if unsafe { libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid, IOPRIO_CLASS_IDLE << 13) } != 0 {
+        failed.push(("ioprio", io::Error::last_os_error()));
     }
     failed
 }
@@ -374,6 +373,10 @@ pub fn cpu_seconds() -> f64 {
     secs(UsageWho::RUSAGE_SELF) + secs(UsageWho::RUSAGE_CHILDREN)
 }
 
+pub fn load_average() -> Option<f64> {
+    std::fs::read_to_string("/proc/loadavg").ok()?.split_whitespace().next()?.parse().ok()
+}
+
 pub fn stop_on_signals(stop: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<()> {
     for sig in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
         // The first stops at the next safe point; a second ends the run now.
@@ -396,4 +399,15 @@ pub fn process_name(tid: u32) -> Option<String> {
 #[cfg(not(target_os = "linux"))]
 pub fn process_name(_tid: u32) -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mountinfo_escapes() {
+        assert_eq!(unescape_octal(r"/a\040b"), OsString::from("/a b"));
+        assert_eq!(unescape_octal(r"/a\04"), OsString::from(r"/a\04"));
+    }
 }
