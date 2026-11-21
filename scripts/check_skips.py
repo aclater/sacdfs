@@ -35,7 +35,8 @@ IGNORED = re.compile(r"^test (.+?) \.\.\. ignored(?:, (.*))?$")
 RESULT = re.compile(r"^test result: \S+ (\d+) passed; (\d+) failed; (\d+) ignored;")
 # Not anchored: the line is written past libtest's capture, so it can land right after the
 # "test name ... " that libtest has written so far on another thread.
-SKIPPED = re.compile(r"\bSKIPPED (\S+): (.*)$")
+# No word boundary before the marker: with threads, it can follow another test's "ok" directly.
+SKIPPED = re.compile(r"SKIPPED (\S+): (.*)$")
 
 
 @dataclass
