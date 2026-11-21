@@ -554,7 +554,6 @@ remove() {
     done
 }
 
-# rmdir_empty DIR: remove a folder this script made, only if empty and not mounted.
 # mounted DIR: something is mounted on DIR (/proc/mounts writes a space as \040, a tab as
 # \011, a backslash as \134).
 mounted() {
@@ -563,6 +562,7 @@ mounted() {
         if (x == ENVIRON["MNT"]) f = 1
     } END { exit !f }' /proc/mounts
 }
+# rmdir_empty DIR: remove a folder this script made, only if empty and not mounted.
 rmdir_empty() {
     [ -d "$1" ] || return 0
     mounted "$1" && return 0
@@ -1498,10 +1498,8 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
     check_name "--iso-dir (the folder it leads to)" "$ISO_DIR"
     VOLUME=$(volume_of "$ISO_DIR")
 
-    # ---------------------------------------------------------------------------------------
-    # The machine: architecture, glibc, FUSE, systemd, container engine.
-
-    # (probe_machine read the processor and C library above.)
+    # The machine: systemd and the container engine (probe_machine read the processor and C
+    # library above).
     if [ -d /run/systemd/system ]; then HAS_SYSTEMD=1; else HAS_SYSTEMD=0; fi
 
     # A container engine that answers, and a Compose for it. NAS packages install Docker
@@ -1637,9 +1635,8 @@ Another user could then put a link in place of the folder to mount on, $MOUNT, a
     PKGDIR=
     [ "$UNINSTALL" = 1 ] || verify_local
 
+    # Synology's Task Scheduler tasks (hook_install, hook_remove).
     SYNO_TASKS="sacdfs-start sacdfs-stop"
-
-    # ---------------------------------------------------------------------------------------
 
     if [ "$UNINSTALL" = 1 ]; then
         uninstall_compose

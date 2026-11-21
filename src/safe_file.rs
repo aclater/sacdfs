@@ -145,17 +145,19 @@ pub fn read_text(path: &Path, max: u64) -> io::Result<(String, fs::Metadata)> {
 /// characters [`crate::printable::needs_escape`] names; line ends kept when `lines`: for a
 /// terminal or a log.
 fn escape_controls(s: &str, lines: bool) -> Cow<'_, str> {
+    use fmt::Write as _;
     let escaped = |c: char| crate::printable::needs_escape(c) && !(lines && c == '\n');
     if !s.chars().any(escaped) {
         return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
-        match c {
-            c if !escaped(c) => out.push(c),
-            c if (c as u32) < 0x100 && c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
-            c => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
-        }
+        // Writing to a `String` can't fail.
+        let _ = match c {
+            c if !escaped(c) => out.write_char(c),
+            c if (c as u32) < 0x100 && c.is_control() => write!(out, "\\x{:02x}", c as u32),
+            c => write!(out, "\\u{{{:x}}}", c as u32),
+        };
     }
     Cow::Owned(out)
 }
@@ -186,14 +188,14 @@ impl fmt::Display for Shown<'_> {
     }
 }
 
-// Links and modes: Unix only.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
+    // Links and modes: Unix only.
+    #[cfg(unix)]
     use std::os::unix::fs::{PermissionsExt, symlink};
 
+    #[cfg(unix)]
     #[test]
     fn write_atomic_replaces_a_link_and_leaves_its_target() {
         let dir = tempfile::tempdir().unwrap();
@@ -222,6 +224,7 @@ mod tests {
         assert!(a.file_name().unwrap().to_str().unwrap().starts_with(".a.toml."));
     }
 
+    #[cfg(unix)]
     #[test]
     fn create_new_refuses_a_link() {
         let dir = tempfile::tempdir().unwrap();
@@ -236,6 +239,7 @@ mod tests {
         assert_eq!(fs::read(&victim).unwrap(), b"precious");
     }
 
+    #[cfg(unix)]
     #[test]
     fn read_regular_refuses_links_and_other_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -250,6 +254,8 @@ mod tests {
     }
 
     /// A sparse file larger than the bound is refused before anything is allocated for it.
+    /// Unix only: the test makes a file of 1 TiB, which is sparse there without asking.
+    #[cfg(unix)]
     #[test]
     fn read_text_refuses_a_file_over_its_bound() {
         let dir = tempfile::tempdir().unwrap();

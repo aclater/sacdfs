@@ -189,6 +189,68 @@ def name(scenario):
     return s + "-" + suffix.replace(":", "") if suffix else s
 
 
+def verdict(a, res, elapsed):
+    """The gate's report and its failures, from every run's numbers: `res[scenario][build]` is the
+    list of that build's runs (base, head), `a` holds the thresholds, `elapsed` the seconds the
+    runs took. Returns the Markdown report and one "name (what is worse)" per failed scenario."""
+    def med(runs, k):
+        return statistics.median(x[k] for x in runs)
+
+    def top(runs, k, f=max):
+        return f(x[k] for x in runs)
+
+    def rng(s, b, k):
+        return f"{min(x[k] for x in res[s][b]):g}-{max(x[k] for x in res[s][b]):g}"
+
+    lines = [f"## Player stall gate ({a.rounds} rounds, sacdfs at {a.quota}% of one CPU on CPUs {a.cpus})", "",
+             ("| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | Audio by 5 s, base → head (s) "
+              "| Re-reads, base → head (ms) | |"),
+             "|---|---|---|---|---|---|"]
+    failed = []
+    for s in a.scenarios:
+        bw, hw = med(res[s]["base"], "worst_ms"), med(res[s]["head"], "worst_ms")
+        bs, hs = med(res[s]["base"], "stalled_s"), med(res[s]["head"], "stalled_s")
+        bwt, bst = top(res[s]["base"], "worst_ms"), top(res[s]["base"], "stalled_s")
+        bad = []
+        if hw > bwt * a.worst_ratio and hw > bwt + a.worst_ms:
+            bad.append("worst read")
+        if hs > bst * a.stall_ratio and hs > bst + a.stall_s:
+            bad.append("stall")
+        ba, ha = top(res[s]["base"], "audio_by_5s", min), med(res[s]["head"], "audio_by_5s")
+        if ha < ba / a.audio_ratio and ha < ba - a.audio_s:
+            bad.append("audio by 5 s")
+        rescans = all(x.get("rescan_ms") is not None for b in ("base", "head") for x in res[s][b])
+        if rescans:
+            br, hr = med(res[s]["base"], "rescan_ms"), med(res[s]["head"], "rescan_ms")
+            brt = top(res[s]["base"], "rescan_ms")
+            if hr > brt * a.rescan_ratio and hr > brt + a.rescan_ms:
+                bad.append("re-reads")
+            rereads = f"{br:.0f} → {hr:.0f} ({rng(s, 'base', 'rescan_ms')} / {rng(s, 'head', 'rescan_ms')})"
+        else:
+            rereads = "-"
+        # A player that opens its track after re-reading heads: how long it took to get there.
+        if opens_after_heads(s):
+            bo, ho = top(res[s]["base"], "play_open_s"), med(res[s]["head"], "play_open_s")
+            if ho > bo * a.open_ratio and ho > bo + a.open_s:
+                bad.append("track opened later")
+            rereads += f"; opened {med(res[s]['base'], 'play_open_s'):.2f} → {ho:.2f} s"
+        if bad:
+            failed.append(f"{name(s)} ({', '.join(bad)})")
+        lines.append(f"| {name(s)} | {bw:.0f} → {hw:.0f} ({rng(s, 'base', 'worst_ms')} / {rng(s, 'head', 'worst_ms')}) "
+                     f"| {bs:.2f} → {hs:.2f} ({rng(s, 'base', 'stalled_s')} / {rng(s, 'head', 'stalled_s')}) "
+                     f"| {med(res[s]['base'], 'audio_by_5s'):.2f} → {ha:.2f} ({rng(s, 'base', 'audio_by_5s')} / "
+                     f"{rng(s, 'head', 'audio_by_5s')}) | {rereads} "
+                     f"| {'**WORSE**: ' + ', '.join(bad) if bad else 'ok'} |")
+    lines += ["", (f"Medians (ranges base / head) of the first {a.secs:g} s after the playing file opened; "
+              f"measured in {elapsed:.0f} s. Head fails where its median is above base's "
+              f"highest by more than {a.worst_ratio}x and {a.worst_ms:g} ms (worst read) or {a.stall_ratio}x and "
+              f"{a.stall_s:g} s (stall), or the mean time of the re-reads in a player's first 6 s by "
+              f"{a.rescan_ratio}x and {a.rescan_ms:g} ms; or where the audio it held after 5 s is below base's "
+              f"lowest by {a.audio_ratio}x and {a.audio_s:g} s; or where a player that opens its track after "
+              f"re-reading heads opened it later than base's latest by {a.open_ratio}x and {a.open_s:g} s.")]
+    return "\n".join(lines) + "\n", failed
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", required=True)
@@ -243,56 +305,7 @@ def main():
         with open(a.json, "w") as f:
             json.dump({"quota": a.quota, "results": res}, f)
 
-    med = lambda runs, k: statistics.median(x[k] for x in runs)
-    top = lambda runs, k, f=max: f(x[k] for x in runs)
-    lines = [f"## Player stall gate ({a.rounds} rounds, sacdfs at {a.quota}% of one CPU on CPUs {a.cpus})", "",
-             ("| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | Audio by 5 s, base → head (s) "
-              "| Re-reads, base → head (ms) | |"),
-             "|---|---|---|---|---|---|"]
-    failed = []
-    for s in a.scenarios:
-        bw, hw = med(res[s]["base"], "worst_ms"), med(res[s]["head"], "worst_ms")
-        bs, hs = med(res[s]["base"], "stalled_s"), med(res[s]["head"], "stalled_s")
-        bwt, bst = top(res[s]["base"], "worst_ms"), top(res[s]["base"], "stalled_s")
-        bad = []
-        if hw > bwt * a.worst_ratio and hw > bwt + a.worst_ms:
-            bad.append("worst read")
-        if hs > bst * a.stall_ratio and hs > bst + a.stall_s:
-            bad.append("stall")
-        rng = lambda b, k, s=s: f"{min(x[k] for x in res[s][b]):g}-{max(x[k] for x in res[s][b]):g}"
-        ba, ha = top(res[s]["base"], "audio_by_5s", min), med(res[s]["head"], "audio_by_5s")
-        if ha < ba / a.audio_ratio and ha < ba - a.audio_s:
-            bad.append("audio by 5 s")
-        rescans = all(x.get("rescan_ms") is not None for b in ("base", "head") for x in res[s][b])
-        if rescans:
-            br, hr = med(res[s]["base"], "rescan_ms"), med(res[s]["head"], "rescan_ms")
-            brt = top(res[s]["base"], "rescan_ms")
-            if hr > brt * a.rescan_ratio and hr > brt + a.rescan_ms:
-                bad.append("re-reads")
-            re = f"{br:.0f} → {hr:.0f} ({rng('base', 'rescan_ms')} / {rng('head', 'rescan_ms')})"
-        else:
-            re = "-"
-        # A player that opens its track after re-reading heads: how long it took to get there.
-        if opens_after_heads(s):
-            bo, ho = top(res[s]["base"], "play_open_s"), med(res[s]["head"], "play_open_s")
-            if ho > bo * a.open_ratio and ho > bo + a.open_s:
-                bad.append("track opened later")
-            re += f"; opened {med(res[s]['base'], 'play_open_s'):.2f} → {ho:.2f} s"
-        if bad:
-            failed.append(f"{name(s)} ({', '.join(bad)})")
-        lines.append(f"| {name(s)} | {bw:.0f} → {hw:.0f} ({rng('base', 'worst_ms')} / {rng('head', 'worst_ms')}) "
-                     f"| {bs:.2f} → {hs:.2f} ({rng('base', 'stalled_s')} / {rng('head', 'stalled_s')}) "
-                     f"| {med(res[s]['base'], 'audio_by_5s'):.2f} → {ha:.2f} ({rng('base', 'audio_by_5s')} / "
-                     f"{rng('head', 'audio_by_5s')}) | {re} "
-                     f"| {'**WORSE**: ' + ', '.join(bad) if bad else 'ok'} |")
-    lines += ["", (f"Medians (ranges base / head) of the first {a.secs:g} s after the playing file opened; "
-              f"measured in {time.monotonic() - started:.0f} s. Head fails where its median is above base's "
-              f"highest by more than {a.worst_ratio}x and {a.worst_ms:g} ms (worst read) or {a.stall_ratio}x and "
-              f"{a.stall_s:g} s (stall), or the mean time of the re-reads in a player's first 6 s by "
-              f"{a.rescan_ratio}x and {a.rescan_ms:g} ms; or where the audio it held after 5 s is below base's "
-              f"lowest by {a.audio_ratio}x and {a.audio_s:g} s; or where a player that opens its track after "
-              f"re-reading heads opened it later than base's latest by {a.open_ratio}x and {a.open_s:g} s.")]
-    text = "\n".join(lines) + "\n"
+    text, failed = verdict(a, res, time.monotonic() - started)
     print(text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
