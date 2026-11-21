@@ -55,6 +55,8 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"
+# Every unsafe block and unsafe impl says why it is sound, in a SAFETY comment.
+undocumented_unsafe_blocks = "deny"
 
 [profile.release]
 overflow-checks = true
