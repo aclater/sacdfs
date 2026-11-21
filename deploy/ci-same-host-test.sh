@@ -72,4 +72,11 @@ timeout 60 bash -c "until [ \"\$(${rt[*]} inspect -f '{{.RestartCount}} {{.State
     { echo "the container was not started again"; exit 1; }
 "$here/ci-wait-healthy.sh" "$srv"
 check "sacdfs killed"
+# Stopped, the mount point left in the host directory is unreadable (mode 000), not an empty
+# folder that a NAS's own share of the directory would show to players (#522).
+"${rt[@]}" stop -t 20 "$srv" >/dev/null
+mode=$(stat -c %a "$dir/sacd")
+[ "$mode" = 0 ] || { echo "stopped: the mount point has mode $mode, not 000"; exit 1; }
+if "${rt[@]}" exec "$reader" ls /music/sacd >/dev/null 2>&1; then echo "stopped: the reader can list the mount point"; exit 1; fi
+echo "same host, stopped: the mount point is unreadable"
 echo "same-host test passed: $image"

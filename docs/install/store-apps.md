@@ -1,9 +1,11 @@
 # Unraid and TrueNAS app-store entries
 
 sacdfs has an Unraid Community Applications template and a TrueNAS catalog app definition in
-the repository. **Neither is listed in a store yet** (listing is a separate step, after
-review by each store's maintainers). This page says what is in the repository, how to use
-the Unraid template today, and what was checked where.
+the repository. The TrueNAS app is listed in the community train of the TrueNAS apps catalog
+(since 2026-11-18): install it from Apps, Discover Apps, as in the
+[TrueNAS SCALE guide](truenas-scale.md#install-from-the-apps-screen). The Unraid template isn't
+listed yet. This page says what is in the repository, how to use the Unraid template today,
+and what was checked where.
 
 Both entries run the same published image as [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml):
 `ghcr.io/aclater/sacdfs:0.6.5`, with the FUSE device, all capabilities dropped but the seven
@@ -27,11 +29,25 @@ Directory: [deploy/truenas/sacdfs/](../../deploy/truenas/sacdfs/), in the layout
 `ix-dev/community/<app>` folders of the TrueNAS apps catalog (`app.yaml`, `ix_values.yaml`,
 `questions.yaml`, `templates/docker-compose.yaml`, test values). The form asks for the folder
 that holds your images (read-only), the ports, an optional SMB user and password, NFS clients,
-formats, and storage for the index cache.
+formats, and storage for the index cache. **Mount Folder** (off by default) binds a dataset over
+`/srv` with `rshared`, so sacdfs's files appear in it for TrueNAS's own SMB share on port 445
+([guide](truenas-scale.md#share-through-truenass-own-smb-port-445)); **SMB Share From The App** and
+**NFS Export From The App** (on by default) turn the app's own servers, their ports and their
+capabilities off. These three are not in the listed catalog app yet (#522).
 
-**You can't install it from this directory.** TrueNAS installs catalog apps only from its
-catalog, so until sacdfs is accepted there, use the [TrueNAS SCALE guide](truenas-scale.md)
-("Install via YAML"), which has the same settings and was run on TrueNAS.
+**Install from the catalog, not from this directory.** TrueNAS installs catalog apps only
+from its catalog: Apps, Discover Apps, search `sacdfs` ([guide](truenas-scale.md#install-from-the-apps-screen)).
+The listed app is the catalog's copy and is updated there: new sacdfs releases reach it through
+the catalog maintainers' automated update pull requests, so it can trail a release. Its form
+differs from this directory's: SMB and NFS ports default to 30602 and 30603, and it has no
+Formats or One Folder Per Disc options. For those, use "Install via YAML"
+([guide](truenas-scale.md#or-install-with-yaml)).
+
+**What was checked from the catalog (0.7.0).** On TrueNAS SCALE 25.10.8 in a VM, with its
+standard catalog: sacdfs listed in the community train, installed as a guest through the API
+calls behind the Apps screen, healthy 11.7 s after the install call; 910 DSF and WAV files of the
+test corpus identical to a reference over SMB; stop and start; uninstall. Details and what wasn't
+run: [truenas-scale.md](truenas-scale.md#what-was-checked).
 
 **What was checked on TrueNAS (0.6.4).** On TrueNAS SCALE 25.10.8 in a VM, not on TrueNAS
 hardware, the app at 0.6.4 (version 1.0.2) was rendered by the catalog's own tooling for both test
@@ -74,7 +90,7 @@ set above: healthy, the SMB share on 10445 listed the files as a guest, and the 
 password set in the second value set worked. Nothing was run on Unraid, which is why the Unraid
 steps stay marked untested.
 
-Two things the catalog's maintainers will weigh, noted here so nobody is surprised:
+Two things the catalog's maintainers weighed before listing it:
 
 - The app runs as root with `/dev/fuse` and seven capabilities, among them `SYS_ADMIN` and
   `DAC_READ_SEARCH`. sacdfs cannot mount without them, nor NFS-Ganesha serve
@@ -94,8 +110,8 @@ The mark is an original drawing of a disc rising out of a folder, with a wavefor
 - [deploy/icon.png](../../deploy/icon.png): 512 x 512 PNG, 8-bit with transparency, exported from the SVG.
   Unraid's template and `ca_profile.xml` point to its raw URL on `main`.
 - TrueNAS hosts catalog icons on its own CDN. The app's `icon:` and `icon_url:` already carry the
-  CDN path the catalog uses (`.../apps/sacdfs/icons/icon.svg`); the catalog's reviewers upload the
-  file from the pull request and confirm the URL. The SVG is the file to attach.
+  CDN path the catalog uses (`.../apps/sacdfs/icons/icon.svg`), which serves the SVG since the
+  listing.
 
 Requirements this was checked against. The apps catalog's contribution guide says icons and
 screenshots go on the TrueNAS CDN and are uploaded by the reviewer from the pull request; most

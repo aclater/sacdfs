@@ -58,8 +58,9 @@ Synology NAS; type your own folder instead.
    [guide per NAS and player](docs/install/README.md#pick-a-guide) shows how.
 
 Add `--dry-run` to the installer to see what it would change first, and `--uninstall` to remove
-sacdfs again. No `curl`, checking the download first, or TrueNAS: see the
-[install guide](docs/install/README.md). Other ways in: [container](docs/install/docker-podman.md)
+sacdfs again. No `curl`, or checking the download first: see the
+[install guide](docs/install/README.md). On TrueNAS SCALE, install it from Apps, Discover Apps
+([guide](docs/install/truenas-scale.md)). Other ways in: [container](docs/install/docker-podman.md)
 · [release binary or source](docs/install/binary.md).
 
 **Have a NAS?** Tell us how it went on real hardware: [beta testing](docs/beta-testing.md).
