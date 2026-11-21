@@ -628,10 +628,17 @@ fn losses(
     if t.dff_artist.as_deref().is_some_and(|v| Some(v) != served_text("TPE1")) {
         l.add("DIIN/DIAR");
     }
+    add_dff_other(&mut l, t);
+    l
+}
+
+/// Adds the other DFF chunks of `t` to `l`: those listed, then those past the list's bound,
+/// which [`Losses::add`] would count in `more` as well (the list holds as many as it lists).
+fn add_dff_other(l: &mut Losses, t: &container::TagPlace) {
     for o in &t.dff_other {
         l.add(o);
     }
-    l
+    l.more = l.more.saturating_add(t.dff_other_more);
 }
 
 /// The outcome of a run.
@@ -1051,6 +1058,27 @@ fn progress_loop(done: &AtomicUsize, total: usize, kept: usize, read: &AtomicU64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn other_dff_chunks_past_the_list_give_the_same_losses() {
+        // 33 other chunks: the file keeps the first 32 and counts one more; added one by one,
+        // all 33 give the same.
+        let keys: Vec<String> = (0..33).map(|i| format!("DIIN/{i:04}")).collect();
+        let mut each = Losses::default();
+        for k in &keys {
+            each.add(k);
+        }
+        let t = container::TagPlace {
+            dff_other: keys[..id3::MAX_OTHER].to_vec(),
+            dff_other_more: 1,
+            ..container::TagPlace::default()
+        };
+        let mut kept = Losses::default();
+        add_dff_other(&mut kept, &t);
+        assert_eq!(kept, each);
+        assert_eq!(kept.render(), each.render());
+        assert!(kept.render().ends_with("|+1 more"), "{}", kept.render());
+    }
 
     /// A library of one image, and its track files as extracts beside it.
     fn library(dir: &Path) -> (PathBuf, Vec<PathBuf>) {
