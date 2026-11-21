@@ -247,8 +247,22 @@ pub struct TagPlace {
     pub dff_title: Option<String>,
     /// See `dff_title`.
     pub dff_artist: Option<String>,
-    /// DFF only: other informational chunks (COMT, MANF, DIIN/EMID, DIIN/MARK).
+    /// DFF only: other informational chunks (COMT, MANF, DIIN/EMID, DIIN/MARK), the first
+    /// [`MAX_OTHER`](super::id3::MAX_OTHER) of them: as many as the report lists.
     pub dff_other: Vec<String>,
+    /// DFF only: how many more such chunks there were, not in `dff_other`.
+    pub dff_other_more: usize,
+}
+
+impl TagPlace {
+    /// Adds a DFF chunk to `dff_other` if it has room, else counts it in `dff_other_more`.
+    fn note_other(&mut self, key: String) {
+        if self.dff_other.len() < super::id3::MAX_OTHER {
+            self.dff_other.push(key);
+        } else {
+            self.dff_other_more = self.dff_other_more.saturating_add(1);
+        }
+    }
 }
 
 /// A DSD file whose audio can be read.
@@ -477,12 +491,12 @@ fn parse_dff(src: &mut dyn Source) -> Result<Audio, Problem> {
                     match &sid {
                         b"DITI" => tags.dff_title = dff_text(src, sdata, ssize, end)?,
                         b"DIAR" => tags.dff_artist = dff_text(src, sdata, ssize, end)?,
-                        other => tags.dff_other.push(format!("DIIN/{}", id_text(other))),
+                        other => tags.note_other(format!("DIIN/{}", id_text(other))),
                     }
                     Ok(())
                 })?;
             }
-            b"COMT" | b"MANF" => tags.dff_other.push(id_text(&id)),
+            b"COMT" | b"MANF" => tags.note_other(id_text(&id)),
             _ => {}
         }
         Ok(())
@@ -986,6 +1000,36 @@ mod tests {
         assert_eq!(a.tags.dff_title.as_deref(), Some("Title"));
         assert_eq!(a.tags.dff_artist.as_deref(), Some("Artist"));
         assert_eq!(a.tags.dff_other, vec!["DIIN/EMID".to_owned()]);
+        assert_eq!(a.tags.dff_other_more, 0);
+    }
+
+    /// A DFF file whose DIIN chunk holds `n` chunks of a few bytes, numbered from 0000.
+    fn dff_with_diin(n: usize) -> Vec<u8> {
+        let mut diin = Vec::new();
+        for i in 0..n {
+            diin.extend_from_slice(format!("{i:04}").as_bytes());
+            diin.extend_from_slice(&2u64.to_be_bytes());
+            diin.extend_from_slice(b"ab");
+        }
+        let mut extra = b"DIIN".to_vec();
+        extra.extend_from_slice(&(diin.len() as u64).to_be_bytes());
+        extra.extend_from_slice(&diin);
+        dff(&sample(20), 2, b"DSD ", &extra)
+    }
+
+    #[test]
+    fn dff_keeps_as_many_other_chunks_as_the_report_lists() {
+        for (n, kept, more) in [(super::super::id3::MAX_OTHER, 32, 0), (33, 32, 1), (4000, 32, 4000 - 32)] {
+            let f = dff_with_diin(n);
+            let mut s: &[u8] = &f;
+            let a = parse(&mut s).unwrap();
+            assert_eq!((a.channels, a.samples), (2, 80), "{n} chunks");
+            assert_eq!(a.tags.dff_other.len(), kept, "{n} chunks");
+            assert_eq!(a.tags.dff_other_more, more, "{n} chunks");
+            assert_eq!(a.tags.dff_other.first().map(String::as_str), Some("DIIN/0000"));
+            assert_eq!(a.tags.dff_other.last(), Some(&format!("DIIN/{:04}", kept - 1)));
+            assert_eq!(canon_of(&f), sample(20));
+        }
     }
 
     /// A FIFO in place of a track file is refused at once: opening it must not wait for a
