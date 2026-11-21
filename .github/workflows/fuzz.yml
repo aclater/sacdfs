@@ -1,7 +1,10 @@
 # Fuzzing sacdfs's own parsers and paths (#161; fuzz/README.md): about 60 s per target on every
 # pull request and push to main, 20 minutes per target every week, from the corpus the last
 # weekly run left. Not a required check: a fuzzer can find an old bug in any run, and that
-# shouldn't block an unrelated pull request.
+# shouldn't block an unrelated pull request. "fuzz (i686)" runs the same targets as 32-bit
+# x86 programs (#498), so that overflows of a 32-bit usize are searched for too: built for
+# i686-unknown-linux-gnu (libFuzzer needs glibc and C++, so not the release's musl target) without
+# AddressSanitizer, which Rust doesn't offer there, with the same overflow checks.
 name: fuzz
 
 on:
@@ -25,32 +28,67 @@ env:
 
 jobs:
   fuzz:
-    name: fuzz
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ github.event_name == 'schedule' && 90 || 20 }}
+    timeout-minutes: ${{ github.event_name == 'schedule' && 90 || 25 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fuzz
+            # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh.
+            image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+            triple: ""
+            packages: ""
+            cache: v0-rust-ubi10
+            artifact: fuzz-crashes
+            options: ""
+          - name: fuzz (i686)
+            # Fedora 44, pinned by digest: UBI 10 has no 32-bit C and C++ libraries.
+            image: registry.fedoraproject.org/fedora@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
+            triple: i686-unknown-linux-gnu
+            # libstdc++-devel for x86_64 too: g++ -m32 reads its 32/ headers, and the .i686 one
+            # alone satisfies gcc-c++.
+            packages: >-
+              shadow-utils util-linux libstdc++-devel.x86_64
+              glibc-devel.i686 libstdc++-devel.i686 libgcc.i686 libatomic.i686
+            cache: v0-rust-fedora44-i686
+            artifact: fuzz-crashes-i686
+            # Docker's default seccomp profile on the runner answers 32-bit socketpair with
+            # ENOSYS, so nfs_rpc's runtime can't start; the job runs only our own build.
+            options: --security-opt seccomp=unconfined
     container:
-      # UBI 10 (ubi10/ubi 10.3), pinned by digest. See .github/scripts/ci-container-setup.sh.
-      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+      image: ${{ matrix.image }}
+      options: ${{ matrix.options }}
+    env:
+      FUZZ_TRIPLE: ${{ matrix.triple }}  # fuzz/run.sh: the Rust target, or the host's when empty
     defaults:
       run:
         shell: runuser -u ci -- bash --noprofile --norc -eo pipefail {0}
     steps:
       - name: Packages
         shell: bash
-        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc gcc-c++ && dnf clean all
+        env:
+          PACKAGES: ${{ matrix.packages }}
+        run: |
+          # shellcheck disable=SC2086 # a list of packages
+          dnf -y -q --setopt=install_weak_deps=False install git-core gcc gcc-c++ $PACKAGES && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
         shell: bash
         run: .github/scripts/ci-container-setup.sh "$RUST_NIGHTLY"
+      - name: The 32-bit standard library
+        if: matrix.triple != ''
+        run: rustup target add "$FUZZ_TRIPLE"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           workspaces: |
             . -> target
             fuzz -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
-          prefix-key: v0-rust-ubi10
+          prefix-key: ${{ matrix.cache }}
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         if: github.event_name == 'schedule'
         with:
@@ -65,15 +103,16 @@ jobs:
         env:
           SECONDS_PER_TARGET: ${{ github.event_name == 'schedule' && 1200 || 60 }}
         run: fuzz/run.sh "$SECONDS_PER_TARGET" 4 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The corpus is the same for both: only the 64-bit job keeps it.
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        if: github.event_name == 'schedule' && !cancelled()
+        if: github.event_name == 'schedule' && !cancelled() && matrix.triple == ''
         with:
           path: fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: failure()
         with:
-          name: fuzz-crashes
+          name: ${{ matrix.artifact }}
           path: |
             fuzz/artifacts/
             fuzz/logs/

@@ -375,7 +375,7 @@ The release checklist runs this before every release candidate ([test plan](test
 
 Not a leak tool, but it runs the same way: `fuzz/` holds cargo-fuzz targets for sacdfs's own
 parsers and paths (#161), for about 60 s each on every pull request and 20 minutes each every
-week. See [fuzz/README.md](../fuzz/README.md).
+week, as 64-bit and as 32-bit x86 programs (#498). See [fuzz/README.md](../fuzz/README.md).
 
 ## Results
 
