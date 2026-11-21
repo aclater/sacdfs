@@ -67,6 +67,12 @@ class Parse(unittest.TestCase):
         self.assertEqual((out.passed, out.failed, out.ignored_count), (5, 0, 2))
         self.assertEqual(out.ran, 3)  # libtest's 5 passed hold the 2 guards' tests
 
+    def test_a_marker_glued_to_another_tests_ok_is_read(self):
+        # Seen in CI: "test the_daily_budget_holds ... okSKIPPED acoustid::...: no fpcalc".
+        for ok in ("ok", "\x1b[32mok\x1b[0m"):
+            out = check_skips.parse(f"Running tests/x.rs (x)\ntest a ... {ok}SKIPPED x::b: why\ntest b ... ok\n")
+            self.assertEqual(out.guarded, {"x::b": "why"})
+
     def test_same_test_name_in_two_binaries_stays_apart(self):
         out = check_skips.parse(
             "Running tests/wav.rs (x)\ntest real_discs ... ignored, a\n"
