@@ -83,8 +83,8 @@ pub fn status(e: vfs::Error) -> FspError {
         vfs::Error::Stale => nt(STATUS_FILE_INVALID),
         vfs::Error::BadHandle => nt(STATUS_INVALID_HANDLE),
         vfs::Error::Io => nt(STATUS_UNEXPECTED_IO_ERROR),
-        // The sidecar cap: the core's own `Os` code, an errno value.
-        vfs::Error::Os(libc::EMFILE) => nt(STATUS_TOO_MANY_OPENED_FILES),
+        // The sidecar cap: the core's own `Os` code, which on Windows is a Win32 error code too.
+        vfs::Error::Os(sacdfs::platform::TOO_MANY_OPEN_FILES) => nt(STATUS_TOO_MANY_OPENED_FILES),
         // A source file's own error: on Windows a Win32 error code.
         vfs::Error::Os(n) => FspError::WIN32(n as u32),
     }
