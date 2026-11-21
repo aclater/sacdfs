@@ -121,7 +121,8 @@ pub fn open_regular(path: &Path) -> io::Result<File> {
 
 fn seek(file: &File, at: u64, whence: nix::unistd::Whence) -> Result<u64, nix::errno::Errno> {
     use std::os::fd::AsFd;
-    let at = i64::try_from(at).map_err(|_| nix::errno::Errno::EOVERFLOW)?;
+    // off_t: 32 bits on 32-bit glibc (the i686 fuzz build, #498), 64 everywhere else.
+    let at = libc::off_t::try_from(at).map_err(|_| nix::errno::Errno::EOVERFLOW)?;
     nix::unistd::lseek(file.as_fd(), at, whence).map(|p| u64::try_from(p).unwrap_or(0))
 }
 
