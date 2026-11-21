@@ -67,6 +67,9 @@ All notable changes to sacdfs are recorded here. The format follows
   new i686 fuzz job. Mounting is not affected, and released builds are 64-bit.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
+- **CI: the folder-warming tests failed on busy runners (#563).** They took wall-clock gaps
+  between reads as the mount's quiet; they now set the warmer's clock themselves. Tests only; the
+  warmer behaves as before.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
   it lists the album, and when playback starts, often minutes later, re-reads the head of every
   other file of the album before it opens the track. On a 32-bit Atom the first start after a
