@@ -78,7 +78,7 @@ class Mount:
 
     def __exit__(self, *exc):
         for _ in range(50):
-            if subprocess.run(["fusermount3", "-u", self.dir], stderr=subprocess.DEVNULL).returncode == 0:
+            if subprocess.run(["fusermount3", "-u", self.dir], stderr=subprocess.DEVNULL, check=False).returncode == 0:
                 break
             time.sleep(0.2)
         deadline = time.monotonic() + 30
@@ -246,8 +246,8 @@ def main():
     med = lambda runs, k: statistics.median(x[k] for x in runs)
     top = lambda runs, k, f=max: f(x[k] for x in runs)
     lines = [f"## Player stall gate ({a.rounds} rounds, sacdfs at {a.quota}% of one CPU on CPUs {a.cpus})", "",
-             "| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | Audio by 5 s, base → head (s) "
-             "| Re-reads, base → head (ms) | |",
+             ("| Scenario | Worst read, base → head (ms) | Stalled, base → head (s) | Audio by 5 s, base → head (s) "
+              "| Re-reads, base → head (ms) | |"),
              "|---|---|---|---|---|---|"]
     failed = []
     for s in a.scenarios:
@@ -259,7 +259,7 @@ def main():
             bad.append("worst read")
         if hs > bst * a.stall_ratio and hs > bst + a.stall_s:
             bad.append("stall")
-        rng = lambda b, k: f"{min(x[k] for x in res[s][b]):g}-{max(x[k] for x in res[s][b]):g}"
+        rng = lambda b, k, s=s: f"{min(x[k] for x in res[s][b]):g}-{max(x[k] for x in res[s][b]):g}"
         ba, ha = top(res[s]["base"], "audio_by_5s", min), med(res[s]["head"], "audio_by_5s")
         if ha < ba / a.audio_ratio and ha < ba - a.audio_s:
             bad.append("audio by 5 s")
@@ -285,13 +285,13 @@ def main():
                      f"| {med(res[s]['base'], 'audio_by_5s'):.2f} → {ha:.2f} ({rng('base', 'audio_by_5s')} / "
                      f"{rng('head', 'audio_by_5s')}) | {re} "
                      f"| {'**WORSE**: ' + ', '.join(bad) if bad else 'ok'} |")
-    lines += ["", f"Medians (ranges base / head) of the first {a.secs:g} s after the playing file opened; "
+    lines += ["", (f"Medians (ranges base / head) of the first {a.secs:g} s after the playing file opened; "
               f"measured in {time.monotonic() - started:.0f} s. Head fails where its median is above base's "
               f"highest by more than {a.worst_ratio}x and {a.worst_ms:g} ms (worst read) or {a.stall_ratio}x and "
               f"{a.stall_s:g} s (stall), or the mean time of the re-reads in a player's first 6 s by "
               f"{a.rescan_ratio}x and {a.rescan_ms:g} ms; or where the audio it held after 5 s is below base's "
               f"lowest by {a.audio_ratio}x and {a.audio_s:g} s; or where a player that opens its track after "
-              f"re-reading heads opened it later than base's latest by {a.open_ratio}x and {a.open_s:g} s."]
+              f"re-reading heads opened it later than base's latest by {a.open_ratio}x and {a.open_s:g} s.")]
     text = "\n".join(lines) + "\n"
     print(text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):

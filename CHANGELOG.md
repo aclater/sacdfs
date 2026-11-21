@@ -47,6 +47,14 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Changed
+- **install.sh verifies release files beside it against built-in checksums.** Run from an
+  unpacked release archive, it copies `sacdfs`, `sacdfs-ctl`, `sacdfs.service` and
+  `nas-compose.yaml` into its temporary folder and uses those copies only when each matches the
+  SHA-256 the release workflow built into it (the copy in each archive carries that archive's,
+  the installer published on its own every archive's); if one is missing or doesn't match, it
+  uses none of them and downloads the release, as the one-liner does. A copy of `install.sh`
+  from the repository has no such checksums and always downloads. Unpacking as yourself and
+  running `sudo sh install.sh` works as before. See docs/install/README.md.
 - **The installer on 32-bit x86 (#500)** (an `i686` kernel, or an x86-64 kernel with 32-bit
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
