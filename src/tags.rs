@@ -326,9 +326,9 @@ fn without_custom(set: &TagSet, custom: &[(String, String)]) -> TagSet {
 /// `set` with the control characters (C0, DEL and C1) of its values and descriptions removed,
 /// line breaks kept in the messages only. *Why:* scarletbook 0.6.0 keeps control characters in
 /// the strings of a TOC (all of them in ISRCs and catalogue numbers, DEL and C1 in free text),
-/// and sacdfs filters what it writes itself rather than rely on the ID3 writer's own removal
-/// (W9). This is what that removal does, so the writer finds nothing left and the tag's bytes
-/// are the same.
+/// and sacdfs filters what it writes itself rather than rely on the ID3 writer's own removal.
+/// This is what that removal does, so the writer finds nothing left and the tag's bytes are
+/// the same.
 pub fn without_controls(set: &TagSet) -> TagSet {
     let dirty = |s: &str| s.chars().any(char::is_control);
     if !ALL_ITEMS.iter().any(|i| set.get(*i).iter().any(|v| dirty(v)))
@@ -885,8 +885,6 @@ impl Stamp {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
 
     const EXAMPLE: &str = r#"
@@ -999,7 +997,8 @@ TIT2 = "Three (stereo)"
         let d = tempfile::tempdir().unwrap();
         let tags = d.path().join("tags");
         fs::create_dir_all(&tags).unwrap();
-        // Only this test installs a store in this process; no other unit test opens a disc.
+        // Only this test installs a store in this process; the other unit tests that open a disc
+        // find no tags file for it in this store.
         install(Some(Store::new(&tags)));
         let key = "0123456789abcdef0123456789abcdef";
         let image = d.path().join("a.iso");
