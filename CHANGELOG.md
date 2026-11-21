@@ -51,6 +51,11 @@ All notable changes to sacdfs are recorded here. The format follows
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
   unsupported-system report and form.
+- **Docs: library scans on slow NAS units (#505).** docs/deployment.md gives the CPU cost per disc
+  of MPD, Jellyfin and Navidrome first scans at Atom speed with `dsf`, `wav` and `dsf,wav`, and
+  recommends `--format dsf` for MPD and Jellyfin on such units; docs/install/binary.md says so
+  for the 32-bit build. Code changes were measured and would not help: the cost is the WAV
+  audio the scanners ask for.
 
 ### Fixed
 - **32-bit only: an ID3v2.3 extended header near 4 GiB (#498).** The fix for #457 checked the
