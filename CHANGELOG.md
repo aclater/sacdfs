@@ -51,11 +51,13 @@ All notable changes to sacdfs are recorded here. The format follows
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
   unsupported-system report and form.
-- **The container ignores three settings it cannot use, with a warning.** `SMB_LOG_LEVEL`
-  takes a number from 0 to 99, `NFS_LOG_LEVEL` one of NFS-Ganesha's level names (`EVENT`,
-  `INFO`, `DEBUG` ...; docs/deployment.md lists them), and `SMB_EXTRA_GLOBAL` a single line that
-  does not start with `[`. For any other value the entry point logs one warning that names the
-  setting and what it takes, then starts with the default log level, or without the extra line.
+- **The container ignores log levels it cannot use, and section lines in `SMB_EXTRA_GLOBAL`,
+  with a warning.** `SMB_LOG_LEVEL` takes a number from 0 to 99 and `NFS_LOG_LEVEL` one of
+  NFS-Ganesha's level names (`EVENT`, `INFO`, `DEBUG` ...; docs/deployment.md lists them); for
+  any other value the entry point logs one warning that names the setting and what it takes, and
+  starts with the default. `SMB_EXTRA_GLOBAL` takes several lines for the `[global]` section, ending
+  in LF, CRLF or CR; from a line that opens a section (starts with `[`) on, the value
+  is ignored, with one warning, and the lines before it are kept.
   The SMB password is removed from the entry point's environment once `smbpasswd` has it, so smbd
   and NFS-Ganesha start without it.
 

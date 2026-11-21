@@ -64,19 +64,31 @@ MOUNT_TIMEOUT=${SACDFS_MOUNT_TIMEOUT:-300}
 # --- SMB settings -----------------------------------------------------------------------
 SHARE=${SHARE_NAME:-sacd}
 [[ $SHARE =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "SHARE_NAME must be 1 to 64 of A-Z a-z 0-9 . _ -"
-# A value these don't take is ignored with a warning, and the container starts with the default.
+# A log level it doesn't take is ignored with a warning, and the container starts with the default.
 SMB_LEVEL=${SMB_LOG_LEVEL:-1}
-SMB_EXTRA=${SMB_EXTRA_GLOBAL:-}
+# SMB_EXTRA_GLOBAL: lines for the [global] section, each written indented like the lines around
+# it. A line may end in LF, CRLF or CR; no CR is written. From a line that opens a section ([...])
+# on, the value is ignored with a warning; the lines before it are kept.
+SMB_EXTRA=
 if on "${SMB:-1}"; then
     if ! [[ $SMB_LEVEL =~ ^[0-9]{1,2}$ ]]; then
         warn_setting "SMB_LOG_LEVEL takes a number from 0 to 99; ignoring it and using 1"
         SMB_LEVEL=1
     fi
-    # One line of the [global] section: no line break, and no new section ([...]).
-    if [[ $SMB_EXTRA == *[$'\n\r']* || $SMB_EXTRA =~ ^[[:space:]]*\[ ]]; then
-        warn_setting "SMB_EXTRA_GLOBAL takes a single smb.conf line for the [global] section, such as 'server min protocol = SMB3', with no line break and not starting with [; ignoring it"
-        SMB_EXTRA=
-    fi
+    extra=${SMB_EXTRA_GLOBAL:-}
+    extra=${extra//$'\r\n'/$'\n'}
+    extra=${extra//$'\r'/$'\n'}
+    while [[ $extra == *$'\n' ]]; do extra=${extra%$'\n'}; done
+    first=1
+    while IFS= read -r line; do
+        if [[ $line =~ ^[[:space:]]*\[ ]]; then
+            warn_setting "SMB_EXTRA_GLOBAL takes lines for the [global] section only, such as 'server min protocol = SMB3'; ignoring it from the line that starts a section ([...]) on"
+            break
+        fi
+        if [ "$first" = 1 ]; then SMB_EXTRA=$line; else SMB_EXTRA+=$'\n   '$line; fi
+        first=0
+    done <<<"$extra"
+    unset extra first line
 fi
 write_smb_conf() {
     local access
