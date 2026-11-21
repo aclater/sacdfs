@@ -6,6 +6,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+- **6-channel decoding re-measured on a hybrid CPU (#493).** docs/design.md now records that 6-channel
+  WAV reads on 20 threads are decoded in groups on main, so they no longer trail 0.6.5 on the
+  i9-13900H, and that the remaining single-frame gap is in scarletbook (scarletbook-rs #378).
+
 ### Added
 - **Fuzzing on 32-bit x86 (#498).** The fuzz workflow now also runs every target as a 32-bit x86
   program (`i686-unknown-linux-gnu`, without AddressSanitizer, which Rust doesn't offer there),

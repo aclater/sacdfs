@@ -1222,10 +1222,14 @@ frames per thread and stays ungrouped, which is faster there: grouped it took 13
 because the batch ends with its slowest group and two SMT threads per core leave a group little
 to gain. *Alternatives:* 4 or 2 (as fast on the 20-thread CPU, 13 % slower on the 32-thread
 one); choosing by measuring both ways at run time. *Trade-off:* the threshold comes from two
-CPUs and today's batch sizes. WAV reads of 6 channels come in batches of about 100 frames, 4 to
-5 per thread on 20 threads, and stay ungrouped: grouping them would make them 6 % faster there,
-but the same frames per thread are the 32-thread case that grouping makes slower, so no
-threshold serves both; that needs the run-time choice.
+CPUs and today's batch sizes. In 0.7.0, WAV reads of 6 channels came in batches of about 100
+frames, 4 to 5 per thread on 20 threads, and stayed ungrouped. On main since the decode-ahead
+changes after 0.7.0 they reach the threshold on 20 threads and are grouped: re-measured on the
+i9-13900H (#493), two real discs' multichannel areas read about 3 % faster than 0.6.5 as WAV and
+1 to 2 % faster as DSF, and forcing single frames makes WAV 8 % slower. So no run-time choice is
+needed for the regression. What stays slower is a lone 6-channel frame on a P-core (scarletbook
+0.6.1: 12 % behind 0.5.9 on one thread; tracked in scarletbook-rs #378), which sacdfs now only
+decodes in short batches.
 
 *Why demultiplexing overlaps decoding (#210):* the thread reading the batch demultiplexes and
 hands frames to the pool as it finds them (`in_place_scope`), so the decoder threads no longer
