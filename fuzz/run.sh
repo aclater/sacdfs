@@ -4,6 +4,10 @@
 # crashes; the input that did it is in fuzz/artifacts/<target>/. See fuzz/README.md.
 #
 #   fuzz/run.sh SECONDS JOBS [TARGET...]
+#
+# FUZZ_TRIPLE=i686-unknown-linux-gnu builds and runs the targets for that Rust target instead of
+# the host's (#498), without AddressSanitizer, which Rust doesn't offer there; overflow checks
+# stay on (fuzz/Cargo.toml).
 set -u
 
 seconds=${1:?usage: fuzz/run.sh SECONDS JOBS [TARGET...]}
@@ -11,8 +15,16 @@ jobs=${2:?usage: fuzz/run.sh SECONDS JOBS [TARGET...]}
 shift 2
 cd "$(dirname "$0")/.." || exit 2
 
+fuzz_args=()
+if [ -n "${FUZZ_TRIPLE:-}" ]; then
+    fuzz_args=(--target "$FUZZ_TRIPLE" --sanitizer none)
+    # libFuzzer's C++ (cc-rs): the host's gcc and g++, which add -m32 for i686, unless set.
+    t=${FUZZ_TRIPLE//-/_}
+    export "CC_$t=$(printenv "CC_$t" || echo gcc)" "CXX_$t=$(printenv "CXX_$t" || echo g++)"
+fi
+
 cargo run --locked --quiet --example fuzz_seeds -- fuzz/corpus || exit 2
-cargo fuzz build || exit 2
+cargo fuzz build "${fuzz_args[@]}" || exit 2
 
 if [ $# -gt 0 ]; then
     targets=("$@")
@@ -24,7 +36,8 @@ mkdir -p fuzz/logs
 # Inputs are parts of images and small files; 256 KiB holds a whole TOC region.
 run_one() {
     local log="fuzz/logs/$1.log"
-    if cargo fuzz run "$1" -- \
+    # shellcheck disable=SC2086 # the options, one word each
+    if cargo fuzz run $FUZZ_ARGS "$1" -- \
         -max_total_time="$seconds" -max_len=262144 -timeout=30 -rss_limit_mb=4096 \
         -print_final_stats=1 >"$log" 2>&1; then
         echo "ok    $1: $(grep -E '^stat::number_of_executed_units' "$log" | awk '{print $2}') runs"
@@ -36,6 +49,8 @@ run_one() {
 }
 export -f run_one
 export seconds
+FUZZ_ARGS="${fuzz_args[*]}"
+export FUZZ_ARGS
 
 printf '%s\n' "${targets[@]}" | xargs -P "$jobs" -I{} bash -c 'run_one {}'
 status=$?

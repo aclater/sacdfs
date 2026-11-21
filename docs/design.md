@@ -3315,7 +3315,18 @@ the owner's NAS already used.
   nightly toolchain, which stays away from sacdfs's build and locked dependencies.
   *Alternative:* longer runs on every pull request, rejected by the CI speed rule.
   *Trade-off:* 60 s per target finds only the easy bugs, so a weekly run goes on for 20 minutes
-  per target from the corpus the last one left.
+  per target from the corpus the last one left. *32-bit x86 (#498):* a second job runs the same
+  targets built for `i686-unknown-linux-gnu`, since sizes folded into a 32-bit `usize` overflow
+  where 64-bit builds can't (#457, the listing budget in #488), and the saved regressions alone
+  only test what was already found. *Why not the release's `i686-unknown-linux-musl`:*
+  libFuzzer is C++ and cargo-fuzz links it against the target's glibc and libstdc++; the code
+  under test has the same 32-bit sizes either way. sacdfs builds there since #498, where 32-bit
+  glibc's `off_t` and `rlim_t` are 32 bits (a hole search past 2 GiB is `EOVERFLOW` in that
+  build only). *Why without AddressSanitizer:* Rust doesn't offer it for i686. Overflow checks,
+  panics and the targets' own checks still fail the run. *Why no seccomp filter in that job's
+  container:* the runner's Docker profile answers 32-bit `socketpair` with `ENOSYS`, so the NFS
+  target's runtime can't start; the job runs only our own build, with a read-only token.
+  *Trade-off:* memory errors in unsafe code are caught by the 64-bit job only.
 - **The corpus.** Integration tests run against the synthetic CC0 conformance corpus of
   [sacd-spec](https://github.com/aclater/sacd-spec) (copied into `tests/corpus/` with its
   licence). `tests/corpus.rs` reads every case through the tree and readers without
