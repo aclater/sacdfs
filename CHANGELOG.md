@@ -65,6 +65,10 @@ All notable changes to sacdfs are recorded here. The format follows
   header's size, but the frame header after it could still end past a 32-bit `usize`, which
   panicked `sacdfs verify` and `sacdfs tags import` on such a tag in the i686 build. Found by the
   new i686 fuzz job. Mounting is not affected, and released builds are 64-bit.
+- **Windows: a source file's error 24 is no longer reported as "too many open files".**
+  sacdfs-win compared the core's code for its limit on open sidecar files with the C library's
+  `EMFILE` (24) where the core sends Windows's `ERROR_TOO_MANY_OPEN_FILES` (4). The limit itself
+  was reported correctly before and still is (`STATUS_TOO_MANY_OPENED_FILES`).
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **CI: the folder-warming tests failed on busy runners (#563).** They took wall-clock gaps
