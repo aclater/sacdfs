@@ -21,7 +21,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # leaves no __pycache__ in the checkout
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import soak  # noqa: E402
+import soak
 
 MIB = 1024  # KiB
 
@@ -147,7 +147,7 @@ class MemoryTrend(unittest.TestCase):
 
     def test_step_trend_reports_the_step_it_set_aside(self):
         rows = [r for r in series(steps=[(83, 6.5)]) if r["t"] >= 3600]
-        rate, left, hours, step = soak.step_trend(rows, "rss_kb")
+        rate, _left, hours, step = soak.step_trend(rows, "rss_kb")
         self.assertAlmostEqual(step / MIB, 6.5, delta=1.5)
         self.assertLess(abs(rate / MIB), 3)
         self.assertGreater(hours, 0.4)
