@@ -46,6 +46,12 @@ All notable changes to sacdfs are recorded here. The format follows
   4-thread Atom's speed, and fails when head's worst read or stall time in the first 15 s is clearly
   above base's. See docs/performance.md, "The CI stall gate".
 
+### Changed
+- **The installer on 32-bit x86 (#500)** (an `i686` kernel, or an x86-64 kernel with 32-bit
+  programs) still stops before downloading anything, but now names the release's `i686` archive
+  with its download link and links docs/install/binary.md, "32-bit x86", instead of the
+  unsupported-system report and form.
+
 ### Fixed
 - **32-bit only: an ID3v2.3 extended header near 4 GiB (#498).** The fix for #457 checked the
   header's size, but the frame header after it could still end past a 32-bit `usize`, which
