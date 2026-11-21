@@ -24,11 +24,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use super::{
-    Client, Failure, MAX_FAILED_IN_A_ROW, Options, Outcome, Transport, WRITING, fetch_image, now_secs, path_hash,
-    stamp,
+    Client, Failure, MAX_FAILED_IN_A_ROW, Options, Outcome, Transport, WRITING, fetch_image, now_secs,
+    path_hash, stamp,
 };
 
 /// Wait after the mount before the first pass, so that a scanner's first look at a new mount
@@ -124,7 +124,6 @@ struct State {
     file: Option<PathBuf>,
     dirty: bool,
 }
-
 
 impl State {
     fn load(file: Option<PathBuf>) -> State {
