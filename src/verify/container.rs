@@ -16,10 +16,13 @@
 //! "Direct Stream Digital Interchange File Format: DSDIFF" 1.5. Container parsing only:
 //! no SACD format code.
 
+#![warn(clippy::cast_possible_truncation)]
+
 use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::Relaxed;
 
 use sha2::{Digest, Sha256};
 
@@ -273,13 +276,28 @@ pub enum Problem {
     Error(String),
 }
 
+impl Problem {
+    /// Its text, whichever kind it is.
+    pub fn into_text(self) -> String {
+        match self {
+            Problem::Unsupported(s) | Problem::Error(s) => s,
+        }
+    }
+}
+
+/// A read error `e` in the file's `place` ("headers", "audio"): an end of file there is a
+/// truncated file.
+fn read_problem(e: io::Error, place: &str) -> Problem {
+    if e.kind() == io::ErrorKind::UnexpectedEof {
+        Problem::Error(format!("truncated: the file ends inside its {place}"))
+    } else {
+        Problem::Error(format!("read error: {e}"))
+    }
+}
+
 impl From<io::Error> for Problem {
     fn from(e: io::Error) -> Self {
-        if e.kind() == io::ErrorKind::UnexpectedEof {
-            Problem::Error("truncated: the file ends inside its headers".to_owned())
-        } else {
-            Problem::Error(format!("read error: {e}"))
-        }
+        read_problem(e, "headers")
     }
 }
 
@@ -340,9 +358,10 @@ fn parse_dsf(src: &mut dyn Source) -> Result<Audio, Problem> {
     if format_id != 0 {
         return Err(Problem::Unsupported(format!("DSF format id {format_id} (only 0, raw DSD, is defined)")));
     }
-    if channels == 0 || channels > MAX_CHANNELS {
+    let Some(channels) = u8::try_from(channels).ok().filter(|&c| c != 0 && u32::from(c) <= MAX_CHANNELS)
+    else {
         return Err(Problem::Unsupported(format!("{channels} channels")));
-    }
+    };
     let lsb_first = match bits {
         1 => true,
         8 => false,
@@ -354,7 +373,7 @@ fn parse_dsf(src: &mut dyn Source) -> Result<Audio, Problem> {
     let data_at = dsd_size
         .checked_add(fmt_size)
         .filter(|&d| d <= len)
-        .ok_or_else(|| Problem::Error("truncated: the file ends inside its headers".to_owned()))?;
+        .ok_or_else(|| read_problem(io::ErrorKind::UnexpectedEof.into(), "headers"))?;
     let mut d = [0u8; 12];
     src.read_at(data_at, &mut d)?;
     if &d[0..4] != b"data" {
@@ -363,7 +382,7 @@ fn parse_dsf(src: &mut dyn Source) -> Result<Audio, Problem> {
     let start = data_at + 12;
     let audio = Audio {
         kind: Kind::Dsf,
-        channels: channels as u8,
+        channels,
         rate,
         samples,
         data: Data::Dsf { start, block, lsb_first },
@@ -413,31 +432,17 @@ fn parse_dff(src: &mut dyn Source) -> Result<Audio, Problem> {
     // A form that claims more than the file: walk what is there, and let the audio check
     // report the truncation.
     let form_end = form_data.saturating_add(form_size).min(len);
-    let mut at = form_data + 4;
     let (mut channels, mut rate, mut compression) = (None, None, None);
     let mut sound: Option<(u64, u64, [u8; 4])> = None;
     let mut tags = TagPlace::default();
-    let mut n = 0;
-    while form_end.saturating_sub(at) >= 12 {
-        n += 1;
-        if n > MAX_CHUNKS {
-            return err("too many chunks");
-        }
-        let (id, data, size) = dff_chunk(src, at, form_end)?;
+    walk_chunks(src, form_data + 4, form_end, &mut |src, id, data, size| {
         match &id {
             b"PROP" => {
                 let end = data.saturating_add(size).min(form_end);
                 let mut pt = [0u8; 4];
                 src.read_at(data, &mut pt)?;
                 if &pt == b"SND " {
-                    let mut p = data + 4;
-                    let mut m = 0;
-                    while end.saturating_sub(p) >= 12 {
-                        m += 1;
-                        if m > MAX_CHUNKS {
-                            return err("too many chunks");
-                        }
-                        let (sid, sdata, ssize) = dff_chunk(src, p, end)?;
+                    walk_chunks(src, data + 4, end, &mut |src, sid, sdata, ssize| {
                         match &sid {
                             b"FS  " if ssize >= 4 => {
                                 let mut b = [0u8; 4];
@@ -456,11 +461,8 @@ fn parse_dff(src: &mut dyn Source) -> Result<Audio, Problem> {
                             }
                             _ => {}
                         }
-                        p = match next_chunk(sdata, ssize) {
-                            Some(p) => p,
-                            None => break,
-                        };
-                    }
+                        Ok(())
+                    })?;
                 }
             }
             b"DSD " | b"DST " => {
@@ -471,33 +473,20 @@ fn parse_dff(src: &mut dyn Source) -> Result<Audio, Problem> {
             b"ID3 " => tags.id3 = Some((data, size.min(len.saturating_sub(data)))),
             b"DIIN" => {
                 let end = data.saturating_add(size).min(form_end);
-                let mut p = data;
-                let mut m = 0;
-                while end.saturating_sub(p) >= 12 {
-                    m += 1;
-                    if m > MAX_CHUNKS {
-                        return err("too many chunks");
-                    }
-                    let (sid, sdata, ssize) = dff_chunk(src, p, end)?;
+                walk_chunks(src, data, end, &mut |src, sid, sdata, ssize| {
                     match &sid {
                         b"DITI" => tags.dff_title = dff_text(src, sdata, ssize, end)?,
                         b"DIAR" => tags.dff_artist = dff_text(src, sdata, ssize, end)?,
                         other => tags.dff_other.push(format!("DIIN/{}", id_text(other))),
                     }
-                    p = match next_chunk(sdata, ssize) {
-                        Some(p) => p,
-                        None => break,
-                    };
-                }
+                    Ok(())
+                })?;
             }
             b"COMT" | b"MANF" => tags.dff_other.push(id_text(&id)),
             _ => {}
         }
-        at = match next_chunk(data, size) {
-            Some(p) => p,
-            None => break,
-        };
-    }
+        Ok(())
+    })?;
     let Some(channels) = channels else { return err("no channel count (PROP/CHNL)") };
     let Some(rate) = rate else { return err("no sampling frequency (PROP/FS)") };
     match compression.as_ref() {
@@ -515,22 +504,47 @@ fn parse_dff(src: &mut dyn Source) -> Result<Audio, Problem> {
     if &id == b"DST " {
         return Err(Problem::Unsupported("DST-compressed DFF (a DST chunk)".to_owned()));
     }
-    if channels == 0 || channels > MAX_CHANNELS {
+    let Some(channels) = u8::try_from(channels).ok().filter(|&c| c != 0 && u32::from(c) <= MAX_CHANNELS)
+    else {
         return Err(Problem::Unsupported(format!("{channels} channels")));
-    }
+    };
     if size % u64::from(channels) != 0 {
         return err(format!("sound data of {size} bytes is not a whole number of {channels}-channel bytes"));
     }
     let Some(samples) = (size / u64::from(channels)).checked_mul(8) else {
         return err("absurd sound data size");
     };
-    let audio =
-        Audio { kind: Kind::Dff, channels: channels as u8, rate, samples, data: Data::Dff { start }, tags };
+    let audio = Audio { kind: Kind::Dff, channels, rate, samples, data: Data::Dff { start }, tags };
     let need = audio.data_end().ok_or_else(|| Problem::Error("absurd sound data size".to_owned()))?;
     if need > len {
         return err(format!("truncated: the sound data needs {need} bytes, the file has {len}"));
     }
     Ok(audio)
+}
+
+/// What [`walk_chunks`] calls for each chunk, with the source, the chunk's id, data offset and
+/// data size.
+type ChunkVisitor<'a> = dyn FnMut(&mut dyn Source, [u8; 4], u64, u64) -> Result<(), Problem> + 'a;
+
+/// Walks the DFF chunks from `from` to `end`, at most [`MAX_CHUNKS`] of them: `f` gets each
+/// one's id, data offset and data size. A chunk header that runs past `end` is an error; a
+/// chunk whose end is past 2^64 ends the walk.
+fn walk_chunks(src: &mut dyn Source, from: u64, end: u64, f: &mut ChunkVisitor<'_>) -> Result<(), Problem> {
+    let mut at = from;
+    let mut n = 0;
+    while end.saturating_sub(at) >= 12 {
+        n += 1;
+        if n > MAX_CHUNKS {
+            return err("too many chunks");
+        }
+        let (id, data, size) = dff_chunk(src, at, end)?;
+        f(src, id, data, size)?;
+        at = match next_chunk(data, size) {
+            Some(p) => p,
+            None => break,
+        };
+    }
+    Ok(())
 }
 
 /// The offset of the chunk after one whose data starts at `data` (chunks are padded to an
@@ -553,6 +567,45 @@ fn dff_text(src: &mut dyn Source, data: u64, size: u64, end: u64) -> Result<Opti
     Ok((!s.is_empty()).then_some(s))
 }
 
+/// Where a DSF file's audio lies: groups of one block per channel, one after the other; the
+/// last group holds only the bytes left, and may lack the padding after the last channel's.
+#[derive(Clone, Copy, Debug)]
+struct DsfGeometry {
+    /// Bytes per channel.
+    bpc: u64,
+    /// Channels.
+    ch: u64,
+    /// Bytes per channel in a block.
+    block: u64,
+    /// Groups (none if there is no audio).
+    groups: u64,
+    /// Bytes per channel in the last group.
+    last: u64,
+}
+
+impl DsfGeometry {
+    /// The layout of `audio`'s blocks; `None` if it is no DSF file.
+    fn new(audio: &Audio) -> Option<DsfGeometry> {
+        let Data::Dsf { block, .. } = audio.data else { return None };
+        let bpc = audio.bytes_per_channel();
+        let groups = bpc.div_ceil(block);
+        let last = if groups == 0 { 0 } else { bpc - (groups - 1) * block };
+        Some(DsfGeometry { bpc, ch: u64::from(audio.channels), block, groups, last })
+    }
+
+    /// The offset just past the last audio byte, for audio that starts at `start`; `None` if
+    /// it is past 2^64.
+    fn end(&self, start: u64) -> Option<u64> {
+        if self.bpc == 0 {
+            return Some(start);
+        }
+        let group = self.block.checked_mul(self.ch)?;
+        start
+            .checked_add((self.groups - 1).checked_mul(group)?)?
+            .checked_add((self.ch - 1) * self.block + self.last)
+    }
+}
+
 impl Audio {
     /// Bytes per channel: whole bytes holding the samples.
     pub fn bytes_per_channel(&self) -> u64 {
@@ -567,19 +620,11 @@ impl Audio {
     /// The offset just past the last audio byte the samples need (not counting a DSF
     /// file's padding after the last channel's last byte).
     fn data_end(&self) -> Option<u64> {
-        let bpc = self.bytes_per_channel();
-        let ch = u64::from(self.channels);
         match self.data {
-            Data::Dff { start } => start.checked_add(bpc.checked_mul(ch)?),
-            Data::Dsf { start, block, .. } => {
-                if bpc == 0 {
-                    return Some(start);
-                }
-                let groups = bpc.div_ceil(block);
-                let last = bpc - (groups - 1) * block;
-                let group = block.checked_mul(ch)?;
-                start.checked_add((groups - 1).checked_mul(group)?)?.checked_add((ch - 1) * block + last)
+            Data::Dff { start } => {
+                start.checked_add(self.bytes_per_channel().checked_mul(u64::from(self.channels))?)
             }
+            Data::Dsf { start, .. } => DsfGeometry::new(self)?.end(start),
         }
     }
 
@@ -611,112 +656,140 @@ impl Audio {
         read: &AtomicU64,
         sink: &mut dyn FnMut(&[u8]) -> bool,
     ) -> Result<(), Problem> {
-        use std::sync::atomic::Ordering::Relaxed;
-        let bpc = self.bytes_per_channel();
-        let ch = u64::from(self.channels);
-        // The last byte's unused low bits (a sample count that is not a multiple of 8).
-        let tail_mask: u8 = match self.samples % 8 {
+        match self.data {
+            Data::Dff { start } => self.canonical_dff(src, read, sink, start),
+            Data::Dsf { start, lsb_first, .. } => match DsfGeometry::new(self) {
+                Some(geo) => self.canonical_dsf(src, read, sink, start, lsb_first, &geo),
+                None => Ok(()),
+            },
+        }
+    }
+
+    /// The mask of the last byte's used bits (a sample count that is not a multiple of 8
+    /// leaves its low bits unused).
+    fn tail_mask(&self) -> u8 {
+        match self.samples % 8 {
             0 => 0xFF,
             r => 0xFFu8 << (8 - r),
-        };
-        let io_err = |e: io::Error| {
-            if e.kind() == io::ErrorKind::UnexpectedEof {
-                Problem::Error("truncated: the file ends inside its audio".to_owned())
+        }
+    }
+
+    /// [`Audio::canonical_while`] of a DFF file, whose audio at `start` is canonical already.
+    fn canonical_dff(
+        &self,
+        src: &mut dyn Source,
+        read: &AtomicU64,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+        start: u64,
+    ) -> Result<(), Problem> {
+        let tail_mask = self.tail_mask();
+        let channels = usize::from(self.channels);
+        let total = self.bytes_per_channel() * u64::from(self.channels);
+        #[expect(clippy::cast_possible_truncation, reason = "at most CHUNK")]
+        let mut buf = vec![0u8; CHUNK.min(total) as usize];
+        let mut done = 0u64;
+        while done < total {
+            let n = (total - done).min(CHUNK) as usize;
+            let b = &mut buf[..n];
+            src.read_at(start + done, b).map_err(|e| read_problem(e, "audio"))?;
+            read.fetch_add(n as u64, Relaxed);
+            done += n as u64;
+            if done == total && tail_mask != 0xFF {
+                // DFF holds whole bytes; this cannot happen, but keep it exact.
+                for x in b.iter_mut().rev().take(channels) {
+                    *x &= tail_mask;
+                }
+            }
+            if !sink(b) {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Audio::canonical_while`] of a DSF file: its blocks at `start`, laid out as `geo`,
+    /// interleaved byte by byte, bits reversed if `lsb_first`. `parse_dsf` has checked that
+    /// the audio ends within the file, so the offsets below fit in a `u64`.
+    fn canonical_dsf(
+        &self,
+        src: &mut dyn Source,
+        read: &AtomicU64,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+        start: u64,
+        lsb_first: bool,
+        geo: &DsfGeometry,
+    ) -> Result<(), Problem> {
+        let DsfGeometry { bpc, ch, block, groups, last } = *geo;
+        if bpc == 0 {
+            return Ok(());
+        }
+        let tail_mask = self.tail_mask();
+        let group = block * ch;
+        // Whole groups per read, at least one.
+        let per_read = (CHUNK / group).max(1);
+        #[expect(clippy::cast_possible_truncation, reason = "at most CHUNK, or one group of 6 x MAX_BLOCK")]
+        let mut raw = vec![0u8; (per_read * group).min(groups * group) as usize];
+        let mut out = Vec::with_capacity(raw.len());
+        let channels = usize::from(self.channels);
+        #[expect(clippy::cast_possible_truncation, reason = "at most MAX_BLOCK")]
+        let block_len = block as usize;
+        let mut group_at = 0u64;
+        while group_at < groups {
+            let groups_now = (groups - group_at).min(per_read);
+            let at = start + group_at * group;
+            // The last group may lack the padding after the last channel's bytes.
+            let want = if group_at + groups_now == groups {
+                (groups_now - 1) * group + (ch - 1) * block + last
             } else {
-                Problem::Error(format!("read error: {e}"))
-            }
-        };
-        match self.data {
-            Data::Dff { start } => {
-                let total = bpc * ch;
-                let mut buf = vec![0u8; CHUNK.min(total) as usize];
-                let mut done = 0u64;
-                while done < total {
-                    let n = (total - done).min(CHUNK) as usize;
-                    let b = &mut buf[..n];
-                    src.read_at(start + done, b).map_err(io_err)?;
-                    read.fetch_add(n as u64, Relaxed);
-                    done += n as u64;
-                    if done == total && tail_mask != 0xFF {
-                        // DFF holds whole bytes; this cannot happen, but keep it exact.
-                        for x in b.iter_mut().rev().take(ch as usize) {
-                            *x &= tail_mask;
-                        }
-                    }
-                    if !sink(b) {
-                        return Ok(());
-                    }
-                }
-            }
-            Data::Dsf { start, block, lsb_first } => {
-                if bpc == 0 {
-                    return Ok(());
-                }
-                let group = block * ch;
-                let groups = bpc.div_ceil(block);
-                // Whole groups per read, at least one.
-                let per_read = (CHUNK / group).max(1);
-                let mut raw = vec![0u8; (per_read * group).min(groups * group) as usize];
-                let mut out = Vec::with_capacity(raw.len());
-                let cu = ch as usize;
-                let bu = block as usize;
-                let mut g = 0u64;
-                while g < groups {
-                    let k = (groups - g).min(per_read);
-                    let at = start + g * group;
-                    // The last group may lack the padding after the last channel's bytes.
-                    let want = if g + k == groups {
-                        let last = bpc - (groups - 1) * block;
-                        (k - 1) * group + (ch - 1) * block + last
-                    } else {
-                        k * group
-                    };
-                    let r = &mut raw[..want as usize];
-                    src.read_at(at, r).map_err(io_err)?;
-                    read.fetch_add(want, Relaxed);
-                    out.clear();
-                    for j in 0..k {
-                        let gi = g + j;
-                        let n = if gi + 1 == groups { (bpc - gi * block) as usize } else { bu };
-                        let base = (j * group) as usize;
-                        let blocks = &r[base..];
-                        if lsb_first {
-                            match cu {
-                                1 => out.extend(blocks[..n].iter().map(|&b| b.reverse_bits())),
-                                2 => {
-                                    let (l, rr) = (&blocks[..n], &blocks[bu..bu + n]);
-                                    for (&a, &b) in l.iter().zip(rr) {
-                                        out.push(a.reverse_bits());
-                                        out.push(b.reverse_bits());
-                                    }
-                                }
-                                _ => {
-                                    for i in 0..n {
-                                        for c in 0..cu {
-                                            out.push(blocks[c * bu + i].reverse_bits());
-                                        }
-                                    }
-                                }
+                groups_now * group
+            };
+            #[expect(clippy::cast_possible_truncation, reason = "at most raw.len()")]
+            let r = &mut raw[..want as usize];
+            src.read_at(at, r).map_err(|e| read_problem(e, "audio"))?;
+            read.fetch_add(want, Relaxed);
+            out.clear();
+            for i in 0..groups_now {
+                let group_index = group_at + i;
+                #[expect(clippy::cast_possible_truncation, reason = "at most MAX_BLOCK")]
+                let bytes = if group_index + 1 == groups { last as usize } else { block_len };
+                #[expect(clippy::cast_possible_truncation, reason = "within raw.len()")]
+                let base = (i * group) as usize;
+                let blocks = &r[base..];
+                if lsb_first {
+                    match channels {
+                        1 => out.extend(blocks[..bytes].iter().map(|&b| b.reverse_bits())),
+                        2 => {
+                            let (l, rr) = (&blocks[..bytes], &blocks[block_len..block_len + bytes]);
+                            for (&a, &b) in l.iter().zip(rr) {
+                                out.push(a.reverse_bits());
+                                out.push(b.reverse_bits());
                             }
-                        } else {
-                            for i in 0..n {
-                                for c in 0..cu {
-                                    out.push(blocks[c * bu + i]);
+                        }
+                        _ => {
+                            for byte in 0..bytes {
+                                for c in 0..channels {
+                                    out.push(blocks[c * block_len + byte].reverse_bits());
                                 }
                             }
                         }
                     }
-                    g += k;
-                    if g == groups && tail_mask != 0xFF {
-                        let at = out.len().saturating_sub(cu);
-                        for x in &mut out[at..] {
-                            *x &= tail_mask;
+                } else {
+                    for byte in 0..bytes {
+                        for c in 0..channels {
+                            out.push(blocks[c * block_len + byte]);
                         }
                     }
-                    if !sink(&out) {
-                        return Ok(());
-                    }
                 }
+            }
+            group_at += groups_now;
+            if group_at == groups && tail_mask != 0xFF {
+                let at = out.len().saturating_sub(channels);
+                for x in &mut out[at..] {
+                    *x &= tail_mask;
+                }
+            }
+            if !sink(&out) {
+                return Ok(());
             }
         }
         Ok(())
@@ -736,6 +809,7 @@ impl Audio {
         if total > MAX_TAG {
             return Err(total);
         }
+        #[expect(clippy::cast_possible_truncation, reason = "at most MAX_TAG")]
         let mut b = vec![0u8; total as usize];
         if src.read_at(at, &mut b).is_err() {
             return Ok(None);
@@ -745,6 +819,7 @@ impl Audio {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "test data of known small sizes")]
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;

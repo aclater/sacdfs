@@ -6,6 +6,8 @@
 //! sacdfs that uses the network ([`crate::lookup`], #185). Nothing but the tags directory is
 //! written.
 
+#![warn(clippy::cast_possible_truncation)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
@@ -629,9 +631,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// The ID3 tag of an extract, read only.
 fn extract_tag(path: &Path) -> Result<Option<Vec<u8>>, String> {
     let mut src = container::FileSource::open(path).map_err(|e| format!("cannot open: {e}"))?;
-    let audio = container::parse(&mut src).map_err(|e| match e {
-        container::Problem::Unsupported(s) | container::Problem::Error(s) => s,
-    })?;
+    let audio = container::parse(&mut src).map_err(container::Problem::into_text)?;
     audio.read_id3(&mut src).map_err(|size| format!("a tag of {size} bytes is too large to read"))
 }
 
@@ -694,6 +694,7 @@ fn apic(b: &[u8]) -> Option<(u8, Vec<u8>)> {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "test data of known small sizes")]
 mod tests {
     use super::*;
 

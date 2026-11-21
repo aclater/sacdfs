@@ -18,6 +18,8 @@
 //! The canonical stream is byte-interleaved, so lengths here are counted in bytes per channel
 //! (8 samples each), not in SACD frames.
 
+#![warn(clippy::cast_possible_truncation)]
+
 use std::sync::atomic::AtomicU64;
 
 use sha2::{Digest, Sha256};
@@ -350,6 +352,7 @@ fn scan(
             } else {
                 (b.len() as u64, Part::Tail)
             };
+            #[expect(clippy::cast_possible_truncation, reason = "at most b.len()")]
             let (now, rest) = b.split_at(n as usize);
             match part {
                 Part::Head => head.feed(now),
@@ -365,6 +368,7 @@ fn scan(
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "test data of known small sizes")]
 mod tests {
     use super::super::container::One;
     use super::*;
