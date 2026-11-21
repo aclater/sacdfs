@@ -42,6 +42,9 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Fixed
+- **sacdfs-nfs: the log when the mount point is no longer its mount.** At the end, if another
+  mount had taken the folder, the log said it was not unmounting it and, in the same line, to
+  unmount it by hand. The hint is now given only when sacdfs-nfs's own mount is still there.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
