@@ -48,6 +48,11 @@ All notable changes to sacdfs are recorded here. The format follows
   unsupported-system report and form.
 
 ### Fixed
+- **`sacdfs tags import` lists a cover it cannot read as not kept.** An extract whose embedded
+  picture import cannot read (anything but a plain JPEG or PNG: a GIF, a compressed frame, an
+  ID3v2.2 or unsynchronised tag) was passed over in silence, and import could exit 0 with that
+  extract's art in no tags directory. It is now listed as `not kept:` with its extract and disc,
+  and the exit status is 2, as the user guide says of every picture left out.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
