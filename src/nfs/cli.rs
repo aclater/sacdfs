@@ -82,7 +82,8 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Err(e) => e.exit(),
     };
     // An error on standard error, under the name the program was started by.
-    let complain = |e: &dyn std::fmt::Display| eprintln!("{name}: {}", crate::safe_file::printable(&e.to_string()));
+    let complain =
+        |e: &dyn std::fmt::Display| eprintln!("{name}: {}", crate::safe_file::printable(&e.to_string()));
     if args.launch_agent {
         return match super::agent::write(&argv) {
             Ok(()) => ExitCode::SUCCESS,
