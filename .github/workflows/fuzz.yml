@@ -42,6 +42,7 @@ jobs:
             packages: ""
             cache: v0-rust-ubi10
             artifact: fuzz-crashes
+            options: ""
           - name: fuzz (i686)
             # Fedora 44, pinned by digest: UBI 10 has no 32-bit C and C++ libraries.
             image: registry.fedoraproject.org/fedora@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
@@ -53,8 +54,12 @@ jobs:
               glibc-devel.i686 libstdc++-devel.i686 libgcc.i686 libatomic.i686
             cache: v0-rust-fedora44-i686
             artifact: fuzz-crashes-i686
+            # Docker's default seccomp profile on the runner answers 32-bit socketpair with
+            # ENOSYS, so nfs_rpc's runtime can't start; the job runs only our own build.
+            options: --security-opt seccomp=unconfined
     container:
       image: ${{ matrix.image }}
+      options: ${{ matrix.options }}
     env:
       FUZZ_TRIPLE: ${{ matrix.triple }}  # fuzz/run.sh: the Rust target, or the host's when empty
     defaults:
