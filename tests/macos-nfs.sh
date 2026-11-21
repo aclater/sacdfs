@@ -20,9 +20,11 @@
 # Bash 3.2 (macOS's) compatible.
 set -euo pipefail
 
-SERVER=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 OUT=${2:?usage: $0 SACDFS-NFS OUT}
+SERVER=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 SOURCE=${SOURCE:-tests/corpus/images}
+# The port the server chooses for a user other than root (default_port in src/nfs/serve.rs).
+# It is always passed with --port, so the two cannot differ.
 PORT=${PORT:-$((20000 + $(id -u) % 10000))}
 OS=$(uname)
 
@@ -33,19 +35,25 @@ mnt=$work/mnt
 mkdir -p "$mnt"
 pid=
 
+# The SHA-256 command, as an array: one word per element.
 if [ "$OS" = Darwin ]; then
-    SHA="shasum -a 256"
+    SHA=(shasum -a 256)
 else
-    SHA=sha256sum
+    SHA=(sha256sum)
 fi
+
+# umount as whoever mounted: the user on macOS, root on Linux.
+system_umount() {
+    if [ "$OS" = Darwin ]; then umount "$@"; else sudo umount "$@"; fi
+}
 
 unmount() {
     # A file closed just now can keep the mount busy for a moment.
     for _ in 1 2 3 4 5 6 7 8 9; do
-        if [ "$OS" = Darwin ]; then umount "$mnt" 2> /dev/null && return; else sudo umount "$mnt" 2> /dev/null && return; fi
+        system_umount "$mnt" 2> /dev/null && return
         sleep 1
     done
-    if [ "$OS" = Darwin ]; then umount "$mnt"; else sudo umount "$mnt"; fi
+    system_umount "$mnt"
 }
 
 mounted() {
@@ -97,6 +105,8 @@ start() {
     pid=$!
     wait_for "the server" listening
     if [ "${1:-}" = mount ]; then
+        # The options sacdfs-nfs itself gives on Linux (mount_options in src/nfs/serve.rs):
+        # keep the two lists the same.
         sudo mount -t nfs -o "vers=3,proto=tcp,port=$PORT,mountport=$PORT,mountproto=tcp,nolock,soft,timeo=10,retrans=30,rsize=1048576,ro,nosuid,nodev,noexec" \
             127.0.0.1:/ "$mnt"
     fi
@@ -106,7 +116,7 @@ start mount
 echo "mounted on $mnt"
 
 # 1. Every file's bytes.
-(cd "$mnt" && find . -type f -print0 | xargs -0 $SHA) | LC_ALL=C sort > "$OUT"
+(cd "$mnt" && find . -type f -print0 | xargs -0 "${SHA[@]}") | LC_ALL=C sort > "$OUT"
 echo "$(wc -l < "$OUT" | tr -d ' ') files hashed"
 
 # 2. Names in both normalisation forms.
@@ -171,7 +181,7 @@ wait "$pid" 2> /dev/null || true
 start
 cat <&3 >> "$work/part"
 exec 3<&-
-got=$($SHA "$work/part" | cut -d' ' -f1)
+got=$("${SHA[@]}" "$work/part" | cut -d' ' -f1)
 if [ "$got" != "$want" ]; then
     echo "FAIL: $big read across a restart: $got, want $want" >&2
     exit 1

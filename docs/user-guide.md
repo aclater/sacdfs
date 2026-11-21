@@ -437,7 +437,8 @@ chunks are not imported.
 It writes only what the mount uses: a picture of up to 960 KiB; per track, values of up to
 16 KiB, 64 keys and 32 KiB of text in all (the tag sacdfs builds holds at most 1 MiB, with the
 picture and the disc's own text); and up to about 2 MiB of text per disc, since every track's
-tag is built from that tags file. A value over a limit is left out whole, never cut. Each
+tag is built from that tags file. A value over a limit is left out whole, never cut; so is a
+picture import cannot read (anything but a plain JPEG or PNG). Each
 picture or value left out is listed as `not kept:`, with its extract and disc: keep those
 extracts, as their tags file lacks it. A disc whose tags file, with what import adds, would be
 over 3 MiB gets nothing added and is listed as `not kept:` too; the file is left as it was.

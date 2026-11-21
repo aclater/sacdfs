@@ -56,7 +56,8 @@ pub fn frames(tag: &[u8]) -> Vec<Frame> {
     }
     let (id_len, head_len) = if major == 2 { (3, 6) } else { (4, 10) };
     while out.len() < MAX_FRAMES {
-        let Some(h) = body.get(at..at + head_len) else { break };
+        // `at` can be near usize::MAX on 32-bit targets (an extended header's size, #498).
+        let Some(h) = at.checked_add(head_len).and_then(|e| body.get(at..e)) else { break };
         if h[0] == 0 {
             break; // padding
         }
