@@ -272,8 +272,10 @@ pub fn fd_dir() -> Option<PathBuf> {
     imp::fd_dir()
 }
 
-/// Sets the modification time of the file or folder at `path`. On Windows the open asks
-/// for the right to write attributes, which a plain open for reading lacks.
+/// Sets the modification time of the regular file or folder at `path`. On Unix a symbolic
+/// link is not followed, a FIFO is not waited on, and anything but a regular file or a folder
+/// is refused. On Windows the open asks for the right to write attributes, which a plain
+/// open for reading lacks.
 pub fn set_modified(path: &Path, t: SystemTime) -> io::Result<()> {
     imp::set_modified(path, t)
 }

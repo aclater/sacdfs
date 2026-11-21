@@ -312,7 +312,18 @@ pub fn fd_dir() -> Option<PathBuf> {
 }
 
 pub fn set_modified(path: &Path, t: SystemTime) -> io::Result<()> {
-    File::open(path)?.set_modified(t)
+    // Not following a link, and not waiting on a FIFO's writer; then only a regular file or a
+    // folder, as fstat on the open descriptor says.
+    let f = set_open_flags(
+        OpenOptions::new().read(true),
+        OpenFlags::NO_FOLLOW | OpenFlags::NON_BLOCK | OpenFlags::NO_CTTY,
+    )
+    .open(path)?;
+    let meta = f.metadata()?;
+    if !meta.is_file() && !meta.is_dir() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file or a folder"));
+    }
+    f.set_modified(t)
 }
 
 pub fn fs_size(path: &Path) -> io::Result<(u64, u32)> {
