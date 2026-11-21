@@ -3320,8 +3320,12 @@ the owner's NAS already used.
   where 64-bit builds can't (#457, the listing budget in #488), and the saved regressions alone
   only test what was already found. *Why not the release's `i686-unknown-linux-musl`:*
   libFuzzer is C++ and cargo-fuzz links it against the target's glibc and libstdc++; the code
-  under test has the same 32-bit sizes either way. *Why without AddressSanitizer:* Rust doesn't
-  offer it for i686. Overflow checks, panics and the targets' own checks still fail the run.
+  under test has the same 32-bit sizes either way. sacdfs builds there since #498, where 32-bit
+  glibc's `off_t` and `rlim_t` are 32 bits (a hole search past 2 GiB is `EOVERFLOW` in that
+  build only). *Why without AddressSanitizer:* Rust doesn't offer it for i686. Overflow checks,
+  panics and the targets' own checks still fail the run. *Why no seccomp filter in that job's
+  container:* the runner's Docker profile answers 32-bit `socketpair` with `ENOSYS`, so the NFS
+  target's runtime can't start; the job runs only our own build, with a read-only token.
   *Trade-off:* memory errors in unsafe code are caught by the 64-bit job only.
 - **The corpus.** Integration tests run against the synthetic CC0 conformance corpus of
   [sacd-spec](https://github.com/aclater/sacd-spec) (copied into `tests/corpus/` with its
