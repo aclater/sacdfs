@@ -16,8 +16,18 @@ use crate::tags::Stamp;
 use scarletbook::toc::TrackTextItem;
 use scarletbook::{Area, Slot, Toc, Track};
 
-/// DSD bytes per channel in one SACD frame (1/75 s at 2.8224 MHz).
-pub const FRAME_BYTES: u64 = 4704;
+/// DSD bytes per channel in one SACD frame (1/75 s at 2.8224 MHz): the library's constant, and
+/// the one definition the others here come from ([`crate::pcm::FRAME_BYTES`]).
+pub const FRAME_BYTES: u64 = scarletbook::audio::FRAME_BYTES_PER_CHANNEL as u64;
+
+/// SACD frames (timeline positions) per second of audio.
+pub const FRAMES_PER_SECOND: u32 = 75;
+
+/// The most channels an area has.
+pub const MAX_CHANNELS: u8 = 6;
+
+// A frame is 1/75 s of 1-bit samples, 8 to a byte.
+const _: () = assert!(FRAME_BYTES * 8 * FRAMES_PER_SECOND as u64 == SAMPLE_RATE as u64);
 
 /// Bytes per channel in one DSF block.
 pub const BLOCK: u64 = 4096;
