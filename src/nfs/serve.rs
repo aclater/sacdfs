@@ -242,22 +242,26 @@ struct Mounted<'a> {
 /// Why [`unmount`] did not unmount.
 #[derive(Debug)]
 enum UnmountError {
-    /// The path no longer names the mount made: nothing was tried.
+    /// The path was read and is on another device: it is not the mount made, and nothing
+    /// was tried.
     NotOurs(io::Error),
+    /// The path could not be read, as when nothing answers for the mount any more: nothing
+    /// was tried, and the mount may still be there.
+    Unreadable(io::Error),
     /// The plain and the forced unmount both failed: the mount is still there.
     Failed(io::Error),
 }
 
 /// Unmounts `m`: a plain unmount (a few tries: a file closed just now keeps the mount busy for
-/// a moment), then a forced one. An error, and nothing unmounted, if the path is no longer
-/// this mount.
+/// a moment), then a forced one. An error, and nothing unmounted, if the path is not seen to
+/// be this mount: it is on another device, or cannot be read.
 fn unmount(m: Mounted<'_>) -> Result<(), UnmountError> {
-    let dev = std::fs::metadata(m.at).map(|x| x.dev());
-    if dev.as_ref().ok() != Some(&m.dev) {
-        return Err(UnmountError::NotOurs(io::Error::other(format!(
-            "{} is no longer this mount: not unmounting it",
-            m.at.display()
-        ))));
+    let not_this =
+        || io::Error::other(format!("{} is no longer this mount: not unmounting it", m.at.display()));
+    match std::fs::metadata(m.at).map(|x| x.dev()) {
+        Ok(dev) if dev == m.dev => {}
+        Ok(_) => return Err(UnmountError::NotOurs(not_this())),
+        Err(_) => return Err(UnmountError::Unreadable(not_this())),
     }
     let mut last = None;
     for i in 0..3 {
@@ -279,15 +283,15 @@ fn unmount(m: Mounted<'_>) -> Result<(), UnmountError> {
     run_command(c, "umount -f", UMOUNT_TIMEOUT).map_err(UnmountError::Failed)
 }
 
-/// [`unmount`], with its outcome logged. Only a mount that is still there is said to need
-/// unmounting by hand.
+/// [`unmount`], with its outcome logged. A mount that is or may be still there is said to
+/// need unmounting by hand; a folder seen to be another mount is not.
 fn unmount_and_log(m: Mounted<'_>) -> io::Result<()> {
     match unmount(m) {
         Ok(()) => {
             log::info!("unmounted {}", m.at.display());
             Ok(())
         }
-        Err(UnmountError::Failed(e)) => {
+        Err(UnmountError::Failed(e) | UnmountError::Unreadable(e)) => {
             log::error!("{e}: unmount {} by hand", m.at.display());
             Err(e)
         }
