@@ -198,7 +198,7 @@ all of this already; with `docker run` or `podman run`, pass:
 | `SETUID`, `SETGID` | smbd, to act as the connecting user or the guest account | always (with SMB) |
 | `NET_BIND_SERVICE` | smbd, to listen on port 445 (with host networking the host's limit on ports under 1024 applies) | always (with SMB) |
 | `SETPCAP` | the entry point, to drop from each program the capabilities it doesn't need (below) | always |
-| `no-new-privileges` | no program in the container can gain privileges through a setuid or file-capability program. FUSE doesn't need the setuid `fusermount3`: sacdfs mounts as root in the container | always |
+| `no-new-privileges` | no program in the container can gain privileges through a setuid or file-capability program. FUSE doesn't need the setuid `fusermount3`: sacdfs mounts as root in the container, and the image clears every setuid and setgid bit | always |
 | `apparmor=unconfined` | Docker's default AppArmor profile forbids `mount(2)` even with `CAP_SYS_ADMIN`, so sacdfs can't mount under it. Only on hosts that use AppArmor (Ubuntu, Debian, TrueNAS SCALE); SELinux hosts (Fedora, RHEL) ignore it | AppArmor hosts |
 
 Nothing else: no `--privileged`, no host network, no host paths but the images and the
