@@ -41,6 +41,13 @@ All notable changes to sacdfs are recorded here. The format follows
   4-thread Atom's speed, and fails when head's worst read or stall time in the first 15 s is clearly
   above base's. See docs/performance.md, "The CI stall gate".
 
+### Changed
+- **Clearer log lines for tags files and pauses.** The warnings about a tags file that is not
+  applied, or whose frames and art do not fit, now name the image and read
+  `IMAGE: AREA track N: ...` like the other listing lines. The line for a track shown without its
+  pause (`--pauses kept`) says that with the pause it overlaps another track or does not fit the
+  image; it named only the first cause.
+
 ### Fixed
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
