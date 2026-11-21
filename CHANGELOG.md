@@ -42,6 +42,10 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Fixed
+- **`sacdfs-nfs --help`.** The command it shows for mounting by hand on macOS lacked
+  `rsize=1048576` and `rdirplus`, which sacdfs-nfs itself mounts with; it now shows the same
+  options, and SIGQUIT is named among the signals that stop the server. Errors are printed under
+  the name the program was started by (`sacdfs:` for `sacdfs SOURCE MOUNTPOINT` on a Mac).
 - **sacdfs-nfs: the log when the mount point is no longer its mount.** At the end, if another
   mount had taken the folder, the log said it was not unmounting it and, in the same line, to
   unmount it by hand. The hint is now left out when the folder is seen to be another mount; it
