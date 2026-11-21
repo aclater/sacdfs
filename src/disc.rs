@@ -315,7 +315,7 @@ impl Disc {
             .iter()
             .map(|a| {
                 let (start_lsn, end_lsn) = audio_sector_range(a, sectors);
-                let capacity = (end_lsn - start_lsn).saturating_mul(FRAMES_PER_SECTOR);
+                let capacity = end_lsn.saturating_sub(start_lsn).saturating_mul(FRAMES_PER_SECTOR);
                 let per_frame = FRAME_BYTES_PER_CHANNEL * u64::from(a.channel_count.max(1));
                 AreaState {
                     slot: a.slot,
