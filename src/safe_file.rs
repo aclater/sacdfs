@@ -98,7 +98,8 @@ pub fn write_atomic_with(
 }
 
 /// The bytes of the regular file `path`, of at most `max` bytes, read through one descriptor
-/// that doesn't follow a symbolic link, and its metadata from that descriptor.
+/// that doesn't follow a symbolic link, and its metadata from that descriptor. On Windows a
+/// reparse point is refused too ([`crate::platform::refuse_link`]).
 pub fn read_regular(path: &Path, max: u64) -> io::Result<(Vec<u8>, fs::Metadata)> {
     use crate::platform::OpenFlags;
     let f = crate::platform::set_open_flags(
@@ -113,6 +114,7 @@ pub fn read_regular(path: &Path, max: u64) -> io::Result<(Vec<u8>, fs::Metadata)
             e
         }
     })?;
+    crate::platform::refuse_link(&f)?;
     let meta = f.metadata()?;
     if !meta.is_file() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
