@@ -13,6 +13,7 @@ after the data end exactly at the end of the file.
 import struct
 import sys
 
+
 def fail(msg):
     print(f"check_rf64: {msg}", file=sys.stderr)
     sys.exit(1)
