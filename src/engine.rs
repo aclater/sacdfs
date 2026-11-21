@@ -15,7 +15,8 @@ use rayon::prelude::*;
 use scarletbook::{DstDecoder, FrameContent, FrameStatus, TrackFrame};
 
 use crate::disc::{Cursor, Disc, ReadError};
-use crate::pcm::{Converter, PcmConfig};
+use crate::dsf::{FRAMES_PER_SECOND, MAX_CHANNELS};
+use crate::pcm::{Converter, PcmConfig, SAMPLE_BYTES};
 
 /// How a decoded frame was produced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -750,7 +751,7 @@ pub struct Stream {
 #[derive(Debug, Default)]
 pub struct DecodeRates {
     /// Times real time x 1000 per [DSD, PCM] and channel count (index 0 unused); 0: not measured.
-    rates: [[AtomicU32; 7]; 2],
+    rates: [[AtomicU32; MAX_CHANNELS as usize + 1]; 2],
 }
 
 /// Fewest frames a batch has to decode to be measured ([`DecodeRates`]): a read's few frames
@@ -768,8 +769,8 @@ impl DecodeRates {
             return;
         }
         let Some(slot) = self.slot(kind, channels) else { return };
-        let x =
-            (f64::from(frames) / 75.0 / took.as_secs_f64().max(1e-6) * 1000.0).min(f64::from(u32::MAX / 2));
+        let x = (f64::from(frames) / f64::from(FRAMES_PER_SECOND) / took.as_secs_f64().max(1e-6) * 1000.0)
+            .min(f64::from(u32::MAX / 2));
         let old = f64::from(slot.load(Ordering::Relaxed));
         let new = if old == 0.0 { x } else { old * 0.75 + x * 0.25 };
         slot.store((new as u32).max(1), Ordering::Relaxed);
@@ -1000,7 +1001,7 @@ impl Engine {
 
     /// Bytes of PCM per frame of `channels` channels with the engine's settings.
     pub fn pcm_frame_bytes(&self, channels: u8) -> usize {
-        self.pcm.rate.samples_per_frame() * usize::from(channels) * 3
+        self.pcm.rate.samples_per_frame() * usize::from(channels) * SAMPLE_BYTES
     }
 
     /// Keeps the cached frames of timeline positions `[first, end)` among the heads
@@ -1426,7 +1427,7 @@ impl Engine {
 }
 
 /// Bytes per channel of a decoded DSD frame.
-const FRAME_BYTES_PER_CHANNEL: usize = 4704;
+const FRAME_BYTES_PER_CHANNEL: usize = crate::pcm::FRAME_BYTES;
 
 /// Decodes one timeline position, interleaved, for the cache, into `buf` (`channels x 4704`
 /// bytes, from [`FrameCache::buffers`], or a new one): what `scarletbook::audio::decode_frame` gives, but
@@ -1435,7 +1436,7 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
     let bad = |m: &str| Err(ReadError::Io(io::Error::other(m.to_owned())));
     let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
     let mut buf = buf.unwrap_or_else(|| FrameBuf::heap(len));
-    if !(1..=6).contains(&channels) || buf.len() != len {
+    if !(1..=MAX_CHANNELS).contains(&channels) || buf.len() != len {
         return bad("bad channel count");
     }
     let fill = match job.content {
@@ -1500,7 +1501,7 @@ fn decode_group(
     group: Vec<(TrackFrame, Option<FrameBuf>)>,
     channels: u8,
 ) -> Vec<Result<(u32, Frame), ReadError>> {
-    if group.len() == 1 || !(1..=6).contains(&channels) {
+    if group.len() == 1 || !(1..=MAX_CHANNELS).contains(&channels) {
         return group.into_iter().map(|(j, b)| decode(j, channels, b)).collect();
     }
     let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;

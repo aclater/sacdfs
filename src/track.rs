@@ -405,7 +405,7 @@ pub const HEAD_WINDOW: u64 = 1 << 20;
 /// start, though it held once running (#456). *Why 8 s:* with a cache that held them, 4 s gave
 /// worse worst reads than 8 s (the window after it came while the player's buffer was still
 /// small), and 12 s no better.
-pub const START_AHEAD_FRAMES: u32 = 8 * 75;
+pub const START_AHEAD_FRAMES: u32 = 8 * dsf::FRAMES_PER_SECOND;
 
 /// Bytes of a file's audio from its start whose frames a read keeps in the cache as its head
 /// ([`crate::engine::FrameCache::keep`], #456): a network player's probe of a 6-channel DSF
@@ -495,6 +495,16 @@ pub enum Audio {
     Dsf(Layout),
     /// WAV frames of PCM.
     Wav(wav::Layout),
+}
+
+impl Audio {
+    /// Bytes of audio per frame: DSD bytes of every channel, or PCM samples of every channel.
+    pub fn frame_bytes(self) -> u64 {
+        match self {
+            Audio::Dsf(l) => dsf::FRAME_BYTES * u64::from(l.channels),
+            Audio::Wav(l) => l.frame_bytes(),
+        }
+    }
 }
 
 /// The range of `track`'s track with pause, if it is a valid range longer than the track.
@@ -690,29 +700,31 @@ impl TrackFile {
     /// that quarter can't hold what it decodes past the furthest read (`start_lead`) and a slice
     /// of `slice` frames.
     pub fn start_ahead_frames(&self, cache_bytes: usize, lead: u32, slice: u32, secs: u32) -> u32 {
-        let frame = (self.byte_rate() as u64 / 75).max(1);
+        let frame = self.frame_bytes().max(1);
         let quarter = cache_bytes as u64 / 4 / frame;
         if quarter < u64::from(lead) + u64::from(slice) {
             return 0;
         }
-        quarter.min(u64::from(secs) * 75).min(u64::from(self.layout.frames)) as u32
+        quarter.min(u64::from(secs) * u64::from(dsf::FRAMES_PER_SECOND)).min(u64::from(self.layout.frames))
+            as u32
     }
 
     /// The share of a quarter of the cache, in frames, of one of `readers` reading for
     /// throughput while someone plays ([`Traffic`]).
     pub fn shared_frames(&self, cache_bytes: usize, readers: usize) -> u32 {
-        let frame = self.byte_rate() as u64 / 75;
+        let frame = self.frame_bytes();
         let share = cache_bytes as u64 / 4 / readers.max(1) as u64 / frame.max(1);
         share.clamp(u64::from(SHARED_WINDOW_MIN), u64::from(READ_AHEAD_FRAMES_MAX)) as u32
     }
 
     /// Bytes of the file's audio per second of playing.
     pub fn byte_rate(&self) -> f64 {
-        let per_frame = match self.audio {
-            Audio::Dsf(l) => dsf::FRAME_BYTES * u64::from(l.channels),
-            Audio::Wav(l) => l.frame_bytes(),
-        };
-        per_frame as f64 * 75.0
+        self.frame_bytes() as f64 * f64::from(dsf::FRAMES_PER_SECOND)
+    }
+
+    /// Bytes of the file's audio per frame.
+    pub fn frame_bytes(&self) -> u64 {
+        self.audio.frame_bytes()
     }
 
     /// The file format.
@@ -928,8 +940,10 @@ impl TrackFile {
     }
 }
 
-/// A frame of zeros of six channels, whose start is the padding of fewer.
-static ZEROS: [u8; 6 * dsf::FRAME_BYTES as usize] = [0; 6 * dsf::FRAME_BYTES as usize];
+/// A frame of zeros of the most channels, whose start is the padding of fewer.
+static ZEROS: [u8; ZEROS_LEN] = [0; ZEROS_LEN];
+
+const ZEROS_LEN: usize = dsf::MAX_CHANNELS as usize * dsf::FRAME_BYTES as usize;
 
 /// Most reply buffers kept ([`give_back`]): as many as reads ever overlap in a straight read,
 /// and a few more.
@@ -1930,7 +1944,7 @@ impl Reader {
             let n = traffic.fast.note(self.id, now);
             let someone_plays = traffic.players.any(now);
             let f = &self.file;
-            let margin = (GIVE_UP_MARGIN / (f.byte_rate() as u64 / 75).max(1)) as u32;
+            let margin = (GIVE_UP_MARGIN / f.frame_bytes().max(1)) as u32;
             let behind = k0.saturating_sub(margin);
             if s.given_up < behind {
                 if someone_plays {
@@ -1997,6 +2011,23 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    /// The bytes per frame are what the byte rate, through `f64`, gave before there was
+    /// [`Audio::frame_bytes`]: for every channel count and every format and PCM rate.
+    #[test]
+    fn frame_bytes_are_the_byte_rate_over_the_frame_rate() {
+        for channels in 0..=u8::MAX {
+            let mut layouts = vec![Audio::Dsf(Layout { channels, frames: 1 })];
+            for samples_per_frame in [1176, 2352, 4704] {
+                let rate = samples_per_frame * dsf::FRAMES_PER_SECOND;
+                layouts.push(Audio::Wav(wav::Layout { channels, frames: 1, samples_per_frame, rate }));
+            }
+            for audio in layouts {
+                let byte_rate = audio.frame_bytes() as f64 * 75.0;
+                assert_eq!(audio.frame_bytes(), byte_rate as u64 / 75, "{audio:?}");
+            }
+        }
+    }
 
     /// Readers count while they read and until they close or pause.
     #[test]
