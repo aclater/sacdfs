@@ -5,9 +5,10 @@
 #     (the script must refuse before changing anything), Fedora 44, and UBI 7 (glibc 2.17);
 #   - on the runner as root: with the systemd unit, and with Docker Compose;
 #   - in the BusyBox and Fedora containers, a failed or cut-short download must fail loudly (#352);
-#   - unsupported systems (#382), with a fake uname, getconf and ldd: i686, armv7l, aarch64 with
-#     32-bit programs, glibc 2.12, musl, the container route on such a processor, no Compose
-#     engine, no FUSE: each must stop with the report and download nothing; and --report.
+#   - unsupported systems (#382), with a fake uname, getconf and ldd: armv7l, aarch64 with 32-bit
+#     programs, glibc 2.12, musl, the container route on such a processor, no Compose engine, no
+#     FUSE: each must stop with the report and download nothing; 32-bit x86 (i686, x86-64 with
+#     32-bit programs) must stop and name the i686 archive instead (#500); and --report.
 #   - security, in the BusyBox and Fedora containers (deploy/ci-install-security-steps.sh):
 #     a prefix or mount folder that other users can change is refused; folder names with &,
 #     spaces and brackets install and run; a name that is a command is refused and never runs;

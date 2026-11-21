@@ -418,9 +418,39 @@ unsupported() {
     exit 1
 }
 
+# x86_32: stop on 32-bit x86 (an i686 kernel, or an x86-64 kernel that runs 32-bit programs)
+# and point to the release's i686 archive, which is installed by hand (#500). No report or form:
+# there is a build for it. Any other answer returns.
+x86_32() {
+    case $UNAME_M in
+        i686) ;;
+        x86_64 | amd64) [ "$WORD" = 32 ] || return 0 ;;
+        *) return 0 ;;
+    esac
+    v=${VERSION:-$DEFAULT_VERSION}
+    case $v in
+        0.[0-6].* | 0.7.0 | 0.7.0[-+]*)
+            what="From 0.7.1 on, each release has one: sacdfs-<version>-i686-linux.tar.gz, at"
+            url=$RELEASES/latest ;;
+        *)
+            what="This release's archive: sacdfs-$v-i686-linux.tar.gz, at"
+            url=$RELEASES/download/v$v/sacdfs-$v-i686-linux.tar.gz ;;
+    esac
+    {
+        say "install.sh: this is a 32-bit x86 system ($UNAME_M, 32-bit programs), and the installer and"
+        say "the container image are 64-bit only. Nothing was downloaded or changed. Install the 32-bit"
+        say "x86 build by hand instead (Pentium 4, Atom and later CPUs, with SSE2)."
+        say "$what"
+        say "  $url"
+        say "Steps: $DOCS/binary.md#32-bit-x86"
+    } >&2
+    exit 1
+}
+
 # check_machine [libc]: stop on a processor or word size with no release build; with
 # "libc", also on a C library the release binary can't use.
 check_machine() {
+    x86_32
     [ -z "$ARCH_BAD" ] ||
         unsupported "processor ($UNAME_M)" "there is no sacdfs release for this processor ($UNAME_M): only 64-bit x86-64 and aarch64. Nothing was downloaded or changed. Building from source: $DOCS/binary.md#from-source"
     [ "$WORD" != 32 ] ||
