@@ -11,6 +11,7 @@
 """
 
 import importlib.util
+import itertools
 import json
 import shlex
 import sys
@@ -27,7 +28,7 @@ spec.loader.exec_module(tr)
 def derived(source):
     """The profile --profile prints for a profile's `source` command."""
     argv = shlex.split(source.split(",")[0])[1:]
-    a = {k: v for k, v in zip(argv, argv[1:]) if k in ("--play", "--before", "--secs", "--wav-audio-start")}
+    a = {k: v for k, v in itertools.pairwise(argv) if k in ("--play", "--before", "--secs", "--wav-audio-start")}
     handles = tr.parse(str(ROOT / argv[0]))
     play = int(a["--play"])
     wav = int(a.get("--wav-audio-start", 0)) or tr.wav_audio_start(handles, tr.trace_rate) or 0
