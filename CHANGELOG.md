@@ -42,6 +42,10 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Fixed
+- **Every option as an `-o` mount option.** `mount -t fuse.sacdfs` and fstab refused `tags`,
+  `pauses`, `listing_mb`, `request_timeout`, `stop_grace` and `no_multichannel_album_suffix` as
+  "not a sacdfs mount option", and so `musicbrainz` too, which needs `tags`. They are accepted now,
+  and a test keeps the `-o` options in step with the command line.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when

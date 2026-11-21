@@ -964,9 +964,9 @@ command name.)
 /srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,cache_mb=64,format=dsf,_netdev,nofail  0 0
 ```
 
-`-o` takes sacdfs's own options as `name` or `name=value` with the dashes written as underscores
-(`allow_other`, `cache_mb=64`, `pcm_rate=88200`, `flatten`, `index_cache=/var/cache/sacdfs`,
-`log_file=/var/log/sacdfs.log`, `verbose=2`). A comma separates `-o` options, so a list value
+`-o` takes each of sacdfs's own options as `name` or `name=value` with the dashes written as
+underscores (`allow_other`, `cache_mb=64`, `pcm_rate=88200`, `flatten`, `tags=/etc/sacdfs/tags`,
+`index_cache=/var/cache/sacdfs`, `log_file=/var/log/sacdfs.log`, `verbose=2`). A comma separates `-o` options, so a list value
 uses `+`: `format=dsf+wav`, `sidecars=default+cue`. The options of `mount(8)` and fstab (`ro`,
 `rw`, `noauto`, `nofail`, `_netdev`, `nosuid`, `nodev`, `x-systemd.*` and similar) are accepted
 and ignored by sacdfs itself; sacdfs is always read-only. Any other option is an error, so a
