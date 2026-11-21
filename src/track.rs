@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A track shown as a DSF or WAV file, and reading byte ranges of it.
+//!
+//! Frame numbers come in three kinds here and in [`crate::engine`], told apart by their names:
+//! `k0`, `k1` are indices into the file (its first frame is 0); `t0`, `t1` are timeline positions
+//! of the area (`start_frame + k`); `d0`, `d1` are the timeline positions of the DSD frames a PCM
+//! conversion needs (one more on each side). Each pair is a half-open range.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -1032,6 +1037,8 @@ pub struct ReadAhead {
 /// Whether a process is a network file server's ([`Reader::opened_by`]).
 pub type IsServer = fn(u32) -> bool;
 
+/// What a [`Reader`] knows of its reads so far: how far they got, their pace, and what is decoded
+/// ahead of them ([`Reader::plan_read_ahead`]).
 #[derive(Debug, Default)]
 struct Seq {
     /// The furthest byte read so far.
@@ -1132,6 +1139,10 @@ impl Drop for Arrival {
 
 /// An open file: the file and its own demultiplexer state (and, for a WAV file, its last
 /// decoded DSD frames), so that a sequential read continues where the last one stopped.
+///
+/// Its locks are taken in this order: `seq`, then `start` or `flight`, then one of [`Traffic`]'s
+/// or the frame cache's. `stream` is taken with none of the others held, and held for the length
+/// of a decode. The warmer's lock ([`crate::warm`]) comes before `seq`.
 #[derive(Debug)]
 pub struct Reader {
     /// The file.
@@ -1740,6 +1751,8 @@ impl Reader {
         Ok(frames)
     }
 
+    /// [`Reader::decoded`], without keeping the frames as the file's head: from the cache, or
+    /// decoded with the open file's demultiplexer, after players if this reader is none.
     fn decoded_frames(
         &self,
         engine: &Engine,
@@ -1818,12 +1831,18 @@ impl Reader {
     /// player that seeks is judged again by its pace, but it has been playing.
     fn judged(&self, s: &Seq, now: std::time::Instant) -> bool {
         let Some((t, _)) = s.started else { return false };
-        let secs = now.saturating_duration_since(t);
-        secs >= PLAYER_AFTER
+        let elapsed = now.saturating_duration_since(t);
+        elapsed >= PLAYER_AFTER
             && (s.paced >= FAST_AFTER
-                || secs.as_secs_f64() * PLAYER_FACTOR * self.file.byte_rate() >= FAST_AFTER as f64)
+                || elapsed.as_secs_f64() * PLAYER_FACTOR * self.file.byte_rate() >= FAST_AFTER as f64)
     }
 
+    /// After a read of bytes `[offset, end)`, frames `[k0, k1)`: notes it in the reader's state,
+    /// judges the reader anew (for throughput, a player, or neither yet: [`Traffic`]), and gives
+    /// the frames to decode ahead, if any. In order: a look at the file's end changes nothing;
+    /// the pace and the reader's place among the others; the start-of-track decode-ahead
+    /// ([`Reader::plan_start`]), which replaces the rest while it runs; then the window, for a
+    /// sequential reader past the file's head.
     fn plan_read_ahead(&self, engine: &Engine, offset: u64, end: u64, k0: u32, k1: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
         // A jump to the file's last frame is a look at what follows the audio, as a player
@@ -1989,12 +2008,12 @@ impl Reader {
         // too, and in slices a whole 6-channel file read 9 % slower. *Why not "not for
         // throughput":* a player filling its buffer at 1.5 times real time counts as one; and a
         // bound in frames only moved the wait to where it ended.
-        let slow = s.pace_from.is_some_and(|(t, _)| {
+        let near_real_time = s.pace_from.is_some_and(|(t, _)| {
             let secs = now.saturating_duration_since(t).as_secs_f64().max(0.5);
             (s.paced as f64) < SLICE_PACE_MAX * self.file.byte_rate() * secs
         });
         let sliced = std::mem::take(&mut s.after_start)
-            || s.slicing && slow && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
+            || s.slicing && near_real_time && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
         s.slicing = sliced;
         let start = s.ahead_until.max(k1);
         let stop = frames.min(k1 + window);

@@ -61,8 +61,8 @@ const THREAD: u64 = 3_880_000;
 const IMAGE_LISTED: u64 = 56 << 10;
 
 /// What an image costs at least, with everything of it that can be dropped gone: the names
-/// walked, its directory's node and entry.
-const IMAGE_FLOOR: u64 = 7 << 9;
+/// walked, its directory's node and entry: 3.5 KiB.
+const IMAGE_FLOOR: u64 = 3584;
 
 /// The cgroup whose limit this process runs under.
 #[derive(Clone, Debug)]
