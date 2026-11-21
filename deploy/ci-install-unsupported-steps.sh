@@ -4,7 +4,7 @@
 # deploy/install.sh on systems it can't support (#382): with a fake uname, getconf and ldd
 # (and a fake docker for the container route), each case must stop with status 1, print the
 # system report and the link to the form, change nothing, and make no request to the releases
-# URL it is given. Then --report: status 0, the block, nothing written, and no host name or
+# URL it is given. 32-bit x86 stops too, but points to the i686 archive instead (#500). Then --report: status 0, the block, nothing written, and no host name or
 # --iso-dir in it. Plain POSIX sh, for BusyBox. Called by deploy/ci-install-test.sh:
 #
 #   ci-install-unsupported-steps.sh SCRIPT URL LOG
@@ -90,15 +90,50 @@ stops() {
     if [ -z "$why" ]; then res "$name" pass; else res "$name" "FAIL ($why)"; fi
 }
 
+# points NAME FAKEDIR EXPECT [install.sh options...]: 32-bit x86 (#500): status 1, a message
+# that names the i686 archive (EXPECT) and links the 32-bit x86 section of the binary guide, no
+# report or form (there is a build), nothing changed, no request.
+points() {
+    name=$1 dir=$2 expect=$3
+    shift 3
+    echo "=== $name: $*"
+    state >"$work/state0"
+    before=$(requests)
+    PATH="$dir:$PATH" SACDFS_RELEASES_URL=$url sh -s -- --iso-dir "$iso" "$@" <"$script" >"$work/out" 2>&1
+    rc=$?
+    cat "$work/out"
+    state >"$work/state1"
+    after=$(requests)
+    why=
+    [ "$rc" = 1 ] || why="$why status $rc;"
+    grep -q 'this is a 32-bit x86 system' "$work/out" || why="$why no 32-bit x86 message;"
+    grep -qF "$expect" "$work/out" || why="$why no '$expect';"
+    grep -q 'docs/install/binary.md#32-bit-x86$' "$work/out" || why="$why no link to the 32-bit x86 section;"
+    grep -q '^--- sacdfs system report' "$work/out" && why="$why a report;"
+    grep -q 'unsupported-system.yml' "$work/out" && why="$why the form;"
+    grep -q 'downloading' "$work/out" && why="$why downloading;"
+    same "$work/state0" "$work/state1" || why="$why something changed;"
+    [ "$before" = "$after" ] || why="$why $((after - before)) requests;"
+    if [ -n "$(ls "$dir/docker.log" 2>/dev/null)" ] && grep -qE '(^| )(pull|up|run|create)( |$)' "$dir/docker.log"; then
+        why="$why docker was asked to pull or start;"
+    fi
+    if [ -z "$why" ]; then res "$name" pass; else res "$name" "FAIL ($why)"; fi
+}
+
 f=$work/f
 fakes "$f/i686" i686 32 real
+fakes "$f/x86_64-32" x86_64 32 real
 fakes "$f/armv7l" armv7l 32 real
 fakes "$f/aarch64-32" aarch64 32 real
 fakes "$f/glibc212" x86_64 64 "glibc 2.12"
 fakes "$f/musl" x86_64 64 "musl 1.2.4"
 
-stops i686 "$f/i686" 'processor (i686)'
-stops i686-dry-run "$f/i686" 'processor (i686)' --dry-run
+# This file's own DEFAULT_VERSION is older than the first i686 release: the archive by pattern.
+points i686 "$f/i686" "$url/latest"
+points i686-dry-run "$f/i686" 'sacdfs-<version>-i686-linux.tar.gz' --dry-run
+points i686-version "$f/i686" "$url/download/v0.7.1/sacdfs-0.7.1-i686-linux.tar.gz" --version 0.7.1
+points i686-ctl "$f/i686" 'sacdfs-0.7.2-i686-linux.tar.gz' --method ctl --version 0.7.2
+points x86_64-32bit "$f/x86_64-32" 'sacdfs-<version>-i686-linux.tar.gz'
 stops armv7l "$f/armv7l" 'processor (armv7l)'
 stops aarch64-32bit "$f/aarch64-32" '32-bit programs'
 stops aarch64-32bit-ctl "$f/aarch64-32" '32-bit programs' --method ctl
@@ -115,14 +150,16 @@ fi
 # logs what it is asked. It must not be asked to pull or start anything.
 for m in i686 armv7l; do
     fakes "$f/docker-$m" "$m" 32 real
+    check=stops expect="processor ($m)"
+    [ "$m" = i686 ] && check=points expect='i686-linux.tar.gz'
     cat >"$f/docker-$m/docker" <<EOF
 #!/bin/sh
 echo "\$*" >>"$f/docker-$m/docker.log"
 exit 0
 EOF
     chmod 0755 "$f/docker-$m/docker"
-    stops "container-$m" "$f/docker-$m" "processor ($m)"
-    stops "container-$m-dry-run" "$f/docker-$m" "processor ($m)" --dry-run --method compose
+    "$check" "container-$m" "$f/docker-$m" "$expect"
+    "$check" "container-$m-dry-run" "$f/docker-$m" "$expect" --dry-run --method compose
 done
 
 # --method compose where no engine answers (a docker and podman that fail).

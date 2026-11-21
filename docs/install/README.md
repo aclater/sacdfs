@@ -294,12 +294,14 @@ processor other than 64-bit x86-64 or aarch64 (also for the container route), a 
 that runs 32-bit programs (Raspberry Pi OS 32-bit on a Pi 4 or 5 reports `aarch64`), a glibc
 older than 2.17 or musl instead of glibc (for the binary; the container brings its own), no
 `/dev/fuse` that `modprobe fuse` can load, or `--method compose` with no Docker or Podman that
-answers. (On 32-bit x86, install the `i686` archive by hand from 0.7.1 on:
-[32-bit x86](binary.md#32-bit-x86).) It then prints a short block of system details and a link to the
+answers. It then prints a short block of system details and a link to the
 [unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml):
 paste the block there to ask for that system. After a download, it still tries the binary
 before installing it, and stops the same way if it doesn't start. A Mac or Windows PC gets the
-"Linux only" message, with no block.
+"Linux only" message, with no block. On 32-bit x86 (an `i686` kernel, or an x86-64 kernel with
+32-bit programs) it stops the same way, but from 0.7.1 prints no block or form: it names the
+release's `i686` archive, with its download link, to install by hand, and links
+[32-bit x86](binary.md#32-bit-x86).
 
 **`--report`** prints the same block on any Linux system and changes nothing. It needs neither
 root nor `--iso-dir`:
@@ -314,12 +316,14 @@ library, `/dev/fuse`, systemd and the container engine. It holds no host name, a
 number, user name or folder, and nothing is sent anywhere: it is only printed.
 *(0.6.3 and older don't have `--report`. Checked with BusyBox 1.37 `sh`, dash and bash, in the
 BusyBox and Fedora 44 test containers that CI runs, with a fake `uname`, `getconf` and `ldd`:
-i686, armv7l, aarch64 with 32-bit programs, glibc 2.12 and musl each stop with status 1, the
-block and the link, and a local server the installer was pointed at got no request. The same
+armv7l, aarch64 with 32-bit programs, glibc 2.12 and musl each stop with status 1, the
+block and the link, i686 and x86-64 with 32-bit programs with the `i686` archive's name and
+link instead (from 0.7.1), and a local server the installer was pointed at got no request. The same
 cases, `--report` and the whole install cycle with the 0.6.3 release were also run on QNAP
 QuTScloud 5.2.9 (BusyBox, no systemd; a hand-made ext4 volume) and TerraMaster TOS 7.0
-(systemd), checked in VMs, not on the vendor's hardware. Not run: real i686, 32-bit ARM or musl
-systems, other NAS systems.)*
+(systemd), checked in VMs, not on the vendor's hardware. The 32-bit x86 stop was also run in a
+CentOS 7 i386 userland with no network, under `linux32` and without it. Not run: an i686 kernel,
+32-bit ARM or musl systems, other NAS systems.)*
 
 **Where the installer was checked,** on the 0.6.2 release from GitHub, in both forms (the
 one-liner, and download, check, run): a dry run that changed nothing, the install, all 28 DSF and
