@@ -11,6 +11,7 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -49,17 +50,19 @@ fn release_for(image: &Path) -> Value {
 }
 
 /// Answers a catalogue search with the release, the release with `release`, else 404; counts
-/// requests. With `gate`, the first request waits for a message: a service that doesn't answer.
+/// requests. With `gate`, the first request waits for a message: a service that doesn't answer;
+/// `waiting` says that it has arrived there.
 #[derive(Clone)]
 struct Recorded {
     release: Option<Value>,
     urls: Arc<Mutex<Vec<String>>>,
     gate: Option<Arc<Mutex<mpsc::Receiver<()>>>>,
+    waiting: Arc<AtomicBool>,
 }
 
 impl Recorded {
     fn new(release: Option<Value>) -> Recorded {
-        Recorded { release, urls: Arc::default(), gate: None }
+        Recorded { release, urls: Arc::default(), gate: None, waiting: Arc::default() }
     }
 
     fn count(&self) -> usize {
@@ -70,6 +73,7 @@ impl Recorded {
 impl Transport for Recorded {
     fn get(&mut self, url: &str) -> Result<Reply, String> {
         if let Some(g) = self.gate.take() {
+            self.waiting.store(true, Ordering::SeqCst);
             let _ = g.lock().unwrap().recv();
         }
         self.urls.lock().unwrap().push(url.to_owned());
@@ -172,11 +176,8 @@ fn serving_never_waits_for_the_worker() {
     let images = vec![lib.join("disc.iso")];
     let w = Worker::start(config(&tagsdir, None), client(&r), move || images.clone()).unwrap();
 
-    // The worker is now held in its first request.
-    let held = Instant::now();
-    while r.count() == 0 && held.elapsed() < Duration::from_millis(300) {
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // The worker is held in its first request from here on.
+    common::wait_for("the worker's first request", || r.waiting.load(Ordering::SeqCst));
     let tree = Tree::new(SourceDir::scan(&lib).unwrap());
     let t = Instant::now();
     let mut files = 0;

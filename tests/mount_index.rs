@@ -15,19 +15,19 @@ mod common;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::process::Command;
-use std::time::{Duration, Instant};
 
 use common::*;
 
-fn is_mounted(mountpoint: &Path) -> bool {
-    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
-    let mp = mountpoint.to_str().unwrap();
-    info.lines().any(|l| l.split(' ').nth(4) == Some(mp))
-}
-
-/// Mounts `image` with `args`, reads `len` bytes at `fraction` of its first stereo file,
-/// stops sacdfs with SIGTERM, and returns the bytes and the image reads it logged.
-fn mount_and_seek(image: &Path, args: &[&str], fraction: f64, len: usize) -> (Vec<u8>, u64, u64) {
+/// Mounts `image` with `args` and its cache directory under `home`, reads `len` bytes at
+/// `fraction` of its first stereo file, stops sacdfs with SIGTERM, and returns the bytes and the
+/// image reads it logged.
+fn mount_and_seek(
+    image: &Path,
+    args: &[&str],
+    home: &Path,
+    fraction: f64,
+    len: usize,
+) -> (Vec<u8>, u64, u64) {
     let mp = tempfile::tempdir().unwrap();
     let mpath = mp.path().canonicalize().unwrap();
     let log = tempfile::NamedTempFile::new().unwrap();
@@ -36,15 +36,12 @@ fn mount_and_seek(image: &Path, args: &[&str], fraction: f64, len: usize) -> (Ve
         .args(args)
         .arg(image)
         .arg(&mpath)
+        .env("XDG_CACHE_HOME", home)
         .env("RUST_LOG", "info")
         .stderr(log.reopen().unwrap())
         .spawn()
         .unwrap();
-    let start = Instant::now();
-    while !is_mounted(&mpath) {
-        assert!(start.elapsed() < Duration::from_secs(30), "timed out waiting for the mount");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_for("the mount", || is_mounted(&mpath));
     let stem = image.file_stem().unwrap();
     let dir = mpath.join(stem).join("Stereo");
     let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
@@ -81,12 +78,14 @@ fn remount_seeks_with_the_saved_index() {
     let image = corpus().join("images/dst-invalid-frames-2ch.iso");
     let cache = dir.path().join("index");
     let c = cache.to_str().unwrap();
-    let (cold, cold_calls, cold_bytes) = mount_and_seek(&image, &["--index-cache", c], 0.6, 64 << 10);
+    let home = dir.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let (cold, cold_calls, cold_bytes) = mount_and_seek(&image, &["--index-cache", c], &home, 0.6, 64 << 10);
     let entries: Vec<_> = std::fs::read_dir(&cache).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(entries.len(), 1, "{entries:?}");
     let name = entries[0].to_str().unwrap();
     assert!(name.ends_with(".idx") && !name.contains("dst"), "{name}");
-    let (warm, warm_calls, warm_bytes) = mount_and_seek(&image, &["--index-cache", c], 0.6, 64 << 10);
+    let (warm, warm_calls, warm_bytes) = mount_and_seek(&image, &["--index-cache", c], &home, 0.6, 64 << 10);
     eprintln!("cold: {cold_calls} calls, {cold_bytes} bytes; warm: {warm_calls} calls, {warm_bytes} bytes");
     assert!(!cold.is_empty());
     assert_eq!(cold, warm);
@@ -96,9 +95,12 @@ fn remount_seeks_with_the_saved_index() {
     assert!(warm_calls <= cold_calls, "warm {warm_calls} calls, cold {cold_calls}");
 
     // Without the cache, a remount seeks cold again, and nothing is written.
-    let other = dir.path().join("unused");
-    let (again, calls, bytes) = mount_and_seek(&image, &["--no-index-cache"], 0.6, 64 << 10);
+    let unused = dir.path().join("unused");
+    std::fs::create_dir(&unused).unwrap();
+    let (again, calls, bytes) = mount_and_seek(&image, &["--no-index-cache"], &unused, 0.6, 64 << 10);
     assert_eq!(again, cold);
     assert_eq!((calls, bytes), (cold_calls, cold_bytes));
-    assert!(!other.exists());
+    let written: Vec<_> = std::fs::read_dir(&unused).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(written.is_empty(), "{written:?}");
+    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 1);
 }

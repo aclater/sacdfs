@@ -41,6 +41,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::safe_file;
+use crate::verify::id3;
 
 /// The names of the TagSet items a tags file can set, with the ID3 frame each is written as.
 pub const ITEMS: [(&str, &str, TagItem); 12] = [
@@ -326,9 +327,9 @@ fn without_custom(set: &TagSet, custom: &[(String, String)]) -> TagSet {
 /// `set` with the control characters (C0, DEL and C1) of its values and descriptions removed,
 /// line breaks kept in the messages only. *Why:* scarletbook 0.6.0 keeps control characters in
 /// the strings of a TOC (all of them in ISRCs and catalogue numbers, DEL and C1 in free text),
-/// and sacdfs filters what it writes itself rather than rely on the ID3 writer's own removal
-/// (W9). This is what that removal does, so the writer finds nothing left and the tag's bytes
-/// are the same.
+/// and sacdfs filters what it writes itself rather than rely on the ID3 writer's own removal.
+/// This is what that removal does, so the writer finds nothing left and the tag's bytes are
+/// the same.
 pub fn without_controls(set: &TagSet) -> TagSet {
     let dirty = |s: &str| s.chars().any(char::is_control);
     if !ALL_ITEMS.iter().any(|i| set.get(*i).iter().any(|v| dirty(v)))
@@ -807,13 +808,9 @@ impl Watch {
 /// An ID3v2.4 frame: `id`, a body of `body`.
 fn frame(out: &mut Vec<u8>, id: [u8; 4], body: &[u8]) {
     out.extend_from_slice(&id);
-    out.extend_from_slice(&syncsafe(body.len() as u32));
+    out.extend_from_slice(&id3::to_syncsafe(body.len() as u32));
     out.extend_from_slice(&[0, 0]);
     out.extend_from_slice(body);
-}
-
-fn syncsafe(v: u32) -> [u8; 4] {
-    [(v >> 21) as u8 & 0x7F, (v >> 14) as u8 & 0x7F, (v >> 7) as u8 & 0x7F, v as u8 & 0x7F]
 }
 
 /// `tag` (an ID3v2.4 tag without footer, or empty) with the frames and the picture of `o`
@@ -859,9 +856,9 @@ pub fn append_frames(tag: &[u8], o: &Overrides) -> Option<Vec<u8>> {
     if out.len() > MAX_TAG_BYTES {
         return None;
     }
-    let size = syncsafe((out.len() - 10) as u32);
+    let size = id3::to_syncsafe((out.len() - 10) as u32);
     out[6..10].copy_from_slice(&size);
-    out[5] &= !0x10; // no footer
+    out[5] &= !id3::TAG_FOOTER; // no footer
     Some(out)
 }
 
@@ -886,8 +883,6 @@ impl Stamp {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
 
     const EXAMPLE: &str = r#"
@@ -1007,7 +1002,8 @@ TIT2 = "Three (stereo)"
         let d = tempfile::tempdir().unwrap();
         let tags = d.path().join("tags");
         fs::create_dir_all(&tags).unwrap();
-        // Only this test installs a store in this process; no other unit test opens a disc.
+        // Only this test installs a store in this process; the other unit tests that open a disc
+        // find no tags file for it in this store.
         install(Some(Store::new(&tags)));
         let key = "0123456789abcdef0123456789abcdef";
         let image = d.path().join("a.iso");
