@@ -29,6 +29,10 @@ open a draft advisory and follow
    cargo deny check advisories bans licenses sources
    ```
 
+   The other [code acceptance rules](#code-acceptance-rules) have their own checks; for
+   changes outside Rust, `git ls-files -z '*.sh' deploy/sacdfs-ctl | xargs -0 shellcheck`,
+   `ruff check` and `sh .github/scripts/check-copies.sh`.
+
    The mount tests need `/dev/fuse` and `fusermount3` (package `fuse3`); without
    `SACDFS_FUSE_TESTS=1` they are skipped where FUSE is missing, each with a `SKIPPED` line in
    the output. In a container, pass
@@ -40,6 +44,30 @@ open a draft advisory and follow
    `.github/scripts/check-readme-options.py`), docs/design.md when the design changes, with
    the reason for each decision, docs/performance.md with new measurements, and CHANGELOG.md
    under "Unreleased".
+
+## Code acceptance rules
+
+A pull request is merged only when it keeps these rules. Each is checked in CI.
+
+| Rule | Check |
+|---|---|
+| Every `unsafe` block and `unsafe impl` has a `// SAFETY:` comment. | `undocumented_unsafe_blocks = "deny"` in Cargo.toml and winfsp/Cargo.toml (clippy jobs) |
+| Every long option of the mount command is an `-o` option or listed in `NOT_MOUNT_OPTIONS`. | unit test `the_lists_match_the_command_line` (ci, tests) |
+| Every shell script passes ShellCheck in the dialect it declares; a disable says why. | `shellcheck` over `git ls-files '*.sh' deploy/sacdfs-ctl` (ci, fmt + clippy) |
+| Python passes `ruff check` at its default rules (ruff.toml). | ruff 0.17.3, pinned by hash in .github/requirements/ruff.txt (zizmor) |
+| Every Cargo.lock is built `--locked` and checked by cargo-deny. | deny.yml (core, fuzz), windows.yml (winfsp); fuzz/run.sh stops when fuzz/Cargo.lock is stale |
+| winfsp/ is formatted. | `cargo fmt --manifest-path winfsp/Cargo.toml --check` (ci, fmt + clippy) |
+| The minimum Rust version builds the `nfs` feature too. | `cargo check --all-targets --locked --features nfs` (msrv) |
+| The docs build without warnings, with and without `nfs`. | `RUSTDOCFLAGS=-D warnings cargo doc --no-deps --locked [--features nfs]` (ci, sacdfs-nfs) |
+| Copies that must be equal are equal: one `RUST_STABLE`; `entry_unsafe` and `path_unsafe` identical in install.sh and sacdfs-ctl. | .github/scripts/check-copies.sh (ci, no private names) |
+| Shipped container definitions drop all capabilities, set no-new-privileges, and are never privileged. | .github/scripts/check-copies.sh (ci, no private names) |
+| No function over 200 code lines. | `too_many_lines`, threshold in clippy.toml (clippy jobs) |
+| The core's test code is linted on Windows. | `cargo clippy --lib --profile test --locked -- -D warnings` (windows) |
+| No lossy `as` cast in verify's untrusted-file readers. | `#![warn(clippy::cast_possible_truncation)]` in src/verify/container.rs, src/verify/id3.rs and src/tags_cli.rs |
+| No needless collect, large enum variant, large stack array, large future or large value passed by value. | `needless_collect`, `large_enum_variant`, `large_stack_arrays`, `large_futures`, `large_types_passed_by_value` (clippy jobs) |
+
+Clippy warnings fail CI (`-D warnings`). Silence a lint at one place with
+`#[expect(lint, reason = "...")]`.
 
 ## Issues: milestones, labels and claiming
 

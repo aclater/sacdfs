@@ -1,0 +1,3 @@
+# Clippy settings for the core and winfsp/ (clippy reads the nearest clippy.toml upwards).
+# No function over 200 code lines (lint `too_many_lines` in Cargo.toml).
+too-many-lines-threshold = 200

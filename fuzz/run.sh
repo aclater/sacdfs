@@ -34,6 +34,7 @@ fi
 
 mkdir -p fuzz/logs
 # Inputs are parts of images and small files; 256 KiB holds a whole TOC region.
+# shellcheck disable=SC2329 # called by xargs through bash -c
 run_one() {
     local log="fuzz/logs/$1.log"
     # shellcheck disable=SC2086 # the options, one word each
