@@ -28,6 +28,14 @@ All notable changes to sacdfs are recorded here. The format follows
   most 256 MiB over 64 connections). While a new connection waits for one of the 64 places, a
   connection that has had nothing outstanding for 10 s is closed to make room (NFS clients
   connect again when they need to). See docs/design.md, "The NFS front end".
+- **A player that re-reads an album's heads at each start no longer has them decoded again (#456).**
+  The frames of each file's first 2 MiB of audio and its last frame stay in the cache, within
+  half of it, also through the idle release, and a probed folder's heads are decoded ahead on
+  slow CPUs (#510). Unlike the test builds withdrawn before 0.7.1 (#569), kept frames use slabs of
+  their own, a reader that reads a file past its head gives that head back, and no heads are kept
+  while files are read for throughput: a sequential read of whole files still reads about the
+  image data once. With the #456 player's profile on cores limited to an Atom's speed, a start
+  after the idle release opens its track in about 0.25 s instead of 3.6 s, without stalls.
 
 ## [0.7.1] - 2026-11-22
 
