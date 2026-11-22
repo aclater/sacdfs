@@ -579,7 +579,7 @@ impl FrameCache {
     /// (#456) found them decoded only if it came back within the minute before the idle
     /// release; people take longer between albums, so every start was a first start, and on a
     /// 32-bit Atom each decoded the album's heads again, 3.5 to 4 s of CPU while the track
-    /// started. The heads are in slabs of their own ([`Pool::alloc_head`]), so only those stay.
+    /// started. The heads are in slabs of their own (`Pool::alloc_head`), so only those stay.
     pub fn release_idle_keeping_heads(&self, idle: Duration) -> bool {
         let now = self.epoch.elapsed().as_millis() as u64;
         let used = self.used.load(Ordering::Relaxed);
@@ -696,7 +696,7 @@ impl FrameCache {
     /// A reader past a file's head reads for throughput (a copy, a checksum:
     /// [`crate::track::Traffic`]): the heads go back among the other frames, the first to be
     /// evicted, and none are kept for
-    /// [`BULK_HOLD`] (#456). *Why:* the heads of files no one was reading, half the cache, left
+    /// `BULK_HOLD` (#456). *Why:* the heads of files no one was reading, half the cache, left
     /// the read-ahead of three such readers too little room, and they evicted each other's before
     /// it was read: after a scan of five real discs' heads, `sha256sum` of every file with three
     /// readers read 19.6 GB of image against 12.9 GB without kept heads; with a quarter of the
