@@ -5,7 +5,7 @@
 //! short, MSB-first, DST-compressed, and FLAC, next to the images and in a tree of their
 //! own.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "a test fails by panicking")]
 
 mod common;
 

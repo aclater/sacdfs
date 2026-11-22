@@ -71,6 +71,12 @@ struct Args {
     verbose: u8,
 }
 
+/// The command line, for the test that keeps the `-o` option lists in step with it.
+#[cfg(test)]
+pub(crate) fn command() -> clap::Command {
+    <Args as clap::CommandFactory>::command()
+}
+
 pub fn main() -> ExitCode {
     // `-o` options, as `mount -t fuse.sacdfs` and fstab pass them (#60).
     let argv = match mount_opts::expand(std::env::args_os().collect()) {
@@ -228,7 +234,6 @@ fn run(args: Args) -> io::Result<()> {
             open_files,
         },
     )?;
-    // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let tags_tree = tree.clone();
     let shedding = engine.clone();

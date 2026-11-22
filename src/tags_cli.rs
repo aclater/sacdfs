@@ -6,6 +6,8 @@
 //! sacdfs that uses the network ([`crate::lookup`], #185). Nothing but the tags directory is
 //! written.
 
+#![warn(clippy::cast_possible_truncation)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
@@ -34,7 +36,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Print each image's disc key: its tags file is DIR/<key>.toml.
+    /// Print each image's disc key: its tags file is DIR/KEY.toml.
     Key {
         /// The tags directory, to print the tags file's path and whether it exists.
         #[arg(long, value_name = "DIR")]
@@ -142,21 +144,17 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
                 no_suffix: no_multichannel_album_suffix,
                 only_wanting: false,
             };
-            let mut session = match acoustid {
-                false => None,
-                true => match acoustid_session(
-                    &tags,
-                    acoustid_key_file.as_deref(),
-                    acoustid_budget,
-                    max_load,
-                    fpcalc,
-                ) {
+            let mut session = if acoustid {
+                match acoustid_session(&tags, acoustid_key_file.as_deref(), acoustid_budget, max_load, fpcalc)
+                {
                     Ok(s) => Some(s),
                     Err(e) => {
                         eprintln!("sacdfs tags: {}", safe_file::printable(&e));
                         return ExitCode::FAILURE;
                     }
-                },
+                }
+            } else {
+                None
             };
             let mut client = lookup::Client::new(lookup::Http::new());
             let s = lookup::fetch_with(&tags, &images, options, &mut client, session.as_mut(), |line| {
@@ -279,6 +277,9 @@ pub struct ImportSummary {
     pub report: Option<PathBuf>,
     /// Frame keys that were lost but cannot be kept (binary frames).
     pub skipped: BTreeSet<String>,
+    /// Sections of the tags files read that the mount does not apply
+    /// ([`TagsFile::unapplied_sections`]), each with its file and the section to write instead.
+    pub not_applied: Vec<String>,
 }
 
 impl ImportSummary {
@@ -317,13 +318,19 @@ impl ImportSummary {
         if !self.not_kept.is_empty() {
             s.push_str("keep those extracts: their tags files lack what is listed as not kept\n");
         }
+        for n in &self.not_applied {
+            s.push_str(&format!("not applied: {n}\n"));
+        }
         s
     }
 
     /// Whether every extract was handled, which is exit status 0: the same rule as `sacdfs
     /// verify`'s, plus what the import itself could not do (#198).
     pub fn all_handled(&self) -> bool {
-        self.failed.is_empty() && self.not_imported == 0 && self.not_kept.is_empty()
+        self.failed.is_empty()
+            && self.not_imported == 0
+            && self.not_kept.is_empty()
+            && self.not_applied.is_empty()
     }
 }
 
@@ -416,13 +423,75 @@ pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
 fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut ImportSummary) -> io::Result<()> {
     let disc = Arc::new(Disc::open(image, 0, Tuning::default()).map_err(io::Error::other)?);
     let key = tags::disc_key(disc.toc());
+    // Where this disc's "not kept" lines start.
+    let listed = sum.not_kept.len();
+    let (areas, art) = collect_fields(&disc, image, rows, sum);
+    let mut file = lay_out(&disc, &areas);
+    let mut picture = None;
+    if let Some(bytes) = &art {
+        let ext = if tags::picture_mime(bytes) == Some("image/png") { "png" } else { "jpg" };
+        let name = format!("{key}.{ext}");
+        picture = Some(dir.join(&name));
+        file.album.insert(ART.to_owned(), name);
+    }
+    if file.is_empty() {
+        return Ok(());
+    }
+    let path = dir.join(format!("{key}.toml"));
+    let existing = match safe_file::read_text(&path, safe_file::MAX_TAGS_TEXT) {
+        Ok((text, _)) => {
+            Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", shown(&path))))?)
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", shown(&path)))),
+    };
+    for (section, canonical) in existing.iter().flat_map(TagsFile::unapplied_sections) {
+        sum.not_applied.push(format!("{}: section [{section}]: write it as [{canonical}]", shown(&path)));
+    }
+    let created = existing.is_none();
+    let mut merged = existing.unwrap_or_default();
+    let added = merge(&mut merged, &file);
+    // The file as it would be written, with what was there: over its bound, the disc gets
+    // nothing, and that is all there is to say about it.
+    let text = (added > 0).then(|| merged.to_text());
+    if let Some(t) = text.as_ref().filter(|t| t.len() > MAX_FILE_BYTES) {
+        sum.not_kept.truncate(listed);
+        sum.not_kept.push(format!(
+            "disc {}: its tags file {} would be {} KiB, over the {} KiB import writes; nothing added",
+            shown(image),
+            shown(&path),
+            t.len() >> 10,
+            MAX_FILE_BYTES >> 10
+        ));
+        return Ok(());
+    }
+    if let (Some(p), Some(bytes)) = (&picture, &art) {
+        if !p.exists() {
+            write_atomic(p, bytes)?;
+            sum.pictures += 1;
+        }
+    }
+    let Some(text) = text else { return Ok(()) };
+    write_atomic(&path, text.as_bytes())?;
+    sum.written += 1;
+    sum.created += usize::from(created);
+    sum.keys += added;
+    Ok(())
+}
+
+/// The fields of the extracts' tags (`rows`, of `image`) that sacdfs does not serve, by area and
+/// track, and the front cover; what can't be kept is listed in `sum`.
+fn collect_fields(
+    disc: &Arc<Disc>,
+    image: &Path,
+    rows: &[&verify::Row],
+    sum: &mut ImportSummary,
+) -> ([AreaFields; 2], Option<Vec<u8>>) {
     let mut areas: [AreaFields; 2] = Default::default();
     let mut art: Option<Vec<u8>> = None;
     let mut disc_bytes = 0;
-    // Where this disc's "not kept" lines start.
-    let listed = sum.not_kept.len();
     for row in rows {
-        let slot = if row.area == "Multichannel" { Slot::Multichannel } else { Slot::TwoChannel };
+        let slot = if row.area == crate::tree::MULTICHANNEL { Slot::Multichannel } else { Slot::TwoChannel };
         let Some(number) = row.track else { continue };
         let Some(i) = disc.toc().areas.iter().position(|a| a.slot == slot) else { continue };
         let area = &disc.toc().areas[i];
@@ -453,19 +522,23 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
             }
             if f.key == "APIC" {
                 if art.is_none() {
-                    art = front_cover(&tag).filter(|p| {
-                        let fits = p.len() <= tags::MAX_ART_BYTES;
-                        if !fits {
-                            sum.not_kept.push(format!(
-                                "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
-                                shown(&row.path),
-                                shown(image),
-                                p.len() >> 10,
-                                tags::MAX_ART_BYTES >> 10
-                            ));
-                        }
-                        fits
-                    });
+                    // A cover that is not kept is listed, whatever the reason: its extract
+                    // still holds something the tags directory lacks.
+                    match front_cover(&tag) {
+                        Some(p) if p.len() <= tags::MAX_ART_BYTES => art = Some(p),
+                        Some(p) => sum.not_kept.push(format!(
+                            "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
+                            shown(&row.path),
+                            shown(image),
+                            p.len() >> 10,
+                            tags::MAX_ART_BYTES >> 10
+                        )),
+                        None => sum.not_kept.push(format!(
+                            "{} (disc {}): picture that import cannot read (not a plain JPEG or PNG)",
+                            shown(&row.path),
+                            shown(image)
+                        )),
+                    }
                 }
                 continue;
             }
@@ -496,6 +569,12 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
             }
         }
     }
+    (areas, art)
+}
+
+/// The tags file of `areas` (stereo, then multichannel): what every track of an area shares
+/// at its album level, what both areas share at the disc's.
+fn lay_out(disc: &Disc, areas: &[AreaFields; 2]) -> TagsFile {
     let mut file = TagsFile::default();
     for (k, tracks) in areas.iter().enumerate() {
         let slot = if k == 0 { &Slot::TwoChannel } else { &Slot::Multichannel };
@@ -533,53 +612,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         file.multichannel.album.remove(k);
     }
     file.album = shared;
-    let mut picture = None;
-    if let Some(bytes) = &art {
-        let ext = if tags::picture_mime(bytes) == Some("image/png") { "png" } else { "jpg" };
-        let name = format!("{key}.{ext}");
-        picture = Some(dir.join(&name));
-        file.album.insert(ART.to_owned(), name);
-    }
-    if file.is_empty() {
-        return Ok(());
-    }
-    let path = dir.join(format!("{key}.toml"));
-    let existing = match safe_file::read_text(&path, safe_file::MAX_TAGS_TEXT) {
-        Ok((text, _)) => {
-            Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", shown(&path))))?)
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", shown(&path)))),
-    };
-    let created = existing.is_none();
-    let mut merged = existing.unwrap_or_default();
-    let added = merge(&mut merged, &file);
-    // The file as it would be written, with what was there: over its bound, the disc gets
-    // nothing, and that is all there is to say about it.
-    let text = (added > 0).then(|| merged.to_text());
-    if let Some(t) = text.as_ref().filter(|t| t.len() > MAX_FILE_BYTES) {
-        sum.not_kept.truncate(listed);
-        sum.not_kept.push(format!(
-            "disc {}: its tags file {} would be {} KiB, over the {} KiB import writes; nothing added",
-            shown(image),
-            shown(&path),
-            t.len() >> 10,
-            MAX_FILE_BYTES >> 10
-        ));
-        return Ok(());
-    }
-    if let (Some(p), Some(bytes)) = (&picture, &art) {
-        if !p.exists() {
-            write_atomic(p, bytes)?;
-            sum.pictures += 1;
-        }
-    }
-    let Some(text) = text else { return Ok(()) };
-    write_atomic(&path, text.as_bytes())?;
-    sum.written += 1;
-    sum.created += usize::from(created);
-    sum.keys += added;
-    Ok(())
+    file
 }
 
 /// The fields every track of `all` has with the same value, if `tracks` holds them all
@@ -633,9 +666,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// The ID3 tag of an extract, read only.
 fn extract_tag(path: &Path) -> Result<Option<Vec<u8>>, String> {
     let mut src = container::FileSource::open(path).map_err(|e| format!("cannot open: {e}"))?;
-    let audio = container::parse(&mut src).map_err(|e| match e {
-        container::Problem::Unsupported(s) | container::Problem::Error(s) => s,
-    })?;
+    let audio = container::parse(&mut src).map_err(container::Problem::into_text)?;
     audio.read_id3(&mut src).map_err(|size| format!("a tag of {size} bytes is too large to read"))
 }
 
@@ -644,15 +675,15 @@ fn extract_tag(path: &Path) -> Result<Option<Vec<u8>>, String> {
 /// are skipped. Offsets use checked arithmetic, so that a size near 2^32 can't overflow a 32-bit
 /// `usize` (#457): such a tag has no cover.
 pub fn front_cover(tag: &[u8]) -> Option<Vec<u8>> {
-    if tag.len() < 10 || &tag[0..3] != b"ID3" || !(3..=4).contains(&tag[3]) || tag[5] & 0x80 != 0 {
+    if tag.len() < 10 || &tag[0..3] != b"ID3" || !(3..=4).contains(&tag[3]) || tag[5] & id3::TAG_UNSYNC != 0 {
         return None;
     }
     let major = tag[3];
-    let syncsafe = |b: &[u8]| b.iter().fold(0usize, |a, &x| (a << 7) | usize::from(x & 0x7F));
+    let syncsafe = |b: &[u8]| id3::syncsafe(b) as usize;
     let be = |b: &[u8]| b.iter().fold(0usize, |a, &x| (a << 8) | usize::from(x));
     let end = (10 + syncsafe(&tag[6..10])).min(tag.len());
     let mut at: usize = 10;
-    if tag[5] & 0x40 != 0 {
+    if tag[5] & id3::TAG_EXTENDED != 0 {
         let ext = tag.get(10..14)?;
         let ext_size = if major == 4 { syncsafe(ext) } else { be(ext).checked_add(4)? };
         at = at.checked_add(ext_size)?;
@@ -668,7 +699,13 @@ pub fn front_cover(tag: &[u8]) -> Option<Vec<u8>> {
         let Some(body_end) = (at + 10).checked_add(size) else { break };
         let body = tag.get(at + 10..body_end.min(end))?;
         at = body_end;
-        let packed = if major == 4 { h[9] & 0x0F != 0 } else { h[9] & 0xE0 != 0 };
+        // Skipped: v2.4 compressed, encrypted, unsynchronised or with a data length; v2.3
+        // compressed, encrypted or grouped.
+        let packed = if major == 4 {
+            h[9] & (id3::V4_COMPRESSED_OR_ENCRYPTED | id3::V4_UNSYNC | id3::V4_DATA_LENGTH) != 0
+        } else {
+            h[9] & (id3::V3_COMPRESSED_OR_ENCRYPTED | id3::V3_GROUPING) != 0
+        };
         if &h[0..4] != b"APIC" || packed {
             continue;
         }
@@ -698,9 +735,8 @@ fn apic(b: &[u8]) -> Option<(u8, Vec<u8>)> {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "test data of known small sizes")]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
 
     fn f(pairs: &[(&str, &str)]) -> Fields {

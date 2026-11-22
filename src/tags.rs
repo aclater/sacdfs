@@ -26,7 +26,9 @@
 //! Keys are the names below ([`ITEMS`]) or ID3 frames written as `sacdfs verify` reports
 //! them: a text frame id (`TBPM`), `TXXX:description`, `COMM:description` or `UFID:owner`.
 //! An empty value removes the item. Levels apply in the order album, area album, track, area
-//! track; a later one wins.
+//! track; a later one wins. A track is named by its number, 1 to 255, with no sign or leading
+//! zeros (`[track.3]`, not `[track.03]`): a section that writes it another way is not applied,
+//! and is reported ([`TagsFile::unapplied_sections`]); the rest of the file applies.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
@@ -41,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::safe_file;
+use crate::verify::id3;
 
 /// The names of the TagSet items a tags file can set, with the ID3 frame each is written as.
 pub const ITEMS: [(&str, &str, TagItem); 12] = [
@@ -134,6 +137,7 @@ impl TagsFile {
             }
         }
         for t in f.track.keys().chain(f.stereo.track.keys()).chain(f.multichannel.track.keys()) {
+            // A number written another way (`03`, `+3`) is no error: see `unapplied_sections`.
             if t.parse::<u8>().ok().filter(|&n| n > 0).is_none() {
                 return Err(format!("track {t:?} is not a number from 1 to 255"));
             }
@@ -167,6 +171,26 @@ impl TagsFile {
             }
         }
         v
+    }
+
+    /// The track sections that are never applied, because their key is a track number not written
+    /// as a track's fields are looked up (`03` or `+3` for `3`): each with the section to write
+    /// instead, as `("track.03", "track.3")`. *Why not an error:* the rest of such a file is
+    /// good, and refusing it whole would take every other override of the disc away for one
+    /// mis-keyed section. *Why not read as `3`:* that would hide two sections for one track.
+    /// Whoever reads a tags file reports these.
+    pub fn unapplied_sections(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (prefix, tracks) in
+            [("", &self.track), ("stereo.", &self.stereo.track), ("multichannel.", &self.multichannel.track)]
+        {
+            for key in tracks.keys() {
+                if let Some(n) = key.parse::<u8>().ok().filter(|n| n.to_string() != *key) {
+                    out.push((format!("{prefix}track.{key}"), format!("{prefix}track.{n}")));
+                }
+            }
+        }
+        out
     }
 
     /// The album-level fields of the area in `slot`, both levels merged.
@@ -326,9 +350,9 @@ fn without_custom(set: &TagSet, custom: &[(String, String)]) -> TagSet {
 /// `set` with the control characters (C0, DEL and C1) of its values and descriptions removed,
 /// line breaks kept in the messages only. *Why:* scarletbook 0.6.0 keeps control characters in
 /// the strings of a TOC (all of them in ISRCs and catalogue numbers, DEL and C1 in free text),
-/// and sacdfs filters what it writes itself rather than rely on the ID3 writer's own removal
-/// (W9). This is what that removal does, so the writer finds nothing left and the tag's bytes
-/// are the same.
+/// and sacdfs filters what it writes itself rather than rely on the ID3 writer's own removal.
+/// This is what that removal does, so the writer finds nothing left and the tag's bytes are
+/// the same.
 pub fn without_controls(set: &TagSet) -> TagSet {
     let dirty = |s: &str| s.chars().any(char::is_control);
     if !ALL_ITEMS.iter().any(|i| set.get(*i).iter().any(|v| dirty(v)))
@@ -486,7 +510,8 @@ const KEPT_PICTURES: usize = 16;
 /// its first bytes, and its bytes.
 pub fn read_picture(dir: &Path, name: &str) -> io::Result<Picture> {
     let bad = |m: &str| io::Error::new(io::ErrorKind::InvalidInput, m.to_owned());
-    if name.contains('/') || name.starts_with('.') || name.contains('\0') {
+    // A single plain file name on every platform: no `/` or `\`, no drive (`C:`), no NUL.
+    if name.contains(['/', '\\', ':', '\0']) || name.starts_with('.') {
         return Err(bad("not a file name in the tags directory"));
     }
     let path = dir.join(name);
@@ -588,6 +613,13 @@ impl Store {
             .and_then(|(s, m)| TagsFile::parse(&s).map(|f| (f, m)))
         {
             Ok((f, m)) => {
+                // Once per read of the file: it is cached until it changes.
+                for (section, canonical) in f.unapplied_sections() {
+                    log::warn!(
+                        "tags: {}: section [{section}] is not applied: write it as [{canonical}]",
+                        safe_file::shown(&path)
+                    );
+                }
                 let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
                 let tags = (!f.is_empty()).then(|| Arc::new(DiscTags::new(f, mtime, &self.dir)));
                 ((mtime, m.len()), tags)
@@ -806,13 +838,9 @@ impl Watch {
 /// An ID3v2.4 frame: `id`, a body of `body`.
 fn frame(out: &mut Vec<u8>, id: [u8; 4], body: &[u8]) {
     out.extend_from_slice(&id);
-    out.extend_from_slice(&syncsafe(body.len() as u32));
+    out.extend_from_slice(&id3::to_syncsafe(body.len() as u32));
     out.extend_from_slice(&[0, 0]);
     out.extend_from_slice(body);
-}
-
-fn syncsafe(v: u32) -> [u8; 4] {
-    [(v >> 21) as u8 & 0x7F, (v >> 14) as u8 & 0x7F, (v >> 7) as u8 & 0x7F, v as u8 & 0x7F]
 }
 
 /// `tag` (an ID3v2.4 tag without footer, or empty) with the frames and the picture of `o`
@@ -858,9 +886,9 @@ pub fn append_frames(tag: &[u8], o: &Overrides) -> Option<Vec<u8>> {
     if out.len() > MAX_TAG_BYTES {
         return None;
     }
-    let size = syncsafe((out.len() - 10) as u32);
+    let size = id3::to_syncsafe((out.len() - 10) as u32);
     out[6..10].copy_from_slice(&size);
-    out[5] &= !0x10; // no footer
+    out[5] &= !id3::TAG_FOOTER; // no footer
     Some(out)
 }
 
@@ -885,8 +913,6 @@ impl Stamp {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
 
     const EXAMPLE: &str = r#"
@@ -926,6 +952,37 @@ TIT2 = "Three (stereo)"
         {
             assert!(TagsFile::parse(bad).is_err(), "{bad}");
         }
+    }
+
+    /// A track section whose number is not written as sacdfs looks it up (`3`) is not applied,
+    /// and is named with the section to write instead; the rest of the file applies, and the
+    /// section is still there when the file is written again.
+    #[test]
+    fn track_sections_keyed_another_way_are_reported() {
+        let text = "[album]\ngenre = 'Jazz'\n[track.03]\ntitle = 'x'\n[track.4]\ntitle = 'four'\n\
+                    [track.\"+3\"]\ntitle = 'y'\n[stereo.track.007]\ntitle = 'z'\n\
+                    [multichannel.track.\"+1\"]\ntitle = 'w'\n";
+        let f = TagsFile::parse(text).unwrap();
+        let pair = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+        assert_eq!(
+            f.unapplied_sections(),
+            [
+                pair("track.+3", "track.3"),
+                pair("track.03", "track.3"),
+                pair("stereo.track.007", "stereo.track.7"),
+                pair("multichannel.track.+1", "multichannel.track.1"),
+            ]
+        );
+        // Those sections set nothing; everything else applies.
+        let three = f.fields_for(Slot::TwoChannel, 3);
+        assert_eq!((three.get("title"), three["genre"].as_str()), (None, "Jazz"));
+        assert_eq!(f.fields_for(Slot::TwoChannel, 4)["title"], "four");
+        assert!(!f.fields_for(Slot::TwoChannel, 7).contains_key("title"));
+        // Written and read again: the same, the sections kept.
+        assert_eq!(TagsFile::parse(&f.to_text()).unwrap(), f);
+        // A file keyed as sacdfs looks tracks up has none; what is no track number is refused.
+        assert!(TagsFile::parse("[track.3]\ntitle = 'x'\n").unwrap().unapplied_sections().is_empty());
+        assert!(TagsFile::parse("[track.0]\ntitle = 'x'\n").is_err());
     }
 
     #[test]
@@ -990,6 +1047,13 @@ TIT2 = "Three (stereo)"
         assert_eq!(read_picture(d.path(), "a.jpg").unwrap().0, "image/jpeg");
         assert!(read_picture(d.path(), "b.gif").is_err());
         assert!(read_picture(d.path(), "../a.jpg").is_err());
+        // Refused on every platform, although `\` and `:` are ordinary characters here.
+        for name in ["a\\b.jpg", "C:x.jpg", "..\\x.jpg"] {
+            fs::write(d.path().join(name), b"\xFF\xD8\xFFrest").unwrap();
+            assert!(read_picture(d.path(), name).is_err(), "{name}");
+        }
+        fs::write(d.path().join("cover (1) - b&w.jpg"), b"\xFF\xD8\xFFrest").unwrap();
+        assert!(read_picture(d.path(), "cover (1) - b&w.jpg").is_ok());
         std::os::unix::fs::symlink(d.path().join("a.jpg"), d.path().join("l.jpg")).unwrap();
         assert!(read_picture(d.path(), "l.jpg").is_err());
     }
@@ -999,7 +1063,8 @@ TIT2 = "Three (stereo)"
         let d = tempfile::tempdir().unwrap();
         let tags = d.path().join("tags");
         fs::create_dir_all(&tags).unwrap();
-        // Only this test installs a store in this process; no other unit test opens a disc.
+        // Only this test installs a store in this process; the other unit tests that open a disc
+        // find no tags file for it in this store.
         install(Some(Store::new(&tags)));
         let key = "0123456789abcdef0123456789abcdef";
         let image = d.path().join("a.iso");

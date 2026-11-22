@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A track shown as a DSF or WAV file, and reading byte ranges of it.
+//!
+//! Frame numbers come in three kinds here and in [`crate::engine`], told apart by their names:
+//! `k0`, `k1` are indices into the file (its first frame is 0); `t0`, `t1` are timeline positions
+//! of the area (`start_frame + k`); `d0`, `d1` are the timeline positions of the DSD frames a PCM
+//! conversion needs (one more on each side). Each pair is a half-open range.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -405,12 +410,7 @@ pub const HEAD_WINDOW: u64 = 1 << 20;
 /// start, though it held once running (#456). *Why 8 s:* with a cache that held them, 4 s gave
 /// worse worst reads than 8 s (the window after it came while the player's buffer was still
 /// small), and 12 s no better.
-pub const START_AHEAD_FRAMES: u32 = 8 * 75;
-
-/// Bytes of a file's audio from its start whose frames a read keeps in the cache as its head
-/// ([`crate::engine::FrameCache::keep`], #456): a network player's probe of a 6-channel DSF
-/// file reads its first 1.6 MiB.
-const HEAD_KEEP: u64 = 2 << 20;
+pub const START_AHEAD_FRAMES: u32 = 8 * dsf::FRAMES_PER_SECOND;
 
 /// A reader whose reads all end within this many bytes after the file's header has read only
 /// its head (`Reader::head_only`, #503). *Why this far:* a player that re-reads the heads of an
@@ -495,6 +495,16 @@ pub enum Audio {
     Dsf(Layout),
     /// WAV frames of PCM.
     Wav(wav::Layout),
+}
+
+impl Audio {
+    /// Bytes of audio per frame: DSD bytes of every channel, or PCM samples of every channel.
+    pub fn frame_bytes(self) -> u64 {
+        match self {
+            Audio::Dsf(l) => dsf::FRAME_BYTES * u64::from(l.channels),
+            Audio::Wav(l) => l.frame_bytes(),
+        }
+    }
 }
 
 /// The range of `track`'s track with pause, if it is a valid range longer than the track.
@@ -690,29 +700,31 @@ impl TrackFile {
     /// that quarter can't hold what it decodes past the furthest read (`start_lead`) and a slice
     /// of `slice` frames.
     pub fn start_ahead_frames(&self, cache_bytes: usize, lead: u32, slice: u32, secs: u32) -> u32 {
-        let frame = (self.byte_rate() as u64 / 75).max(1);
+        let frame = self.frame_bytes().max(1);
         let quarter = cache_bytes as u64 / 4 / frame;
         if quarter < u64::from(lead) + u64::from(slice) {
             return 0;
         }
-        quarter.min(u64::from(secs) * 75).min(u64::from(self.layout.frames)) as u32
+        quarter.min(u64::from(secs) * u64::from(dsf::FRAMES_PER_SECOND)).min(u64::from(self.layout.frames))
+            as u32
     }
 
     /// The share of a quarter of the cache, in frames, of one of `readers` reading for
     /// throughput while someone plays ([`Traffic`]).
     pub fn shared_frames(&self, cache_bytes: usize, readers: usize) -> u32 {
-        let frame = self.byte_rate() as u64 / 75;
+        let frame = self.frame_bytes();
         let share = cache_bytes as u64 / 4 / readers.max(1) as u64 / frame.max(1);
         share.clamp(u64::from(SHARED_WINDOW_MIN), u64::from(READ_AHEAD_FRAMES_MAX)) as u32
     }
 
     /// Bytes of the file's audio per second of playing.
     pub fn byte_rate(&self) -> f64 {
-        let per_frame = match self.audio {
-            Audio::Dsf(l) => dsf::FRAME_BYTES * u64::from(l.channels),
-            Audio::Wav(l) => l.frame_bytes(),
-        };
-        per_frame as f64 * 75.0
+        self.frame_bytes() as f64 * f64::from(dsf::FRAMES_PER_SECOND)
+    }
+
+    /// Bytes of the file's audio per frame.
+    pub fn frame_bytes(&self) -> u64 {
+        self.audio.frame_bytes()
     }
 
     /// The file format.
@@ -759,28 +771,6 @@ impl TrackFile {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (Arc::as_ptr(&self.disc) as usize, self.area, self.start_frame).hash(&mut h);
         h.finish() as usize
-    }
-
-    /// The frames (file indices from 0) that the first `audio` bytes of the file's audio need,
-    /// within what a read keeps as its head (`HEAD_KEEP`).
-    pub fn head_frames(&self, audio: u64) -> u32 {
-        let head = ((HEAD_KEEP / (self.byte_rate() as u64 / 75).max(1)) as u32).min(self.layout.frames);
-        let h = self.header_len();
-        self.frames_for(h, h.saturating_add(audio)).1.min(head)
-    }
-
-    /// Bytes a decoded frame of the file takes in the cache: DSD, or PCM with `engine`'s rate.
-    pub fn cached_frame_bytes(&self, engine: &Engine) -> usize {
-        match self.audio {
-            Audio::Dsf(_) => usize::from(self.layout.channels) * crate::dsf::FRAME_BYTES as usize,
-            Audio::Wav(l) => engine.pcm_frame_bytes(l.channels),
-        }
-    }
-
-    /// Whether `other` is a file of the same area in the same format: one of the files a
-    /// folder shows beside it.
-    pub fn beside(&self, other: &TrackFile) -> bool {
-        Arc::ptr_eq(&self.disc, &other.disc) && self.area == other.area && self.format() == other.format()
     }
 
     /// Length of everything before the first audio byte.
@@ -928,8 +918,10 @@ impl TrackFile {
     }
 }
 
-/// A frame of zeros of six channels, whose start is the padding of fewer.
-static ZEROS: [u8; 6 * dsf::FRAME_BYTES as usize] = [0; 6 * dsf::FRAME_BYTES as usize];
+/// A frame of zeros of the most channels, whose start is the padding of fewer.
+static ZEROS: [u8; ZEROS_LEN] = [0; ZEROS_LEN];
+
+const ZEROS_LEN: usize = dsf::MAX_CHANNELS as usize * dsf::FRAME_BYTES as usize;
 
 /// Most reply buffers kept ([`give_back`]): as many as reads ever overlap in a straight read,
 /// and a few more.
@@ -1018,6 +1010,8 @@ pub struct ReadAhead {
 /// Whether a process is a network file server's ([`Reader::opened_by`]).
 pub type IsServer = fn(u32) -> bool;
 
+/// What a [`Reader`] knows of its reads so far: how far they got, their pace, and what is decoded
+/// ahead of them ([`Reader::plan_read_ahead`]).
 #[derive(Debug, Default)]
 struct Seq {
     /// The furthest byte read so far.
@@ -1118,6 +1112,10 @@ impl Drop for Arrival {
 
 /// An open file: the file and its own demultiplexer state (and, for a WAV file, its last
 /// decoded DSD frames), so that a sequential read continues where the last one stopped.
+///
+/// Its locks are taken in this order: `seq`, then `start` or `flight`, then one of [`Traffic`]'s
+/// or the frame cache's. `stream` is taken with none of the others held, and held for the length
+/// of a decode.
 #[derive(Debug)]
 pub struct Reader {
     /// The file.
@@ -1222,30 +1220,6 @@ impl Reader {
     /// Whether the reader has read only the file's head so far ([`HEAD_SCAN`]).
     fn head_only(&self, s: &Seq) -> bool {
         s.max_end <= self.file.header_len().saturating_add(HEAD_SCAN)
-    }
-
-    /// How far into the audio a probe of the file read, if the reader is one whose head a
-    /// folder's other files are worth decoding like ([`crate::warm`], #510): its reads began at
-    /// the file's start, went past the kernel's read-ahead of a first read (a tagger's or a
-    /// library scanner's look at the header stops within it) and stayed within the head; and this
-    /// machine decodes the file's format slower than players read at the start of a track
-    /// (`--start-burst`). The bytes of audio it read.
-    pub fn probe_extent(&self, engine: &Engine) -> Option<u64> {
-        let s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
-        let (_, at) = s.started?;
-        let header = self.file.header_len();
-        (at <= header
-            && self.head_only(&s)
-            && s.max_end > at.saturating_add(KERNEL_FIRST_WINDOW)
-            && self.slow(engine))
-        .then(|| s.max_end.saturating_sub(header))
-    }
-
-    /// Decodes frames `[k0, k1)` of the file into the cache and keeps them as its head, as a read
-    /// of them would ([`crate::warm`], #510); frames cached already only become the most recently
-    /// read heads.
-    pub fn warm(&self, engine: &Engine, k0: u32, k1: u32) -> Result<(), ReadError> {
-        self.decoded(engine, k0, k1, true).map(drop)
     }
 
     /// Bytes `[offset, offset + len)` of the file (fewer at its end), and the frames (file
@@ -1476,7 +1450,7 @@ impl Reader {
     /// decoding; each decoding its own few frames used the decoder threads poorly and took
     /// turns with the decode-ahead's slices for the open file's demultiplexer.
     ///
-    /// Not a read of frames in the cache already (kept heads, #456): those take no decoding. On
+    /// Not a read of frames in the cache already (#456): those take no decoding. On
     /// the Atom of #456 such reads waited up to 2 s for a decode-ahead held up by others' work.
     fn wait_for_start(&self, engine: &Engine, k0: u32, k1: u32) {
         let running = {
@@ -1578,7 +1552,7 @@ impl Reader {
             // the player of #456 re-reads them one file at a time, each closed before the next
             // opens, and from a second start on most come before its track's handle does, so
             // no file was starting yet; each started a decode-ahead the re-read then waited for,
-            // a quarter of a second per file on its Atom, though the kept heads held every frame.
+            // a quarter of a second per file on its Atom, though the cache held every frame.
             // *Why not one that began past the start:* that is how a player's handle begins
             // after its probe (#456), and it must not wait for a scanner's.
             if st.from == 0
@@ -1701,32 +1675,13 @@ impl Reader {
         }
     }
 
-    /// Frames `[k0, k1)` of the file, for a read (`for_read`) or for read-ahead.
+    /// Frames `[k0, k1)` of the file, for a read (`for_read`) or for read-ahead: from the cache,
+    /// or decoded with the open file's demultiplexer, after players if this reader is none.
+    ///
+    /// Frames of files' heads and tails are not kept apart from the others: keeping them
+    /// (#508, #510) about doubled the image reads of sequential whole-file reads with small
+    /// reads, and was withdrawn from 0.7.1 (#456).
     fn decoded(
-        &self,
-        engine: &Engine,
-        k0: u32,
-        k1: u32,
-        for_read: bool,
-    ) -> Result<Vec<Arc<Frame>>, ReadError> {
-        let frames = self.decoded_frames(engine, k0, k1, for_read)?;
-        // A read of the head or the last frame: keep those frames (#456).
-        if for_read {
-            let f = &self.file;
-            let head = ((HEAD_KEEP / (f.byte_rate() as u64 / 75).max(1)) as u32).min(f.layout.frames);
-            let pcm = matches!(f.audio, Audio::Wav(_));
-            if k0 < head {
-                engine.keep_heads(&f.disc, f.area, pcm, f.start_frame + k0, f.start_frame + k1.min(head));
-            }
-            let last = f.layout.frames.saturating_sub(1);
-            if k1 > last && k1 > head {
-                engine.keep_heads(&f.disc, f.area, pcm, f.start_frame + k0.max(last), f.start_frame + k1);
-            }
-        }
-        Ok(frames)
-    }
-
-    fn decoded_frames(
         &self,
         engine: &Engine,
         k0: u32,
@@ -1804,12 +1759,18 @@ impl Reader {
     /// player that seeks is judged again by its pace, but it has been playing.
     fn judged(&self, s: &Seq, now: std::time::Instant) -> bool {
         let Some((t, _)) = s.started else { return false };
-        let secs = now.saturating_duration_since(t);
-        secs >= PLAYER_AFTER
+        let elapsed = now.saturating_duration_since(t);
+        elapsed >= PLAYER_AFTER
             && (s.paced >= FAST_AFTER
-                || secs.as_secs_f64() * PLAYER_FACTOR * self.file.byte_rate() >= FAST_AFTER as f64)
+                || elapsed.as_secs_f64() * PLAYER_FACTOR * self.file.byte_rate() >= FAST_AFTER as f64)
     }
 
+    /// After a read of bytes `[offset, end)`, frames `[k0, k1)`: notes it in the reader's state,
+    /// judges the reader anew (for throughput, a player, or neither yet: [`Traffic`]), and gives
+    /// the frames to decode ahead, if any. In order: a look at the file's end changes nothing;
+    /// the pace and the reader's place among the others; the start-of-track decode-ahead
+    /// ([`Reader::plan_start`]), which replaces the rest while it runs; then the window, for a
+    /// sequential reader past the file's head.
     fn plan_read_ahead(&self, engine: &Engine, offset: u64, end: u64, k0: u32, k1: u32) -> Option<ReadAhead> {
         let mut s = self.seq.lock().unwrap_or_else(|p| p.into_inner());
         // A jump to the file's last frame is a look at what follows the audio, as a player
@@ -1930,7 +1891,7 @@ impl Reader {
             let n = traffic.fast.note(self.id, now);
             let someone_plays = traffic.players.any(now);
             let f = &self.file;
-            let margin = (GIVE_UP_MARGIN / (f.byte_rate() as u64 / 75).max(1)) as u32;
+            let margin = (GIVE_UP_MARGIN / f.frame_bytes().max(1)) as u32;
             let behind = k0.saturating_sub(margin);
             if s.given_up < behind {
                 if someone_plays {
@@ -1975,12 +1936,12 @@ impl Reader {
         // too, and in slices a whole 6-channel file read 9 % slower. *Why not "not for
         // throughput":* a player filling its buffer at 1.5 times real time counts as one; and a
         // bound in frames only moved the wait to where it ended.
-        let slow = s.pace_from.is_some_and(|(t, _)| {
+        let near_real_time = s.pace_from.is_some_and(|(t, _)| {
             let secs = now.saturating_duration_since(t).as_secs_f64().max(0.5);
             (s.paced as f64) < SLICE_PACE_MAX * self.file.byte_rate() * secs
         });
         let sliced = std::mem::take(&mut s.after_start)
-            || s.slicing && slow && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
+            || s.slicing && near_real_time && k1.saturating_add(slice_frames(engine)) >= s.ahead_until;
         s.slicing = sliced;
         let start = s.ahead_until.max(k1);
         let stop = frames.min(k1 + window);
@@ -1997,6 +1958,23 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    /// The bytes per frame are what the byte rate, through `f64`, gave before there was
+    /// [`Audio::frame_bytes`]: for every channel count and every format and PCM rate.
+    #[test]
+    fn frame_bytes_are_the_byte_rate_over_the_frame_rate() {
+        for channels in 0..=u8::MAX {
+            let mut layouts = vec![Audio::Dsf(Layout { channels, frames: 1 })];
+            for samples_per_frame in [1176, 2352, 4704] {
+                let rate = samples_per_frame * dsf::FRAMES_PER_SECOND;
+                layouts.push(Audio::Wav(wav::Layout { channels, frames: 1, samples_per_frame, rate }));
+            }
+            for audio in layouts {
+                let byte_rate = audio.frame_bytes() as f64 * 75.0;
+                assert_eq!(audio.frame_bytes(), byte_rate as u64 / 75, "{audio:?}");
+            }
+        }
+    }
 
     /// Readers count while they read and until they close or pause.
     #[test]
@@ -2572,36 +2550,6 @@ mod tests {
     /// A reader of a file's head from its start (#503) does not start its decode-ahead while
     /// another file starts, and reads ahead nothing beside a file starting or a player; it starts
     /// once the other has.
-    /// A probe (#510): reads from the file's start, past the kernel's first window, within the
-    /// head, on a machine slower than the start burst.
-    #[test]
-    fn a_probe_reads_the_head_from_the_start_on_a_slow_machine() {
-        let f = longest_dsf(&corpus());
-        let engine = Engine::new(2, 32 << 20).unwrap();
-        let r = Reader::new(f.clone());
-        let h = f.header_len();
-        let set = |start: u64, end: u64| {
-            let mut s = r.seq.lock().unwrap();
-            s.started = Some((std::time::Instant::now(), start));
-            s.max_end = end;
-        };
-        set(0, h + (1536 << 10));
-        assert_eq!(r.probe_extent(&engine), None, "not measured: not slow");
-        engine.rates().set(false, f.layout.channels, 1.5);
-        assert_eq!(r.probe_extent(&engine), Some(1536 << 10));
-        set(0, h + (200 << 10));
-        assert_eq!(r.probe_extent(&engine), None, "a tagger's read and the kernel's read-ahead");
-        set(0, h + HEAD_SCAN + 1);
-        assert_eq!(r.probe_extent(&engine), None, "past the head: a player");
-        set(h + (1 << 20), h + (1536 << 10));
-        assert_eq!(r.probe_extent(&engine), None, "began past the start");
-        engine.rates().set(false, f.layout.channels, 5.0);
-        set(0, h + (1536 << 10));
-        assert_eq!(r.probe_extent(&engine), None, "a fast machine");
-        assert_eq!(f.head_frames(0), 0);
-        assert!(f.head_frames(u64::MAX) <= f.layout.frames);
-    }
-
     #[test]
     fn a_head_reader_beside_a_file_starting_waits() {
         let tree = corpus();
@@ -2697,7 +2645,7 @@ mod tests {
     }
 
     /// A read of frames in the cache already does not wait for the start-of-track decode-ahead
-    /// (#456, round 5): on the Atom such a read of the kept head waited 2 s for a decode-ahead
+    /// (#456, round 5): on the Atom such a read of a cached head waited 2 s for a decode-ahead
     /// held up by other files' work.
     #[test]
     fn a_read_of_cached_frames_does_not_wait_for_the_start_ahead() {
