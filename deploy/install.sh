@@ -602,6 +602,17 @@ tls_checked() {
     wget --version 2>/dev/null | grep -q 'GNU Wget'
 }
 
+# untar ARCHIVE: unpack the .tar.gz ARCHIVE into $TMP. Run as root, tar gives the files the
+# owners recorded in the archive unless told not to (--no-same-owner); a tar without that
+# option (a BusyBox built without long options) fails the listing and unpacks as before.
+untar() {
+    if tar --no-same-owner -tzf "$1" >/dev/null 2>&1; then
+        tar --no-same-owner -C "$TMP" -xzf "$1"
+    else
+        tar -C "$TMP" -xzf "$1"
+    fi
+}
+
 get_archive() {
     [ -n "$PKGDIR" ] && return 0
     v=${VERSION:-$DEFAULT_VERSION}
@@ -621,7 +632,7 @@ get_archive() {
         else
             warn "no $ARCHIVE.sha256 next to it: the archive isn't checked"
         fi
-        tar -C "$TMP" -xzf "$ARCHIVE" || die "cannot unpack $ARCHIVE"
+        untar "$ARCHIVE" || die "cannot unpack $ARCHIVE"
         pkg=''
         for d in "$TMP"/sacdfs-*-linux; do [ -d "$d" ] && pkg=${d##*/}; done
         [ -n "$pkg" ] || die "$ARCHIVE is not a sacdfs release archive"
@@ -649,7 +660,7 @@ get_archive() {
                 die "the download doesn't match its checksum; try again later"
             say "  checksum OK: $pkg.tar.gz"
         fi
-        tar -C "$TMP" -xzf "$TMP/$pkg.tar.gz" || die "cannot unpack $pkg.tar.gz"
+        untar "$TMP/$pkg.tar.gz" || die "cannot unpack $pkg.tar.gz"
     fi
     PKGDIR=$TMP/$pkg
 }
