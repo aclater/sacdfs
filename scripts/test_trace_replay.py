@@ -117,7 +117,7 @@ class Anonymise(unittest.TestCase):
             self.assertEqual(Path(d, "b").read_text(), text)
 
     def test_exact_sizes_on_request(self):
-        text, h = self.run_on([(self.TAIL, 4096)], unit=0)
+        _, h = self.run_on([(self.TAIL, 4096)], unit=0)
         self.assertEqual((h.size, h.reads[0][1]), (self.SIZE, self.TAIL))
 
     def test_reads_meeting_in_the_middle_are_refused(self):
