@@ -181,8 +181,9 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 
 ## Real-disc tests
 
-Real images can't go into CI, so three `#[ignore]`d tests (`dsf_header::real_discs_head_reads`,
-`library_index::real_discs`, `wav::real_discs`) run by hand. Before each release candidate the
+Real images can't go into CI, so four `#[ignore]`d tests (`dsf_header::real_discs_head_reads`,
+`library_index::real_discs`, `wav::real_discs`, `sequential_reads::real_discs_sequential_reads`)
+run by hand. Before each release candidate the
 coordinator runs, on a build of the candidate commit:
 
 ```sh
@@ -190,13 +191,13 @@ scripts/real-discs.sh DIR
 ```
 
 `DIR` is the Small library's images ([Test libraries](#test-libraries)) or larger, SACDs only. The
-release report records the counts (images, tests passed of 3, skipped) and the exit status, never
+release report records the counts (images, tests passed of 4, skipped) and the exit status, never
 disc titles. Exit 0 passes. Exit 77 (no images given) is a skip and is reported as one: the gate
 was not run, which [the exit criteria](#exit-criteria) do not count as passed. Details:
 [development.md](development.md#real-disc-tests).
 
 The run is checked to fail when it should: on a directory holding only an empty file, only random
-bytes named `.iso`, or a real image next to random bytes, each of the three tests fails (images
+bytes named `.iso`, or a real image next to random bytes, each of the tests fails (images
 that don't open, compare nothing or serve no file), and on a truncated copy of a real image (the
 TOC says more sectors than the file holds, #294). A corrupt image of the right size is not caught.
 For a long run use `nice`; it is not timed, so it

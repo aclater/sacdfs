@@ -4,7 +4,8 @@
 # The installer as a release publishes it: deploy/install.sh with DEFAULT_VERSION set to the
 # release's version and the SHA-256 of its archives built in (RELEASE_SHA256), so that it
 # checks the downloads against values from the attested install.sh itself rather than a
-# .sha256 from the same server. Used by .github/workflows/release.yml after the binaries
+# .sha256 from the same server; and the SHA-256 of the release files in every archive
+# (MEMBER_SHA256, stamp-members.sh), against which it verifies release files beside it. Used by .github/workflows/release.yml after the binaries
 # are built, and by deploy/ci-install-test.sh for the installer tests.
 #
 #   stamp-installer.sh VERSION DIR SRC OUT
@@ -75,6 +76,25 @@ printf '%s' "$lines" | awk -v v="$version" -v sums=/dev/stdin '
     exit 1
 }
 
+# The release files of every archive, from the archives themselves (stamp-members.sh): this
+# install.sh verifies release files beside it against built-in checksums.
+unpacked=$(mktemp -d)
+trap 'rm -rf "$unpacked"' EXIT
+for f in "$dir"/sacdfs-"$version"-*-linux.tar.gz; do
+    [ -f "$f" ] || continue
+    tar -C "$unpacked" -xzf "$f"
+done
+set -- "$unpacked"/sacdfs-"$version"-*-linux
+[ "$#" = "$n" ] && [ -d "$1" ] || {
+    echo "stamp-installer.sh: $n archives but $# release folders in them" >&2
+    rm -f "$out.tmp"
+    exit 1
+}
+sh "$(dirname "$0")/stamp-members.sh" fill "$out.tmp" "$@" >/dev/null || {
+    rm -f "$out.tmp"
+    exit 1
+}
+
 # The result: parses, has the version and every checksum, and nothing else changed.
 sh -n "$out.tmp"
 grep -q "^DEFAULT_VERSION=$version " "$out.tmp"
@@ -83,7 +103,12 @@ got=$(sed -n "/^RELEASE_SHA256='\$/,/^'\$/p" "$out.tmp" | grep -c '^[0-9a-f]\{64
     echo "stamp-installer.sh: $got checksums in the result, expected $n" >&2
     exit 1
 }
+members=$(sed -n "/^MEMBER_SHA256='\$/,/^'\$/p" "$out.tmp" | grep -c '^[0-9a-f]\{64\}  ' || true)
+[ "$members" -ge "$((2 * n))" ] || {
+    echo "stamp-installer.sh: $members release file checksums in the result, for $n archives" >&2
+    exit 1
+}
 mv "$out.tmp" "$out"
 chmod 0755 "$out"
-echo "stamped $out: sacdfs $version, $n archive checksums"
+echo "stamped $out: sacdfs $version, $n archive checksums, $members release file checksums"
 printf '%s' "$lines"

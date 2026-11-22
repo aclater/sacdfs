@@ -3,7 +3,7 @@
 //! The crashes and wrong results the fuzz targets found (`fuzz/`, #161), each as a small
 //! input that shows it. These run without a fuzzer, on every pull request.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "a test fails by panicking")]
 
 use std::ffi::OsStr;
 
