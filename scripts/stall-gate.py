@@ -9,7 +9,7 @@ base in the first seconds of a track.
 SCENARIO is a profile (tests/fixtures/players/NAME.json, acted out by
 `scripts/trace-replay.py --player`) or TRACE:R (reader R of a trace, replayed). PROFILE@idle acts
 the profile out twice on one mount, IDLE_S apart, and measures the second: a start after the idle
-release (#510; #456 round 5). PROFILE@probe:D first only probes the track, as
+release, with the kept heads (#510; #456 round 5). PROFILE@probe:D first only probes the track, as
 a player does when it lists the album (the profile's `browse` probe), and starts playback D seconds
 later on the same mount: the first start after a mount (#510). Each round mounts
 SOURCE afresh for each scenario and build (`--threads 4 --cache-mb 64`, no index cache), with the

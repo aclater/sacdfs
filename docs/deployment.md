@@ -802,13 +802,6 @@ at 6.1 s of audio, then 2 to 5 more over 0.5 s; none over 0.5 s with #502), 15 s
 starts on such a CPU still read at the speed it decodes: that is the CPU's limit, not the
 read-ahead's.
 
-**Withdrawn before 0.7.1: kept heads (#508, #510).** Keeping the heads and tails that readers
-read, keeping them through the idle release, and decoding a folder's heads after a probe, all
-measured below, are not in 0.7.1: with them, a plain sequential read of whole files with small
-reads (`sha256sum` of every file of two real discs) read about 1.75 times the image data and took
-twice as long, at any `--cache-mb`. Their measurements are kept as a record. The hold-back of
-head readers (#518) stays.
-
 **A player that re-reads the album's heads (#456).** A third trace (with #502) had three starts of a
 6-channel track, each with the player re-reading the heads and tails of the album's other 22
 files: 13 to 15 MB in the first 10 s, about 3.5 to 4 s of the Atom's decoding, since the playing
@@ -816,9 +809,9 @@ track's read-ahead had evicted them. The playing file's own reads were answered 
 from its second second, yet the player asked for half real time until about 9 s (2.3 s of audio
 after 8 s): it waits for those head reads, which were slow while the CPU was busy. A copy of the
 album as plain DSF files plays without glitches there because a head read from disk needs no
-CPU. With #508 the frames a read takes from a file's first 2 MiB of audio or its last frame
-stayed in the cache within half of it (withdrawn, above). Measured with a client that plays
-track 1 of a 6-channel album over one connection, taking turns with re-reads of the heads (DSF and WAV, as in the
+CPU. Since #456 the frames a read takes from a file's first 2 MiB of audio or its last frame
+stay in the cache within half of it. Measured with a client that plays track 1 of a 6-channel
+album over one connection, taking turns with re-reads of the heads (DSF and WAV, as in the
 trace) of tracks 2 to 12, on the same E-cores (0.45 and 0.54 of a CPU: 6-channel WAV at 1.05 and
 1.3 times real time, DSF at 1.4 and 1.85), `--threads 4`, `--cache-mb 64`: a first start with the
 heads already read, 150 MB more of the track, then the measured start, 2 runs each, main against
@@ -875,7 +868,7 @@ On the stall gate's synthetic disc at 0.39 of a CPU: 119 → 86 ms
 for this player, 147 → 105 ms for the WAV one. A whole 6-channel track read as WAV and DSF on 4
 P-cores took the same time (15.06 → 15.08 s, medians of 5). Bytes are unchanged: 910 corpus files
 and 94 files of 3 real discs, i686 and x86_64.
-**Heads kept through the idle release (#510, withdrawn).** The kept heads went with the rest of the cache
+**Heads kept through the idle release (#510).** The kept heads went with the rest of the cache
 when a mount had been idle for a minute (#150). The #456 player re-reads the album's heads at each
 track start, and people take longer than a minute between albums or before picking a track
 again: in the user's round-4 log every start found them gone, and decoded them again while the
@@ -910,7 +903,7 @@ open (`zidoo-turns-dsf`): stalled in its first 15 s 6.25 → 4.62 s, audio held 
 up to 1.4 s each there, and the first-start profile got slightly worse (stalled 6.03 → 6.58 s). Bytes are unchanged:
 910 corpus files and 94 files of 3 real discs, i686 and x86_64.
 
-**The first start after a mount (#510, withdrawn).** The #456 player probes the track it shows when it lists the album, and the
+**The first start after a mount (#510).** The #456 player probes the track it shows when it lists the album, and the
 user starts playback later; that first start re-read every other file's head, all misses, before the track opened.
 Now, once one file's head was probed and the mount has had no read for 2 s, the folder's other heads are decoded in
 the background as far as the probe read, until the next read. Replayed on two E-cores of an i9-13900H at 0.45 of a
