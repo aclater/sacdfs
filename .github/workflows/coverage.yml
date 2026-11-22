@@ -43,7 +43,7 @@ jobs:
     steps:
       - name: Packages
         shell: bash
-        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 python3 findutils gnupg2 && dnf clean all
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc fuse3 python3 findutils gnupg2 rsync && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false

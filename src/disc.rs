@@ -22,8 +22,8 @@
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use scarletbook::audio::{FRAMES_PER_SECTOR, audio_sector_range};
@@ -31,6 +31,8 @@ use scarletbook::{
     AreaIndex, FrameContent, Image, IndexOptions, ReadAt, ReadAtReader, SeekPolicy, Slot, Speculation,
     SpeculativeOptions, Toc, TrackCursor,
 };
+
+use sha2::{Digest, Sha256};
 
 use crate::handles::Stamp;
 use crate::index_cache::{AreaShape, ImageKey, IndexCache};
@@ -174,10 +176,29 @@ struct SourceInner {
     counting: AtomicBool,
     reads: AtomicU64,
     bytes: AtomicU64,
+    /// What the TOC was read from, to tell whether another file at the path holds the same
+    /// disc ([`Source::open`]).
+    layout: Mutex<Layout>,
+    /// Set once the file at the path was found to hold another disc, or another length: the
+    /// image is then opened as a new one at its folder's next listing ([`Disc::current`]).
+    replaced: AtomicBool,
+}
+
+/// The file an image's TOC was read from, and which bytes of it the TOC was read from.
+#[derive(Debug)]
+struct Layout {
+    /// The file the TOC was read from, or the last one found to hold the same TOC bytes.
+    stamp: Stamp,
+    /// The ranges the TOC was read from, in the order they were read: `(offset, length)`.
+    ranges: Vec<(u64, usize)>,
+    /// Their SHA-256, while they are being read.
+    hashing: Option<Sha256>,
+    /// Their SHA-256, once the TOC was read.
+    digest: Option<[u8; 32]>,
 }
 
 impl Source {
-    fn new(key: u64, path: &Path, len: u64) -> Source {
+    fn new(key: u64, path: &Path, len: u64, stamp: Stamp) -> Source {
         Source {
             inner: Arc::new(SourceInner {
                 key,
@@ -186,20 +207,81 @@ impl Source {
                 counting: AtomicBool::new(false),
                 reads: AtomicU64::new(0),
                 bytes: AtomicU64::new(0),
+                layout: Mutex::new(Layout {
+                    stamp,
+                    ranges: Vec::new(),
+                    hashing: Some(Sha256::new()),
+                    digest: None,
+                }),
+                replaced: AtomicBool::new(false),
             }),
         }
     }
 
-    /// Opens the image again; refused if its length changed since its TOC was read.
+    fn layout(&self) -> std::sync::MutexGuard<'_, Layout> {
+        self.inner.layout.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Notes that the TOC was read: the bytes it was read from are what a re-opened file must
+    /// hold ([`Source::open`]), and reads from here on are audio reads, counted.
+    fn toc_read(&self) {
+        let mut l = self.layout();
+        l.digest = l.hashing.take().map(|h| h.finalize().into());
+        l.ranges.shrink_to_fit();
+        drop(l);
+        self.inner.counting.store(true, Ordering::Relaxed);
+    }
+
+    /// Opens the image again; refused if its length changed since its TOC was read, or if the
+    /// path now leads to a file that holds another TOC.
+    ///
+    /// *Why:* the TOC and the track layout read at the first open are kept, and are only valid
+    /// for a file with the same TOC. A file at the path that is not the one last read (another
+    /// file identity or modification time: an image replaced by a copy through a rename, as
+    /// rsync and sync tools do, or rewritten in place) has the bytes the TOC was read from read
+    /// again from the descriptor just opened, the one the reads are then served from. If they
+    /// are the same bytes, it is the same disc and reading carries on from the new file; if
+    /// not, or they cannot be read, the open is refused, nothing is read from that file, and
+    /// the image is opened as a new one at its folder's next listing ([`Disc::current`]).
     fn open(&self) -> io::Result<(File, Stamp)> {
         let file = open_image(&self.inner.path)?;
         let meta = file.metadata()?;
         if meta.len() != self.inner.len {
+            self.inner.replaced.store(true, Ordering::Relaxed);
             return Err(io::Error::other("image file changed size since it was mounted"));
         }
         let stamp = Stamp::of(&file, &meta);
+        let (ranges, digest) = {
+            let l = self.layout();
+            if l.stamp == stamp {
+                return Ok((file, stamp));
+            }
+            match l.digest {
+                Some(d) => (l.ranges.clone(), d),
+                // Changed while its TOC was being read: that open fails, and is tried again.
+                None => return Err(io::Error::other("image file changed while its TOC was read")),
+            }
+        };
+        if toc_digest(&file, &ranges).ok() != Some(digest) {
+            self.inner.replaced.store(true, Ordering::Relaxed);
+            return Err(io::Error::other("image file holds another disc than when it was listed"));
+        }
+        self.layout().stamp = stamp;
         Ok((file, stamp))
     }
+}
+
+/// The SHA-256 of the bytes of `file` in `ranges`, read in that order; an error if any of
+/// them is past the file's end.
+fn toc_digest(file: &File, ranges: &[(u64, usize)]) -> io::Result<[u8; 32]> {
+    let mut h = Sha256::new();
+    let mut buf = Vec::new();
+    for &(offset, len) in ranges {
+        buf.resize(len, 0);
+        crate::platform::read_exact_at(file, &mut buf, offset)?;
+        h.update(&buf);
+    }
+    Ok(h.finalize().into())
 }
 
 impl ReadAt for Source {
@@ -212,7 +294,16 @@ impl ReadAt for Source {
             TOTAL_BYTES.fetch_add(buf.len() as u64, Ordering::Relaxed);
         }
         let file = crate::handles::global().get(s.key, &s.path, || self.open())?;
-        ReadAt::read_at(&*file, offset, buf)
+        let n = ReadAt::read_at(&*file, offset, buf)?;
+        if !s.counting.load(Ordering::Relaxed) {
+            // A read of the TOC: noted, for a later open to check its file against.
+            let mut l = self.layout();
+            if let Some(h) = l.hashing.as_mut() {
+                h.update(&buf[..n]);
+                l.ranges.push((offset, n));
+            }
+        }
+        Ok(n)
     }
 
     fn size(&self) -> io::Result<u64> {
@@ -295,7 +386,7 @@ impl Disc {
         let handle = crate::handles::next_key();
         let stamp = Stamp::of(&file, &meta);
         crate::handles::global().insert(handle, file, stamp);
-        let source = Source::new(handle, path, meta.len());
+        let source = Source::new(handle, path, meta.len(), stamp);
         let mut lib = match scarletbook::Disc::open(ReadAtReader::new(source.clone())) {
             Ok(d) => d,
             Err(e) => {
@@ -303,7 +394,7 @@ impl Disc {
                 return Err(e);
             }
         };
-        source.inner.counting.store(true, Ordering::Relaxed);
+        source.toc_read();
         for w in lib.warnings() {
             log::debug!("{}: {w}", path.display());
         }
@@ -440,6 +531,25 @@ impl Disc {
 
     fn area(&self, area: usize) -> Result<&AreaState, ReadError> {
         self.areas.get(area).ok_or(ReadError::Io(io::Error::other("no such area")))
+    }
+
+    /// Whether the image file at the disc's path still holds this disc: `false` once a re-open
+    /// found another disc or another length there ([`Source::open`]). A file that changed since
+    /// it was last read (another identity or modification time) is checked here, and if it
+    /// holds the same disc, kept open for the reads. Called when the image's folder is listed
+    /// again, so that an image replaced by another disc is then opened as a new image.
+    pub(crate) fn current(&self) -> bool {
+        let s = &self.source;
+        if s.inner.replaced.load(Ordering::Relaxed) {
+            return false;
+        }
+        let known = s.layout().stamp;
+        if Stamp::at(&s.inner.path).is_ok_and(|now| now != known) {
+            if let Ok((file, stamp)) = s.open() {
+                crate::handles::global().insert(s.inner.key, file, stamp);
+            }
+        }
+        !s.inner.replaced.load(Ordering::Relaxed)
     }
 
     /// Calls to the image for audio sectors so far.

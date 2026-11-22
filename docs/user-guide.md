@@ -947,11 +947,13 @@ Notes:
   ([Sidecar files](#sidecar-files-art-scans-playlists)). A subfolder that held no image
   when its parent was last read is watched too, so an album copied in file by file shows
   once its image is there. Not covered: a folder collapsed by `--flatten` that gains a
-  second image (it stays one image's folder until a remount), and an image file replaced
-  under the same name.
+  second image (it stays one image's folder until a remount).
 - **An image file that changes while mounted** (another size, modification time or file) is
-  opened again, at most a second after the change. An image whose size changed gives I/O
-  errors until the next mount, since its directory still shows the old tracks.
+  opened again, at most a second after the change, and its disc layout read again. The same
+  disc, as after an `rsync` or a sync tool copies the image over itself, reads on without a
+  break. Another disc, another size or a file that is no longer a disc gives I/O errors on the
+  files open on the old one, and is listed as a new image once its folder is read again (a
+  copy renamed into place changes the folder's time).
 - **A damaged image** shows up as missing directories or files, filled audio (missing frames
   as 0x69, invalid DST frames as 0x55, with a warning in the log) or an I/O error on one
   file. It never stops the mount: every image is treated as untrusted input.
