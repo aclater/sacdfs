@@ -84,6 +84,11 @@ All notable changes to sacdfs are recorded here. The format follows
   is ignored, with one warning, and the lines before it are kept.
   The SMB password is removed from the entry point's environment once `smbpasswd` has it, so smbd
   and NFS-Ganesha start without it.
+- **Docs: library scans on slow NAS units (#505).** docs/deployment.md gives the CPU cost per disc
+  of MPD, Jellyfin and Navidrome first scans at Atom speed with `dsf`, `wav` and `dsf,wav`, and
+  recommends `--format dsf` for MPD and Jellyfin on such units; docs/install/binary.md says so
+  for the 32-bit build. Code changes were measured and would not help: the cost is the WAV
+  audio the scanners ask for.
 
 ### Fixed
 - **`sacdfs-nfs --help`.** The command it shows for mounting by hand on macOS lacked
