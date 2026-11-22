@@ -68,7 +68,9 @@ fn real_discs_sequential_reads() {
         let engine = Arc::new(Engine::new(threads, 32 << 20).unwrap());
         let v = Volume::new(tree.clone(), engine, 4, 1000, 1000).unwrap();
         let mut all = Vec::new();
+        let listing = std::time::Instant::now();
         files(&v, ROOT, "", &mut all);
+        let listing = listing.elapsed();
         all.sort();
         // The files by image, and each image's channel counts.
         let mut by_image: BTreeMap<PathBuf, (Vec<FileAt>, BTreeSet<u8>)> = BTreeMap::new();
@@ -91,10 +93,15 @@ fn real_discs_sequential_reads() {
             n += 1;
         }
         chosen.sort();
-        let before = sacdfs::disc::total_reads().1;
+        let (calls_before, before) = sacdfs::disc::total_reads();
         let started = std::time::Instant::now();
+        let (mut open_total, mut open_max) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
         for (path, ino, size) in &chosen {
+            let t = std::time::Instant::now();
             let fh = ask(|r| v.open(*ino, r)).unwrap();
+            let t = t.elapsed();
+            open_total += t;
+            open_max = open_max.max(t);
             let mut off = 0;
             while off < *size {
                 let data = ask(|r| v.read(*ino, fh, off, chunk, r)).unwrap();
@@ -103,13 +110,18 @@ fn real_discs_sequential_reads() {
             }
             v.release(fh);
         }
-        let read = sacdfs::disc::total_reads().1 - before;
+        let (calls, read) = sacdfs::disc::total_reads();
+        let (calls, read) = (calls - calls_before, read - before);
         let ratio = read as f64 / bytes as f64;
         println!(
             "{chunk}-byte reads: {} files of {n} images ({bytes} bytes, channels {channels:?}): \
-             {read} bytes of image read, {ratio:.2} times, {:.1} s",
+             {read} bytes of image read in {calls} calls, {ratio:.2} times, {:.1} s; listing \
+             {:.1} ms; opens {:.1} us mean, {:.1} us max",
             chosen.len(),
-            started.elapsed().as_secs_f64()
+            started.elapsed().as_secs_f64(),
+            listing.as_secs_f64() * 1e3,
+            open_total.as_secs_f64() * 1e6 / chosen.len().max(1) as f64,
+            open_max.as_secs_f64() * 1e6,
         );
         assert!(
             ratio <= MAX_RATIO,

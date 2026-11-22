@@ -16,6 +16,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- **Re-read the disc layout when an image file changes.** An image file replaced while mounted
+  (rsync without `--inplace` and sync tools rename a new copy over it) or rewritten in place now
+  has its TOC bytes read again before anything is read from the new file. The same disc reads on
+  without a break; another disc, another size, or a file whose TOC no longer reads gives I/O
+  errors on the files open on the old disc, and the folder's next listing shows the image as a
+  new one. Reads of unchanged images do no more work than before. See docs/design.md, "Open images".
 - **sacdfs-nfs: tighter bounds on calls and replies per connection.** A call holds one of
   the 128 places shared by all connections only while it is answered, no longer while its reply
   waits for the client to read it; replies not yet written are bounded per connection (4, so at

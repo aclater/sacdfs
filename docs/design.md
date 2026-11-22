@@ -652,9 +652,10 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   Everything else (the audio, the images' own areas) keeps the 24 hours, and a mount that
   does not watch (a single image as SOURCE) is as before. *Why not inotify or
   `inval_entry` notifications:* inotify does not see changes made by other clients of a
-  network source, and a short TTL needs no notifier thread. *Not done:* a changed image file
-  under the same name (an image's changes are for `handles`), and a folder collapsed by
-  `--flatten` that gains a second image.
+  network source, and a short TTL needs no notifier thread. An image file replaced by another
+  disc under the same name is opened again as a new image when its folder is re-read
+  ([Open images](#open-images)). *Not done:* a folder collapsed by `--flatten` that gains a
+  second image.
 - **Not done:** embedding art in the DSF and WAV tags (a separate question, #79) and rewriting
   playlist entries when `--flatten` or `--format` change paths (kept byte for byte, #75).
 
@@ -2458,7 +2459,8 @@ was waiting on, for the next occurrence.
 
 The handle an image's TOC was read through is kept (`handles.rs`, #26), and every audio read
 of the disc uses it; a closed one is opened again on the next read, and refused if the
-image's size changed since the TOC was read. The handles live in one least-recently-used
+image's size changed since the TOC was read, or if it is another file (device and inode, or
+modification time) whose TOC bytes differ from the ones the TOC was read from. The handles live in one least-recently-used
 cache for the process, bounded by `--max-open-images` (default 64); a handle unused for 5
 minutes is closed by a thread that looks every 30 seconds. A handle is checked against its
 path (one `stat`) when it is used, at most once a second: if the file's size, modification
@@ -2478,8 +2480,22 @@ open would. A disc that is dropped closes its handle.
   on a share whose attribute cache has expired. Once a second costs nothing measurable on a
   straight read and bounds how long a replaced file is read through its old handle. The
   tree, the frame cache and the seek index still describe the image as it was mounted (the
-  seek index checks every point it uses, so it costs only speed); a changed image needs a
-  remount.
+  seek index checks every point it uses, so it costs only speed).
+- *Re-reading the disc layout when an image file changes:* the disc keeps the byte ranges its
+  TOC was read from, in order, and their SHA-256. An open that finds another file at the path,
+  or the same file with another modification time, reads those ranges again from the
+  descriptor it just opened, the one the reads are then served from, before any read is served
+  from it. The same bytes are the same disc: the reads carry on from the new file, which is
+  what an rsync re-sync (a copy renamed over the image) or a sync tool's rewrite needs. Other
+  bytes, a TOC that no longer reads, or another length are refused, and the folder's next
+  listing (when its modification time moved, as a rename does) opens the image as a new one
+  and lets go of the old disc. *Why the TOC bytes and not the disc's title or ID:* only
+  everything the layout is read from proves that the tracks map to the same sectors; a title
+  is shared by reissues. *Why not refuse any other file:* a re-sync would then give I/O errors
+  until a remount, and so would a source whose filesystem does not keep inode numbers.
+  *Cost:* none on a read or an open of an unchanged file (a comparison of the `fstat` already
+  made); a changed file costs one more read of the TOC (6 to 8 calls), not counted as audio
+  reads.
 - *Why the cache drops handles instead of closing them:* a handle is shared (`Arc`), so a
   read in progress on an evicted handle finishes on it, and the file is closed when that
   read ends. No lock is held while opening a file, and the cache's lock never waits for a
