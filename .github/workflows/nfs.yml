@@ -23,8 +23,14 @@ env:
   FEDORA: registry.fedoraproject.org/fedora@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
 
 jobs:
+  # Docs-only pull requests skip the jobs (changes.yml); skipped, they report success.
+  changes:
+    uses: $/.github/workflows/changes.yml
+
   nfs:
     name: nfs export
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -62,6 +68,8 @@ jobs:
   # job runs as a normal user, where these tests skip. The loopback NFS server stays x86-64 only.
   handles-arm64:
     name: file handles (arm64)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:

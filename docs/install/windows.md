@@ -40,14 +40,14 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
    ```powershell
    cd $HOME\Downloads
-   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.0/sacdfs-0.7.0-x86_64-windows.zip
-   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.0/sacdfs-0.7.0-x86_64-windows.zip.sha256
+   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs-0.7.1-x86_64-windows.zip
+   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs-0.7.1-x86_64-windows.zip.sha256
    ```
 
 3. **Check the download.**
 
    ```powershell
-   (Get-FileHash sacdfs-0.7.0-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.7.0-x86_64-windows.zip.sha256).Split(" ")[0]
+   (Get-FileHash sacdfs-0.7.1-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.7.1-x86_64-windows.zip.sha256).Split(" ")[0]
    ```
 
    *You should see* `True`. If you see `False`, delete both files and download them again.
@@ -55,7 +55,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 4. **Unpack it into your programs folder.**
 
    ```powershell
-   Expand-Archive sacdfs-0.7.0-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
+   Expand-Archive sacdfs-0.7.1-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
    Unblock-File $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe
    ```
 

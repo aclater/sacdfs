@@ -41,7 +41,12 @@ jobs:
           persist-credentials: false
           fetch-depth: 2  # a pull request's checkout is its merge commit: the first parent is the base
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      # Read only, the cache main writes for sacdfs-nfs.yml's Linux release build: a cache saved
+      # by every pull request filled the repository's cache space and pushed main's out.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          shared-key: linux
+          save-if: false
       - name: Build head
         run: |
           cargo build --locked --release

@@ -9,6 +9,7 @@ name: fuzz
 
 on:
   pull_request:
+    paths-ignore: ["**.md"]  # not a required check: a docs-only pull request skips it
   push:
     branches: [main]
   schedule:

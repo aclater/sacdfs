@@ -32,7 +32,7 @@ The catalog takes a new sacdfs release through its maintainers' automated update
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.7.0
+       image: ghcr.io/aclater/sacdfs:0.7.1
        restart: unless-stopped
        devices:
          - /dev/fuse
@@ -85,7 +85,7 @@ Windows drive mapping, Roon's "Add network share" and the SMB storage of other T
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.7.0
+       image: ghcr.io/aclater/sacdfs:0.7.1
        restart: unless-stopped
        devices:
          - /dev/fuse
@@ -127,7 +127,7 @@ Windows drive mapping, Roon's "Add network share" and the SMB storage of other T
 
 - **NFS:** TrueNAS's own NFS cannot export the mount (the kernel's NFS server needs options TrueNAS doesn't set), so NFS stays on the app, on 12049. Leave out `DAC_READ_SEARCH`, the NFS port and set `NFS: "0"` if nothing uses NFS.
 - **Other apps on the same NAS:** a catalog app (Plex) reads it through its **SMB share** storage type: server = the NAS's own address, path `sacd`, the user of step 3, read-only; the discs are then in the folder `sacd` of that storage's mount path. Don't give a catalog app the dataset as a Host Path: the form binds it without `rslave`, so the app keeps an empty or dead folder after sacdfs restarts or starts later. A custom (YAML) app can bind it with `rslave`: [deployment guide](../deployment.md#players-on-the-same-host-no-smb-hop).
-- **At boot**, TrueNAS's SMB starts before the apps. Until sacdfs has mounted (seconds), the folder `sacd` refuses access, so a player scanning then sees an error, not an empty library (from the next sacdfs release; 0.7.0 shows an empty folder).
+- **At boot**, TrueNAS's SMB starts before the apps. Until sacdfs has mounted (seconds), the folder `sacd` refuses access, so a player scanning then sees an error, not an empty library (since 0.7.1; 0.7.0 and earlier show an empty folder).
 
 ## Check it worked
 

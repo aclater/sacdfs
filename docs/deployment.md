@@ -198,7 +198,7 @@ all of this already; with `docker run` or `podman run`, pass:
 | `SETUID`, `SETGID` | smbd, to act as the connecting user or the guest account | always (with SMB) |
 | `NET_BIND_SERVICE` | smbd, to listen on port 445 (with host networking the host's limit on ports under 1024 applies) | always (with SMB) |
 | `SETPCAP` | the entry point, to drop from each program the capabilities it doesn't need (below) | always |
-| `no-new-privileges` | no program in the container can gain privileges through a setuid or file-capability program. FUSE doesn't need the setuid `fusermount3`: sacdfs mounts as root in the container | always |
+| `no-new-privileges` | no program in the container can gain privileges through a setuid or file-capability program. FUSE doesn't need the setuid `fusermount3`: sacdfs mounts as root in the container, and the image clears every setuid and setgid bit | always |
 | `apparmor=unconfined` | Docker's default AppArmor profile forbids `mount(2)` even with `CAP_SYS_ADMIN`, so sacdfs can't mount under it. Only on hosts that use AppArmor (Ubuntu, Debian, TrueNAS SCALE); SELinux hosts (Fedora, RHEL) ignore it | AppArmor hosts |
 
 Nothing else: no `--privileged`, no host network, no host paths but the images and the
@@ -1563,6 +1563,27 @@ DSF files and 648.5 MiB with `dsf,wav`, because its ffprobe reads about 7 MB of 
 LUFS normalization reads every file about twice (39.8 GiB for 22.0 GiB of DSF files in the
 same test), and Plex's nightly deep analysis reads every file once (on 0.1.1): turn them off,
 or use a 16 MiB `--cache-mb` as on a NAS ([clients](clients.md#jellyfin)).
+
+**On a slow NAS, use `dsf` (#505).** On a 32-bit Atom NAS, or any CPU that converts 6-channel
+DST to WAV at about real time, every WAV file a scan probes costs seconds of the whole CPU, and the
+scan competes with playback. Neither keeping decoded heads nor reading ahead less changes that:
+the scanners read 5 to 9 MB of each WAV file, far more than the kept heads (0.6 MB), and a build
+with no read-ahead at all used as much CPU (MPD 8.6 against 8.4 s, Jellyfin 15.8 against 13.5 s).
+The cost is the audio the scanner asks for. Navidrome reads only about 0.2 MB of each WAV file and
+needs no change. First scans of three real discs (47 WAV tracks, stereo and 5.1 DST), sacdfs on a
+Ryzen AI Max+ 395 held to 0.12 of a CPU (6-channel WAV at 1.09 to 1.18 times real time, DSF at
+1.53), servers in Fedora containers, medians of 2 rounds:
+
+| Server | Format | CPU per disc, as Atom seconds | Scan of the 3 discs |
+|---|---|---|---|
+| MPD 0.24.19 | `dsf` | under 1 s | 1 s |
+| | `wav` / `dsf,wav` | 23 / 25 s | 70 / 75 s |
+| Jellyfin 12.4 | `dsf` | about 1 s | 38 s |
+| | `wav` / `dsf,wav` | 38 / 39 s | 139 / 154 s |
+| Navidrome 0.64.2 | any | about 1 s | 4 to 6 s |
+
+"Atom seconds" is sacdfs's CPU time divided by its 0.12 CPU share. Rescans were not measured
+here; the earlier tests above found MPD's incremental update reads nothing.
 
 ### File names over SMB
 
