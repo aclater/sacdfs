@@ -51,24 +51,6 @@ impl Library {
     }
 }
 
-fn is_mounted(mountpoint: &Path) -> bool {
-    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
-    let mp = mountpoint.to_str().unwrap();
-    // Field 5 is the mount point; after " - " come the type ("fuse" or "fuse.sacdfs",
-    // depending on how it was mounted) and the source.
-    info.lines().any(|l| {
-        l.split(' ').nth(4) == Some(mp) && l.split(" - ").nth(1).is_some_and(|t| t.starts_with("fuse"))
-    })
-}
-
-fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
-    let start = Instant::now();
-    while !cond() {
-        assert!(start.elapsed() < Duration::from_secs(30), "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 struct Mount {
     child: Option<Child>,
     dir: tempfile::TempDir,
@@ -305,9 +287,6 @@ fn flatten_through_the_kernel() {
     mount.stop("TERM");
 }
 
-/// Folder art, scans and playlists next to an image are served byte for byte (#79, #75),
-/// with and without `--flatten`; other files are not, nor a link into the mount (#67); the
-/// audio files are the same as without them.
 /// The longest names that can collide in a mount (#161): an image's folder and a sidecar with
 /// the same name, of an extension too long to keep with a ` (2)`. A client sees both, under names
 /// it can use, and the rest of the listing.
@@ -346,6 +325,9 @@ fn colliding_name_with_a_long_extension_through_the_kernel() {
     }
 }
 
+/// Folder art, scans and playlists next to an image are served byte for byte (#79, #75),
+/// with and without `--flatten`; other files are not, nor a link into the mount (#67); the
+/// audio files are the same as without them.
 #[test]
 fn sidecars_through_the_kernel() {
     common::skip_without_fuse!();
