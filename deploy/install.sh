@@ -602,6 +602,17 @@ tls_checked() {
     wget --version 2>/dev/null | grep -q 'GNU Wget'
 }
 
+# untar ARCHIVE: unpack the .tar.gz ARCHIVE into $TMP. Run as root, tar gives the files the
+# owners recorded in the archive unless told not to (--no-same-owner); a tar without that
+# option (a BusyBox built without long options) fails the listing and unpacks as before.
+untar() {
+    if tar --no-same-owner -tzf "$1" >/dev/null 2>&1; then
+        tar --no-same-owner -C "$TMP" -xzf "$1"
+    else
+        tar -C "$TMP" -xzf "$1"
+    fi
+}
+
 get_archive() {
     [ -n "$PKGDIR" ] && return 0
     v=${VERSION:-$DEFAULT_VERSION}
@@ -621,7 +632,7 @@ get_archive() {
         else
             warn "no $ARCHIVE.sha256 next to it: the archive isn't checked"
         fi
-        tar -C "$TMP" -xzf "$ARCHIVE" || die "cannot unpack $ARCHIVE"
+        untar "$ARCHIVE" || die "cannot unpack $ARCHIVE"
         pkg=''
         for d in "$TMP"/sacdfs-*-linux; do [ -d "$d" ] && pkg=${d##*/}; done
         [ -n "$pkg" ] || die "$ARCHIVE is not a sacdfs release archive"
@@ -649,7 +660,7 @@ get_archive() {
                 die "the download doesn't match its checksum; try again later"
             say "  checksum OK: $pkg.tar.gz"
         fi
-        tar -C "$TMP" -xzf "$TMP/$pkg.tar.gz" || die "cannot unpack $pkg.tar.gz"
+        untar "$TMP/$pkg.tar.gz" || die "cannot unpack $pkg.tar.gz"
     fi
     PKGDIR=$TMP/$pkg
 }
@@ -663,9 +674,22 @@ LOCAL_MAX=268435456
 # HERE again. All of one archive's files must be there and match, or none is used: one
 # warning names the first that doesn't, and the release is downloaded as when piped. A copy
 # of install.sh with no checksums built in (one from the repository) uses none of them.
+#
+# Which archive's files: the install.sh published on its own is told apart from the copy inside
+# an archive by the archive checksums built into it (RELEASE_SHA256, empty in the archive's
+# copy). It carries every archive's files, and takes only those of the archive it would
+# download for this machine (sacdfs-VERSION-ARCH-linux): files of another archive are not used.
+# The copy inside an archive carries only that archive's files and takes them (so the
+# x86_64-v3 archive's installer uses its own binary); a binary that doesn't start here is
+# replaced by a download (check_binary).
 verify_local() {
     SRC=
     [ -n "$HERE" ] && [ -z "$ARCHIVE" ] || return 0
+    _vl_mine=
+    if [ -n "$(printf '%s\n' "$RELEASE_SHA256" | awk '$1 ~ /^[0-9a-f]+$/ && length($1) == 64 { print; exit }')" ]; then
+        _vl_mine=sacdfs-$DEFAULT_VERSION-$ARCH-linux
+    fi
+    _vl_other=
     _vl_pkgs=$(printf '%s\n' "$MEMBER_SHA256" | awk -v v="sacdfs-$DEFAULT_VERSION-" '
         $1 ~ /^[0-9a-f]+$/ && length($1) == 64 && index($2, v) == 1 && $2 ~ /^[^\/]+\/[^\/]+$/ {
             p = $2; sub(/\/.*/, "", p); if (!(p in s)) { s[p] = 1; print p } }')
@@ -716,15 +740,22 @@ verify_local() {
 $(printf '%s\n' "$MEMBER_SHA256" | awk -v p="$_vl_p" '$1 ~ /^[0-9a-f]+$/ && length($1) == 64 && index($2, p "/") == 1 { print $1, $2 }')
 EOF
         if [ -z "$_vl_bad" ] && [ "$_vl_n" -gt 0 ]; then
-            SRC=$_vl_dir
-            say "  the release files next to install.sh match the checksums built in ($_vl_p): using them"
-            return 0
+            if [ -z "$_vl_mine" ] || [ "$_vl_p" = "$_vl_mine" ]; then
+                SRC=$_vl_dir
+                say "  the release files next to install.sh match the checksums built in ($_vl_p): using them"
+                return 0
+            fi
+            _vl_other=$_vl_p
         fi
         rm -rf "$_vl_dir"
         if [ "$_vl_n" -gt "$_vl_best" ]; then
             _vl_best=$_vl_n _vl_why=$_vl_bad
         fi
     done
+    if [ -n "$_vl_other" ]; then
+        warn "the release files next to install.sh are not used: they are $_vl_other's, and this machine takes $_vl_mine. Downloading that instead."
+        return 0
+    fi
     warn "the release files next to install.sh are not used: $_vl_why. Downloading the release instead."
 }
 
@@ -754,13 +785,24 @@ fetch_files() {
     done
 }
 
-# check_binary: the release binary runs here (glibc, CPU) before anything is installed.
+# check_binary: the release binary runs here (glibc, CPU) before anything is installed. A
+# verified binary from next to this script that doesn't start (the x86_64-v3 build on an older
+# CPU, say) is set aside with the other local files, and the release for this machine is
+# downloaded and tried instead.
 check_binary() {
     if ! { cp "$(file_of sacdfs)" "$TMP/sacdfs-check" && chmod 0755 "$TMP/sacdfs-check"; }; then
         die "cannot copy the binary to $TMP"
     fi
-    out=$("$TMP/sacdfs-check" --version 2>&1) ||
+    if ! out=$("$TMP/sacdfs-check" --version 2>&1); then
+        if [ -n "$SRC" ] && [ "$(file_of sacdfs)" = "$SRC/sacdfs" ]; then
+            warn "the sacdfs next to install.sh doesn't run here ($out): downloading the release for this machine instead"
+            SRC=
+            get_archive
+            check_binary
+            return
+        fi
         unsupported "the release binary didn't start" "the sacdfs binary doesn't run here: $out (glibc 2.17 or later is needed; see $DOCS/binary.md#binaries). Nothing was changed."
+    fi
     say "  $out runs here"
 }
 

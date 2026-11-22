@@ -27,9 +27,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use scarletbook::output::TagItem;
 use scarletbook::{Slot, Toc};
+use sha2::{Digest, Sha256};
 
 use crate::disc::{Disc, Tuning};
 use crate::dsf::{self, MC_ALBUM_SUFFIX};
@@ -52,6 +54,12 @@ pub const RECORDING_ID: &str = "UFID:http://musicbrainz.org";
 /// How many discs without an answer in a row end a run. With the waits between them
 /// ([`Client::cool_off`]: 1, 2, 4 and 8 minutes) that is a quarter of an hour of an outage.
 const MAX_FAILED_IN_A_ROW: usize = 5;
+/// How the reason starts when a step found more than one release it could not choose between.
+/// [`fetch_one`] reads it back: after an ambiguity no weaker step is tried.
+const AMBIGUOUS: &str = "ambiguous";
+/// What a reason holds when a release was refused because the disc's ISRCs disagree with it.
+/// [`advice_for`] reads it back.
+const ISRCS_DISAGREE: &str = "ISRCs disagree";
 
 /// How tightly durations must fit, in seconds.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -325,7 +333,7 @@ pub fn confirm(area: &AreaFacts, medium: &Medium, limits: Limits) -> Result<Evid
         return Err(format!("tracks are {mean:.1} s off on average (limit {:.1} s)", limits.mean));
     }
     if misses > hits {
-        return Err(format!("ISRCs disagree on {misses} tracks, agree on {hits}"));
+        return Err(format!("{ISRCS_DISAGREE} on {misses} tracks, agree on {hits}"));
     }
     Ok(Evidence { mean, worst, isrc_hits: hits, print_hits: 0 })
 }
@@ -875,7 +883,7 @@ fn fetch_one<T: Transport>(
     };
     // The last resort: only when no step found anything, not even an ambiguity.
     let nothing =
-        first.0.iter().all(Option::is_none) && !first.1.iter().flatten().any(|w| w.starts_with("ambiguous"));
+        first.0.iter().all(Option::is_none) && !first.1.iter().flatten().any(|w| w.starts_with(AMBIGUOUS));
     let (found, why) = match acoustid {
         Some(ac) if nothing => match fingerprint_step(&disc, image, &mut facts, options, client, ac, say)? {
             // Still nothing: say why for every step, the earlier ones first.
@@ -981,7 +989,7 @@ fn fingerprint_step<T: Transport>(
     say: &mut impl FnMut(String),
 ) -> Result<Option<Outcomes>, Failure> {
     use acoustid::{Settled, Skip};
-    let shown = image.display();
+    let shown = safe_file::shown(image);
     let Some(area) = disc.toc().areas.iter().position(|a| a.slot == Slot::TwoChannel) else {
         say(format!("{shown}: not fingerprinted: no stereo area"));
         return Ok(None);
@@ -1036,7 +1044,7 @@ fn fingerprint_step<T: Transport>(
 /// ISRCs disagree with it. *Why that refusal stays, though most such releases proved right on real
 /// discs:* a wrong tag in a library costs more than a disc left unmatched, so a person decides.
 fn advice_for(reason: &str, options: Options) -> Option<&'static str> {
-    if !reason.contains("ISRCs disagree") {
+    if !reason.contains(ISRCS_DISAGREE) {
         return None;
     }
     Some(if options.by_name {
@@ -1044,6 +1052,25 @@ fn advice_for(reason: &str, options: Options) -> Option<&'static str> {
     } else {
         "the disc's ISRCs disagree with that release, so it may be another edition. `--lookup-name` may find one that fits, or write its tags by hand in the tags file"
     })
+}
+
+/// The key of the image at `p` in the state files of [`acoustid`] and [`worker`]: a hash of
+/// its path.
+fn path_hash(p: &Path) -> String {
+    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_encoded_bytes())[..16])
+}
+
+/// Now, in seconds since the epoch, as the state files note when an image was settled.
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// An image's size and mtime in ns, if it can be read: a state file's entry holds while they
+/// stay the same.
+fn stamp(image: &Path) -> Option<(u64, u64)> {
+    let meta = fs::metadata(image).ok()?;
+    let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    Some((meta.len(), u64::try_from(mtime.as_nanos()).unwrap_or(u64::MAX)))
 }
 
 /// The tags file at `path`, if there is one.
@@ -1149,7 +1176,7 @@ pub fn look_up_steps<T: Transport>(
                 Decision::Ambiguous(e) => {
                     any = true;
                     found.push(None);
-                    why.push(Some(format!("ambiguous by {}: {e}", step.label())));
+                    why.push(Some(format!("{AMBIGUOUS} by {}: {e}", step.label())));
                 }
                 Decision::None => {
                     found.push(None);
@@ -1167,7 +1194,7 @@ pub fn look_up_steps<T: Transport>(
                 .map(|a| fallback::normalized(a.strip_suffix(MC_ALBUM_SUFFIX).unwrap_or(a)))
                 .collect();
             if albums.len() > 1 {
-                let why = format!("ambiguous by {}: the areas match different albums", step.label());
+                let why = format!("{AMBIGUOUS} by {}: the areas match different albums", step.label());
                 return Ok(((0..areas.len()).map(|_| None).collect(), vec![Some(why); areas.len()]));
             }
             if let Some(a) = why.iter().flatten().next().cloned() {

@@ -31,7 +31,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    Set `a` to that.
 
    ```sh
-   v=0.7.0 a=x86_64
+   v=0.7.1 a=x86_64
    cd ~
    curl -fLO "https://github.com/aclater/sacdfs/releases/download/v$v/sacdfs-$v-$a-linux.tar.gz"
    curl -fLO "https://github.com/aclater/sacdfs/releases/download/v$v/sacdfs-$v-$a-linux.tar.gz.sha256"
@@ -43,7 +43,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
    ```
 
-   *You should see* `sacdfs-0.7.0-x86_64-linux.tar.gz: OK`.
+   *You should see* `sacdfs-0.7.1-x86_64-linux.tar.gz: OK`.
 
 4. **Unpack it and put the program in your own `bin` folder.**
 
@@ -54,7 +54,7 @@ Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#det
    ~/.local/bin/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.7.0`.
+   *You should see* `sacdfs 0.7.1`.
 
 5. **Make an empty folder to mount on, and start sacdfs.** While it runs, this folder shows the
    DSF and WAV files; anything already in it is hidden.
@@ -117,7 +117,8 @@ and `nas-compose.yaml`: `sudo sh install.sh --iso-dir ...` in the unpacked folde
 next to it and downloads nothing ([the installer](README.md#the-installer-one-line)). The released
 `install.sh` verifies the files beside it against checksums built into it when the release was
 packed, and uses only verified copies; if one is missing or doesn't match, it uses none of them and
-downloads the release. The
+downloads the release. If the binary there doesn't start on this machine (the x86-64-v3 build on an
+older CPU, say), it says so and downloads the release for this machine instead. The
 installer is also a release asset of its own, `install.sh`, with its `.sha256` and attestation.
 
 **What it needs.** glibc 2.17 or later (0.4.1 and earlier needed 2.28); every release build is
@@ -135,7 +136,7 @@ clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributi
 **With `gh` instead of `curl`,** and checking where it was built:
 
 ```sh
-v=0.7.0 a=x86_64          # or a=x86_64-v3, or a=aarch64
+v=0.7.1 a=x86_64          # or a=x86_64-v3, or a=aarch64
 gh release download "v$v" -R aclater/sacdfs -p "sacdfs-$v-$a-linux.tar.gz*"
 sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
 gh attestation verify "sacdfs-$v-$a-linux.tar.gz" -R aclater/sacdfs
