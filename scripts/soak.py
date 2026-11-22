@@ -43,6 +43,7 @@ cache directory plateaus. Exit status 0 on PASS, 1 on FAIL.
 """
 import argparse
 import collections
+import contextlib
 import errno
 import os
 import random
@@ -212,8 +213,10 @@ class Mount:
                                    "--request-timeout", str(args.request_timeout),
                                    "--log-file", str(args.work / logname), str(lib), str(mp)]
         env = dict(os.environ, XDG_CACHE_HOME=str(args.work / "cache"), RUST_LOG=args.log_level)
-        self.proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                     stderr=open(args.work / f"{logname}.stderr", "ab"))
+        # sacdfs keeps its own copy of the file; ours is closed once it has started.
+        with open(args.work / f"{logname}.stderr", "ab") as err:
+            self.proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                         stderr=err)
         wait(lambda: is_mounted(mp) or self.proc.poll() is not None, 120, f"the mount on {mp}")
         if self.proc.poll() is not None:
             # Say why: sacdfs's own words are in its stderr and log, in the work directory
@@ -367,9 +370,9 @@ class StallFs:
     def __init__(self, args, image, mp):
         mp.mkdir(exist_ok=True)
         self.mp = mp
-        self.proc = subprocess.Popen([args.stallfs, str(image), str(mp)], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, stderr=open(args.work / "stallfs.stderr", "ab"),
-                                     text=True)
+        with open(args.work / "stallfs.stderr", "ab") as err:
+            self.proc = subprocess.Popen([args.stallfs, str(image), str(mp)], stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=err, text=True)
         if self.proc.stdout.readline().strip() != "ready":
             raise RuntimeError(f"stallfs did not mount on {mp}: see stallfs.stderr in the work directory")
         self.file = mp / "disc.iso"
@@ -801,9 +804,9 @@ def main():
 
 
 def run(args, main_mount, keys_out, rows, t0):
-    with open(args.out, "w") as out:
+    with open(args.out, "w") as out, contextlib.ExitStack() as files:
         out.write("\t".join(keys_out) + "\n")
-        maps_out = open(args.out.with_suffix(".smaps.tsv"), "w") if args.smaps else None
+        maps_out = files.enter_context(open(args.out.with_suffix(".smaps.tsv"), "w")) if args.smaps else None
         if maps_out:
             maps_out.write("t\tstart\tperms\tsize_kb\trss_kb\tanon_kb\tname\n")
         mi_dir = args.out.with_suffix(".malloc-info")

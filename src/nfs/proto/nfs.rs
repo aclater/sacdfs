@@ -256,6 +256,7 @@ pub struct nfstime3 {
     pub nseconds: u32,
 }
 xdr_struct!(nfstime3, seconds, nseconds);
+// sacdfs: nfsserve's conversion to `filetime::FileTime` went with that dependency.
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, Default)]

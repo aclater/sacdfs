@@ -9,15 +9,13 @@
 mod common;
 
 use std::fs::OpenOptions;
-use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
+use common::ask;
 use sacdfs::disc::Tuning;
 use sacdfs::engine::Engine;
 use sacdfs::tree::{Output, ROOT, SourceDir, Tree};
-use sacdfs::vfs::{Attr, DataReply, Error, Kind, Listing, Lookup, Reply, Volume};
-use sacdfs::watchdog::Fail;
+use sacdfs::vfs::{Attr, Error, Kind, Listing, Lookup, Volume};
 
 /// DST-coded, with a 6-channel area: the kind of file #339 failed on.
 const IMAGE: &str = "images/dst-features-2ch-6ch.iso";
@@ -39,32 +37,6 @@ impl log::Log for Capture {
 }
 
 static CAPTURE: Capture = Capture;
-
-struct To<T>(Sender<Result<T, Error>>);
-
-impl<T: Send + 'static> Fail for To<T> {
-    fn fail(self, err: Error) {
-        let _ = self.0.send(Err(err));
-    }
-}
-
-impl<T: Send + 'static> Reply<T> for To<T> {
-    fn reply(self, r: Result<T, Error>) {
-        let _ = self.0.send(r);
-    }
-}
-
-impl DataReply for To<Vec<u8>> {
-    fn data(self, data: &[u8]) {
-        let _ = self.0.send(Ok(data.to_vec()));
-    }
-}
-
-fn ask<T: Send + 'static>(f: impl FnOnce(To<T>)) -> Result<T, Error> {
-    let (tx, rx) = mpsc::channel::<Result<T, Error>>();
-    f(To(tx));
-    rx.recv_timeout(Duration::from_secs(60)).expect("no answer")
-}
 
 /// Every file below `dir`, with its attributes.
 fn files(v: &Volume, dir: u64, out: &mut Vec<(u64, String, Attr)>) {

@@ -27,8 +27,11 @@
 
 use scarletbook_pcm as sb;
 
-/// DSD bytes per channel in one SACD frame (1/75 s).
-pub const FRAME_BYTES: usize = 4704;
+/// DSD bytes per channel in one SACD frame (1/75 s): [`crate::dsf::FRAME_BYTES`] as a `usize`.
+pub const FRAME_BYTES: usize = crate::dsf::FRAME_BYTES as usize;
+
+/// Bytes of one 24-bit PCM sample.
+pub const SAMPLE_BYTES: usize = 3;
 
 /// The DSD silence pattern (01101001), used for the frames before the first and after the
 /// last frame of an area. It converts to exact zero.
@@ -219,7 +222,7 @@ impl Converter {
 
     /// Bytes of one converted frame: `samples_per_frame × channels × 3`.
     pub fn frame_bytes(&self) -> usize {
-        self.conv.samples_per_frame() * self.channels * 3
+        self.conv.samples_per_frame() * self.channels * SAMPLE_BYTES
     }
 
     /// A neighbour of exactly one frame: itself, or padded with silence into `pad`.
@@ -336,7 +339,7 @@ impl Converter {
             return Err(e);
         }
         if !direct {
-            let block = self.channels * 3;
+            let block = self.channels * SAMPLE_BYTES;
             let fit = out.len() / block * block;
             out[..fit].copy_from_slice(&self.spill[..fit]);
         }
@@ -359,7 +362,7 @@ impl Converter {
         bytes.clear();
         bytes.resize(self.frame_bytes(), 0);
         self.convert(prev, cur, next, &mut bytes);
-        for (o, s) in out.iter_mut().zip(bytes.chunks_exact(3)) {
+        for (o, s) in out.iter_mut().zip(bytes.chunks_exact(SAMPLE_BYTES)) {
             *o = (i32::from_le_bytes([0, s[0], s[1], s[2]]) >> 8) as f32 / 8_388_608.0;
         }
         self.spill = bytes;
