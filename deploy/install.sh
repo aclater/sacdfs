@@ -25,6 +25,13 @@ DEFAULT_VERSION=0.6.0 # set to the release's version when the release packs this
 # them; this file itself is attested. Empty here and in the copy inside each archive.
 RELEASE_SHA256='
 '
+# The SHA-256 of the release files install.sh can take from next to itself, one
+# "<sha256>  <archive folder>/<file>" line each, written in when the release workflow packs
+# this file (.github/scripts/stamp-members.sh): in the copy inside each archive, that archive's
+# files; in the installer published on its own, every archive's. Empty here, so a copy from
+# the repository always downloads.
+MEMBER_SHA256='
+'
 REPO=aclater/sacdfs
 # Where releases are downloaded from: GitHub, or a mirror with the same layout
 # (<url>/download/v<version>/<file>), as the CI test uses.
@@ -547,7 +554,6 @@ remove() {
     done
 }
 
-# rmdir_empty DIR: remove a folder this script made, only if empty and not mounted.
 # mounted DIR: something is mounted on DIR (/proc/mounts writes a space as \040, a tab as
 # \011, a backslash as \134).
 mounted() {
@@ -556,6 +562,7 @@ mounted() {
         if (x == ENVIRON["MNT"]) f = 1
     } END { exit !f }' /proc/mounts
 }
+# rmdir_empty DIR: remove a folder this script made, only if empty and not mounted.
 rmdir_empty() {
     [ -d "$1" ] || return 0
     mounted "$1" && return 0
@@ -647,8 +654,82 @@ get_archive() {
     PKGDIR=$TMP/$pkg
 }
 
-# local_file NAME: a release file next to this script, if it is in an unpacked archive or a
-# clone's deploy/ folder (and no other release was asked for).
+# The most bytes a release file next to this script is copied with: more than any release file.
+LOCAL_MAX=268435456
+
+# verify_local: when this script is in an unpacked release archive (HERE), copies the release
+# files there into the temporary folder and checks each copy against the checksum built into
+# this script (MEMBER_SHA256); SRC is then the folder of the copies, and nothing is read from
+# HERE again. All of one archive's files must be there and match, or none is used: one
+# warning names the first that doesn't, and the release is downloaded as when piped. A copy
+# of install.sh with no checksums built in (one from the repository) uses none of them.
+verify_local() {
+    SRC=
+    [ -n "$HERE" ] && [ -z "$ARCHIVE" ] || return 0
+    _vl_pkgs=$(printf '%s\n' "$MEMBER_SHA256" | awk -v v="sacdfs-$DEFAULT_VERSION-" '
+        $1 ~ /^[0-9a-f]+$/ && length($1) == 64 && index($2, v) == 1 && $2 ~ /^[^\/]+\/[^\/]+$/ {
+            p = $2; sub(/\/.*/, "", p); if (!(p in s)) { s[p] = 1; print p } }')
+    if [ -z "$_vl_pkgs" ]; then
+        warn "the release files next to install.sh are not used: this install.sh has no checksums of them built in (a released install.sh has). Downloading the release instead."
+        return 0
+    fi
+    _vl_best=-1 _vl_why=
+    for _vl_p in $_vl_pkgs; do
+        _vl_dir=$TMP/local-$_vl_p
+        rm -rf "$_vl_dir"
+        mkdir -m 0700 "$_vl_dir" || {
+            _vl_why="$_vl_dir can't be made"
+            continue
+        }
+        _vl_n=0 _vl_bad=
+        while read -r _vl_want _vl_m; do
+            [ -n "$_vl_m" ] || continue
+            _vl_m=${_vl_m#*/}
+            _vl_f=
+            for _vl_c in "$HERE/$_vl_m" "$HERE/systemd/$_vl_m"; do
+                if [ -e "$_vl_c" ] || [ -L "$_vl_c" ]; then
+                    _vl_f=$_vl_c
+                    break
+                fi
+            done
+            if [ -z "$_vl_f" ] || [ -L "$_vl_f" ] || [ ! -f "$_vl_f" ]; then
+                _vl_bad="$_vl_m is missing, or not a regular file"
+                break
+            fi
+            if ! dd if="$_vl_f" of="$_vl_dir/$_vl_m" bs=65536 count=$((LOCAL_MAX / 65536 + 1)) 2>/dev/null; then
+                _vl_bad="$_vl_m can't be read"
+                break
+            fi
+            if [ "$(wc -c <"$_vl_dir/$_vl_m")" -gt "$LOCAL_MAX" ]; then
+                _vl_bad="$_vl_m is larger than any release file"
+                break
+            fi
+            # A match needs a computed 64-digit hash: an empty or failed one never matches.
+            _vl_got=$(sha_of "$_vl_dir/$_vl_m")
+            case $_vl_got in *[!0-9a-f]* | '') _vl_got=none ;; esac
+            if [ "${#_vl_got}" != 64 ] || [ "$_vl_got" != "$_vl_want" ]; then
+                _vl_bad="$_vl_m doesn't match the checksum built into install.sh"
+                break
+            fi
+            _vl_n=$((_vl_n + 1))
+        done <<EOF
+$(printf '%s\n' "$MEMBER_SHA256" | awk -v p="$_vl_p" '$1 ~ /^[0-9a-f]+$/ && length($1) == 64 && index($2, p "/") == 1 { print $1, $2 }')
+EOF
+        if [ -z "$_vl_bad" ] && [ "$_vl_n" -gt 0 ]; then
+            SRC=$_vl_dir
+            say "  the release files next to install.sh match the checksums built in ($_vl_p): using them"
+            return 0
+        fi
+        rm -rf "$_vl_dir"
+        if [ "$_vl_n" -gt "$_vl_best" ]; then
+            _vl_best=$_vl_n _vl_why=$_vl_bad
+        fi
+    done
+    warn "the release files next to install.sh are not used: $_vl_why. Downloading the release instead."
+}
+
+# local_file NAME: a verified copy of a release file from next to this script (verify_local),
+# if no other release archive was asked for.
 local_file() {
     [ -n "$SRC" ] && [ -z "$ARCHIVE" ] || return 1
     for f in "$SRC/$1" "$SRC/systemd/$1"; do
@@ -1312,13 +1393,13 @@ main() {
     # Folders and files made here are root's alone, whatever umask the login has.
     umask 022
     # SELF: this script's file, when it runs from one; empty when it is piped into sh.
-    SELF='' SRC=''
+    SELF='' SRC='' HERE=''
     case $0 in */install.sh | install.sh) [ -f "$0" ] && SELF=$0 ;; esac
-    # Release files next to it (an unpacked release archive, or deploy/ in a clone) are used
-    # instead of downloading them; never when piped.
+    # Release files next to it (an unpacked release archive) are used instead of downloading
+    # them once verified (verify_local, below); never when piped.
     if [ -n "$SELF" ]; then
         here=$(cd "$(dirname "$SELF")" && pwd)
-        [ -f "$here/sacdfs-ctl" ] && SRC=$here
+        [ -n "$here" ] && [ -f "$here/sacdfs-ctl" ] && HERE=$here
     fi
     parse_args "$@"
     # Folder names go into a settings file, start-at-boot scripts and YAML that root reads:
@@ -1417,10 +1498,8 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
     check_name "--iso-dir (the folder it leads to)" "$ISO_DIR"
     VOLUME=$(volume_of "$ISO_DIR")
 
-    # ---------------------------------------------------------------------------------------
-    # The machine: architecture, glibc, FUSE, systemd, container engine.
-
-    # (probe_machine read the processor and C library above.)
+    # The machine: systemd and the container engine (probe_machine read the processor and C
+    # library above).
     if [ -d /run/systemd/system ]; then HAS_SYSTEMD=1; else HAS_SYSTEMD=0; fi
 
     # A container engine that answers, and a Compose for it. NAS packages install Docker
@@ -1549,15 +1628,15 @@ Another user could then put a link in place of the folder to mount on, $MOUNT, a
     fi
     rm -f "$TMP/x"
 
-    # The release files: sacdfs, sacdfs-ctl, sacdfs.service, nas-compose.yaml. From the folder
-    # this script is in when it is an unpacked release archive or deploy/ of a clone (the files
-    # that match this script), and the binary from the archive.
+    # The release files: sacdfs, sacdfs-ctl, sacdfs.service, nas-compose.yaml. Verified copies
+    # of those next to this script when it is in an unpacked release archive (SRC), else from
+    # the downloaded archive (PKGDIR).
 
     PKGDIR=
+    [ "$UNINSTALL" = 1 ] || verify_local
 
+    # Synology's Task Scheduler tasks (hook_install, hook_remove).
     SYNO_TASKS="sacdfs-start sacdfs-stop"
-
-    # ---------------------------------------------------------------------------------------
 
     if [ "$UNINSTALL" = 1 ]; then
         uninstall_compose

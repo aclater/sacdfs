@@ -35,7 +35,7 @@ use scarletbook::output::{TagItem, TagSet};
 pub const BITS: u16 = 24;
 
 /// Bytes per sample.
-pub const SAMPLE_BYTES: u64 = 3;
+pub const SAMPLE_BYTES: u64 = crate::pcm::SAMPLE_BYTES as u64;
 
 /// Length of the fmt chunk body (`WAVE_FORMAT_EXTENSIBLE`).
 pub const FMT_LEN: u32 = 40;
