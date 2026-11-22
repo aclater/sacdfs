@@ -89,15 +89,17 @@ pub async fn handle_rpc(
     }
 }
 
-/// RFC 5531 section 11, record marking: a record is fragments, each a 4-byte header (the top
-/// bit set on the last, the low 31 bits its length) and its bytes.
-///
-/// sacdfs: replaces nfsserve's reader, which allocated whatever length a header said (up to
-/// 2 GiB) before reading it. A record longer than [`MAX_RECORD`] ends the connection.
+/// sacdfs: the longest record read, in bytes. A longer one ends the connection.
 pub const MAX_RECORD: usize = 256 * 1024;
 
 /// Reads one record into `buf` (cleared first): `Ok(false)` at the end of the stream before
 /// a record starts.
+///
+/// RFC 5531 section 11, record marking: a record is fragments, each a 4-byte header (the top
+/// bit set on the last, the low 31 bits its length) and its bytes.
+///
+/// sacdfs: replaces nfsserve's reader, which allocated whatever length a header said (up to
+/// 2 GiB) before reading it. A record longer than [`MAX_RECORD`] is an error.
 pub async fn read_record(src: &mut (impl AsyncRead + Unpin), buf: &mut Vec<u8>) -> std::io::Result<bool> {
     buf.clear();
     loop {

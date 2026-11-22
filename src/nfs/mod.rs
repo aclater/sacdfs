@@ -125,6 +125,7 @@ fn fattr(a: &Attr, fsid: u64) -> fattr3 {
         uid: a.uid,
         gid: a.gid,
         size: a.size,
+        // `blocks` counts 512-byte units, as `st_blocks` does; `used` is in bytes.
         used: a.blocks.saturating_mul(512),
         rdev: specdata3::default(),
         fsid,
@@ -135,10 +136,15 @@ fn fattr(a: &Attr, fsid: u64) -> fattr3 {
     }
 }
 
-/// A file open in the core: its handle, its generation, and when it was last read.
+/// The position of the first entry after `.` and `..` in a [`Listing`], and of `..` itself.
+const FIRST_ENTRY: u64 = 2;
+const PARENT_ENTRY: u64 = 1;
+
+/// A file open in the core: the core's number for the open file (not an NFS file handle:
+/// that is [`Handle`]), its generation, and when it was last read.
 #[derive(Debug, Clone, Copy)]
 struct Open {
-    fh: u64,
+    core_fh: u64,
     generation: u64,
     used: Instant,
 }
@@ -147,6 +153,9 @@ struct Open {
 #[derive(Debug, Clone)]
 pub struct NfsFront {
     volume: Arc<Volume>,
+    /// The files open in the core, by inode number. Locked only through [`NfsFront::opened`]
+    /// and never across an `await`: each use takes it, reads or changes the map, and lets it
+    /// go before asking the core. [`Volume::release`] is called under it; it does not wait.
     open: Arc<Mutex<HashMap<u64, Open>>>,
     /// Names this volume in file handles ([`handle::volume_id`]).
     volume_id: u64,
@@ -159,6 +168,8 @@ impl NfsFront {
         NfsFront { volume, open: Arc::new(Mutex::new(HashMap::new())), volume_id, callers }
     }
 
+    /// The open files, locked. A poisoned lock is taken anyway: the map is valid after every
+    /// step, so a panic elsewhere leaves nothing half done in it.
     fn opened(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Open>> {
         self.open.lock().unwrap_or_else(|p| p.into_inner())
     }
@@ -169,7 +180,7 @@ impl NfsFront {
         self.opened().retain(|_, o| {
             let keep = now.duration_since(o.used) < IDLE;
             if !keep {
-                self.volume.release(o.fh);
+                self.volume.release(o.core_fh);
             }
             keep
         });
@@ -178,7 +189,7 @@ impl NfsFront {
     /// Closes every file: before the server stops.
     pub fn close_all(&self) {
         for (_, o) in self.opened().drain() {
-            self.volume.release(o.fh);
+            self.volume.release(o.core_fh);
         }
     }
 
@@ -201,35 +212,35 @@ impl NfsFront {
         }
     }
 
-    /// The core's handle on `ino`, opening it on first use.
-    async fn file_handle(&self, ino: u64) -> Result<u64, nfsstat3> {
+    /// The core's number for the open file `ino`, opening it in the core on first use.
+    async fn open_in_core(&self, ino: u64) -> Result<u64, nfsstat3> {
         if let Some(o) = self.opened().get_mut(&ino) {
             o.used = Instant::now();
-            return Ok(o.fh);
+            return Ok(o.core_fh);
         }
         let generation = self.generation(ino).await?;
         let v = self.volume.clone();
-        let fh = ask(move |r| v.open(ino, r)).await?;
+        let core_fh = ask(move |r| v.open(ino, r)).await?;
         let mut open = self.opened();
         // Two first reads at once: keep one handle, close the other.
         if let Some(o) = open.get(&ino) {
-            self.volume.release(fh);
-            return Ok(o.fh);
+            self.volume.release(core_fh);
+            return Ok(o.core_fh);
         }
         if open.len() >= MAX_OPEN {
             if let Some((&old, o)) = open.iter().min_by_key(|(_, o)| o.used) {
-                self.volume.release(o.fh);
+                self.volume.release(o.core_fh);
                 open.remove(&old);
             }
         }
-        open.insert(ino, Open { fh, generation, used: Instant::now() });
-        Ok(fh)
+        open.insert(ino, Open { core_fh, generation, used: Instant::now() });
+        Ok(core_fh)
     }
 
     async fn attr(&self, ino: u64) -> Result<Attr, nfsstat3> {
-        let fh = self.opened().get(&ino).map(|o| o.fh);
+        let core_fh = self.opened().get(&ino).map(|o| o.core_fh);
         let v = self.volume.clone();
-        Ok(ask(move |r| v.getattr(ino, fh, r)).await?.1)
+        Ok(ask(move |r| v.getattr(ino, core_fh, r)).await?.1)
     }
 
     async fn listing(&self, dir: u64) -> Result<Listing, nfsstat3> {
@@ -243,14 +254,25 @@ impl NfsFront {
     async fn window(&self, dir: u64, start_after: u64) -> Result<(u64, Listing), nfsstat3> {
         let l = self.listing(dir).await?;
         if start_after == 0 {
-            return Ok((2, l));
+            return Ok((FIRST_ENTRY, l));
         }
-        let from = l.entries(2).find(|(_, ino, ..)| *ino == start_after).map(|(next, ..)| next);
+        let from = l.entries(FIRST_ENTRY).find(|(_, ino, ..)| *ino == start_after).map(|(next, ..)| next);
         match from {
             Some(from) => Ok((from, l)),
             None => Err(nfsstat3::NFS3ERR_BAD_COOKIE),
         }
     }
+}
+
+/// The first `max` items of `items` (at least one), and whether they are the last: one more
+/// than `max` is taken to see. `max` is at most 1024 (`LIST_ENTRIES`, which the protocol layer
+/// applies to what a client asks), so `max + 1` cannot overflow.
+fn page<T>(items: impl Iterator<Item = T>, max: usize) -> (Vec<T>, bool) {
+    let max = max.max(1);
+    let mut page: Vec<T> = items.take(max + 1).collect();
+    let end = page.len() <= max;
+    page.truncate(max);
+    (page, end)
 }
 
 /// `true` if `callers` may be answered for a call with credentials `auth` (`None`: not
@@ -278,9 +300,8 @@ impl NFSFileSystem for NfsFront {
             return Ok(dirid);
         }
         if name == ".." {
-            // The listing's second entry is the parent.
             let l = self.listing(dirid).await?;
-            return l.entries(1).next().map(|(_, ino, ..)| ino).ok_or(nfsstat3::NFS3ERR_NOENT);
+            return l.entries(PARENT_ENTRY).next().map(|(_, ino, ..)| ino).ok_or(nfsstat3::NFS3ERR_NOENT);
         }
         let (v, name) = (self.volume.clone(), name.to_owned());
         match ask(move |r| v.lookup(dirid, &name, r)).await? {
@@ -298,10 +319,10 @@ impl NFSFileSystem for NfsFront {
     }
 
     async fn read(&self, id: fileid3, offset: u64, count: u32) -> Result<(Vec<u8>, bool), nfsstat3> {
-        let fh = self.file_handle(id).await?;
+        let core_fh = self.open_in_core(id).await?;
         let count = count.min(MAX_READ);
         let v = self.volume.clone();
-        let data: Vec<u8> = ask(move |r| v.read(id, fh, offset, count, r)).await?;
+        let data: Vec<u8> = ask(move |r| v.read(id, core_fh, offset, count, r)).await?;
         // The core answers fewer bytes only at the end of the file.
         let eof = data.len() < count as usize;
         Ok((data, eof))
@@ -352,15 +373,10 @@ impl NFSFileSystem for NfsFront {
         max_entries: usize,
     ) -> Result<ReadDirResult, nfsstat3> {
         let (from, listing) = self.window(dirid, start_after).await?;
-        let max = max_entries.max(1);
-        let page: Vec<(u64, Vec<u8>)> = listing
-            .entries(from)
-            .take(max + 1)
-            .map(|(_, ino, _, name)| (ino, name.as_bytes().to_vec()))
-            .collect();
-        let end = page.len() <= max;
-        let mut entries = Vec::with_capacity(page.len().min(max));
-        for (ino, name) in page.into_iter().take(max) {
+        let names = listing.entries(from).map(|(_, ino, _, name)| (ino, name.as_bytes().to_vec()));
+        let (listed, end) = page(names, max_entries);
+        let mut entries = Vec::with_capacity(listed.len());
+        for (ino, name) in listed {
             match self.attr(ino).await {
                 Ok(a) => {
                     entries.push(DirEntry { fileid: ino, name: name.into(), attr: fattr(&a, self.volume_id) })
@@ -382,14 +398,10 @@ impl NFSFileSystem for NfsFront {
         count: usize,
     ) -> Result<ReadDirSimpleResult, nfsstat3> {
         let (from, listing) = self.window(dirid, start_after).await?;
-        let max = count.max(1);
-        let mut entries: Vec<DirEntrySimple> = listing
+        let names = listing
             .entries(from)
-            .take(max + 1)
-            .map(|(_, ino, _, name)| DirEntrySimple { fileid: ino, name: name.as_bytes().to_vec().into() })
-            .collect();
-        let end = entries.len() <= max;
-        entries.truncate(max);
+            .map(|(_, ino, _, name)| DirEntrySimple { fileid: ino, name: name.as_bytes().to_vec().into() });
+        let (entries, end) = page(names, count);
         Ok(ReadDirSimpleResult { entries, end })
     }
 
@@ -417,6 +429,7 @@ impl NFSFileSystem for NfsFront {
             obj_attributes,
             rtmax: MAX_READ,
             rtpref: MAX_READ,
+            // Read sizes in multiples of a page; no writes; listings asked 64 KiB at a time.
             rtmult: 4096,
             wtmax: 0,
             wtpref: 0,
@@ -443,8 +456,9 @@ impl NFSFileSystem for NfsFront {
     }
 
     async fn id_to_fh(&self, id: fileid3) -> nfs_fh3 {
-        // A number whose generation cannot be read now gets 0: a handle that a later check
-        // finds stale, unless it is a folder's.
+        // A number whose generation cannot be read now gets 0. A folder's generation is
+        // always 0, so its handle still works; a file's is not, so a later check finds the
+        // handle stale.
         let generation = self.generation(id).await.unwrap_or(0);
         nfs_fh3 { data: Handle { volume: self.volume_id, ino: id, generation }.encode() }
     }

@@ -626,7 +626,7 @@ impl Drop for Cursor {
 
 /// Logs, once per disc, the areas without a loudspeaker layout the specification defines
 /// (specification 3, 3.4.1): their WAV channel mask and DSF channel type come from the
-/// channel count alone ([`crate::wav::channel_mask`], [`crate::dsf::channel_type`]).
+/// channel count alone ([`crate::wav::channel_mask`], [`crate::dsf::count_channel_type`]).
 fn log_unspecified_layouts(path: &Path, toc: &Toc) {
     let unspecified: Vec<String> = toc
         .areas

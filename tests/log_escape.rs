@@ -12,15 +12,7 @@ mod common;
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
 use std::process::Command;
-use std::time::{Duration, Instant};
-
-fn is_mounted(mountpoint: &Path) -> bool {
-    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
-    let mp = mountpoint.to_str().unwrap();
-    info.lines().any(|l| l.split(' ').nth(4) == Some(mp))
-}
 
 #[test]
 fn names_in_log_lines_are_escaped() {
@@ -41,11 +33,7 @@ fn names_in_log_lines_are_escaped() {
         .arg(at.path())
         .spawn()
         .unwrap();
-    let start = Instant::now();
-    while !is_mounted(at.path()) {
-        assert!(start.elapsed() < Duration::from_secs(20), "not mounted");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    common::wait_for("the mount", || common::is_mounted(at.path()));
     let _ = std::fs::read_dir(at.path()).unwrap().count();
     common::unmount_retrying(at.path());
     common::stop_gracefully(&mut child);
