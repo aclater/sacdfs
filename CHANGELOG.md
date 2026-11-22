@@ -6,6 +6,11 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+- **6-channel decoding re-measured on a hybrid CPU (#493).** docs/design.md now records that 6-channel
+  WAV reads on 20 threads are decoded in groups on main, so they no longer trail 0.6.5 on the
+  i9-13900H, and that the remaining single-frame gap is in scarletbook (scarletbook-rs #378).
+
 ### Added
 - **Fuzzing on 32-bit x86 (#498).** The fuzz workflow now also runs every target as a 32-bit x86
   program (`i686-unknown-linux-gnu`, without AddressSanitizer, which Rust doesn't offer there),
@@ -84,8 +89,19 @@ All notable changes to sacdfs are recorded here. The format follows
   is ignored, with one warning, and the lines before it are kept.
   The SMB password is removed from the entry point's environment once `smbpasswd` has it, so smbd
   and NFS-Ganesha start without it.
+- **Docs: library scans on slow NAS units (#505).** docs/deployment.md gives the CPU cost per disc
+  of MPD, Jellyfin and Navidrome first scans at Atom speed with `dsf`, `wav` and `dsf,wav`, and
+  recommends `--format dsf` for MPD and Jellyfin on such units; docs/install/binary.md says so
+  for the 32-bit build. Code changes were measured and would not help: the cost is the WAV
+  audio the scanners ask for.
 
 ### Fixed
+- **A tags file's track section that is not keyed by the plain number is reported.** `[track.03]`
+  or `[track."+3"]` was accepted and then never applied, without a word, because a track's fields
+  are looked up by its plain number (`3`). The section is still not applied, and the rest of the
+  file applies as before, but the mount now logs a warning that names the section and the one to
+  write instead (`[track.3]`), and `sacdfs tags import` lists it as `not applied:` and exits 2
+  when it reads such a tags file.
 - **`sacdfs-nfs --help`.** The command it shows for mounting by hand on macOS lacked
   `rsize=1048576` and `rdirplus`, which sacdfs-nfs itself mounts with; it now shows the same
   options, and SIGQUIT is named among the signals that stop the server. Errors are printed under
@@ -107,6 +123,10 @@ All notable changes to sacdfs are recorded here. The format follows
   ID3v2.2 or unsynchronised tag) was passed over in silence, and import could exit 0 with that
   extract's art in no tags directory. It is now listed as `not kept:` with its extract and disc,
   and the exit status is 2, as the user guide says of every picture left out.
+- **Every option as an `-o` mount option.** `mount -t fuse.sacdfs` and fstab refused `tags`,
+  `pauses`, `listing_mb`, `request_timeout`, `stop_grace` and `no_multichannel_album_suffix` as
+  "not a sacdfs mount option", and so `musicbrainz` too, which needs `tags`. They are accepted now,
+  and a test keeps the `-o` options in step with the command line.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **Windows: a picture named in a tags file is not embedded when it is a reparse point** (a

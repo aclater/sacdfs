@@ -399,7 +399,10 @@ album = "Album Name (5.1)"
   `TIT2`, `TCON` ...), and any ID3 frame as `sacdfs verify` names it: a text frame (`TBPM`),
   `TXXX:description`, `COMM:description`, `UFID:owner`. An empty value removes the item.
   Levels apply in the order `[album]`, `[<area>.album]`, `[track.N]`, `[<area>.track.N]`; the
-  later wins. A file with an unknown key or section is ignored, with a warning in the log.
+  later wins. `N` is the track's number, 1 to 255, with no sign or leading zeros (`[track.3]`,
+  not `[track.03]`): a section that writes it another way is not applied, while the rest of the
+  file is; the log has a warning that names the section, and `sacdfs tags import` lists it as
+  `not applied:`. A file with an unknown key or section is ignored, with a warning in the log.
 - **Art** is embedded only when the file names a picture with `art`, up to 960 KiB (the
   tag's limit is 1 MiB). The name is a plain file name, with no folder or drive, in the tags
   directory. Folder art passes through either way ([Sidecar
@@ -439,7 +442,8 @@ The summary lists at most 32 `not kept:` lines and counts the rest.
 **Exit status:** 0 when every extract was handled, as `sacdfs verify` means it: each DSF and DFF
 file matched and its tags were read (a FLAC or WAV file can't be compared, and doesn't count
 against this). 2 when any extract didn't match or couldn't be checked, when a tag or tags file
-couldn't be read or written, or when a picture or value was not kept: what could be done was done, the rows are in the report, and the
+couldn't be read or written, when a picture or value was not kept, or when a tags file it read has a
+section that is not applied: what could be done was done, the rows are in the report, and the
 summary says how many were left out. 1 when the import couldn't run or didn't finish.
 
 **From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).
@@ -957,9 +961,9 @@ command name.)
 /srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,cache_mb=64,format=dsf,_netdev,nofail  0 0
 ```
 
-`-o` takes sacdfs's own options as `name` or `name=value` with the dashes written as underscores
-(`allow_other`, `cache_mb=64`, `pcm_rate=88200`, `flatten`, `index_cache=/var/cache/sacdfs`,
-`log_file=/var/log/sacdfs.log`, `verbose=2`). A comma separates `-o` options, so a list value
+`-o` takes each of sacdfs's own options as `name` or `name=value` with the dashes written as
+underscores (`allow_other`, `cache_mb=64`, `pcm_rate=88200`, `flatten`, `tags=/etc/sacdfs/tags`,
+`index_cache=/var/cache/sacdfs`, `log_file=/var/log/sacdfs.log`, `verbose=2`). A comma separates `-o` options, so a list value
 uses `+`: `format=dsf+wav`, `sidecars=default+cue`. The options of `mount(8)` and fstab (`ro`,
 `rw`, `noauto`, `nofail`, `_netdev`, `nosuid`, `nodev`, `x-systemd.*` and similar) are accepted
 and ignored by sacdfs itself; sacdfs is always read-only. Any other option is an error, so a
