@@ -21,6 +21,8 @@ pub fn write(argv: &[OsString]) -> io::Result<()> {
         std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))?;
     let exe = std::env::current_exe()?.canonicalize()?;
     let cwd = std::env::current_dir()?;
+    // A property list is text: an argument that is not UTF-8 is written with U+FFFD in place
+    // of the bytes that are not, and so names another path.
     let args: Vec<String> = std::iter::once(exe.to_string_lossy().into_owned())
         .chain(
             argv.iter().skip(1).filter(|a| *a != "--launch-agent").map(|a| a.to_string_lossy().into_owned()),
