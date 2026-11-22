@@ -409,7 +409,10 @@ album = "Album Name (5.1)"
   `TIT2`, `TCON` ...), and any ID3 frame as `sacdfs verify` names it: a text frame (`TBPM`),
   `TXXX:description`, `COMM:description`, `UFID:owner`. An empty value removes the item.
   Levels apply in the order `[album]`, `[<area>.album]`, `[track.N]`, `[<area>.track.N]`; the
-  later wins. A file with an unknown key or section is ignored, with a warning in the log.
+  later wins. `N` is the track's number, 1 to 255, with no sign or leading zeros (`[track.3]`,
+  not `[track.03]`): a section that writes it another way is not applied, while the rest of the
+  file is; the log has a warning that names the section, and `sacdfs tags import` lists it as
+  `not applied:`. A file with an unknown key or section is ignored, with a warning in the log.
 - **Art** is embedded only when the file names a picture with `art`, up to 960 KiB (the
   tag's limit is 1 MiB). The name is a plain file name, with no folder or drive, in the tags
   directory. Folder art passes through either way ([Sidecar
@@ -449,7 +452,8 @@ The summary lists at most 32 `not kept:` lines and counts the rest.
 **Exit status:** 0 when every extract was handled, as `sacdfs verify` means it: each DSF and DFF
 file matched and its tags were read (a FLAC or WAV file can't be compared, and doesn't count
 against this). 2 when any extract didn't match or couldn't be checked, when a tag or tags file
-couldn't be read or written, or when a picture or value was not kept: what could be done was done, the rows are in the report, and the
+couldn't be read or written, when a picture or value was not kept, or when a tags file it read has a
+section that is not applied: what could be done was done, the rows are in the report, and the
 summary says how many were left out. 1 when the import couldn't run or didn't finish.
 
 **From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).

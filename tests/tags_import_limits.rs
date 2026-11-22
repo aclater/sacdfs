@@ -289,6 +289,41 @@ fn not_kept_names_are_escaped() {
     assert!(say.contains("TXXX:Notes\\x0aFORGED line\\x1b]0;t\\x07\\x1b[2J"), "{say}");
 }
 
+/// A tags file there already with a track section keyed another way than the plain number: the
+/// section is not applied, import says so and exits 2, and the rest of the file and what import
+/// adds are kept, the section included.
+#[test]
+fn import_lists_a_track_section_that_is_not_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = dir.path().join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    let iso = format!("{TAGGED}.iso");
+    common::link(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    let ext = dir.path().join("ext");
+    let numbers = write_extracts(&lib, &ext, |_, _, tag| txxx(tag, "Own", "kept"));
+    let tags_dir = dir.path().join("tags");
+    fs::create_dir_all(&tags_dir).unwrap();
+    let key = tags::disc_key(Disc::open(&lib.join(&iso), 0, Tuning::default()).unwrap().toc());
+    let path = tags_dir.join(format!("{key}.toml"));
+    fs::write(&path, "[album]\ngenre = \"Mine\"\n\n[track.01]\ntitle = \"Never shown\"\n").unwrap();
+
+    let (code, say) = import(&lib, &ext, &tags_dir);
+    assert_eq!(code, Some(2), "{say}");
+    let lines: Vec<&str> = say.lines().filter(|l| l.starts_with("not applied: ")).collect();
+    assert_eq!(lines.len(), 1, "{say}");
+    assert!(
+        lines[0].contains(&format!("{key}.toml"))
+            && lines[0].ends_with("section [track.01]: write it as [track.1]"),
+        "{say}"
+    );
+    assert!(!say.contains("failed: ") && !say.contains("not kept: "), "{say}");
+    let written = TagsFile::parse(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written.unapplied_sections().len(), 1);
+    let fields = written.fields_for(Slot::TwoChannel, numbers[0] as u8);
+    assert_eq!((fields["genre"].as_str(), fields["TXXX:Own"].as_str()), ("Mine", "kept"));
+    assert!(!written.fields_for(Slot::TwoChannel, 1).contains_key("title"));
+}
+
 /// A cover import cannot read (here a GIF) is listed as not kept, with exit status 2: verify
 /// says the extract's art would be lost, and before this fix import said nothing and exited 0.
 #[test]

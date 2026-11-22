@@ -439,6 +439,7 @@ fn retrying_clients_of_a_stalled_image_leave_threads_to_the_others() {
     other.truncate(2);
     other.extend(files_below(&m.path.join("Other"), "wav").into_iter().take(2));
     assert!(!stalled.is_empty() && other.len() == 4);
+    #[expect(clippy::needless_collect, reason = "the files are opened before the image stalls")]
     let open: Vec<_> =
         (0..CLIENTS).map(|i| std::fs::File::open(&stalled[i % stalled.len()]).unwrap()).collect();
 

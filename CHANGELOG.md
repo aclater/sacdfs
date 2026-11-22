@@ -6,10 +6,36 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-### Documentation
-- **6-channel decoding re-measured on a hybrid CPU (#493).** docs/design.md now records that 6-channel
-  WAV reads on 20 threads are decoded in groups on main, so they no longer trail 0.6.5 on the
-  i9-13900H, and that the remaining single-frame gap is in scarletbook (scarletbook-rs #378).
+### Changed
+
+- **Code acceptance rules.** CONTRIBUTING.md lists the rules a pull request must keep, each with
+  the CI check that enforces it. New checks: ShellCheck on every shell script, ruff on the Python
+  scripts, rustfmt on winfsp/, the MSRV build and the docs with the `nfs` feature, Windows clippy
+  on the core's test code, equal copies and container hardening (`.github/scripts/check-copies.sh`),
+  no function over 200 lines, and five performance lints.
+
+### Fixed
+
+- **A player that re-reads an album's heads at each start no longer has them decoded again (#456).**
+  The frames of each file's first 2 MiB of audio and its last frame stay in the cache, within
+  half of it, also through the idle release, and a probed folder's heads are decoded ahead on
+  slow CPUs (#510). Unlike the test builds withdrawn before 0.7.1 (#569), kept frames use slabs of
+  their own, a reader that reads a file past its head gives that head back, and no heads are kept
+  while files are read for throughput: a sequential read of whole files still reads about the
+  image data once. With the #456 player's profile on cores limited to an Atom's speed, a start
+  after the idle release opens its track in about 0.25 s instead of 3.6 s, without stalls.
+
+## [0.7.1] - 2026-11-22
+
+This release contains security fixes; upgrading is recommended.
+
+**Code review.** A full review of the code base brings changes to readability, structure, tests
+and CI checks, fixes for small bugs found along the way (listed under Fixed), and hardening of the
+installer and container.
+
+Tested on `main` before the release; the results are in docs/test-plan.md ("Results: 0.7.1").
+The install guides and the deploy files (`deploy/nas-compose.yaml`, the Unraid template and the
+TrueNAS app) name this release (#529). Output bytes are those of 0.7.0.
 
 ### Added
 - **Fuzzing on 32-bit x86 (#498).** The fuzz workflow now also runs every target as a 32-bit x86
@@ -52,6 +78,13 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Changed
+- **Files' heads are not kept in the cache (#456).** Test builds since #508 kept the frames of
+  files' heads and tails in the cache through the idle release, and decoded a folder's heads after
+  a player's probe on slow CPUs (#510), for a network player that re-reads an album's heads at each
+  track start. Withdrawn before release: a plain sequential read of whole files with small reads
+  (`sha256sum`) read about 1.75 times the image data and took twice as long (two real discs, DSF:
+  4.76 GB in 39 s against 2.71 GB in 19 s), at any `--cache-mb`. Reads are as in 0.7.0 again.
+  `scripts/real-discs.sh` gains a check that such reads stay at about the image data.
 - **install.sh verifies release files beside it against built-in checksums.** Run from an
   unpacked release archive, it copies `sacdfs`, `sacdfs-ctl`, `sacdfs.service` and
   `nas-compose.yaml` into its temporary folder and uses those copies only when each matches the
@@ -64,6 +97,12 @@ All notable changes to sacdfs are recorded here. The format follows
   platform.** A name containing `\` or `:` was accepted on Linux, where those are ordinary
   characters; such a name is now refused everywhere, and the picture is not embedded, with a
   warning in the log.
+- **install.sh uses local release files only for this machine, and downloads when a local
+  binary doesn't start.** The installer published on its own takes only the files of the
+  archive it would download for this machine; another architecture's files next to it are not
+  used. The copy inside an archive still takes its own archive's files (the x86-64-v3 archive's
+  installer uses its v3 binary). If a verified local binary doesn't start here, the installer
+  says so and downloads the release for this machine instead of stopping.
 - **The installer on 32-bit x86 (#500)** (an `i686` kernel, or an x86-64 kernel with 32-bit
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
@@ -89,6 +128,12 @@ All notable changes to sacdfs are recorded here. The format follows
   audio the scanners ask for.
 
 ### Fixed
+- **A tags file's track section that is not keyed by the plain number is reported.** `[track.03]`
+  or `[track."+3"]` was accepted and then never applied, without a word, because a track's fields
+  are looked up by its plain number (`3`). The section is still not applied, and the rest of the
+  file applies as before, but the mount now logs a warning that names the section and the one to
+  write instead (`[track.3]`), and `sacdfs tags import` lists it as `not applied:` and exits 2
+  when it reads such a tags file.
 - **`sacdfs-nfs --help`.** The command it shows for mounting by hand on macOS lacked
   `rsize=1048576` and `rdirplus`, which sacdfs-nfs itself mounts with; it now shows the same
   options, and SIGQUIT is named among the signals that stop the server. Errors are printed under
@@ -118,35 +163,15 @@ All notable changes to sacdfs are recorded here. The format follows
   reported the guarded test as no longer skipping and failed the job, at random.
 - **Windows: a picture named in a tags file is not embedded when it is a reparse point** (a
   link, junction or placeholder), with a warning in the log, as a symbolic link already was.
-- **CI: the folder-warming tests failed on busy runners (#563).** They took wall-clock gaps
-  between reads as the mount's quiet; they now set the warmer's clock themselves. Tests only; the
-  warmer behaves as before.
-- **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
-  it lists the album, and when playback starts, often minutes later, re-reads the head of every
-  other file of the album before it opens the track. On a 32-bit Atom the first start after a
-  mount decoded all those heads then, about 4 s of silence. Now, once one file's head has been
-  probed and the mount has had no read for 2 s, sacdfs decodes the heads of the other files in
-  that folder in the background, as far as the probe read, and keeps them with the other heads.
-  It stops at the next read of any file, stays within the heads an idle release keeps, runs only
-  where sacdfs measures that it decodes slower than `--start-burst`, and never after reads of
-  several files (a library scan) or a tagger's short look at one. With the player's profile on
-  cores limited to an Atom's speed, a start 30 s after the probe opened its track 4.27 → 0.44 s
-  after its own probe, and its first 15 s went from 2.5 s of stalls to none; 120 s after (past the
-  idle release), 4.09 → 0.26 s and 4.0 s → none. A start within 2 s of the probe is unchanged.
-  It costs about 3 s of that CPU per album probed. The stall gate gains `PROFILE@probe:D`.
 - **A silence of about 2 s when a track starts again with players that re-read the album (#456).**
-  With the heads kept (#510), a start minutes after the last one found every head decoded, yet the
-  #456 player still waited: it re-reads the other files' heads one file at a time, each closed
+  The #456 player re-reads the other files' heads one file at a time, each closed
   before the next opens, and opens its track only after several of them. Each re-read started a
   decode-ahead of that file's next seconds and then waited for it, about a quarter of a second
   per file on a 32-bit Atom, and those decode-aheads kept the CPU after the files closed; once
-  the track's own read of a kept head waited 2 s behind them. A reader of a file's head from its
+  the track's own read of a cached head waited 2 s behind them. A reader of a file's head from its
   start now neither reads ahead nor starts its decode-ahead while another file's head was read in
   the last 2 s, and a read whose frames are all in the cache never waits for a decode-ahead.
-  With the player's profile on cores limited to an Atom's speed, a start after the idle release
-  opened its track 0.28 s after the probe instead of 2.32 s, and the first start after a mount
-  reached it 5.0 s after the probe instead of 8.0 to 8.4 s. The stall gate now also replays that
-  player starting after the idle release, and fails when its track opens later.
+  Its gain was measured only on test builds that also kept heads (see Changed).
 - **Seconds of silence at each track start on slow CPUs with players that re-read the album
   (#512).** On a 32-bit Atom NAS, the slow-machine decode-ahead of #504 decoded a starting track's
   first 7 s at once, while the player re-read the heads of the album's other files. That player
@@ -155,15 +180,6 @@ All notable changes to sacdfs are recorded here. The format follows
   now runs ahead at once only while no other file's head was read in the last second, and stays
   paced otherwise. Players starting a track alone are unchanged. On test builds since #509,
   `--start-burst 0` avoids it.
-- **Kept heads survive the idle release (#510).** A mount idle for a minute dropped its whole
-  cache (#150), the heads of #508 included, so a player that re-reads the album's heads at each
-  track start found them decoded only if it came back within that minute: in practice every
-  start was a first start, and on a 32-bit Atom each decoded the album's heads again. The idle
-  release now keeps the most recently read heads, up to half the cache and 32 MiB, in the slabs
-  they are in; a release for memory pressure still drops them. With the #456 player on
-  cores limited to an Atom's speed, a start after the idle release went from 6 s of stalls in
-  its first 15 s to none; the first start after a mount is unchanged. An idle mount holds up to
-  half its cache (at most 32 MiB) more for them.
 - **Folder rescans no longer take the CPU from a track starting (#503).** A player that re-reads
   the heads of every file in the folder as it starts a track (seen on a Zidoo) made sacdfs decode
   each of those files ahead too: up to 3 s of audio per file, or 16 to 150 frames beside the
@@ -171,7 +187,7 @@ All notable changes to sacdfs are recorded here. The format follows
   or plays, and does not start a decode-ahead while another file starts. In replays of the user's
   traces on cores limited to an Atom's speed, sacdfs used 16 to 27 % less CPU in the seconds a track
   started, and the playing file's worst read fell in five of six starts (0.74 → 0.67 s, 0.47 →
-  0.39 s). Together with #508, which keeps those heads decoded, this completes #503.
+  0.39 s).
 - **The default listing budget no longer wraps on 32-bit builds (#488).** Under a memory limit
   above about 10.6 GiB, the budget for listed images (3/8 of the limit) overflowed a 32-bit
   `usize` and became tiny; it now saturates.
@@ -180,23 +196,9 @@ All notable changes to sacdfs are recorded here. The format follows
   and were decoded frame by frame, which scarletbook 0.6.0 does about 11 % slower than 0.5.x: the
   cause of 0.7.0's slower multichannel reads on a hybrid Intel CPU. On an i9-13900H a real disc's
   multichannel DSF files now read 10 % faster than with 0.7.0 (and 7 to 8 % faster than 0.6.5);
-  a Ryzen 9 3950X is unchanged. Output bytes are unchanged. Not yet: 6-channel WAV reads on that
-  Intel CPU, still about 5 % slower than 0.6.5. Why 6: docs/design.md, "Why frames are decoded
+  a Ryzen 9 3950X is unchanged. Output bytes are unchanged. Re-measured on that CPU,
+  6-channel WAV reads are now grouped too and read about 3 % faster than 0.6.5. Why 6: docs/design.md, "Why frames are decoded
   in groups".
-- **A player that re-reads an album's heads at each start no longer has them decoded again (#456).**
-  A network player re-reads the first 0.6 to 1.6 MiB and the last bytes of every file of an album
-  each time it starts a track. The playing track's read-ahead had evicted those frames, so every
-  start decoded them again: on a 4-thread Atom, 3 to 4 s of its CPU in the seconds the player was
-  filling its buffer, which made it glitch for about 10 s. The frames a read takes from a file's
-  first 2 MiB of audio or its last frame now stay in the cache, evicted after every other frame,
-  within half of it. Output bytes are unchanged. Test builds that kept them made a plain
-  sequential read of whole files (`sha256sum` of every file) read about 1.75 times the image data
-  and take twice as long, so they were withdrawn (#569); they come back with three rules: kept frames go to slabs of the cache's memory that hold heads only, so they no longer
-  stop the slabs of read-ahead from emptying for frames of another size; a reader that reads a
-  file from its start on past its head (a copy, a checksum) gives that file's head back; and no
-  heads are kept while readers past a file's head read for throughput, nor for 10 s after. On two real discs (DSF,
-  one reader) such a read is as in 0.7.0 again. `scripts/real-discs.sh` checks that it stays at
-  about the image data.
 - **No second's wait just after the start-of-track decode-ahead on a slow CPU (#456).** On a
   4-thread Atom that converts 6-channel DST to WAV at about 1.07 times real time, a player
   starting a track reads right behind the decode-ahead. When it ended, a read halfway through the
@@ -2118,7 +2120,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/aclater/sacdfs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0
 [0.7.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.1...v0.7.0-rc.2
 [0.7.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0-rc.1

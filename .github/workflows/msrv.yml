@@ -45,3 +45,4 @@ jobs:
         shell: bash
         run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
       - run: cargo +"$RUST_MSRV" check --all-targets --locked
+      - run: cargo +"$RUST_MSRV" check --all-targets --locked --features nfs
