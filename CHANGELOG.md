@@ -6,6 +6,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-23
+
+This release contains security fixes; upgrading is recommended.
+
+Tested on `main` before the release; the results are in docs/test-plan.md ("Results: 0.7.2").
+The install guides and the deploy files name this release. Output bytes are those of 0.7.1.
+
 ### Changed
 
 - **Code acceptance rules.** CONTRIBUTING.md lists the rules a pull request must keep, each with
@@ -2132,7 +2139,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/aclater/sacdfs/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/aclater/sacdfs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0
 [0.7.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.1...v0.7.0-rc.2
