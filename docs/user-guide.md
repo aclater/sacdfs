@@ -179,22 +179,13 @@ multichannel DST on a 32-bit Atom NAS, it decodes the start of a playing track
 player's reads, unless another file's head was read in the last second: a player that re-reads
 the album's heads as it starts a track (seen on a Zidoo) asks for its track only as fast as those
 re-reads are answered, so they must not wait behind it (#512). The decode-ahead then stays a
-slice ahead of the reads, and runs on once the re-reads stop. The decoded heads of files that
-players read again stay in the cache on any machine (#456).
+slice ahead of the reads, and runs on once the re-reads stop.
 
 On any machine, a reader of a file's head gets no read-ahead while another file starts or plays,
 and does not start its own decode-ahead while another file starts. A reader of a file's head from
 its start does neither while another file's head was read in the last 2 s either: a player
 re-reading the album's heads one file at a time, which opens its track only after several of them
-(#456). A read of frames already in the cache never waits for a decode-ahead.
-
-On a machine slower than `--start-burst`, when a player has read the head of one file (as the #456
-player does for the track it shows when it lists an album) and the mount then has no read for 2 s,
-sacdfs decodes the heads of the other files of that folder in the background, as far as that read
-went, and keeps them (#510). The first start after a mount then finds them decoded. It stops at the
-next read of any file, stays within the heads kept through an idle release (half the cache, at most
-32 MiB), and does not run after reads of several files, which is what a library scan does. The
-read trace shows `warm r=N start`, `done` or `stopped: a read`. A machine that decodes faster
+(#456). A read of frames already in the cache never waits for a decode-ahead. A machine that decodes faster
 than `--start-burst` changes nothing else. `--start-burst 0` turns the slow-machine part off. The
 log's read trace (`-vv`) shows `slow: to frame N at once` when it applies, and `slow: paused at N,
 heads read` when re-reads hold it back. What it measured:
@@ -408,9 +399,13 @@ album = "Album Name (5.1)"
   `TIT2`, `TCON` ...), and any ID3 frame as `sacdfs verify` names it: a text frame (`TBPM`),
   `TXXX:description`, `COMM:description`, `UFID:owner`. An empty value removes the item.
   Levels apply in the order `[album]`, `[<area>.album]`, `[track.N]`, `[<area>.track.N]`; the
-  later wins. A file with an unknown key or section is ignored, with a warning in the log.
+  later wins. `N` is the track's number, 1 to 255, with no sign or leading zeros (`[track.3]`,
+  not `[track.03]`): a section that writes it another way is not applied, while the rest of the
+  file is; the log has a warning that names the section, and `sacdfs tags import` lists it as
+  `not applied:`. A file with an unknown key or section is ignored, with a warning in the log.
 - **Art** is embedded only when the file names a picture with `art`, up to 960 KiB (the
-  tag's limit is 1 MiB). Folder art passes through either way ([Sidecar
+  tag's limit is 1 MiB). The name is a plain file name, with no folder or drive, in the tags
+  directory. Folder art passes through either way ([Sidecar
   files](#sidecar-files-art-scans-playlists)).
 - **Album name:** an `album` the file sets gets no ` (Multichannel)` suffix: you named it. Put
   a name for the multichannel copy in `[multichannel.album]`.
@@ -437,7 +432,8 @@ chunks are not imported.
 It writes only what the mount uses: a picture of up to 960 KiB; per track, values of up to
 16 KiB, 64 keys and 32 KiB of text in all (the tag sacdfs builds holds at most 1 MiB, with the
 picture and the disc's own text); and up to about 2 MiB of text per disc, since every track's
-tag is built from that tags file. A value over a limit is left out whole, never cut. Each
+tag is built from that tags file. A value over a limit is left out whole, never cut; so is a
+picture import cannot read (anything but a plain JPEG or PNG). Each
 picture or value left out is listed as `not kept:`, with its extract and disc: keep those
 extracts, as their tags file lacks it. A disc whose tags file, with what import adds, would be
 over 3 MiB gets nothing added and is listed as `not kept:` too; the file is left as it was.
@@ -446,7 +442,8 @@ The summary lists at most 32 `not kept:` lines and counts the rest.
 **Exit status:** 0 when every extract was handled, as `sacdfs verify` means it: each DSF and DFF
 file matched and its tags were read (a FLAC or WAV file can't be compared, and doesn't count
 against this). 2 when any extract didn't match or couldn't be checked, when a tag or tags file
-couldn't be read or written, or when a picture or value was not kept: what could be done was done, the rows are in the report, and the
+couldn't be read or written, when a picture or value was not kept, or when a tags file it read has a
+section that is not applied: what could be done was done, the rows are in the report, and the
 summary says how many were left out. 1 when the import couldn't run or didn't finish.
 
 **From beets:** beets-pysacd writes tags files from its matches (beets-pysacd#38).
@@ -964,9 +961,9 @@ command name.)
 /srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,cache_mb=64,format=dsf,_netdev,nofail  0 0
 ```
 
-`-o` takes sacdfs's own options as `name` or `name=value` with the dashes written as underscores
-(`allow_other`, `cache_mb=64`, `pcm_rate=88200`, `flatten`, `index_cache=/var/cache/sacdfs`,
-`log_file=/var/log/sacdfs.log`, `verbose=2`). A comma separates `-o` options, so a list value
+`-o` takes each of sacdfs's own options as `name` or `name=value` with the dashes written as
+underscores (`allow_other`, `cache_mb=64`, `pcm_rate=88200`, `flatten`, `tags=/etc/sacdfs/tags`,
+`index_cache=/var/cache/sacdfs`, `log_file=/var/log/sacdfs.log`, `verbose=2`). A comma separates `-o` options, so a list value
 uses `+`: `format=dsf+wav`, `sidecars=default+cue`. The options of `mount(8)` and fstab (`ro`,
 `rw`, `noauto`, `nofail`, `_netdev`, `nosuid`, `nodev`, `x-systemd.*` and similar) are accepted
 and ignored by sacdfs itself; sacdfs is always read-only. Any other option is an error, so a

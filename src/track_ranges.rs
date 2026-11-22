@@ -100,7 +100,7 @@ pub fn fit_overlaps(spans: &[Span]) -> Vec<Fit> {
 /// [`check_track`]).
 pub fn capacity(area: &Area, image_sectors: u64) -> u64 {
     let (start, end) = audio_sector_range(area, image_sectors);
-    (end - start).saturating_mul(FRAMES_PER_SECTOR)
+    end.saturating_sub(start).saturating_mul(FRAMES_PER_SECTOR)
 }
 
 /// Why a track is listed differently from its TOC range, or not at all.
@@ -151,7 +151,9 @@ impl Listed {
                 log::info!("{path}: {slot} track {n}: shown to frame {end}: runs into track {next}")
             }
             Some(Note::PauseDropped) => {
-                log::info!("{path}: {slot} track {n}: shown without its pause: it overlaps another track")
+                log::info!(
+                    "{path}: {slot} track {n}: shown without its pause: with it, it overlaps another track or does not fit the image"
+                )
             }
         }
     }

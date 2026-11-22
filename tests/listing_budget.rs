@@ -109,10 +109,7 @@ fn nodes(root: &Path) -> u64 {
 
 #[test]
 fn a_tiny_bound_serves_the_same_tree_numbers_and_bytes() {
-    if !common::fuse_available() {
-        common::report_skip("a_tiny_bound_serves_the_same_tree_numbers_and_bytes", "no FUSE");
-        return;
-    }
+    common::skip_without_fuse!();
     let lib = library(90);
     let free = Mount::new(lib.path(), &["--listing-mb", "0"]);
     let want = walk(free.at.path(), true);
@@ -128,10 +125,7 @@ fn a_tiny_bound_serves_the_same_tree_numbers_and_bytes() {
 
 #[test]
 fn a_file_stays_open_and_reads_the_same_while_images_are_dropped() {
-    if !common::fuse_available() {
-        common::report_skip("a_file_stays_open_and_reads_the_same_while_images_are_dropped", "no FUSE");
-        return;
-    }
+    common::skip_without_fuse!();
     let lib = library(30);
     let m = Mount::new(lib.path(), &["--listing-mb", "1"]);
     let folder = m.at.path().join("A00/D000");
@@ -158,10 +152,7 @@ fn a_file_stays_open_and_reads_the_same_while_images_are_dropped() {
 /// in this process.
 #[test]
 fn a_shortage_fails_new_requests_with_enomem_and_passes() {
-    if !common::fuse_available() {
-        common::report_skip("a_shortage_fails_new_requests_with_enomem_and_passes", "no FUSE");
-        return;
-    }
+    common::skip_without_fuse!();
     const LIMIT: u64 = 100 << 20;
     let lib = library(30);
     let cgroup = tempfile::tempdir().unwrap();

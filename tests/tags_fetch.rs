@@ -4,7 +4,7 @@
 //! is confirmed, what is refused and why, what a tags file ends up holding, and that nothing is
 //! asked without need. Nothing here touches the network.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "a test fails by panicking")]
 
 mod common;
 

@@ -9,18 +9,23 @@
 //! SHA-256 of the long stream's bytes from there, against the short one's. The audio the long
 //! stream has outside that span is then measured, region by region.
 //!
-//! The meter is the one the owner's survey used: the imbalance of ones and zeros of a window of
-//! 4096 samples, `20 log10(|ones - zeros| / 4096)` dB, the worst window of the worst channel. One
-//! bit of imbalance (two more ones than zeros... the difference is 2) reads -66.2 dB, two bits
-//! (difference 4) -60.2 dB. A region is silence if it is the DSD idle pattern exactly, or no
+//! The meter is the imbalance of ones and zeros of a window of 4096 samples,
+//! `20 log10(|ones - zeros| / 4096)` dB, the worst window of the worst channel. One bit off
+//! balance (one more one, one fewer zero: a difference of 2) reads -66.2 dB, two bits (a
+//! difference of 4) -60.2 dB. A region is silence if it is the DSD idle pattern exactly, or no
 //! window is worse than -60.2 dB: the balanced residue of a noise shaper, which holds no music.
+//!
+//! The canonical stream is byte-interleaved, so lengths here are counted in bytes per channel
+//! (8 samples each), not in SACD frames.
+
+#![warn(clippy::cast_possible_truncation)]
 
 use std::sync::atomic::AtomicU64;
 
 use sha2::{Digest, Sha256};
 
 use super::SACD_RATE;
-use super::container::{Problem, Stream};
+use super::container::{MAX_CHANNELS, Problem, Stream};
 
 /// The most audio, in seconds, a stream may have beyond the other for them to be compared.
 /// Beyond it the files are different recordings, not a pause: the longest pause seen in a real
@@ -35,7 +40,10 @@ const WINDOW_BYTES: u32 = 512;
 const SILENCE_MAX_IMBALANCE: u32 = 4;
 
 /// A needle's length, in bytes per channel.
-const NEEDLE_FRAMES: usize = 1024;
+const NEEDLE_BYTES_PER_CHANNEL: usize = 1024;
+
+/// Most channels a meter counts: what a compared file may have.
+const CHANNELS: usize = MAX_CHANNELS as usize;
 
 /// A needle must hold at least this many distinct byte values (idle patterns and the like hold
 /// one to four).
@@ -108,18 +116,25 @@ fn level(db: f64) -> String {
 }
 
 fn db_of(imbalance: u32) -> f64 {
-    if imbalance == 0 { f64::NEG_INFINITY } else { 20.0 * (f64::from(imbalance) / 4096.0).log10() }
+    let window_samples = f64::from(WINDOW_BYTES * 8);
+    if imbalance == 0 { f64::NEG_INFINITY } else { 20.0 * (f64::from(imbalance) / window_samples).log10() }
 }
 
 /// Measures a region of the canonical (byte-interleaved) stream, fed in pieces.
 #[derive(Debug)]
 pub struct Meter {
     ch: usize,
+    /// The channel of the next byte.
     phase: usize,
-    ones: [u32; 6],
-    frames_in_window: u32,
-    frames: u64,
+    /// Ones in the open window, per channel.
+    ones: [u32; CHANNELS],
+    /// Bytes per channel in the open window.
+    window_bytes: u32,
+    /// Bytes per channel fed in all.
+    bytes_per_channel: u64,
+    /// The largest imbalance of a closed window.
     worst: u32,
+    /// Whether every byte so far is of the idle pattern.
     idle: bool,
 }
 
@@ -127,11 +142,11 @@ impl Meter {
     /// A meter for a stream of `channels` channels (at most 6), starting on a whole frame.
     pub fn new(channels: u8) -> Meter {
         Meter {
-            ch: usize::from(channels.clamp(1, 6)),
+            ch: usize::from(channels).clamp(1, CHANNELS),
             phase: 0,
-            ones: [0; 6],
-            frames_in_window: 0,
-            frames: 0,
+            ones: [0; CHANNELS],
+            window_bytes: 0,
+            bytes_per_channel: 0,
             worst: 0,
             idle: true,
         }
@@ -145,9 +160,9 @@ impl Meter {
             self.phase += 1;
             if self.phase == self.ch {
                 self.phase = 0;
-                self.frames += 1;
-                self.frames_in_window += 1;
-                if self.frames_in_window == WINDOW_BYTES {
+                self.bytes_per_channel += 1;
+                self.window_bytes += 1;
+                if self.window_bytes == WINDOW_BYTES {
                     self.close_window();
                 }
             }
@@ -156,18 +171,18 @@ impl Meter {
 
     /// Closes the window: a short last one is judged by the same absolute imbalance.
     fn close_window(&mut self) {
-        let bits = i64::from(self.frames_in_window) * 8;
+        let bits = i64::from(self.window_bytes) * 8;
         for c in 0..self.ch {
             let diff = (2 * i64::from(self.ones[c]) - bits).unsigned_abs();
             self.worst = self.worst.max(u32::try_from(diff).unwrap_or(u32::MAX));
             self.ones[c] = 0;
         }
-        self.frames_in_window = 0;
+        self.window_bytes = 0;
     }
 
     /// What the region held.
     pub fn finish(mut self) -> Region {
-        if self.frames_in_window > 0 {
+        if self.window_bytes > 0 {
             self.close_window();
         }
         let class = if self.idle {
@@ -177,7 +192,7 @@ impl Meter {
         } else {
             Class::Audio(db_of(self.worst))
         };
-        Region { samples: self.frames * 8, class }
+        Region { samples: self.bytes_per_channel * 8, class }
     }
 }
 
@@ -216,9 +231,10 @@ impl Finder {
 }
 
 /// A piece of `audio` that is unlikely to be anywhere else: the first window of
-/// [`NEEDLE_FRAMES`] frames, at a multiple of its length, with many distinct byte values.
+/// [`NEEDLE_BYTES_PER_CHANNEL`] bytes per channel, at a multiple of its length, with many distinct
+/// byte values.
 fn pick_needle(audio: &mut dyn Stream, read: &AtomicU64) -> Result<Option<(u64, Vec<u8>)>, Problem> {
-    let w = NEEDLE_FRAMES * usize::from(audio.channels());
+    let w = NEEDLE_BYTES_PER_CHANNEL * usize::from(audio.channels());
     let mut pending: Vec<u8> = Vec::new();
     let mut base = 0u64;
     let mut found = None;
@@ -253,6 +269,24 @@ pub struct Found {
     pub offset_samples: u64,
 }
 
+impl Found {
+    /// Whether the long stream has only silence around the short one.
+    pub fn is_silence(&self) -> bool {
+        self.head.is_silence() && self.tail.is_silence()
+    }
+
+    /// What the long stream has around the short one, `what` standing for the short one ("it",
+    /// "them"): "2.350 s of digital silence before it and ... after it", or nothing.
+    pub fn around(&self, what: &str) -> String {
+        let parts: Vec<String> = [("before", &self.head), ("after", &self.tail)]
+            .iter()
+            .filter(|(_, r)| r.samples > 0)
+            .map(|(side, r)| format!("{} {side} {what}", r.describe()))
+            .collect();
+        parts.join(" and ")
+    }
+}
+
 /// Looks for `small` (whose canonical stream hashes to `small_digest`) inside `big`, both of the
 /// same channel count. `None`: it is not there, or no needle could be picked from it.
 pub fn locate(
@@ -262,13 +296,17 @@ pub fn locate(
     read: &AtomicU64,
 ) -> Result<Option<Found>, Problem> {
     let ch = u64::from(big.channels());
-    let (Some(l), Some(m)) = (big.canonical_len(), small.canonical_len()) else { return Ok(None) };
-    if small.channels() != big.channels() || m == 0 || l < m {
+    let (Some(big_len), Some(small_len)) = (big.canonical_len(), small.canonical_len()) else {
+        return Ok(None);
+    };
+    if small.channels() != big.channels() || small_len == 0 || big_len < small_len {
         return Ok(None);
     }
-    let d = l - m;
-    let Some((p, needle)) = pick_needle(small, read)? else { return Ok(None) };
-    let limit = d + p + needle.len() as u64;
+    // The furthest into `big` that `small` can start.
+    let slack = big_len - small_len;
+    let Some((needle_at, needle)) = pick_needle(small, read)? else { return Ok(None) };
+    // Past this offset of `big` the needle can't be where `small` has it.
+    let limit = slack + needle_at + needle.len() as u64;
     let mut finder = Finder { needle, channels: ch, tail: Vec::new(), base: 0, hits: Vec::new() };
     let mut seen = 0u64;
     big.canonical_while(read, &mut |b| {
@@ -276,11 +314,14 @@ pub fn locate(
         seen += b.len() as u64;
         finder.hits.len() < MAX_HITS && seen < limit
     })?;
-    for q in finder.hits {
-        let Some(o) = q.checked_sub(p).filter(|&o| o <= d && o % ch == 0) else { continue };
-        let (head, mid, tail) = scan(big, read, o, m)?;
+    for hit in finder.hits {
+        // Where `small` starts in `big` if this hit is its needle.
+        let Some(start) = hit.checked_sub(needle_at).filter(|&o| o <= slack && o % ch == 0) else {
+            continue;
+        };
+        let (head, mid, tail) = scan(big, read, start, small_len)?;
         if &mid == small_digest {
-            return Ok(Some(Found { head, tail, offset_samples: o / ch * 8 }));
+            return Ok(Some(Found { head, tail, offset_samples: start / ch * 8 }));
         }
     }
     Ok(None)
@@ -294,23 +335,29 @@ fn scan(
     offset: u64,
     len: u64,
 ) -> Result<(Region, [u8; 32], Region), Problem> {
+    enum Part {
+        Head,
+        Mid,
+        Tail,
+    }
     let (mut head, mut tail) = (Meter::new(big.channels()), Meter::new(big.channels()));
     let mut mid = Sha256::new();
     let mut at = 0u64;
     big.canonical_while(read, &mut |mut b| {
         while !b.is_empty() {
-            let (n, which) = if at < offset {
-                ((offset - at).min(b.len() as u64), 0)
+            let (n, part) = if at < offset {
+                ((offset - at).min(b.len() as u64), Part::Head)
             } else if at < offset + len {
-                ((offset + len - at).min(b.len() as u64), 1)
+                ((offset + len - at).min(b.len() as u64), Part::Mid)
             } else {
-                (b.len() as u64, 2)
+                (b.len() as u64, Part::Tail)
             };
+            #[expect(clippy::cast_possible_truncation, reason = "at most b.len()")]
             let (now, rest) = b.split_at(n as usize);
-            match which {
-                0 => head.feed(now),
-                1 => mid.update(now),
-                _ => tail.feed(now),
+            match part {
+                Part::Head => head.feed(now),
+                Part::Mid => mid.update(now),
+                Part::Tail => tail.feed(now),
             }
             at += n;
             b = rest;
@@ -321,6 +368,7 @@ fn scan(
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "test data of known small sizes")]
 mod tests {
     use super::super::container::One;
     use super::*;

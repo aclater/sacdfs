@@ -9,6 +9,8 @@
 //! description for TXXX, COMM and UFID) and a value (its text, or a hash of its bytes).
 //! Every tag is untrusted; sizes are checked against the bytes there are.
 
+#![warn(clippy::cast_possible_truncation)]
+
 use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
@@ -26,6 +28,25 @@ pub struct Frame {
 /// Most frames read from one tag.
 const MAX_FRAMES: usize = 4096;
 
+/// Tag header flag: the tag is unsynchronised.
+pub(crate) const TAG_UNSYNC: u8 = 0x80;
+/// Tag header flag: an extended header follows the header (v2.3 and v2.4).
+pub(crate) const TAG_EXTENDED: u8 = 0x40;
+/// Tag header flag: a footer of 10 bytes follows the tag (v2.4).
+pub(crate) const TAG_FOOTER: u8 = 0x10;
+/// ID3v2.3 frame format flags: compressed or encrypted.
+pub(crate) const V3_COMPRESSED_OR_ENCRYPTED: u8 = 0xC0;
+/// ID3v2.3 frame format flag: a group byte precedes the data.
+pub(crate) const V3_GROUPING: u8 = 0x20;
+/// ID3v2.4 frame format flag: a group byte precedes the data.
+pub(crate) const V4_GROUPING: u8 = 0x40;
+/// ID3v2.4 frame format flags: compressed or encrypted.
+pub(crate) const V4_COMPRESSED_OR_ENCRYPTED: u8 = 0x0C;
+/// ID3v2.4 frame format flag: the frame is unsynchronised.
+pub(crate) const V4_UNSYNC: u8 = 0x02;
+/// ID3v2.4 frame format flag: a 4-byte data length precedes the data.
+pub(crate) const V4_DATA_LENGTH: u8 = 0x01;
+
 /// The frames of `tag` (the whole tag, from its "ID3" header). Whatever can't be parsed
 /// ends the list; nothing fails.
 pub fn frames(tag: &[u8]) -> Vec<Frame> {
@@ -40,11 +61,11 @@ pub fn frames(tag: &[u8]) -> Vec<Frame> {
     let size = syncsafe(&tag[6..10]) as usize;
     let end = (10 + size).min(tag.len());
     let mut body = tag[10..end].to_vec();
-    if flags & 0x80 != 0 && major < 4 {
+    if flags & TAG_UNSYNC != 0 && major < 4 {
         body = deunsync(&body);
     }
     let mut at = 0usize;
-    if flags & 0x40 != 0 && major >= 3 {
+    if flags & TAG_EXTENDED != 0 && major >= 3 {
         let ext = match major {
             3 => be(&body, 0, 4).and_then(|n| n.checked_add(4)),
             _ => body.get(0..4).map(syncsafe),
@@ -77,7 +98,7 @@ pub fn frames(tag: &[u8]) -> Vec<Frame> {
         at = start + size;
         let id = std::str::from_utf8(id).unwrap_or("????");
         let id = if major == 2 { v22_id(id) } else { id.to_owned() };
-        if let Some(f) = frame(&id, data, major, format_flags, flags & 0x80 != 0) {
+        if let Some(f) = frame(&id, data, major, format_flags, flags & TAG_UNSYNC != 0) {
             out.push(f);
         }
     }
@@ -90,23 +111,23 @@ fn frame(id: &str, data: &[u8], major: u8, format_flags: u8, tag_unsync: bool) -
     match major {
         3 => {
             // Compressed or encrypted: kept as bytes. Grouping adds a byte.
-            if format_flags & 0xC0 != 0 {
+            if format_flags & V3_COMPRESSED_OR_ENCRYPTED != 0 {
                 opaque = true;
-            } else if format_flags & 0x20 != 0 {
+            } else if format_flags & V3_GROUPING != 0 {
                 data = data.get(1..)?.to_vec();
             }
         }
         4 => {
-            if format_flags & 0x40 != 0 {
+            if format_flags & V4_GROUPING != 0 {
                 data = data.get(1..)?.to_vec();
             }
-            if format_flags & 0x01 != 0 {
+            if format_flags & V4_DATA_LENGTH != 0 {
                 data = data.get(4..)?.to_vec();
             }
-            if format_flags & 0x02 != 0 || tag_unsync {
+            if format_flags & V4_UNSYNC != 0 || tag_unsync {
                 data = deunsync(&data);
             }
-            if format_flags & 0x0C != 0 {
+            if format_flags & V4_COMPRESSED_OR_ENCRYPTED != 0 {
                 opaque = true;
             }
         }
@@ -188,8 +209,15 @@ fn join(v: Vec<String>) -> String {
     v.into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("; ")
 }
 
-fn syncsafe(b: &[u8]) -> u32 {
+/// The value of a syncsafe integer: the low 7 bits of each of (at most) 4 bytes, big-endian.
+pub(crate) fn syncsafe(b: &[u8]) -> u32 {
     b.iter().take(4).fold(0u32, |a, &x| (a << 7) | u32::from(x & 0x7F))
+}
+
+/// `v` as a syncsafe integer: its low 28 bits, 7 to a byte, big-endian.
+pub(crate) fn to_syncsafe(v: u32) -> [u8; 4] {
+    // Each byte: the low byte of `v` shifted, its top bit cleared.
+    [21, 14, 7, 0].map(|shift| (v >> shift).to_le_bytes()[0] & 0x7F)
 }
 
 fn be(b: &[u8], at: usize, n: usize) -> Option<u32> {
@@ -405,12 +433,21 @@ impl Losses {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "test data of known small sizes")]
 pub(crate) mod tests {
     use super::*;
 
     /// A 28-bit value as an ID3v2 syncsafe integer.
     fn syncsafe(v: u32) -> [u8; 4] {
         [((v >> 21) & 0x7F) as u8, ((v >> 14) & 0x7F) as u8, ((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8]
+    }
+
+    #[test]
+    fn syncsafe_encodes_and_decodes_the_low_28_bits() {
+        for v in [0, 1, 0x7F, 0x80, 0x3FFF, 0x4000, 0x0FFF_FFFF, 0x1000_0000, 0x1234_5678, u32::MAX] {
+            assert_eq!(to_syncsafe(v), syncsafe(v), "{v:#x}");
+            assert_eq!(super::syncsafe(&to_syncsafe(v)), v & 0x0FFF_FFFF, "{v:#x}");
+        }
     }
 
     /// An ID3v2.4 tag of UTF-8 frames (TXXX as `TXXX:desc`) and raw frames.

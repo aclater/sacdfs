@@ -149,7 +149,7 @@ pub fn stream_track(
     let mut prev: Option<Vec<u8>> = None;
     let mut cur = read(start)?;
     for k in 0..n {
-        let next = if k + 1 < n { Some(read(start + k + 1)?) } else { None };
+        let next = if k + 1 < n { Some(read(start.saturating_add(k + 1))?) } else { None };
         conv.try_convert(prev.as_deref(), &cur, next.as_deref(), &mut pcm).map_err(io::Error::other)?;
         let ch = usize::from(channels);
         for s in pcm.chunks_exact(3 * ch) {

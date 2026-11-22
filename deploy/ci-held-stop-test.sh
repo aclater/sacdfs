@@ -67,8 +67,10 @@ for p in smb nfs; do
     timeout 30 bash -c "until ${dk[*]} exec $cli test -e /run/hold/$p/half; do sleep 0.2; done"
 done
 # And one open on the mount, inside the container.
+# shellcheck disable=SC2016 # expanded by the bash inside the container
 "${rt[@]}" exec -d "$srv" bash -c 'exec 3<"$0"; exec sleep 600' "/srv/sacd/$file"
 sleep 1
+# shellcheck disable=SC2016 # expanded by the bash inside the container
 "${rt[@]}" exec "$srv" bash -c 'for l in /proc/[0-9]*/fd/*; do case $(readlink "$l") in */srv/sacd/*) exit 0 ;; esac; done; exit 1' ||
     { echo "no process holds a file open on the mount: this test would test nothing"; exit 1; }
 
