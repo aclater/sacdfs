@@ -15,7 +15,8 @@ use rayon::prelude::*;
 use scarletbook::{DstDecoder, FrameContent, FrameStatus, TrackFrame};
 
 use crate::disc::{Cursor, Disc, ReadError};
-use crate::pcm::{Converter, PcmConfig};
+use crate::dsf::{FRAMES_PER_SECOND, MAX_CHANNELS};
+use crate::pcm::{Converter, PcmConfig, SAMPLE_BYTES};
 
 /// How a decoded frame was produced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -406,7 +407,7 @@ fn heads_cap(cap: usize) -> usize {
     cap / 2
 }
 
-/// Most bytes of heads an idle release keeps ([`FrameCache::release_idle`]): those of a
+/// Most bytes of heads an idle release keeps ([`FrameCache::release_idle_keeping_heads`]): those of a
 /// 12-track 6-channel album as DSF and WAV (about 27 MiB), however large the cache.
 const IDLE_HEADS: usize = 32 << 20;
 
@@ -424,7 +425,7 @@ pub struct FrameCache {
     cap: usize,
     /// When the cache was last used, in ms since `epoch` ([`FrameCache::release_if_idle`]).
     used: AtomicU64,
-    /// `used` as it was at the last idle release that kept heads ([`FrameCache::release_idle`]).
+    /// `used` as it was at the last idle release that kept heads ([`FrameCache::release_idle_keeping_heads`]).
     released: AtomicU64,
     epoch: Instant,
 }
@@ -530,7 +531,7 @@ impl FrameCache {
     /// 32-bit Atom each decoded the album's heads again, 3.5 to 4 s of CPU while the track
     /// started. *Why not copied into fewer slabs:* the copies' heap stayed with the process on
     /// a musl build, more than the slabs it would have saved.
-    pub fn release_idle(&self, idle: Duration) -> bool {
+    pub fn release_idle_keeping_heads(&self, idle: Duration) -> bool {
         let now = self.epoch.elapsed().as_millis() as u64;
         let used = self.used.load(Ordering::Relaxed);
         if now.saturating_sub(used) < idle.as_millis() as u64 || self.released.load(Ordering::Relaxed) == used
@@ -750,7 +751,7 @@ pub struct Stream {
 #[derive(Debug, Default)]
 pub struct DecodeRates {
     /// Times real time x 1000 per [DSD, PCM] and channel count (index 0 unused); 0: not measured.
-    rates: [[AtomicU32; 7]; 2],
+    rates: [[AtomicU32; MAX_CHANNELS as usize + 1]; 2],
 }
 
 /// Fewest frames a batch has to decode to be measured ([`DecodeRates`]): a read's few frames
@@ -768,8 +769,8 @@ impl DecodeRates {
             return;
         }
         let Some(slot) = self.slot(kind, channels) else { return };
-        let x =
-            (f64::from(frames) / 75.0 / took.as_secs_f64().max(1e-6) * 1000.0).min(f64::from(u32::MAX / 2));
+        let x = (f64::from(frames) / f64::from(FRAMES_PER_SECOND) / took.as_secs_f64().max(1e-6) * 1000.0)
+            .min(f64::from(u32::MAX / 2));
         let old = f64::from(slot.load(Ordering::Relaxed));
         let new = if old == 0.0 { x } else { old * 0.75 + x * 0.25 };
         slot.store((new as u32).max(1), Ordering::Relaxed);
@@ -919,10 +920,10 @@ impl Engine {
     }
 
     /// Like [`Engine::release_if_idle`], keeping the most recently read heads
-    /// ([`FrameCache::release_idle`], #510): what the idle thread does. Memory pressure
+    /// ([`FrameCache::release_idle_keeping_heads`], #510): what the idle thread does. Memory pressure
     /// ([`crate::memory`]) still drops them all.
-    pub fn release_idle(&self, idle: Duration) -> bool {
-        if !self.cache.release_idle(idle) {
+    pub fn release_idle_keeping_heads(&self, idle: Duration) -> bool {
+        if !self.cache.release_idle_keeping_heads(idle) {
             return false;
         }
         self.release_the_rest();
@@ -937,7 +938,7 @@ impl Engine {
         trim_heap();
     }
 
-    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_idle`] with
+    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_idle_keeping_heads`] with
     /// [`IDLE_RELEASE`] every 15 s, for as long as the engine lives.
     pub fn start_idle_release(self: &Arc<Self>) -> io::Result<()> {
         let weak = Arc::downgrade(self);
@@ -946,7 +947,7 @@ impl Engine {
                 std::thread::sleep(Duration::from_secs(15));
                 match weak.upgrade() {
                     Some(e) => {
-                        if e.release_idle(IDLE_RELEASE) {
+                        if e.release_idle_keeping_heads(IDLE_RELEASE) {
                             log::debug!("idle: cache and decoders released, heads kept");
                         }
                     }
@@ -1000,7 +1001,7 @@ impl Engine {
 
     /// Bytes of PCM per frame of `channels` channels with the engine's settings.
     pub fn pcm_frame_bytes(&self, channels: u8) -> usize {
-        self.pcm.rate.samples_per_frame() * usize::from(channels) * 3
+        self.pcm.rate.samples_per_frame() * usize::from(channels) * SAMPLE_BYTES
     }
 
     /// Keeps the cached frames of timeline positions `[first, end)` among the heads
@@ -1426,7 +1427,7 @@ impl Engine {
 }
 
 /// Bytes per channel of a decoded DSD frame.
-const FRAME_BYTES_PER_CHANNEL: usize = 4704;
+const FRAME_BYTES_PER_CHANNEL: usize = crate::pcm::FRAME_BYTES;
 
 /// Decodes one timeline position, interleaved, for the cache, into `buf` (`channels x 4704`
 /// bytes, from [`FrameCache::buffers`], or a new one): what `scarletbook::audio::decode_frame` gives, but
@@ -1435,8 +1436,11 @@ fn decode(job: TrackFrame, channels: u8, buf: Option<FrameBuf>) -> Result<(u32, 
     let bad = |m: &str| Err(ReadError::Io(io::Error::other(m.to_owned())));
     let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
     let mut buf = buf.unwrap_or_else(|| FrameBuf::heap(len));
-    if !(1..=6).contains(&channels) || buf.len() != len {
+    if !(1..=MAX_CHANNELS).contains(&channels) {
         return bad("bad channel count");
+    }
+    if buf.len() != len {
+        return bad("a frame buffer of the wrong size");
     }
     let fill = match job.content {
         FrameContent::Dsd(d) => {
@@ -1500,7 +1504,7 @@ fn decode_group(
     group: Vec<(TrackFrame, Option<FrameBuf>)>,
     channels: u8,
 ) -> Vec<Result<(u32, Frame), ReadError>> {
-    if group.len() == 1 || !(1..=6).contains(&channels) {
+    if group.len() == 1 || !(1..=MAX_CHANNELS).contains(&channels) {
         return group.into_iter().map(|(j, b)| decode(j, channels, b)).collect();
     }
     let len = usize::from(channels) * FRAME_BYTES_PER_CHANNEL;
@@ -1823,9 +1827,9 @@ mod tests {
         // Heads: frames 100 to 139.
         c.keep((100..140).map(key));
         let mapped = c.mapped();
-        assert!(!c.release_idle(Duration::from_secs(60)), "just used");
-        assert!(c.release_idle(Duration::ZERO));
-        assert!(!c.release_idle(Duration::ZERO), "not used since");
+        assert!(!c.release_idle_keeping_heads(Duration::from_secs(60)), "just used");
+        assert!(c.release_idle_keeping_heads(Duration::ZERO));
+        assert!(!c.release_idle_keeping_heads(Duration::ZERO), "not used since");
         assert_eq!(c.lock().head_bytes, 40 * 9408);
         assert_eq!(c.bytes(), 40 * 9408);
         // Used again (a millisecond later, the stamp's unit).
@@ -1837,8 +1841,8 @@ mod tests {
         // Only the slabs that hold them stay.
         assert!(c.mapped() < mapped, "{} of {mapped}", c.mapped());
         // The get above used the cache: one more release, then nothing until it is used.
-        assert!(c.release_idle(Duration::ZERO));
-        assert!(!c.release_idle(Duration::ZERO));
+        assert!(c.release_idle_keeping_heads(Duration::ZERO));
+        assert!(!c.release_idle_keeping_heads(Duration::ZERO));
         assert_eq!(c.lock().bytes, 40 * 9408);
         // Memory pressure: all of it.
         assert!(c.release_if_idle(Duration::ZERO));

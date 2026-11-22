@@ -30,6 +30,9 @@ struct Mounted {
     background: Background,
     reads: std::sync::Arc<crate::winfs::Reads>,
 }
+
+/// Runs the mount under WinFsp's service framework until it is stopped; the error is the
+/// message to show.
 pub fn main(args: Args) -> Result<(), String> {
     let missing = "WinFsp is not installed (winfsp-x64.dll not found in WinFsp's folder): install \
                    WinFsp 2.1 or later, from https://winfsp.dev/rel/ or with `winget install WinFsp.WinFsp`";
@@ -43,7 +46,8 @@ pub fn main(args: Args) -> Result<(), String> {
             start(&args).map_err(|e| {
                 log::error!("{e}");
                 *failure.lock().unwrap_or_else(|p| p.into_inner()) = Some(e.to_string());
-                winfsp::FspError::WIN32(e.raw_os_error().map_or(31, |n| n as u32))
+                let general = windows::Win32::Foundation::ERROR_GEN_FAILURE.0;
+                winfsp::FspError::WIN32(e.raw_os_error().map_or(general, |n| n as u32))
             })
         })
         .with_stop(|mounted| {
@@ -126,10 +130,10 @@ fn start(args: &Args) -> io::Result<Mounted> {
     let reads = fs.reads();
 
     let mut vp = VolumeParams::new();
-    vp.sector_size(4096)
+    vp.sector_size(crate::winfs::ALLOCATION_UNIT)
         .sectors_per_allocation_unit(1)
         .max_component_length(crate::names::MAX_UNITS as u16)
-        .volume_creation_time(filetime_now())
+        .volume_creation_time(crate::winfs::filetime(SystemTime::now()))
         .volume_serial_number(0x5ACD_0001)
         .case_sensitive_search(false)
         .case_preserved_names(true)
@@ -181,18 +185,7 @@ fn stop(m: &mut Mounted) {
 
 /// A path as people write it: without the `\\?\` that `canonicalize` puts in front.
 pub fn display_path(p: &Path) -> String {
-    let s = p.to_string_lossy();
-    match s.strip_prefix(r"\\?\UNC\") {
-        Some(rest) => format!(r"\\{rest}"),
-        None => s.strip_prefix(r"\\?\").unwrap_or(&s).to_owned(),
-    }
-}
-
-fn filetime_now() -> u64 {
-    const EPOCH_1601: u64 = 116_444_736_000_000_000;
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(EPOCH_1601, |d| EPOCH_1601 + d.as_secs() * 10_000_000 + u64::from(d.subsec_nanos()) / 100)
+    sacdfs::platform::plain_text(&p.to_string_lossy()).into_owned()
 }
 
 /// The SID of the user sacdfs-win runs as, in SDDL's string form.

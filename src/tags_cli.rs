@@ -453,19 +453,23 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
             }
             if f.key == "APIC" {
                 if art.is_none() {
-                    art = front_cover(&tag).filter(|p| {
-                        let fits = p.len() <= tags::MAX_ART_BYTES;
-                        if !fits {
-                            sum.not_kept.push(format!(
-                                "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
-                                shown(&row.path),
-                                shown(image),
-                                p.len() >> 10,
-                                tags::MAX_ART_BYTES >> 10
-                            ));
-                        }
-                        fits
-                    });
+                    // A cover that is not kept is listed, whatever the reason: its extract
+                    // still holds something the tags directory lacks.
+                    match front_cover(&tag) {
+                        Some(p) if p.len() <= tags::MAX_ART_BYTES => art = Some(p),
+                        Some(p) => sum.not_kept.push(format!(
+                            "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
+                            shown(&row.path),
+                            shown(image),
+                            p.len() >> 10,
+                            tags::MAX_ART_BYTES >> 10
+                        )),
+                        None => sum.not_kept.push(format!(
+                            "{} (disc {}): picture that import cannot read (not a plain JPEG or PNG)",
+                            shown(&row.path),
+                            shown(image)
+                        )),
+                    }
                 }
                 continue;
             }
