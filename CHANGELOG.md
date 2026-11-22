@@ -109,6 +109,21 @@ All notable changes to sacdfs are recorded here. The format follows
   and the exit status is 2, as the user guide says of every picture left out.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
+- **Windows: a picture named in a tags file is not embedded when it is a reparse point** (a
+  link, junction or placeholder), with a warning in the log, as a symbolic link already was.
+- **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
+  it lists the album, and when playback starts, often minutes later, re-reads the head of every
+  other file of the album before it opens the track. On a 32-bit Atom the first start after a
+  mount decoded all those heads then, about 4 s of silence. Now, once one file's head has been
+  probed and the mount has had no read for 2 s, sacdfs decodes the heads of the other files in
+  that folder in the background, as far as the probe read, and keeps them with the other heads.
+  It stops at the next read of any file, stays within the heads an idle release keeps, runs only
+  where sacdfs measures that it decodes slower than `--start-burst`, and never after reads of
+  several files (a library scan) or a tagger's short look at one. With the player's profile on
+  cores limited to an Atom's speed, a start 30 s after the probe opened its track 4.27 → 0.44 s
+  after its own probe, and its first 15 s went from 2.5 s of stalls to none; 120 s after (past the
+  idle release), 4.09 → 0.26 s and 4.0 s → none. A start within 2 s of the probe is unchanged.
+  It costs about 3 s of that CPU per album probed. The stall gate gains `PROFILE@probe:D`.
 - **A silence of about 2 s when a track starts again with players that re-read the album (#456).**
   The #456 player re-reads the other files' heads one file at a time, each closed
   before the next opens, and opens its track only after several of them. Each re-read started a
