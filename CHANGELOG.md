@@ -47,6 +47,13 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Changed
+- **Files' heads are not kept in the cache (#456).** Test builds since #508 kept the frames of
+  files' heads and tails in the cache through the idle release, and decoded a folder's heads after
+  a player's probe on slow CPUs (#510), for a network player that re-reads an album's heads at each
+  track start. Withdrawn before release: a plain sequential read of whole files with small reads
+  (`sha256sum`) read about 1.75 times the image data and took twice as long (two real discs, DSF:
+  4.76 GB in 39 s against 2.71 GB in 19 s), at any `--cache-mb`. Reads are as in 0.7.0 again.
+  `scripts/real-discs.sh` gains a check that such reads stay at about the image data.
 - **install.sh verifies release files beside it against built-in checksums.** Run from an
   unpacked release archive, it copies `sacdfs`, `sacdfs-ctl`, `sacdfs.service` and
   `nas-compose.yaml` into its temporary folder and uses those copies only when each matches the
@@ -81,34 +88,18 @@ All notable changes to sacdfs are recorded here. The format follows
   and the exit status is 2, as the user guide says of every picture left out.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
-- **CI: the folder-warming tests failed on busy runners (#563).** They took wall-clock gaps
-  between reads as the mount's quiet; they now set the warmer's clock themselves. Tests only; the
-  warmer behaves as before.
-- **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
-  it lists the album, and when playback starts, often minutes later, re-reads the head of every
-  other file of the album before it opens the track. On a 32-bit Atom the first start after a
-  mount decoded all those heads then, about 4 s of silence. Now, once one file's head has been
-  probed and the mount has had no read for 2 s, sacdfs decodes the heads of the other files in
-  that folder in the background, as far as the probe read, and keeps them with the other heads.
-  It stops at the next read of any file, stays within the heads an idle release keeps, runs only
-  where sacdfs measures that it decodes slower than `--start-burst`, and never after reads of
-  several files (a library scan) or a tagger's short look at one. With the player's profile on
-  cores limited to an Atom's speed, a start 30 s after the probe opened its track 4.27 → 0.44 s
-  after its own probe, and its first 15 s went from 2.5 s of stalls to none; 120 s after (past the
-  idle release), 4.09 → 0.26 s and 4.0 s → none. A start within 2 s of the probe is unchanged.
-  It costs about 3 s of that CPU per album probed. The stall gate gains `PROFILE@probe:D`.
 - **A silence of about 2 s when a track starts again with players that re-read the album (#456).**
-  With the heads kept (#510), a start minutes after the last one found every head decoded, yet the
-  #456 player still waited: it re-reads the other files' heads one file at a time, each closed
+  The #456 player re-reads the other files' heads one file at a time, each closed
   before the next opens, and opens its track only after several of them. Each re-read started a
   decode-ahead of that file's next seconds and then waited for it, about a quarter of a second
   per file on a 32-bit Atom, and those decode-aheads kept the CPU after the files closed; once
-  the track's own read of a kept head waited 2 s behind them. A reader of a file's head from its
+  the track's own read of a cached head waited 2 s behind them. A reader of a file's head from its
   start now neither reads ahead nor starts its decode-ahead while another file's head was read in
   the last 2 s, and a read whose frames are all in the cache never waits for a decode-ahead.
-  With the player's profile on cores limited to an Atom's speed, a start after the idle release
-  opened its track 0.28 s after the probe instead of 2.32 s, and the first start after a mount
-  reached it 5.0 s after the probe instead of 8.0 to 8.4 s. The stall gate now also replays that
+  With the player's profile on cores limited to an Atom's speed (measured on builds that still
+  kept heads, see Changed), a start after the idle release opened its track 0.28 s after the
+  probe instead of 2.32 s, and the first start after a mount reached it 5.0 s after the probe
+  instead of 8.0 to 8.4 s. The stall gate now also replays that
   player starting after the idle release, and fails when its track opens later.
 - **Seconds of silence at each track start on slow CPUs with players that re-read the album
   (#512).** On a 32-bit Atom NAS, the slow-machine decode-ahead of #504 decoded a starting track's
@@ -118,15 +109,6 @@ All notable changes to sacdfs are recorded here. The format follows
   now runs ahead at once only while no other file's head was read in the last second, and stays
   paced otherwise. Players starting a track alone are unchanged. On test builds since #509,
   `--start-burst 0` avoids it.
-- **Kept heads survive the idle release (#510).** A mount idle for a minute dropped its whole
-  cache (#150), the heads of #508 included, so a player that re-reads the album's heads at each
-  track start found them decoded only if it came back within that minute: in practice every
-  start was a first start, and on a 32-bit Atom each decoded the album's heads again. The idle
-  release now keeps the most recently read heads, up to half the cache and 32 MiB, in the slabs
-  they are in; a release for memory pressure still drops them. With the #456 player on
-  cores limited to an Atom's speed, a start after the idle release went from 6 s of stalls in
-  its first 15 s to none; the first start after a mount is unchanged. An idle mount holds up to
-  half its cache (at most 32 MiB) more for them.
 - **Folder rescans no longer take the CPU from a track starting (#503).** A player that re-reads
   the heads of every file in the folder as it starts a track (seen on a Zidoo) made sacdfs decode
   each of those files ahead too: up to 3 s of audio per file, or 16 to 150 frames beside the
@@ -134,7 +116,7 @@ All notable changes to sacdfs are recorded here. The format follows
   or plays, and does not start a decode-ahead while another file starts. In replays of the user's
   traces on cores limited to an Atom's speed, sacdfs used 16 to 27 % less CPU in the seconds a track
   started, and the playing file's worst read fell in five of six starts (0.74 → 0.67 s, 0.47 →
-  0.39 s). Together with #508, which keeps those heads decoded, this completes #503.
+  0.39 s).
 - **The default listing budget no longer wraps on 32-bit builds (#488).** Under a memory limit
   above about 10.6 GiB, the budget for listed images (3/8 of the limit) overflowed a 32-bit
   `usize` and became tiny; it now saturates.
@@ -146,13 +128,6 @@ All notable changes to sacdfs are recorded here. The format follows
   a Ryzen 9 3950X is unchanged. Output bytes are unchanged. Not yet: 6-channel WAV reads on that
   Intel CPU, still about 5 % slower than 0.6.5. Why 6: docs/design.md, "Why frames are decoded
   in groups".
-- **A player that re-reads an album's heads at each start no longer has them decoded again (#456).**
-  A network player re-reads the first 0.6 to 1.6 MiB and the last bytes of every file of an album
-  each time it starts a track. The playing track's read-ahead had evicted those frames, so every
-  start decoded them again: on a 4-thread Atom, 3 to 4 s of its CPU in the seconds the player was
-  filling its buffer, which made it glitch for about 10 s. The frames a read takes from a file's
-  first 2 MiB of audio or its last frame now stay in the cache, evicted after every other frame,
-  within half of it. Output bytes are unchanged.
 - **No second's wait just after the start-of-track decode-ahead on a slow CPU (#456).** On a
   4-thread Atom that converts 6-channel DST to WAV at about 1.07 times real time, a player
   starting a track reads right behind the decode-ahead. When it ended, a read halfway through the

@@ -1835,24 +1835,6 @@ impl Tree {
         self.nodes.read().unwrap_or_else(|p| p.into_inner()).contains_key(&ino)
     }
 
-    /// The files made so far that a folder shows beside `file` (the same area, in the same
-    /// format), `file` among them, by track number ([`crate::warm`], #510).
-    pub fn files_beside(&self, file: &TrackFile) -> Vec<Arc<TrackFile>> {
-        let mut v: Vec<Arc<TrackFile>> = self
-            .nodes
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .values()
-            .filter_map(|n| match &**n {
-                Node::File(f) if f.beside(file) => Some(f.clone()),
-                _ => None,
-            })
-            .collect();
-        v.sort_by_key(|f| (f.number, f.start_frame));
-        v.dedup_by_key(|f| (f.number, f.start_frame));
-        v
-    }
-
     /// The parent directory of `ino` (the root for files and unknown nodes; files are
     /// never asked for their parent).
     pub fn parent_of(&self, ino: u64) -> u64 {

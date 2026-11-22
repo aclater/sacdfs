@@ -325,7 +325,7 @@ into a container. The release workflow's binary tests don't run this check yet.
 
 ## Real-disc tests
 
-Three tests run on real discs, which no CI job has: images can't go into a public repository
+Four tests run on real discs, which no CI job has: images can't go into a public repository
 (copyright), and the corpus is synthetic. They are `#[ignore]`d, so a plain `cargo test` lists them
 as ignored. They check that
 
@@ -334,7 +334,12 @@ as ignored. They check that
 - `library_index::real_discs`: 300 random ranges per area, located by sacdfs, equal reads through
   a complete library index and a straight read;
 - `wav::real_discs`: every WAV file's audio equals its track's positions of the area stream, and
-  random ranges equal the straight read.
+  random ranges equal the straight read;
+- `sequential_reads::real_discs_sequential_reads`: every DSF file of the first images (by path, at
+  least 2 GiB with files of two channel counts among them, or all) read in path order, as
+  `find | sort | xargs sha256sum` does, in 128 KiB and then in 4 KiB reads, reads at most 1.15
+  times the images' size from them (#456: keeping files' heads in the cache once made it about
+  1.8). The corpus discs are too small to show it.
 
 Run them with:
 
@@ -345,7 +350,7 @@ scripts/real-discs.sh DIR
 `DIR` holds `.iso` images of SACDs only, at least one, searched recursively (links to files are
 followed). `SACDFS_PCM_RATE=88200` or `352800` picks the WAV rate (default 176400); `CARGO_FLAGS`
 adds cargo options. The script runs `cargo test --release` with `SACDFS_REAL_TESTS=1`, and exits
-0 only when all three tests ran and passed. Without a directory it prints `SKIPPED` and exits 77,
+0 only when all four tests ran and passed. Without a directory it prints `SKIPPED` and exits 77,
 which is a skip and not a pass. The same holds under plain cargo: with `SACDFS_REAL_IMAGES` unset,
 the tests print `SKIPPED` (counted by `check_skips.py`), and with `SACDFS_REAL_TESTS=1` they fail.
 

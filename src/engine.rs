@@ -367,49 +367,22 @@ fn free_reserve(cap: usize) -> usize {
 #[derive(Debug)]
 struct CacheInner {
     lru: LruCache<Key, Arc<Frame>>,
-    /// Frames of files' heads and tails that readers read ([`FrameCache::keep`]): evicted only
-    /// when `lru` is empty, or when they hold more than [`heads_cap`].
-    heads: LruCache<Key, Arc<Frame>>,
-    /// Bytes of the frames of both.
+    /// Bytes of the frames of `lru`.
     bytes: usize,
-    /// Bytes of the frames of `heads`.
-    head_bytes: usize,
 }
 
 impl CacheInner {
     fn get(&mut self, key: &Key) -> Option<Arc<Frame>> {
-        if let Some(f) = self.lru.get(key) {
-            return Some(f.clone());
-        }
-        self.heads.get(key).cloned()
+        self.lru.get(key).cloned()
     }
 
-    /// Takes out the least recently used frame, of `lru` first.
+    /// Takes out the least recently used frame.
     fn pop_lru(&mut self) -> Option<Arc<Frame>> {
-        let f = match self.lru.pop_lru() {
-            Some((_, f)) => f,
-            None => {
-                let (_, f) = self.heads.pop_lru()?;
-                self.head_bytes -= f.data.len();
-                f
-            }
-        };
+        let (_, f) = self.lru.pop_lru()?;
         self.bytes -= f.data.len();
         Some(f)
     }
 }
-
-/// Most bytes of [`CacheInner::heads`]: half the cache. *Why half:* the heads of a 12-track
-/// 6-channel album as DSF and WAV, as a player re-reads them each time it starts a track
-/// (#456), take about 27 MiB; the rest of a 64 MiB cache still holds the start-of-track
-/// decode-ahead (a quarter) and the free reserve.
-fn heads_cap(cap: usize) -> usize {
-    cap / 2
-}
-
-/// Most bytes of heads an idle release keeps ([`FrameCache::release_idle_keeping_heads`]): those of a
-/// 12-track 6-channel album as DSF and WAV (about 27 MiB), however large the cache.
-const IDLE_HEADS: usize = 32 << 20;
 
 /// A least-recently-used cache of decoded DSD frames and converted PCM frames, bounded in
 /// bytes: one budget for both, so a mount that serves only one format spends all of it on
@@ -425,8 +398,6 @@ pub struct FrameCache {
     cap: usize,
     /// When the cache was last used, in ms since `epoch` ([`FrameCache::release_if_idle`]).
     used: AtomicU64,
-    /// `used` as it was at the last idle release that kept heads ([`FrameCache::release_idle_keeping_heads`]).
-    released: AtomicU64,
     epoch: Instant,
 }
 
@@ -440,16 +411,10 @@ impl FrameCache {
     /// A cache holding at most `cap` bytes of frames.
     pub fn new(cap: usize) -> Self {
         FrameCache {
-            inner: Mutex::new(CacheInner {
-                lru: LruCache::unbounded(),
-                heads: LruCache::unbounded(),
-                bytes: 0,
-                head_bytes: 0,
-            }),
+            inner: Mutex::new(CacheInner { lru: LruCache::unbounded(), bytes: 0 }),
             pool: Arc::new(Pool { inner: Mutex::new(PoolInner::default()), cap }),
             cap,
             used: AtomicU64::new(0),
-            released: AtomicU64::new(u64::MAX),
             epoch: Instant::now(),
         }
     }
@@ -509,7 +474,7 @@ impl FrameCache {
         }
         let frames: Vec<Arc<Frame>> = {
             let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            let mut v = Vec::with_capacity(g.lru.len() + g.heads.len());
+            let mut v = Vec::with_capacity(g.lru.len());
             while let Some(f) = g.pop_lru() {
                 v.push(f);
             }
@@ -518,90 +483,11 @@ impl FrameCache {
         let any = !frames.is_empty() || self.pool.mapped() > 0;
         drop(frames);
         self.pool.unmap_empty();
-        any
-    }
-
-    /// Like [`FrameCache::release_if_idle`], but keeps the most recently read heads, up to
-    /// `IDLE_HEADS` bytes of them, where they are; the slabs left empty go (#510). Nothing
-    /// happens again until the cache is used again.
-    ///
-    /// *Why:* a player that re-reads the heads of every file of the album at each track start
-    /// (#456) found them decoded only if it came back within the minute before the idle
-    /// release; people take longer between albums, so every start was a first start, and on a
-    /// 32-bit Atom each decoded the album's heads again, 3.5 to 4 s of CPU while the track
-    /// started. *Why not copied into fewer slabs:* the copies' heap stayed with the process on
-    /// a musl build, more than the slabs it would have saved.
-    pub fn release_idle_keeping_heads(&self, idle: Duration) -> bool {
-        let now = self.epoch.elapsed().as_millis() as u64;
-        let used = self.used.load(Ordering::Relaxed);
-        if now.saturating_sub(used) < idle.as_millis() as u64 || self.released.load(Ordering::Relaxed) == used
-        {
-            return false;
-        }
-        let budget = heads_cap(self.cap).min(IDLE_HEADS);
-        let frames: Vec<Arc<Frame>> = {
-            let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            // The most recently read first, within the budget.
-            let mut kept = Vec::new();
-            let mut bytes = 0;
-            while let Some((k, f)) = g.heads.pop_mru() {
-                if bytes + f.data.len() > budget {
-                    g.heads.push(k, f);
-                    break;
-                }
-                bytes += f.data.len();
-                g.bytes -= f.data.len();
-                g.head_bytes -= f.data.len();
-                kept.push((k, f));
-            }
-            let mut v = Vec::with_capacity(g.lru.len() + g.heads.len());
-            while let Some(f) = g.pop_lru() {
-                v.push(f);
-            }
-            for (k, f) in kept.into_iter().rev() {
-                g.bytes += f.data.len();
-                g.head_bytes += f.data.len();
-                g.heads.put(k, f);
-            }
-            v
-        };
-        let any = !frames.is_empty() || self.pool.mapped() > 0;
-        drop(frames);
-        self.pool.unmap_empty();
-        self.released.store(used, Ordering::Relaxed);
         any
     }
 
     fn get(&self, key: &Key) -> Option<Arc<Frame>> {
         self.lock().get(key)
-    }
-
-    /// Keeps these frames, if cached, among the heads: evicted after every other frame, while
-    /// the heads hold at most [`heads_cap`] (#456). *Why:* a network player re-reads the heads
-    /// (and tails) of every file of an album each time it starts a track; the playing track's
-    /// read-ahead had evicted them, so each start decoded them again, 3 to 4 s of a 2-core
-    /// Atom's CPU in the seconds the player was filling its buffer.
-    fn keep(&self, keys: impl Iterator<Item = Key>) {
-        if self.cap == 0 {
-            return;
-        }
-        let mut g = self.lock();
-        for k in keys {
-            if let Some(f) = g.lru.pop(&k) {
-                g.head_bytes += f.data.len();
-                g.heads.put(k, f);
-            } else {
-                g.heads.get(&k);
-            }
-        }
-        // Over the cap, the least recently read heads go back among the other frames, as
-        // the first to be evicted.
-        while g.head_bytes > heads_cap(self.cap) {
-            let Some((k, f)) = g.heads.pop_lru() else { break };
-            g.head_bytes -= f.data.len();
-            g.lru.put(k, f);
-            g.lru.demote(&k);
-        }
     }
 
     fn insert(&self, key: Key, frame: Arc<Frame>) {
@@ -612,11 +498,6 @@ impl FrameCache {
         {
             let mut g = self.lock();
             let len = frame.data.len();
-            if let Some(old) = g.heads.pop(&key) {
-                g.head_bytes -= old.data.len();
-                g.bytes -= old.data.len();
-                evicted.push(old);
-            }
             if let Some(old) = g.lru.put(key, frame) {
                 g.bytes -= old.data.len();
                 evicted.push(old);
@@ -640,19 +521,12 @@ impl FrameCache {
         let mut g = self.lock();
         for k in keys {
             g.lru.demote(&k);
-            g.heads.demote(&k);
         }
     }
 
     /// Bytes of cached frames.
     pub fn bytes(&self) -> usize {
         self.lock().bytes
-    }
-
-    /// Most bytes of heads the cache keeps through an idle release: half the cache, at most
-    /// `IDLE_HEADS`.
-    pub fn heads_budget(&self) -> usize {
-        heads_cap(self.cap).min(IDLE_HEADS)
     }
 
     /// The cache's cap in bytes.
@@ -919,17 +793,6 @@ impl Engine {
         true
     }
 
-    /// Like [`Engine::release_if_idle`], keeping the most recently read heads
-    /// ([`FrameCache::release_idle_keeping_heads`], #510): what the idle thread does. Memory pressure
-    /// ([`crate::memory`]) still drops them all.
-    pub fn release_idle_keeping_heads(&self, idle: Duration) -> bool {
-        if !self.cache.release_idle_keeping_heads(idle) {
-            return false;
-        }
-        self.release_the_rest();
-        true
-    }
-
     /// The decoders, converters and reply buffers an idle engine drops.
     fn release_the_rest(&self) {
         drop(std::mem::take(&mut *DECODERS.lock().unwrap_or_else(|p| p.into_inner())));
@@ -938,7 +801,7 @@ impl Engine {
         trim_heap();
     }
 
-    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_idle_keeping_heads`] with
+    /// Starts a thread (`sacdfs-idle`) that calls [`Engine::release_if_idle`] with
     /// [`IDLE_RELEASE`] every 15 s, for as long as the engine lives.
     pub fn start_idle_release(self: &Arc<Self>) -> io::Result<()> {
         let weak = Arc::downgrade(self);
@@ -947,8 +810,8 @@ impl Engine {
                 std::thread::sleep(Duration::from_secs(15));
                 match weak.upgrade() {
                     Some(e) => {
-                        if e.release_idle_keeping_heads(IDLE_RELEASE) {
-                            log::debug!("idle: cache and decoders released, heads kept");
+                        if e.release_if_idle(IDLE_RELEASE) {
+                            log::debug!("idle: cache and decoders released");
                         }
                     }
                     None => return,
@@ -1002,15 +865,6 @@ impl Engine {
     /// Bytes of PCM per frame of `channels` channels with the engine's settings.
     pub fn pcm_frame_bytes(&self, channels: u8) -> usize {
         self.pcm.rate.samples_per_frame() * usize::from(channels) * SAMPLE_BYTES
-    }
-
-    /// Keeps the cached frames of timeline positions `[first, end)` among the heads
-    /// (evicted after every other frame, within half the cache): DSD frames, or PCM frames if
-    /// `pcm`.
-    pub fn keep_heads(&self, disc: &Disc, area: usize, pcm: bool, first: u32, end: u32) {
-        self.cache.keep(
-            (first..end).map(|t| if pcm { Self::pcm_key(disc, area, t) } else { Self::key(disc, area, t) }),
-        );
     }
 
     /// Makes the cached frames of timeline positions `[first, end)` the first to be evicted:
@@ -1708,38 +1562,6 @@ mod tests {
         assert!(cache.bytes() <= 7 * len);
     }
 
-    /// Kept heads outlive a stream of new frames, within half the cap (#456), and count in
-    /// its bytes; past that the least recently read ones go first.
-    #[test]
-    fn kept_heads_outlive_streaming_within_half_the_cap() {
-        let len = 1000;
-        let c = FrameCache::new(40 * len);
-        for i in 0..4 {
-            c.insert(key(i), frame(len));
-        }
-        c.keep((0..4).map(key));
-        for i in 100..300 {
-            c.insert(key(i), frame(len));
-        }
-        assert!((0..4).all(|i| c.get(&key(i)).is_some()), "kept heads evicted");
-        assert!(c.bytes() <= 35 * len, "{}", c.bytes());
-        // More heads than half the cap: the first kept go back, first to be evicted.
-        for i in 4..30 {
-            c.insert(key(i), frame(len));
-            c.keep(std::iter::once(key(i)));
-        }
-        assert!(c.lock().head_bytes <= 20 * len);
-        for i in 300..400 {
-            c.insert(key(i), frame(len));
-        }
-        assert!(c.get(&key(0)).is_none() && c.get(&key(29)).is_some());
-        // A frame inserted again replaces its kept copy.
-        c.insert(key(29), frame(len));
-        assert!(c.bytes() <= 35 * len);
-        assert!(c.release_if_idle(Duration::ZERO));
-        assert_eq!((c.bytes(), c.lock().head_bytes), (0, 0));
-    }
-
     #[test]
     fn cache_is_bounded() {
         let c = FrameCache::new(10_000);
@@ -1807,46 +1629,6 @@ mod tests {
         let b = c.buffer(9408);
         c.insert(key(1), Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 }));
         assert!(c.get(&key(1)).is_some());
-    }
-
-    /// An idle release keeps the most recently read heads (#510) and drops the rest, with the
-    /// slabs left empty; it does nothing more until the cache is used again. A release for
-    /// memory pressure drops the heads too.
-    #[cfg(unix)]
-    #[test]
-    fn an_idle_release_keeps_the_heads() {
-        let c = FrameCache::new(16 << 20);
-        let frame_of = |c: &FrameCache, i: u32| {
-            let mut b = c.buffer(9408);
-            b.fill(i as u8);
-            Arc::new(Frame { data: b, fill: Fill::Audio, clips: 0 })
-        };
-        for i in 0..400 {
-            c.insert(key(i), frame_of(&c, i));
-        }
-        // Heads: frames 100 to 139.
-        c.keep((100..140).map(key));
-        let mapped = c.mapped();
-        assert!(!c.release_idle_keeping_heads(Duration::from_secs(60)), "just used");
-        assert!(c.release_idle_keeping_heads(Duration::ZERO));
-        assert!(!c.release_idle_keeping_heads(Duration::ZERO), "not used since");
-        assert_eq!(c.lock().head_bytes, 40 * 9408);
-        assert_eq!(c.bytes(), 40 * 9408);
-        // Used again (a millisecond later, the stamp's unit).
-        std::thread::sleep(Duration::from_millis(5));
-        assert!(c.get(&key(1)).is_none());
-        let f = c.get(&key(139)).unwrap();
-        assert!(f.data.iter().all(|&b| b == 139));
-        drop(f);
-        // Only the slabs that hold them stay.
-        assert!(c.mapped() < mapped, "{} of {mapped}", c.mapped());
-        // The get above used the cache: one more release, then nothing until it is used.
-        assert!(c.release_idle_keeping_heads(Duration::ZERO));
-        assert!(!c.release_idle_keeping_heads(Duration::ZERO));
-        assert_eq!(c.lock().bytes, 40 * 9408);
-        // Memory pressure: all of it.
-        assert!(c.release_if_idle(Duration::ZERO));
-        assert_eq!((c.bytes(), c.mapped()), (0, 0));
     }
 
     #[test]

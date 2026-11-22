@@ -179,22 +179,13 @@ multichannel DST on a 32-bit Atom NAS, it decodes the start of a playing track
 player's reads, unless another file's head was read in the last second: a player that re-reads
 the album's heads as it starts a track (seen on a Zidoo) asks for its track only as fast as those
 re-reads are answered, so they must not wait behind it (#512). The decode-ahead then stays a
-slice ahead of the reads, and runs on once the re-reads stop. The decoded heads of files that
-players read again stay in the cache on any machine (#456).
+slice ahead of the reads, and runs on once the re-reads stop.
 
 On any machine, a reader of a file's head gets no read-ahead while another file starts or plays,
 and does not start its own decode-ahead while another file starts. A reader of a file's head from
 its start does neither while another file's head was read in the last 2 s either: a player
 re-reading the album's heads one file at a time, which opens its track only after several of them
-(#456). A read of frames already in the cache never waits for a decode-ahead.
-
-On a machine slower than `--start-burst`, when a player has read the head of one file (as the #456
-player does for the track it shows when it lists an album) and the mount then has no read for 2 s,
-sacdfs decodes the heads of the other files of that folder in the background, as far as that read
-went, and keeps them (#510). The first start after a mount then finds them decoded. It stops at the
-next read of any file, stays within the heads kept through an idle release (half the cache, at most
-32 MiB), and does not run after reads of several files, which is what a library scan does. The
-read trace shows `warm r=N start`, `done` or `stopped: a read`. A machine that decodes faster
+(#456). A read of frames already in the cache never waits for a decode-ahead. A machine that decodes faster
 than `--start-burst` changes nothing else. `--start-burst 0` turns the slow-machine part off. The
 log's read trace (`-vv`) shows `slow: to frame N at once` when it applies, and `slow: paused at N,
 heads read` when re-reads hold it back. What it measured:
