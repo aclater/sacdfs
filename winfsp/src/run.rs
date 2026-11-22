@@ -122,9 +122,10 @@ fn start(args: &Args) -> io::Result<Mounted> {
     let volume = Volume::new(tree.clone(), engine.clone(), serve::request_threads(threads), 0, 0)?
         .with_request_timeout(limits.request_timeout())?;
     let sid = user_sid()?;
-    let everyone = crate::options::allow_other(args.allow_other, args.no_allow_other, &sid);
+    let (allow, refuse) = sacdfs::serve::allow_other_flags(args.allow_other, args.no_allow_other);
+    let everyone = crate::options::allow_other(allow, refuse, &sid);
     if everyone {
-        log::info!("other users may read the mount (--no-allow-other turns it off)");
+        log::info!("other users may read the mount (--allow-other=no turns it off)");
     }
     let fs = WinFs::new(volume, security_descriptor(&sid, everyone)?);
     let reads = fs.reads();

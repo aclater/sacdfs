@@ -28,7 +28,7 @@ use crate::vfs::Volume;
 /// MOUNTPOINT it only serves; on macOS, mount it with
 /// `mount_nfs -o vers=3,tcp,port=PORT,mountport=PORT,nfc,locallocks,hard,intr,deadtimeout=60,rsize=1048576,rdirplus,rdonly,nosuid,nodev,noexec localhost:/ MOUNTPOINT`.
 #[derive(Debug, Parser)]
-#[command(name = "sacdfs-nfs", version, about)]
+#[command(name = "sacdfs-nfs", version, about, after_help = shared::TUNING_HELP)]
 pub struct Args {
     /// An SACD image file, or a folder of them.
     pub source: PathBuf,
@@ -48,11 +48,13 @@ pub struct Args {
     /// Answer every caller: the default when run as root, as for `sacdfs`. Otherwise only
     /// calls made as this user (or root) are answered: a guard against mistakes, not a
     /// security boundary (any program on this computer can claim to be this user). Needed
-    /// for clients on other computers, whose user IDs differ.
-    #[arg(long)]
-    pub allow_other: bool,
-    /// Only calls made as this user (or root) are answered, also when run as root.
-    #[arg(long, conflicts_with = "allow_other")]
+    /// for clients on other computers, whose user IDs differ. `=no`: only calls made as this
+    /// user (or root) are answered, also when run as root.
+    #[arg(long, value_name = "YES|NO", num_args = 0..=1, require_equals = true,
+          default_missing_value = "yes", value_parser = shared::parse_yes_no())]
+    pub allow_other: Option<bool>,
+    /// The older spelling of --allow-other=no (#560).
+    #[arg(long, hide = true, conflicts_with = "allow_other")]
     pub no_allow_other: bool,
     /// More options for the mount, comma-separated (macOS: nobrowse hides it from the Finder).
     #[arg(short = 'o', long = "mount-options", value_name = "LIST", value_delimiter = ',')]
@@ -67,6 +69,18 @@ pub struct Args {
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
+}
+
+impl Args {
+    /// The older spellings on this command line (#560).
+    pub fn renamed(&self) -> Vec<shared::Renamed> {
+        let mut out = self.serve.renamed();
+        if self.no_allow_other {
+            out.push(shared::no_allow_other_renamed());
+        }
+        out.extend(self.limits.renamed());
+        out
+    }
 }
 
 /// Runs `sacdfs-nfs` with `args` (the program name first).
@@ -103,6 +117,9 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).build(),
     ) {
         complain(&e);
+    }
+    for r in args.renamed() {
+        log::warn!("{}", r.message());
     }
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
@@ -163,7 +180,8 @@ pub fn run(args: Args) -> io::Result<()> {
     )?;
     let volume = Volume::new(tree.clone(), engine.clone(), shared::request_threads(threads), uid, gid)?
         .with_request_timeout(args.limits.request_timeout())?;
-    let callers = if args.allow_other || (uid == 0 && !args.no_allow_other) {
+    let (allow, refuse) = shared::allow_other_flags(args.allow_other, args.no_allow_other);
+    let callers = if allow || (uid == 0 && !refuse) {
         log::info!("every caller is answered (--no-allow-other answers only this user)");
         Callers::Anyone
     } else {

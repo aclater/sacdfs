@@ -116,7 +116,7 @@ fn mount_walk_stays_within_the_bound() {
     common::skip_without_fuse!();
     let dir = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
-        .args(["-f", "--no-index-cache", "--max-open-images", "2"])
+        .args(["-f", "--index-cache", "off", "--max-open-images", "2"])
         .arg(corpus().join("images"))
         .arg(dir.path())
         .spawn()

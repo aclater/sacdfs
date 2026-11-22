@@ -71,7 +71,7 @@ sacdfs again. No `curl`, or checking the download first: see the
   sidecar files, mounting at boot, troubleshooting
 - [Before you delete extracts](docs/user-guide.md#before-you-delete-extracts): `sacdfs verify`
 - [Clients](docs/clients.md): players and music servers tested
-- [Options](docs/options.md) · [what the mount shows](docs/layout.md) · [limits](docs/limits.md)
+- [Options and tuning](docs/options.md) · [what the mount shows](docs/layout.md) · [limits](docs/limits.md)
 - [Deployment reference](docs/deployment.md) · [small NAS sizing](docs/deployment.md#small-nas-sizing)
 - [Design](docs/design.md) · [performance](docs/performance.md) · [PCM quality](docs/pcm-quality.md)
 - [Changelog](CHANGELOG.md) · [releases](https://github.com/aclater/sacdfs/releases) ·

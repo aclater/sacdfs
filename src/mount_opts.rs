@@ -50,11 +50,9 @@ const IGNORED_PREFIXES: &[&str] = &["x-", "fsname=", "subtype=", "uid=", "gid=",
 const FLAGS: &[&str] = &[
     "foreground",
     "flatten",
-    "allow_other",
     "no_allow_other",
     "no_index_cache",
     "no_multichannel_album_suffix",
-    "musicbrainz",
     "lookup_name",
     "lookup_durations",
 ];
@@ -78,6 +76,9 @@ const VALUES: &[&str] = &[
     "stop_grace",
     "log_file",
 ];
+/// sacdfs options whose value is optional: `allow_other` or `allow_other=no`, `musicbrainz`
+/// or `musicbrainz=name+durations` (#560).
+const OPTIONAL: &[&str] = &["allow_other", "musicbrainz"];
 /// Command-line options that are not `-o` options: clap's own, and `verbose`, which
 /// [`option_list`] turns into `-v`s itself.
 #[cfg(test)]
@@ -123,6 +124,10 @@ fn option_list(list: &OsStr, out: &mut Vec<OsString>) -> Result<(), String> {
             None if key == "verbose" => out.push("-v".into()),
             Some(v) if key == "verbose" && v.parse::<u8>().is_ok() => {
                 out.push(format!("-{}", "v".repeat(usize::from(v.parse::<u8>().unwrap_or(0)))).into());
+            }
+            None if OPTIONAL.contains(&key) => out.push(long().into()),
+            Some(v) if OPTIONAL.contains(&key) => {
+                out.push(format!("{}={}", long(), v.replace('+', ",")).into())
             }
             Some(v) if VALUES.contains(&key) => {
                 out.push(long().into());
@@ -183,6 +188,7 @@ mod tests {
 
     #[test]
     fn no_allow_other() {
+        // The older spelling (#560) still expands.
         assert_eq!(run(&["s", "-o", "ro,no_allow_other"]).unwrap(), ["s", "--no-allow-other"]);
     }
 
@@ -194,30 +200,54 @@ mod tests {
         assert!(run(&["s", "-o", "threads"]).is_err());
     }
 
-    /// Every option of the command line is an `-o` option of the same kind (flag or value), and
-    /// the lists name nothing else: an option added to the command line and not here fails this.
+    /// Every option of the command line is an `-o` option of the same kind (flag, value or
+    /// optional value), and the lists name nothing else: an option added to the command line
+    /// and not here fails this. Hidden options count too (#560).
     #[test]
     fn the_lists_match_the_command_line() {
-        let command = crate::linux_main::command();
+        let mut command = crate::linux_main::command();
+        command.build();
         let mut flags = Vec::new();
         let mut values = Vec::new();
+        let mut optional = Vec::new();
         for arg in command.get_arguments() {
             let Some(long) = arg.get_long() else { continue };
             let name = long.replace('-', "_");
             if NOT_MOUNT_OPTIONS.contains(&name.as_str()) {
                 continue;
             }
-            if arg.get_action().takes_values() { values.push(name) } else { flags.push(name) }
+            if !arg.get_action().takes_values() {
+                flags.push(name);
+            } else if arg.get_num_args().is_some_and(|n| n.min_values() == 0) {
+                optional.push(name);
+            } else {
+                values.push(name);
+            }
         }
-        let sorted = |names: &[&str]| {
-            let mut v: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
-            v.sort();
-            v
-        };
+        optional.sort();
+        assert_eq!(sorted_names(OPTIONAL), optional, "options with an optional value");
         flags.sort();
         values.sort();
-        assert_eq!(sorted(FLAGS), flags, "options without a value");
-        assert_eq!(sorted(VALUES), values, "options with a value");
+        assert_eq!(sorted_names(FLAGS), flags, "options without a value");
+        assert_eq!(sorted_names(VALUES), values, "options with a value");
+    }
+
+    #[test]
+    fn optional_values() {
+        assert_eq!(
+            run(&["s", "-o", "allow_other,musicbrainz"]).unwrap(),
+            ["s", "--allow-other", "--musicbrainz"]
+        );
+        assert_eq!(
+            run(&["s", "-o", "allow_other=no,musicbrainz=name+durations,index_cache=off"]).unwrap(),
+            ["s", "--allow-other=no", "--musicbrainz=name,durations", "--index-cache", "off"]
+        );
+    }
+
+    fn sorted_names(names: &[&str]) -> Vec<String> {
+        let mut v: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+        v.sort();
+        v
     }
 
     /// The expanded line is one the command line accepts, with an option that needs another.
@@ -226,6 +256,15 @@ mod tests {
         let line = run(&[
             "sacdfs", "/s", "/m", "-o",
             "ro,tags=/t,musicbrainz,pauses=kept,listing_mb=64,request_timeout=30,stop_grace=5,no_multichannel_album_suffix",
+        ])
+        .unwrap();
+        crate::linux_main::command().try_get_matches_from(line).unwrap();
+        let line = run(&[
+            "sacdfs",
+            "/s",
+            "/m",
+            "-o",
+            "ro,tags=/t,musicbrainz=name+durations,allow_other=no,index_cache=off",
         ])
         .unwrap();
         crate::linux_main::command().try_get_matches_from(line).unwrap();

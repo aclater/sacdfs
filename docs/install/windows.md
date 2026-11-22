@@ -157,7 +157,7 @@ The launcher can also run sacdfs-win as the SYSTEM account, so that one drive is
 user's session. SOURCE must then be a folder SYSTEM can read: a local disk, not a mapped network
 drive (`The system cannot find the path specified`) nor a network share that needs a user name
 and password (`Access is denied`), and every user of the PC can read the files
-(`--no-allow-other` limits them to administrators). In PowerShell **as administrator**, register
+(`--allow-other=no` limits them to administrators). In PowerShell **as administrator**, register
 it under a second name, without `RunAs`:
 
 ```powershell
@@ -214,7 +214,7 @@ others in [options](../options.md). `sacdfs-win --help` lists them. Windows only
   until sacdfs-win says they changed. This turns that off; every read reaches sacdfs-win.
 - `--allow-other`: let the other users of the PC read the drive (needed to share it over SMB).
   By default only the user who started sacdfs-win can, besides administrators; run as SYSTEM,
-  everyone can, unless `--no-allow-other`.
+  everyone can, unless `--allow-other=no` (`--no-allow-other` before 0.8.0, still accepted).
 - `--log-file FILE`: append the log there instead of the window. Each start writes a `---- sacdfs-win VERSION started TIME, pid N ----` line first.
 
 The seek index is kept in `%LOCALAPPDATA%\sacdfs` unless `--index-cache` names another folder.

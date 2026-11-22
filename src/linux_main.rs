@@ -36,7 +36,7 @@ use sacdfs::tree::SourceDir;
 /// sacdfs serves, before they are deleted: see `sacdfs verify --help`. `sacdfs tags` keeps
 /// user tags for the files (`--tags`): see `sacdfs tags --help`.
 #[derive(Debug, Parser)]
-#[command(version, about)]
+#[command(version, about, after_help = TUNING_HELP)]
 struct Args {
     /// An SACD image file, or a directory of them.
     source: PathBuf,
@@ -49,18 +49,20 @@ struct Args {
     #[command(flatten)]
     serve: serve::Options,
     /// Let other users read the mount: the default when run as root (the mount is read-only).
-    /// A user other than root needs `user_allow_other` in /etc/fuse.conf for it.
-    #[arg(long)]
-    allow_other: bool,
-    /// Only the user who mounted may read the mount, also when run as root.
-    #[arg(long, conflicts_with = "allow_other")]
+    /// A user other than root needs `user_allow_other` in /etc/fuse.conf for it. `=no`: only
+    /// the user who mounted may read it, also when run as root.
+    #[arg(long, value_name = "YES|NO", num_args = 0..=1, require_equals = true,
+          default_missing_value = "yes", value_parser = serve::parse_yes_no())]
+    allow_other: Option<bool>,
+    /// The older spelling of --allow-other=no (#560).
+    #[arg(long, hide = true, conflicts_with = "allow_other")]
     no_allow_other: bool,
     #[command(flatten)]
     limits: serve::Limits,
     /// Seconds after SIGINT, SIGTERM or SIGHUP that sacdfs keeps serving files clients still hold
     /// open before it exits anyway (the mount is detached at once, so nothing new opens); those
     /// clients then get I/O errors. 0 waits for the last file to close, however long.
-    #[arg(long, default_value_t = DEFAULT_STOP_GRACE, value_name = "SECS")]
+    #[arg(long, hide = true, default_value_t = DEFAULT_STOP_GRACE, value_name = "SECS")]
     stop_grace: u64,
     /// Append the log to FILE instead of standard error, at info level unless -v says more.
     /// Without it a background mount logs nowhere, except to the journal under systemd.
@@ -75,6 +77,24 @@ struct Args {
 #[cfg(test)]
 pub(crate) fn command() -> clap::Command {
     <Args as clap::CommandFactory>::command()
+}
+
+/// The end of `--help`: where the options it leaves out are (#560).
+const TUNING_HELP: &str = "Tuning options, which size themselves by default, are not listed here: \
+--threads, --cache-mb, --listing-mb, --start-burst, --start-burst-secs, --pcm-cutoff, --pcm-gain, \
+--no-multichannel-album-suffix, --max-open-images, --request-timeout and --stop-grace. \
+See docs/options.md.";
+
+impl Args {
+    /// The older spellings on this command line (#560).
+    fn renamed(&self) -> Vec<serve::Renamed> {
+        let mut out = self.serve.renamed();
+        if self.no_allow_other {
+            out.push(serve::no_allow_other_renamed());
+        }
+        out.extend(self.limits.renamed());
+        out
+    }
 }
 
 pub fn main() -> ExitCode {
@@ -119,6 +139,9 @@ pub fn main() -> ExitCode {
     // Names from SOURCE in the log are escaped where lines are written (#391).
     if let Err(e) = sacdfs::printable::install(logger.build()) {
         eprintln!("sacdfs: {}", sacdfs::safe_file::printable(&e.to_string()));
+    }
+    for r in args.renamed() {
+        log::warn!("{}", r.message());
     }
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
@@ -257,8 +280,9 @@ fn run(args: Args) -> io::Result<()> {
         MountOption::CUSTOM(format!("max_read={MAX_READ}")),
     ];
     // Root lets other users read by default (#282): see docs/design.md, "Other users".
-    if startup::allow_other(args.allow_other, args.no_allow_other, uid) {
-        log::info!("other users may read the mount (--no-allow-other turns it off)");
+    let (allow, refuse) = serve::allow_other_flags(args.allow_other, args.no_allow_other);
+    if startup::allow_other(allow, refuse, uid) {
+        log::info!("other users may read the mount (--allow-other=no turns it off)");
         config.acl = SessionACL::All;
     }
     config.n_threads = Some(4);
@@ -960,6 +984,90 @@ mod tests {
     const ROOT: &str = "123 45 0:62 / /mnt rw,nosuid,nodev,noexec - fuse sacdfs ro,user_id=0,group_id=0";
     const OTHER: &str = "9 8 0:63 / /mnt rw - fuse.sshfs host:/x rw,user_id=1000,group_id=1000";
     const OLD_ROOT: &str = "9 8 0:64 / /mnt rw - fuse /music/a\\054b rw,user_id=0,group_id=0";
+
+    fn parse(extra: &[&str]) -> Args {
+        let mut line = vec!["sacdfs", "/s", "/m"];
+        line.extend(extra);
+        Args::try_parse_from(mount_opts::expand(line.into_iter().map(Into::into).collect()).unwrap()).unwrap()
+    }
+
+    /// The older spellings (#560) still parse, mean what they meant, and each is reported once
+    /// with its new form; the new forms are not reported.
+    #[test]
+    fn older_spellings_parse_and_warn() {
+        let old = parse(&["--tags", "/t", "--musicbrainz", "--lookup-name", "--lookup-durations"]);
+        let new = parse(&["--tags", "/t", "--musicbrainz=name,durations"]);
+        assert_eq!(old.serve.lookups(), new.serve.lookups());
+        assert!(old.serve.lookups().name && old.serve.lookups().durations);
+        assert!(new.renamed().is_empty());
+        let said: Vec<String> = old.renamed().iter().map(serve::Renamed::message).collect();
+        assert_eq!(said.len(), 2);
+        assert!(
+            said[0].starts_with("--lookup-name (-o lookup_name) is an older spelling of --musicbrainz=name")
+        );
+        assert!(said[1].contains("--musicbrainz=durations (-o musicbrainz=durations)"));
+
+        let old = parse(&["--no-allow-other", "--no-index-cache"]);
+        let new = parse(&["--allow-other=no", "--index-cache", "off"]);
+        for a in [&old, &new] {
+            assert_eq!(serve::allow_other_flags(a.allow_other, a.no_allow_other), (false, true));
+            assert_eq!(a.limits.index_cache_dir(None).unwrap(), None);
+        }
+        assert!(new.renamed().is_empty());
+        let said: Vec<String> = old.renamed().iter().map(serve::Renamed::message).collect();
+        assert_eq!(said.len(), 2);
+        assert!(said[0].contains("of --allow-other=no (-o allow_other=no)"));
+        assert!(said[1].contains("of --index-cache off (-o index_cache=off)"));
+
+        // As `-o` options, from fstab.
+        let old = parse(&["-o", "ro,tags=/t,musicbrainz,lookup_name,no_allow_other,no_index_cache"]);
+        assert_eq!(old.renamed().len(), 3);
+        assert!(old.serve.lookups().name);
+
+        // Still refused together with the new form, as before.
+        assert!(Args::try_parse_from(["sacdfs", "/s", "/m", "--allow-other", "--no-allow-other"]).is_err());
+        assert!(
+            Args::try_parse_from(["sacdfs", "/s", "/m", "--index-cache", "d", "--no-index-cache"]).is_err()
+        );
+        assert!(Args::try_parse_from(["sacdfs", "/s", "/m", "--lookup-name"]).is_err());
+    }
+
+    #[test]
+    fn folded_values() {
+        assert_eq!(serve::allow_other_flags(parse(&[]).allow_other, false), (false, false));
+        assert_eq!(serve::allow_other_flags(parse(&["--allow-other"]).allow_other, false), (true, false));
+        assert_eq!(serve::allow_other_flags(parse(&["--allow-other=yes"]).allow_other, false), (true, false));
+        assert!(Args::try_parse_from(["sacdfs", "/s", "/m", "--allow-other=maybe"]).is_err());
+        // `--allow-other` takes its value only after `=`: SOURCE is not taken for one.
+        let a = Args::try_parse_from(["sacdfs", "--allow-other", "/s", "/m"]).unwrap();
+        assert_eq!((a.allow_other, a.source.as_path()), (Some(true), Path::new("/s")));
+        let a = Args::try_parse_from(["sacdfs", "--tags", "/t", "--musicbrainz", "/s", "/m"]).unwrap();
+        assert_eq!(a.serve.lookups(), serve::Lookups::default());
+        assert!(a.serve.musicbrainz());
+        assert!(Args::try_parse_from(["sacdfs", "/s", "/m", "--tags", "/t", "--musicbrainz=isbn"]).is_err());
+        assert!(Args::try_parse_from(["sacdfs", "/s", "/m", "--musicbrainz"]).is_err(), "needs --tags");
+        // A directory named off is still possible.
+        let a = parse(&["--index-cache", "./off"]);
+        assert_eq!(a.limits.index_cache_dir(None).unwrap(), Some(std::path::absolute("./off").unwrap()));
+    }
+
+    /// Every option `--help` leaves out is described in docs/options.md (#560).
+    #[test]
+    fn hidden_options_are_documented() {
+        let doc = include_str!("../docs/options.md");
+        let mut command = <Args as clap::CommandFactory>::command();
+        command.build();
+        let hidden: Vec<_> =
+            command.get_arguments().filter(|a| a.is_hide_set()).filter_map(|a| a.get_long()).collect();
+        assert!(hidden.len() >= 15, "{hidden:?}");
+        for long in hidden {
+            assert!(doc.contains(&format!("| `--{long}")), "--{long} is not in docs/options.md");
+        }
+        for long in TUNING_HELP.split([' ', ',']).filter(|w| w.starts_with("--")) {
+            let long = long.trim_end_matches('.');
+            assert!(doc.contains(&format!("| `{long}")), "{long} is not in docs/options.md");
+        }
+    }
 
     #[test]
     fn mount_entries() {

@@ -62,6 +62,9 @@ fn main() -> ExitCode {
     if let Err(e) = sacdfs::printable::install(logger.build()) {
         eprintln!("sacdfs-win: {}", sacdfs::safe_file::printable(&e.to_string()));
     }
+    for r in args.renamed() {
+        log::warn!("{}", r.message());
+    }
     if requoted {
         log::warn!(
             "an argument held a quote, as WinFsp.Launcher makes of a folder ending in a backslash \

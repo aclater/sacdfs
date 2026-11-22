@@ -52,6 +52,17 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Changed
+- **A shorter `--help` (#560).** `sacdfs --help` lists 12 options instead of 27. Three pairs
+  become one option each: `--musicbrainz[=name,durations]` replaces `--lookup-name` and
+  `--lookup-durations`, `--allow-other[=yes|no]` replaces `--no-allow-other`, and
+  `--index-cache off` replaces `--no-index-cache`. The tuning options (`--threads`, `--cache-mb`,
+  `--listing-mb`, `--start-burst`, `--start-burst-secs`, `--pcm-cutoff`, `--pcm-gain`,
+  `--no-multichannel-album-suffix`, `--max-open-images`, `--request-timeout`, `--stop-grace`)
+  work as before but are listed only in docs/options.md, under Tuning. The older spellings still
+  work, on the command line, as `-o` mount options and in `SACDFS_OPTIONS`, until 1.0 at least;
+  each logs one line naming its new form. `-o` takes `allow_other=no`,
+  `musicbrainz=name+durations` and `index_cache=off`. `sacdfs-nfs` and `sacdfs-win` follow, and
+  the container passes the new forms; its variables are unchanged.
 - **Files' heads are not kept in the cache (#456).** Test builds since #508 kept the frames of
   files' heads and tails in the cache through the idle release, and decoded a folder's heads after
   a player's probe on slow CPUs (#510), for a network player that re-reads an album's heads at each

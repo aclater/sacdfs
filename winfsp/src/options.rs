@@ -18,7 +18,13 @@ use sacdfs::serve::{Limits, Options};
 /// lasts until sacdfs-win stops: Ctrl+C or Ctrl+Break in its console, or a stop of the
 /// service or WinFsp.Launcher instance that runs it.
 #[derive(Debug, Parser)]
-#[command(name = "sacdfs-win", version = crate::notice::VERSION, long_version = crate::notice::LONG_VERSION, about)]
+#[command(
+    name = "sacdfs-win",
+    version = crate::notice::VERSION,
+    long_version = crate::notice::LONG_VERSION,
+    about,
+    after_help = sacdfs::serve::TUNING_HELP
+)]
 pub struct Args {
     /// An SACD image file, or a folder of them.
     pub source: PathBuf,
@@ -32,12 +38,14 @@ pub struct Args {
     #[arg(long)]
     pub no_kernel_cache: bool,
     /// Let other users of this PC read the mount: the default when sacdfs-win runs as SYSTEM
-    /// (as a service or under WinFsp.Launcher). Needed to share the drive over SMB.
-    #[arg(long)]
-    pub allow_other: bool,
-    /// Only the user who mounted (and SYSTEM and Administrators) may read the mount, also
-    /// when run as SYSTEM.
-    #[arg(long, conflicts_with = "allow_other")]
+    /// (as a service or under WinFsp.Launcher). Needed to share the drive over SMB. `=no`: only
+    /// the user who mounted (and SYSTEM and Administrators) may read the mount, also when run
+    /// as SYSTEM.
+    #[arg(long, value_name = "YES|NO", num_args = 0..=1, require_equals = true,
+          default_missing_value = "yes", value_parser = sacdfs::serve::parse_yes_no())]
+    pub allow_other: Option<bool>,
+    /// The older spelling of --allow-other=no (#560).
+    #[arg(long, hide = true, conflicts_with = "allow_other")]
     pub no_allow_other: bool,
     #[command(flatten)]
     pub limits: Limits,
@@ -47,6 +55,18 @@ pub struct Args {
     /// Log more (repeat for more still); RUST_LOG overrides it.
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
+}
+
+impl Args {
+    /// The older spellings on this command line (#560).
+    pub fn renamed(&self) -> Vec<sacdfs::serve::Renamed> {
+        let mut out = self.options.renamed();
+        if self.no_allow_other {
+            out.push(sacdfs::serve::no_allow_other_renamed());
+        }
+        out.extend(self.limits.renamed());
+        out
+    }
 }
 
 /// The program's arguments, with a launcher's quoting undone (#466): WinFsp.Launcher quotes
@@ -222,7 +242,7 @@ mod tests {
         assert_eq!(pcm_rate(a.options.pcm_rate), Some(PcmRate::R352800));
         assert_eq!(a.options.pcm_cutoff, Cutoff::Wide80);
         assert_eq!(a.options.pcm_gain, -6.0);
-        assert!(a.options.flatten && a.options.musicbrainz);
+        assert!(a.options.flatten && a.options.musicbrainz());
         assert_eq!(a.options.cache_mb, Some(64));
     }
 
@@ -243,6 +263,17 @@ mod tests {
         assert!(allow_other(true, false, "S-1-5-21-1-2-3-1001"));
         assert!(!allow_other(false, true, SYSTEM_SID));
         assert!(parse(&["s", "X:", "--allow-other", "--no-allow-other"]).is_err());
+    }
+
+    /// The older spellings (#560) still parse and are reported with their new forms.
+    #[test]
+    fn older_spellings_parse_and_warn() {
+        let a = parse(&["s", "X:", "--no-allow-other", "--no-index-cache"]).unwrap();
+        assert_eq!(sacdfs::serve::allow_other_flags(a.allow_other, a.no_allow_other), (false, true));
+        assert_eq!(a.renamed().len(), 2);
+        let b = parse(&["s", "X:", "--allow-other=no", "--index-cache", "off"]).unwrap();
+        assert_eq!(sacdfs::serve::allow_other_flags(b.allow_other, b.no_allow_other), (false, true));
+        assert!(b.renamed().is_empty());
     }
 
     #[test]

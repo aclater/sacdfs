@@ -33,24 +33,24 @@ use crate::tree::{Output, SourceDir, Tree};
 pub struct Options {
     /// DST decoder threads (0: one per CPU; under a memory limit, at most one per 64 MiB of it,
     /// and at least 2).
-    #[arg(long, default_value_t = 0, value_name = "N")]
+    #[arg(long, hide = true, default_value_t = 0, value_name = "N")]
     pub threads: usize,
     /// Size of the cache of decoded and converted frames, in MiB (default: 32, or 16 under a
     /// memory limit below 256 MiB).
-    #[arg(long, value_name = "N")]
+    #[arg(long, hide = true, value_name = "N")]
     pub cache_mb: Option<usize>,
     /// Memory kept for what listed images hold (their TOCs and files), in MiB; past it, those
     /// not used lately are read again when next used. 0: no bound (default: no bound, or 3/8
     /// of the memory limit under one).
-    #[arg(long, value_name = "N")]
+    #[arg(long, hide = true, value_name = "N")]
     pub listing_mb: Option<usize>,
     /// How fast players read a track they start, in times real time (#504). Where this machine
     /// decodes a format slower than that (measured as it serves), a starting track is decoded
     /// ahead without waiting for the player's reads. 0: off.
-    #[arg(long, default_value_t = 3.5, value_name = "X", value_parser = parse_burst)]
+    #[arg(long, hide = true, default_value_t = 3.5, value_name = "X", value_parser = parse_burst)]
     pub start_burst: f64,
     /// Seconds of audio decoded ahead when a track starts playing, within a quarter of the cache.
-    #[arg(long, default_value_t = 8, value_name = "SECS",
+    #[arg(long, hide = true, default_value_t = 8, value_name = "SECS",
           value_parser = clap::builder::RangedU64ValueParser::<u32>::new().range(1..=60))]
     pub start_burst_secs: u32,
     /// Which files to show: dsf, wav, or both (dsf,wav).
@@ -65,14 +65,14 @@ pub struct Options {
     pub pcm_rate: u32,
     /// Low-pass cutoff of the PCM conversion: 40 or 30 (kHz), or wide (about 80 kHz; needs a
     /// --pcm-rate of 176400 or 352800).
-    #[arg(long, default_value = "40", value_name = "KHZ", value_parser = parse_cutoff)]
+    #[arg(long, hide = true, default_value = "40", value_name = "KHZ", value_parser = parse_cutoff)]
     pub pcm_cutoff: Cutoff,
     /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
-    #[arg(long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
+    #[arg(long, hide = true, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
     pub pcm_gain: f32,
     /// Do not add " (Multichannel)" to the album tag of the files of the multichannel area
     /// (by default they get it, so players and servers show them as an album of their own).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub no_multichannel_album_suffix: bool,
     /// Directory of tags files (#81), one per disc, named by its disc key
     /// (`sacdfs tags key IMAGE`): their tags override and add to the TOC's. Without it, or
@@ -82,17 +82,18 @@ pub struct Options {
     /// Look up, on MusicBrainz, discs without a track title, album or artist, in the
     /// background, and write what matches to the --tags directory (which must be writable),
     /// as `sacdfs tags fetch` does: by barcode or catalogue number, confirmed by track count,
-    /// durations and ISRCs. Off by default; nothing else in a mount uses the network. At most
-    /// 1 request per second, once per disc; no client request waits for it.
-    #[arg(long, requires = "tags")]
-    pub musicbrainz: bool,
-    /// With --musicbrainz: if that finds nothing, also search by album and artist, from the
-    /// disc's text or the image's path. Sends those names.
-    #[arg(long, requires = "musicbrainz")]
+    /// durations and ISRCs. `=name` also searches by album and artist (sends those names),
+    /// `=durations` by the tracks' start times (sends the times); `=name,durations` both.
+    /// Off by default; nothing else in a mount uses the network. At most 1 request per
+    /// second, once per disc; no client request waits for it.
+    #[arg(long, requires = "tags", value_name = "LIST", num_args = 0..=1, require_equals = true,
+          default_missing_value = "", value_parser = Lookups::parse)]
+    pub musicbrainz: Option<Lookups>,
+    /// The older spelling of --musicbrainz=name (#560).
+    #[arg(long, hide = true, requires = "musicbrainz")]
     pub lookup_name: bool,
-    /// With --musicbrainz: if that finds nothing, also ask by the tracks' start times (a disc
-    /// of 4 tracks or more). Sends the times.
-    #[arg(long, requires = "musicbrainz")]
+    /// The older spelling of --musicbrainz=durations (#560).
+    #[arg(long, hide = true, requires = "musicbrainz")]
     pub lookup_durations: bool,
     /// Collapse each chain of folders below the top level that holds a single image into
     /// its outermost folder, which then holds the image's Stereo/Multichannel folders.
@@ -111,21 +112,22 @@ pub struct Options {
 #[derive(Debug, Clone, clap::Args)]
 pub struct Limits {
     /// Directory of the persistent seek index, which lets seeks after a remount skip most
-    /// of their search (default: $XDG_CACHE_HOME/sacdfs, else ~/.cache/sacdfs).
+    /// of their search (default: $XDG_CACHE_HOME/sacdfs, else ~/.cache/sacdfs). `off` keeps
+    /// none: every mount starts with an empty one (a directory named off: ./off).
     #[arg(long, value_name = "DIR")]
     pub index_cache: Option<PathBuf>,
-    /// Keep no persistent seek index: every mount starts with an empty one.
-    #[arg(long, conflicts_with = "index_cache")]
+    /// The older spelling of --index-cache off (#560).
+    #[arg(long, hide = true, conflicts_with = "index_cache")]
     pub no_index_cache: bool,
     /// Most image files kept open at once (1 to 1024); the least recently used is closed
     /// first, and any closes after 5 minutes unused.
-    #[arg(long, default_value_t = crate::handles::DEFAULT_MAX_OPEN, value_name = "N",
+    #[arg(long, hide = true, default_value_t = crate::handles::DEFAULT_MAX_OPEN, value_name = "N",
           value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=1024))]
     pub max_open_images: usize,
     /// Seconds a request (a read, a lookup, a listing) may wait for the source before it
     /// fails with an I/O error and a log line, so that a stalled share never hangs a client;
     /// 0 waits for good.
-    #[arg(long, default_value_t = crate::watchdog::DEFAULT_TIMEOUT.as_secs(), value_name = "SECS")]
+    #[arg(long, hide = true, default_value_t = crate::watchdog::DEFAULT_TIMEOUT.as_secs(), value_name = "SECS")]
     pub request_timeout: u64,
 }
 
@@ -148,6 +150,87 @@ fn parse_formats(s: &str) -> Result<Formats, String> {
         }
     }
     Ok(f)
+}
+
+/// The extra lookups of `--musicbrainz=LIST` (#560): besides the barcode and catalogue
+/// number, by name and by durations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Lookups {
+    /// `name`: also search by album and artist.
+    pub name: bool,
+    /// `durations`: also ask by the tracks' start times.
+    pub durations: bool,
+}
+
+impl Lookups {
+    /// An empty value (plain `--musicbrainz`) is the barcode and catalogue number only.
+    fn parse(s: &str) -> Result<Lookups, String> {
+        let mut l = Lookups::default();
+        for part in s.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            match part.to_ascii_lowercase().as_str() {
+                "name" => l.name = true,
+                "durations" => l.durations = true,
+                other => {
+                    return Err(format!("unknown lookup {other:?}: use name, durations or name,durations"));
+                }
+            }
+        }
+        Ok(l)
+    }
+}
+
+/// The end of `--help` for the front ends other than the Linux mount: where the options it
+/// leaves out are (#560).
+pub const TUNING_HELP: &str = "The tuning options of sacdfs (--threads, --cache-mb and the others \
+in docs/options.md, under Tuning) work here too; --help does not list them.";
+
+/// The value of `--index-cache` that keeps no persistent seek index (#560).
+pub const INDEX_CACHE_OFF: &str = "off";
+
+/// An older spelling found on the command line, and the form that replaces it (#560). Both
+/// keep working until 1.0 at least; a front end logs [`Renamed::message`] once for each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Renamed {
+    /// The older spelling, as on the command line.
+    pub old: &'static str,
+    /// The same as an `-o` mount option.
+    pub old_o: &'static str,
+    /// The form that replaces it.
+    pub new: String,
+    /// The same as an `-o` mount option.
+    pub new_o: String,
+}
+
+impl Renamed {
+    /// The log line.
+    pub fn message(&self) -> String {
+        format!(
+            "{} (-o {}) is an older spelling of {} (-o {}): it still works, but use the new form",
+            self.old, self.old_o, self.new, self.new_o
+        )
+    }
+}
+
+/// What `--no-allow-other` became, for the front ends that have it (#560).
+pub fn no_allow_other_renamed() -> Renamed {
+    Renamed {
+        old: "--no-allow-other",
+        old_o: "no_allow_other",
+        new: "--allow-other=no".to_owned(),
+        new_o: "allow_other=no".to_owned(),
+    }
+}
+
+/// The front ends' `--allow-other[=yes|no]`, and the older `--no-allow-other` (#560), as
+/// the pair of flags [`crate::startup::allow_other`] takes: asked for, and refused.
+pub fn allow_other_flags(value: Option<bool>, no_allow_other: bool) -> (bool, bool) {
+    (value == Some(true), value == Some(false) || no_allow_other)
+}
+
+/// The value parser of `--allow-other[=yes|no]`.
+pub fn parse_yes_no() -> impl clap::builder::TypedValueParser<Value = bool> {
+    use clap::builder::TypedValueParser as _;
+    clap::builder::PossibleValuesParser::new(["yes", "no"]).map(|v| v == "yes")
 }
 
 /// The PCM rate of `hz`, if it is one of the three.
@@ -250,7 +333,7 @@ impl Options {
                     format!("--tags {}: not a directory", dir.display()),
                 ));
             }
-            if self.musicbrainz {
+            if self.musicbrainz() {
                 crate::platform::writable(&dir).map_err(|e| {
                     io::Error::new(
                         e.kind(),
@@ -327,6 +410,36 @@ impl Options {
             pauses_kept: self.pauses == "kept",
         }
     }
+
+    /// Whether `--musicbrainz` is on.
+    pub fn musicbrainz(&self) -> bool {
+        self.musicbrainz.is_some()
+    }
+
+    /// The lookups of `--musicbrainz=LIST`, with the older `--lookup-name` and
+    /// `--lookup-durations` folded in.
+    pub fn lookups(&self) -> Lookups {
+        let l = self.musicbrainz.unwrap_or_default();
+        Lookups { name: l.name || self.lookup_name, durations: l.durations || self.lookup_durations }
+    }
+
+    /// The older spellings among these options (#560).
+    pub fn renamed(&self) -> Vec<Renamed> {
+        let new = |what: &str| Renamed {
+            old: "",
+            old_o: "",
+            new: format!("--musicbrainz={what}"),
+            new_o: format!("musicbrainz={}", what.replace(',', "+")),
+        };
+        let mut out = Vec::new();
+        if self.lookup_name {
+            out.push(Renamed { old: "--lookup-name", old_o: "lookup_name", ..new("name") });
+        }
+        if self.lookup_durations {
+            out.push(Renamed { old: "--lookup-durations", old_o: "lookup_durations", ..new("durations") });
+        }
+        out
+    }
 }
 
 impl Limits {
@@ -337,7 +450,7 @@ impl Limits {
     /// the cache folder, such as the home folder) only turns the cache off, since a cache
     /// that cannot be used is only a warning elsewhere too.
     pub fn index_cache_dir(&self, mountpoint: Option<&Path>) -> io::Result<Option<PathBuf>> {
-        if self.no_index_cache {
+        if self.no_index_cache || self.index_cache.as_deref() == Some(Path::new(INDEX_CACHE_OFF)) {
             return Ok(None);
         }
         let Some(dir) = self.index_cache.clone().or_else(index_cache::default_dir) else {
@@ -361,6 +474,20 @@ impl Limits {
         }
         log::warn!("{why}; no seek index cache (use --index-cache DIR)");
         Ok(None)
+    }
+
+    /// The older spellings among these options (#560).
+    pub fn renamed(&self) -> Vec<Renamed> {
+        let mut out = Vec::new();
+        if self.no_index_cache {
+            out.push(Renamed {
+                old: "--no-index-cache",
+                old_o: "no_index_cache",
+                new: format!("--index-cache {INDEX_CACHE_OFF}"),
+                new_o: format!("index_cache={INDEX_CACHE_OFF}"),
+            });
+        }
+        out
     }
 
     /// How long a request may wait for the source.
@@ -484,14 +611,15 @@ pub fn start_background(
         })?;
     }
     // The background lookup (#185): after the mount is up, on a thread of its own.
-    let lookups = match options.tags.as_deref().filter(|_| options.musicbrainz) {
+    let how = options.lookups();
+    let lookups = match options.tags.as_deref().filter(|_| options.musicbrainz()) {
         Some(dir) => {
             let config = crate::lookup::worker::Config {
                 tags: dir.canonicalize().map_err(|e| with_path(e, dir))?,
                 state: cache_dir.map(|d| d.join("musicbrainz")),
                 options: crate::lookup::Options {
-                    by_name: options.lookup_name,
-                    by_durations: options.lookup_durations,
+                    by_name: how.name,
+                    by_durations: how.durations,
                     no_suffix: options.no_multichannel_album_suffix,
                     ..crate::lookup::Options::default()
                 },
@@ -502,8 +630,8 @@ pub fn start_background(
             let images = tree.clone();
             log::info!(
                 "musicbrainz: background lookups on, by number{}{}, from {} s after the mount",
-                if options.lookup_name { ", name" } else { "" },
-                if options.lookup_durations { ", durations" } else { "" },
+                if how.name { ", name" } else { "" },
+                if how.durations { ", durations" } else { "" },
                 config.first_delay.as_secs()
             );
             Some(crate::lookup::worker::Worker::start(config, client, move || images.images())?)
