@@ -23,6 +23,18 @@ fn id3v23_extended_header_of_the_largest_size() {
     assert_eq!(front_cover(&tag), None);
 }
 
+/// An ID3v2.3 tag whose extended header claims 2^32 - 13 bytes: its size plus four fits in a
+/// u32, but the frame header after it ended past usize::MAX on 32-bit targets (found by the
+/// i686 fuzz job, #498).
+#[test]
+fn id3v23_extended_header_that_ends_past_a_32_bit_usize() {
+    let mut tag = b"ID3\x03\x00\x40\x00\x00\x00\x10".to_vec();
+    tag.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xF3]);
+    tag.extend_from_slice(b"TIT2\x00\x00\x00\x02\x00\x00\x00a");
+    assert_eq!(frames(&tag), []);
+    assert_eq!(front_cover(&tag), None);
+}
+
 /// A repeated name whose extension leaves no room for the ` (2)`: the unique name passed
 /// NAME_MAX, which the kernel refuses to look up.
 #[test]

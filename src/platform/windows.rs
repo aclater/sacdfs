@@ -46,18 +46,16 @@ pub fn mtime(m: &Metadata) -> (i64, i64) {
 pub fn file_id(file: &File, _m: &Metadata) -> (u64, u64) {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
-    // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is valid; the handle is open for the
-    // call, and the structure is written by it.
-    unsafe {
-        let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
-        if GetFileInformationByHandle(file.as_raw_handle(), &mut info) == 0 {
-            return (0, 0);
-        }
-        (
-            u64::from(info.dwVolumeSerialNumber),
-            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-        )
+    // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is valid: it holds integers only.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: the handle is open for the call, and `info` is a valid structure for it to write.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return (0, 0);
     }
+    (
+        u64::from(info.dwVolumeSerialNumber),
+        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+    )
 }
 
 pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
@@ -67,6 +65,13 @@ pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
     let m = file.metadata()?;
     let id = file_id(&file, &m);
     Ok((m, id))
+}
+
+pub fn plain_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(r"\\?\") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(text.replace(r"\\?\UNC\", r"\\").replace(r"\\?\", ""))
 }
 
 pub fn cache_home() -> Option<PathBuf> {
@@ -173,28 +178,31 @@ pub fn make_private_dir(dir: &Path) -> io::Result<()> {
     let sddl: Vec<u16> = "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)".encode_utf16().chain(Some(0)).collect();
     let path: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-    // SAFETY: both strings are NUL-terminated and live across the calls; `sd` is allocated by
-    // the conversion and freed with LocalFree once applied.
-    unsafe {
-        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+    // SAFETY: `sddl` is NUL-terminated and lives across the call; `sd` is a valid place for the
+    // address of the descriptor the call allocates; its length is not asked for.
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl.as_ptr(),
             SDDL_REVISION_1,
             &mut sd,
             std::ptr::null_mut(),
-        ) == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        let ok = SetFileSecurityW(
-            path.as_ptr(),
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            sd,
-        );
-        let err = io::Error::last_os_error();
-        LocalFree(sd as HLOCAL);
-        if ok == 0 {
-            return Err(err);
-        }
+        )
+    };
+    if converted == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `path` is NUL-terminated and lives across the call; `sd` is the descriptor the
+    // conversion allocated, not yet freed.
+    let ok = unsafe {
+        SetFileSecurityW(path.as_ptr(), DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, sd)
+    };
+    // Read before LocalFree, which may set another last error.
+    let err = io::Error::last_os_error();
+    // SAFETY: `sd` was allocated by the conversion, which says to free it with LocalFree; it
+    // is not used after.
+    unsafe { LocalFree(sd as HLOCAL) };
+    if ok == 0 {
+        return Err(err);
     }
     Ok(())
 }
@@ -338,10 +346,12 @@ fn open_relative(dir: &File, name: &OsStr, access: u32, options: u32) -> io::Res
         SecurityQualityOfService: std::ptr::null(),
     };
     let mut handle: HANDLE = std::ptr::null_mut();
+    // SAFETY: an all-zero IO_STATUS_BLOCK is valid (integers and a null pointer); the call
+    // only writes it.
+    let mut iosb: IO_STATUS_BLOCK = unsafe { std::mem::zeroed() };
     // SAFETY: every pointer is to a live local (`wide` outlives the call through `us`); the
     // out handle is written only on success, and then owned by the `File` made from it.
     let status = unsafe {
-        let mut iosb: IO_STATUS_BLOCK = std::mem::zeroed();
         NtCreateFile(
             &mut handle,
             access | SYNCHRONIZE,
@@ -378,6 +388,7 @@ pub fn open_root(path: &Path) -> io::Result<Dir> {
 
 pub fn open_dir_at(dir: &Dir, names: &[&OsStr]) -> io::Result<Dir> {
     use windows_sys::Wdk::Storage::FileSystem::FILE_DIRECTORY_FILE;
+    use windows_sys::Win32::Foundation::ERROR_DIRECTORY;
     use windows_sys::Win32::Storage::FileSystem::{FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_TRAVERSE};
     let mut at = Dir { handle: dir.handle.try_clone()?, path: dir.path.clone() };
     for name in names {
@@ -387,7 +398,7 @@ pub fn open_dir_at(dir: &Dir, names: &[&OsStr]) -> io::Result<Dir> {
             FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
             FILE_DIRECTORY_FILE,
         )
-        .map_err(|e| if e.raw_os_error() == Some(267) { not_a_folder() } else { e })?;
+        .map_err(|e| if e.raw_os_error() == Some(ERROR_DIRECTORY as i32) { not_a_folder() } else { e })?;
         let m = handle.metadata()?;
         if is_reparse_point(&m) || !m.is_dir() {
             return Err(not_a_folder());
@@ -475,6 +486,10 @@ pub fn lower_thread_priority() -> Vec<(&'static str, io::Error)> {
 
 pub fn cpu_seconds() -> f64 {
     0.0
+}
+
+pub fn load_average() -> Option<f64> {
+    None
 }
 
 pub fn stop_on_signals(_stop: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<()> {

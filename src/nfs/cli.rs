@@ -196,17 +196,22 @@ fn open_files_budget(nofile: Option<u64>, max_open_images: usize) -> (usize, usi
 /// macOS starts processes at 256. The limit then, if it can be read.
 fn raise_nofile() -> Option<u64> {
     use nix::sys::resource::{Resource, getrlimit, setrlimit};
+    // rlim_t is 32 bits on 32-bit glibc (the i686 fuzz build, #498), 64 everywhere else.
+    #[allow(clippy::useless_conversion)]
+    fn wide(v: libc::rlim_t) -> u64 {
+        v.into()
+    }
     let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE).ok()?;
     if soft >= hard {
-        return Some(soft);
+        return Some(wide(soft));
     }
     if setrlimit(Resource::RLIMIT_NOFILE, hard, hard).is_ok() {
-        return Some(hard);
+        return Some(wide(hard));
     }
     // macOS refuses an unlimited soft limit (above kern.maxfilesperproc); 10240 is what
     // OPEN_MAX allows everywhere.
     let some = hard.min(10_240);
-    if setrlimit(Resource::RLIMIT_NOFILE, some, hard).is_ok() { Some(some) } else { Some(soft) }
+    Some(wide(if setrlimit(Resource::RLIMIT_NOFILE, some, hard).is_ok() { some } else { soft }))
 }
 
 fn ids() -> (u32, u32) {

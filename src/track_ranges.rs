@@ -151,7 +151,9 @@ impl Listed {
                 log::info!("{path}: {slot} track {n}: shown to frame {end}: runs into track {next}")
             }
             Some(Note::PauseDropped) => {
-                log::info!("{path}: {slot} track {n}: shown without its pause: it overlaps another track")
+                log::info!(
+                    "{path}: {slot} track {n}: shown without its pause: with it, it overlaps another track or does not fit the image"
+                )
             }
         }
     }
