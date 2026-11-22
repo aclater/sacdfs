@@ -86,6 +86,12 @@ All notable changes to sacdfs are recorded here. The format follows
   and NFS-Ganesha start without it.
 
 ### Fixed
+- **sacdfs-nfs: tighter bounds on calls and replies per connection.** A call holds one of
+  the 128 places shared by all connections only while it is answered, no longer while its reply
+  waits for the client to read it; replies not yet written are bounded per connection (4, so at
+  most 256 MiB over 64 connections). While a new connection waits for one of the 64 places, a
+  connection that has had nothing outstanding for 10 s is closed to make room (NFS clients
+  connect again when they need to). See docs/design.md, "The NFS front end".
 - **`sacdfs-nfs --help`.** The command it shows for mounting by hand on macOS lacked
   `rsize=1048576` and `rdirplus`, which sacdfs-nfs itself mounts with; it now shows the same
   options, and SIGQUIT is named among the signals that stop the server. Errors are printed under
