@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           code=true
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            files=$(git diff --name-only HEAD^1 HEAD)
+            files=$(git diff --no-renames --name-only HEAD^1 HEAD)
             if [ -n "$files" ]; then
               code=false
               while IFS= read -r f; do
