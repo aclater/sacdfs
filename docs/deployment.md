@@ -290,10 +290,10 @@ All settings are environment variables.
 | `SMB_USER` | (none: guest access) | a user name: the share then needs it and `SMB_PASSWORD`, and refuses guests |
 | `SMB_PASSWORD` / `SMB_PASSWORD_FILE` | | the password, or a file holding it (for Docker or Podman secrets) |
 | `SMB_NAME_MAPPING` | `sfm` | how names with characters Windows forbids are shown; see [below](#file-names-over-smb) |
-| `SMB_LOG_LEVEL` | `1` | Samba's `log level` |
-| `SMB_EXTRA_GLOBAL` | | one extra line for smb.conf's `[global]` section (for example `server min protocol = SMB3`) |
+| `SMB_LOG_LEVEL` | `1` | Samba's `log level`: a number from 0 to 99; anything else is ignored with a warning, and `1` is used |
+| `SMB_EXTRA_GLOBAL` | | extra lines for smb.conf's `[global]` section (for example `server min protocol = SMB3`); several lines are taken, one setting per line, ending in LF, CRLF or CR. From a line that opens a section (starts with `[`) on, the value is ignored, with a warning |
 | `NFS_CLIENTS` | `*` | who may mount over NFS: a comma-separated list of hosts, networks (`192.0.2.0/24`) or `*` |
-| `NFS_LOG_LEVEL` | `EVENT` | NFS-Ganesha's log level (`WARN`, `EVENT`, `INFO`, `DEBUG`) |
+| `NFS_LOG_LEVEL` | `EVENT` | NFS-Ganesha's log level: `NULL`, `FATAL`, `MAJ`, `CRIT`, `WARN`, `EVENT`, `INFO`, `DEBUG`, `MID_DEBUG` (or `M_DBG`) or `FULL_DEBUG` (or `F_DBG`), in any case; anything else is ignored with a warning, and `EVENT` is used |
 
 The shares are always read-only. **Guest access** (the default) lets anyone on the network
 read the files; NFS has no passwords (`sec=sys`), so limit it with `NFS_CLIENTS` or a

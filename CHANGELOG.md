@@ -71,6 +71,15 @@ All notable changes to sacdfs are recorded here. The format follows
   `IMAGE: AREA track N: ...` like the other listing lines. The line for a track shown without its
   pause (`--pauses kept`) says that with the pause it overlaps another track or does not fit the
   image; it named only the first cause.
+- **The container ignores log levels it cannot use, and section lines in `SMB_EXTRA_GLOBAL`,
+  with a warning.** `SMB_LOG_LEVEL` takes a number from 0 to 99 and `NFS_LOG_LEVEL` one of
+  NFS-Ganesha's level names (`EVENT`, `INFO`, `DEBUG` ...; docs/deployment.md lists them); for
+  any other value the entry point logs one warning that names the setting and what it takes, and
+  starts with the default. `SMB_EXTRA_GLOBAL` takes several lines for the `[global]` section, ending
+  in LF, CRLF or CR; from a line that opens a section (starts with `[`) on, the value
+  is ignored, with one warning, and the lines before it are kept.
+  The SMB password is removed from the entry point's environment once `smbpasswd` has it, so smbd
+  and NFS-Ganesha start without it.
 
 ### Fixed
 - **`sacdfs-nfs --help`.** The command it shows for mounting by hand on macOS lacked

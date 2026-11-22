@@ -10,6 +10,9 @@ set -euo pipefail
 MNT=/srv/sacd
 log() { printf '%s entrypoint: %s\n' "$(date -u +%FT%TZ)" "$*"; }
 die() { log "error: $*"; exit 1; }
+# A warning about a setting, on the first run only: the entry point runs itself again once with
+# fewer capabilities (SACDFS_CAPS_SET, below), and that run reads the same settings.
+warn_setting() { [ -n "${SACDFS_CAPS_SET:-}" ] || log "warning: $*"; }
 on() { case "${1,,}" in 1 | yes | true | on) return 0 ;; *) return 1 ;; esac; }
 
 # --- sacdfs options ---------------------------------------------------------------------
@@ -61,6 +64,32 @@ MOUNT_TIMEOUT=${SACDFS_MOUNT_TIMEOUT:-300}
 # --- SMB settings -----------------------------------------------------------------------
 SHARE=${SHARE_NAME:-sacd}
 [[ $SHARE =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "SHARE_NAME must be 1 to 64 of A-Z a-z 0-9 . _ -"
+# A log level it doesn't take is ignored with a warning, and the container starts with the default.
+SMB_LEVEL=${SMB_LOG_LEVEL:-1}
+# SMB_EXTRA_GLOBAL: lines for the [global] section, each written indented like the lines around
+# it. A line may end in LF, CRLF or CR; no CR is written. From a line that opens a section ([...])
+# on, the value is ignored with a warning; the lines before it are kept.
+SMB_EXTRA=
+if on "${SMB:-1}"; then
+    if ! [[ $SMB_LEVEL =~ ^[0-9]{1,2}$ ]]; then
+        warn_setting "SMB_LOG_LEVEL takes a number from 0 to 99; ignoring it and using 1"
+        SMB_LEVEL=1
+    fi
+    extra=${SMB_EXTRA_GLOBAL:-}
+    extra=${extra//$'\r\n'/$'\n'}
+    extra=${extra//$'\r'/$'\n'}
+    while [[ $extra == *$'\n' ]]; do extra=${extra%$'\n'}; done
+    first=1
+    while IFS= read -r line; do
+        if [[ $line =~ ^[[:space:]]*\[ ]]; then
+            warn_setting "SMB_EXTRA_GLOBAL takes lines for the [global] section only, such as 'server min protocol = SMB3'; ignoring it from the line that starts a section ([...]) on"
+            break
+        fi
+        if [ "$first" = 1 ]; then SMB_EXTRA=$line; else SMB_EXTRA+=$'\n   '$line; fi
+        first=0
+    done <<<"$extra"
+    unset extra first line
+fi
 write_smb_conf() {
     local access
     if [ -n "${SMB_USER:-}" ]; then
@@ -70,6 +99,8 @@ write_smb_conf() {
         [ -n "$pw" ] || die "SMB_USER needs SMB_PASSWORD or SMB_PASSWORD_FILE"
         id "$SMB_USER" >/dev/null 2>&1 || useradd -M -N -s /sbin/nologin "$SMB_USER"
         printf '%s\n%s\n' "$pw" "$pw" | smbpasswd -s -a "$SMB_USER" >/dev/null
+        # Nothing after this reads the password, and the servers started next don't inherit it.
+        unset SMB_PASSWORD
         access="valid users = $SMB_USER
    guest ok = no"
         log "SMB: share '$SHARE', user '$SMB_USER'"
@@ -107,7 +138,7 @@ write_smb_conf() {
    disable netbios = yes
    smb ports = 445
    # Logs to standard output (smbd --debug-stdout), level from SMB_LOG_LEVEL.
-   log level = ${SMB_LOG_LEVEL:-1}
+   log level = $SMB_LEVEL
    # sacdfs has no extended attributes or DOS attributes: don't ask for them.
    ea support = no
    store dos attributes = no
@@ -126,7 +157,7 @@ write_smb_conf() {
    # The size and free space don't change while mounted: ask sacdfs once a minute, not for
    # every client's volume query (#205).
    dfree cache time = 60
-   ${SMB_EXTRA_GLOBAL:-}
+   $SMB_EXTRA
 
 [$SHARE]
    path = $MNT
@@ -145,6 +176,13 @@ CONF
 }
 
 # --- NFS settings -----------------------------------------------------------------------
+# NFS_LOG_LEVEL: one of the names NFS-Ganesha's Default_Log_Level takes, in any case.
+NFS_LEVEL=${NFS_LOG_LEVEL:-EVENT}
+# Any other value is ignored with a warning, and the container starts with EVENT.
+if on "${NFS:-1}" && ! [[ ${NFS_LEVEL^^} =~ ^(NULL|FATAL|MAJ|CRIT|WARN|EVENT|INFO|DEBUG|MID_DEBUG|M_DBG|FULL_DEBUG|F_DBG)$ ]]; then
+    warn_setting "NFS_LOG_LEVEL takes one of NULL, FATAL, MAJ, CRIT, WARN, EVENT, INFO, DEBUG, MID_DEBUG (or M_DBG), FULL_DEBUG (or F_DBG); ignoring it and using EVENT"
+    NFS_LEVEL=EVENT
+fi
 # Under a memory limit, NFS-Ganesha's cache of entries is kept to what an eighth of the limit holds,
 # at about 2 KiB each. Its default of 100,000 entries takes about 200 MiB of the limit when a client
 # goes through a large library, and sacdfs can't free any of that. No limit: its defaults.
@@ -212,7 +250,7 @@ EXPORT {
     }
 }
 LOG {
-    Default_Log_Level = ${NFS_LOG_LEVEL:-EVENT};
+    Default_Log_Level = $NFS_LEVEL;
     Facility { name = STDOUT; destination = STDOUT; enable = active; }
 }
 CONF
