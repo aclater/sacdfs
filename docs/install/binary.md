@@ -117,7 +117,8 @@ and `nas-compose.yaml`: `sudo sh install.sh --iso-dir ...` in the unpacked folde
 next to it and downloads nothing ([the installer](README.md#the-installer-one-line)). The released
 `install.sh` verifies the files beside it against checksums built into it when the release was
 packed, and uses only verified copies; if one is missing or doesn't match, it uses none of them and
-downloads the release. The
+downloads the release. If the binary there doesn't start on this machine (the x86-64-v3 build on an
+older CPU, say), it says so and downloads the release for this machine instead. The
 installer is also a release asset of its own, `install.sh`, with its `.sha256` and attestation.
 
 **What it needs.** glibc 2.17 or later (0.4.1 and earlier needed 2.28); every release build is

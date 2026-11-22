@@ -237,7 +237,11 @@ can change them, and checks that before it writes anything
   copy against the SHA-256 the release workflow built into it, and uses only those copies. If
   one is missing or doesn't match, it says which, uses none of them and downloads the release
   as the one-liner does. Only a released `install.sh` has these checksums: a copy of
-  `install.sh` from the repository (deploy/ in a clone, or main) always downloads.
+  `install.sh` from the repository (deploy/ in a clone, or main) always downloads. The
+  `install.sh` inside an archive takes that archive's files; the one published on its own
+  takes only the files of the archive it would download for this machine. A local binary
+  that doesn't start here (the x86-64-v3 build on an older CPU, say) is set aside with the
+  other local files, and the release for this machine is downloaded instead of stopping.
 
 *(Checked on a 0.6.4 development build: in the BusyBox and Fedora 44 test containers that CI
 runs (deploy/ci-install-security-steps.sh: refusals, the folder names above, settings files of
