@@ -6,6 +6,7 @@ name: core-portable
 
 on:
   pull_request:
+    paths-ignore: ["**.md"]  # not a required check: a docs-only pull request skips it
   push:
     branches: [main]
 
@@ -37,6 +38,12 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install "$RUST_STABLE" --profile minimal && rustup default "$RUST_STABLE"
+      # On macOS, the cache of sacdfs-nfs.yml's macOS jobs (same runners, a superset of the
+      # build), read only; Windows keeps its own, written by main.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          shared-key: ${{ startsWith(matrix.os, 'macos') && 'macos' || 'core-portable' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && !startsWith(matrix.os, 'macos') }}
       - name: Tests
         run: cargo test --locked --no-fail-fast --lib --test vfs --test corpus --test tags --test verify
       - name: The binary's version
