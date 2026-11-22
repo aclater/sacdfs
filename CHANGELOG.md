@@ -86,6 +86,12 @@ All notable changes to sacdfs are recorded here. The format follows
   and NFS-Ganesha start without it.
 
 ### Fixed
+- **Re-read the disc layout when an image file changes.** An image file replaced while mounted
+  (rsync without `--inplace` and sync tools rename a new copy over it) or rewritten in place now
+  has its TOC bytes read again before anything is read from the new file. The same disc reads on
+  without a break; another disc, another size, or a file whose TOC no longer reads gives I/O
+  errors on the files open on the old disc, and the folder's next listing shows the image as a
+  new one. Reads of unchanged images do no more work than before. See docs/design.md, "Open images".
 - **`sacdfs-nfs --help`.** The command it shows for mounting by hand on macOS lacked
   `rsize=1048576` and `rdirplus`, which sacdfs-nfs itself mounts with; it now shows the same
   options, and SIGQUIT is named among the signals that stop the server. Errors are printed under

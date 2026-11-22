@@ -1872,6 +1872,19 @@ impl Tree {
         }
     }
 
+    /// Whether node `ino`, if it is an image's or an area's directory, still has its image file
+    /// hold its disc ([`Disc::current`]); `true` for any other node, or none.
+    fn image_current(&self, ino: u64) -> bool {
+        let Some(node) = self.loaded(ino) else { return true };
+        match &*node {
+            Node::Dir(d) => match &d.kind {
+                DirKind::Image(disc) | DirKind::Area(disc, _) => disc.current(),
+                _ => true,
+            },
+            _ => true,
+        }
+    }
+
     /// Whether node `ino` exists already.
     fn exists(&self, ino: u64) -> bool {
         self.nodes.read().unwrap_or_else(|p| p.into_inner()).contains_key(&ino)
@@ -2238,6 +2251,17 @@ impl Tree {
             }
             out.push(Entry { name: dedup.unique(name, false), ino, is_dir: true });
         }
+        if prev.is_some() {
+            // An image file now holding another disc (or another length) is opened again as a
+            // new image: what was made from the one before is let go of.
+            let replaced: Vec<u64> = src
+                .images
+                .iter()
+                .map(|p| self.ids.image(p))
+                .filter(|&ino| !self.image_current(ino))
+                .collect();
+            self.forget(dir, replaced.into_iter());
+        }
         // Opening an image reads its master and area TOCs: a few small reads,
         // worth doing in parallel on a slow (network) source.
         let new: Vec<&PathBuf> = src.images.iter().filter(|p| !self.exists(self.ids.image(p))).collect();
@@ -2415,6 +2439,16 @@ impl Tree {
             cx.watch.extend(chain.chain_rejected());
         }
         let sidecars = chain.chain_sidecars();
+        // The image's own entries are kept, unless its file now holds another disc: then
+        // they are let go of, and the image is opened again as a new one.
+        let prev = prev.filter(|p| {
+            let head = &p.entries[..p.head];
+            let current = head.iter().all(|e| self.image_current(e.ino));
+            if !current {
+                self.forget(dir, head.iter().map(|e| e.ino));
+            }
+            current
+        });
         match prev {
             // The image's own entries are kept: its areas were made once.
             Some(p) if p.head > 0 => {
