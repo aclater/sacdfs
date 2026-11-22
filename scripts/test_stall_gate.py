@@ -117,6 +117,8 @@ class Verdict(unittest.TestCase):
         self.assertEqual(sg.name("a/b/vlc-dsf.json"), "vlc-dsf")
         self.assertEqual(sg.name("a/vlc-dsf.json@idle"), "vlc-dsf-idle")
         self.assertEqual(sg.name("a/vlc-dsf.json@probe:20"), "vlc-dsf-probe20")
+        self.assertEqual(sg.name("a/vlc-dsf.json@list:20"), "vlc-dsf-list20")
+        self.assertEqual(sg.split("a/vlc-dsf.json@list:3"), ("a/vlc-dsf.json", "list:3"))
         self.assertEqual(sg.name("t/x.trace.gz:7"), "x:7")
 
 

@@ -1801,8 +1801,10 @@ player starting a track wait or stall clearly longer than base did, on a CPU abo
   player opens its track only after re-reading five files' heads (`play_after_heads`), as the
   #456 player does from its second start on. `zidoo-turns-warm-dsf.json@probe:20` first makes only
   the probe the player makes when it lists the album (the profile's `browse` reads), then starts
-  20 s later on the same mount: the first start after a mount (#510). Builds alternate, the order
-  swaps every round, 5 rounds.
+  20 s later on the same mount: the first start after a mount (#510).
+  `zidoo-start-dsf.json@list:20` only lists the track's folder and starts 20 s later with no probe,
+  as in the reporter's `-vv` log of 0.7.2 (#456; profile from `session-456-f`, anonymised). Builds
+  alternate, the order swaps every round, 5 rounds.
 - **What fails it:** for each scenario, head's median over the rounds, against the worst base had
   in any round, beyond both margins: the playing file's worst read in its first 15 s (1.25 times
   and 250 ms), the time playback stalled in them (1.25 times and 1 s), the audio the player held

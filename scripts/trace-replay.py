@@ -42,7 +42,8 @@ the playing handle opens once N files' heads are re-read, as the #456 player doe
 start on, so slow re-reads hold up the track itself; `rescan_ms` then counts the re-reads from the
 probes on. `play_open_s` is when the playing handle opened, after the probes began. With
 `--probe-only`, only the probe a player makes when it lists the album is acted out: the profile's
-`browse` reads, or its first probe, on one handle. Offsets are
+`browse` reads, or its first probe, on one handle. With `--list-only`, only the listing of the
+folder of the file it would play, as a player shows the album before it plays (#456). Offsets are
 kept as in a replay: header reads in the header, audio reads at the same byte of the audio (`a`),
 tail reads at the same distance from the end (`e`).
 """
@@ -447,6 +448,20 @@ def probe_only(prof, mount):
     return {"probe_s": round(time.monotonic() - start, 3)}
 
 
+def list_only(prof, mount):
+    """Lists the folder of the file the profile would play, and looks up each of its entries, as a
+    player does when it shows the album."""
+    want = (prof["file"]["channels"], prof["file"]["ext"])
+    local = local_files(mount)
+    if not local[want]:
+        raise SystemExit(f"no {want[0]}ch .{want[1]} file under the mount")
+    d = os.path.dirname(max(local[want], key=lambda c: c[1])[0])
+    names = os.listdir(d)
+    for f in names:
+        os.stat(os.path.join(d, f))
+    return {"listed": len(names)}
+
+
 def act(prof, mount, secs, prebuf):
     """Acts out a profile on a mount; returns the playing handle's numbers, and the rescan's."""
     want = (prof["file"]["channels"], prof["file"]["ext"])
@@ -579,6 +594,7 @@ def main():
     ap.add_argument("--profile", action="store_true", help="print R's player profile (JSON) and stop")
     ap.add_argument("--player", metavar="PROFILE", help="act out the player of a profile on MOUNT")
     ap.add_argument("--probe-only", action="store_true", help="with --player: only the probe at the album's listing")
+    ap.add_argument("--list-only", action="store_true", help="with --player: only the listing of the album's folder")
     a = ap.parse_args()
     if a.player:
         mount = a.mount or a.trace
@@ -587,6 +603,10 @@ def main():
         with open(a.player) as f:
             prof = json.load(f)
         out = {"player": prof.get("name", os.path.basename(a.player)), "secs": a.secs}
+        if a.list_only:
+            out["list"] = list_only(prof, mount)
+            print(json.dumps(out))
+            return
         if a.probe_only:
             out["probe"] = probe_only(prof, mount)
             print(json.dumps(out))

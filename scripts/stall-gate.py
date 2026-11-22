@@ -11,7 +11,9 @@ SCENARIO is a profile (tests/fixtures/players/NAME.json, acted out by
 the profile out twice on one mount, IDLE_S apart, and measures the second: a start after the idle
 release, with the kept heads (#510; #456 round 5). PROFILE@probe:D first only probes the track, as
 a player does when it lists the album (the profile's `browse` probe), and starts playback D seconds
-later on the same mount: the first start after a mount (#510). Each round mounts
+later on the same mount: the first start after a mount (#510). PROFILE@list:D first only lists the
+track's folder, as a player does when it shows the album, and starts playback D seconds later on
+the same mount, with no probe before it (#456, 0.7.2's log). Each round mounts
 SOURCE afresh for each scenario and build (`--threads 4 --cache-mb 64`, no index cache), with the
 builds alternating and the order swapping every round. sacdfs runs on CPUS under a CPU quota,
 the client on the other CPUs. The quota is either given (--quota) or found from base (--target):
@@ -104,9 +106,9 @@ def client(a):
 
 
 def split(scenario):
-    """A scenario's profile or trace, and its suffix: "idle", "probe:D" or None."""
+    """A scenario's profile or trace, and its suffix: "idle", "probe:D", "list:D" or None."""
     base, at, suffix = scenario.rpartition("@")
-    if at and (suffix == "idle" or suffix.startswith("probe:")):
+    if at and (suffix == "idle" or suffix.startswith(("probe:", "list:"))):
         return base, suffix
     return scenario, None
 
@@ -116,9 +118,11 @@ def run(a, binary, quota, scenario, label=None):
     scenario, suffix = split(scenario)
     idle = suffix == "idle"
     with mount as m:
-        if suffix and suffix.startswith("probe:"):
-            # The player probed the track when it listed the album; playback starts D s later.
-            probe = subprocess.run(client(a) + ["--player", scenario, m, "--probe-only"],
+        if suffix and suffix.startswith(("probe:", "list:")):
+            # The player listed the album (and probed the track, for probe:); playback starts D s
+            # later.
+            only = "--probe-only" if suffix.startswith("probe:") else "--list-only"
+            probe = subprocess.run(client(a) + ["--player", scenario, m, only],
                                    capture_output=True, text=True, check=False)
             if probe.returncode:
                 sys.exit(f"{scenario} with {binary} failed:\n{probe.stdout}{probe.stderr}")

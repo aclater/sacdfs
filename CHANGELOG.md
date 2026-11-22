@@ -6,6 +6,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **First start on a slow NAS right after opening the album.** On a machine that decodes slower
+  than players' start-up bursts, listing a folder of track files now decodes the first 1.5 MiB of
+  each file's audio while the mount is idle, as a probe of one file already did. A player that
+  re-reads every file's head when it starts a track (the Zidoo of #456) no longer stutters for
+  the first seconds when playback starts soon after the folder was opened. Any read stops it,
+  and listing another folder moves it there.
+
 ## [0.7.2] - 2026-11-23
 
 This release contains security fixes; upgrading is recommended.

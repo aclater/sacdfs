@@ -1,0 +1,105 @@
+{
+ "name": "zidoo-start-dsf",
+ "note": "The network player of #456 starting a 6-channel DSF track straight after it showed the album, first start after a mount (0.7.2's -vv log, #456): no probe while it showed the album; on play, the first file's head and tail, two probes of the track, the heads and tails of the 3rd and 4th files, then the playing handle from where the probes stopped, taking turns with re-reads of the remaining heads and tails: it sends its track's next read when a re-read is answered. Rate 3.5 and lead 4 s are the player's demand as zidoo-turns-dsf's; the trace's own (1.0, 0.6) are those of a CPU too slow for it. play_after_heads is set by hand (the 1st, 3rd and 4th files' heads came before the playing handle). Run it as zidoo-start-dsf.json@list:D in the stall gate: the album's folder listed D s before the start.",
+ "source": "scripts/trace-replay.py tests/fixtures/traces/session-456-f.trace.gz --play 28 --profile --before 4 --secs 15",
+ "file": {
+  "ext": "dsf",
+  "channels": 6
+ },
+ "probes": [
+  [
+   [
+    "h",
+    0,
+    131072
+   ],
+   [
+    "e",
+    -408,
+    4096
+   ],
+   [
+    "a",
+    130980,
+    131072
+   ],
+   [
+    "a",
+    262052,
+    131072
+   ],
+   [
+    "a",
+    393124,
+    131072
+   ],
+   [
+    "a",
+    1179556,
+    131072
+   ],
+   [
+    "a",
+    1310628,
+    131072
+   ]
+  ],
+  [
+   [
+    "a",
+    524196,
+    131072
+   ],
+   [
+    "a",
+    655268,
+    131072
+   ],
+   [
+    "a",
+    786340,
+    131072
+   ],
+   [
+    "a",
+    917412,
+    131072
+   ],
+   [
+    "a",
+    1048484,
+    131072
+   ],
+   [
+    "a",
+    1441700,
+    131072
+   ]
+  ]
+ ],
+ "play_after_s": 1.57,
+ "play_after_heads": 3,
+ "play": {
+  "from": [
+   "a",
+   1572772
+  ],
+  "read": 131072,
+  "rate": 3.5,
+  "lead": 4.0
+ },
+ "rescan": {
+  "files": 11,
+  "exts": [
+   "dsf"
+  ],
+  "head": {
+   "dsf": 1572772
+  },
+  "tail": 4096,
+  "read": 131072,
+  "start_s": -1.87,
+  "turns": true
+ },
+ "trace_audio": 92
+}
