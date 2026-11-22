@@ -34,7 +34,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Print each image's disc key: its tags file is DIR/<key>.toml.
+    /// Print each image's disc key: its tags file is DIR/KEY.toml.
     Key {
         /// The tags directory, to print the tags file's path and whether it exists.
         #[arg(long, value_name = "DIR")]
@@ -142,21 +142,17 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
                 no_suffix: no_multichannel_album_suffix,
                 only_wanting: false,
             };
-            let mut session = match acoustid {
-                false => None,
-                true => match acoustid_session(
-                    &tags,
-                    acoustid_key_file.as_deref(),
-                    acoustid_budget,
-                    max_load,
-                    fpcalc,
-                ) {
+            let mut session = if acoustid {
+                match acoustid_session(&tags, acoustid_key_file.as_deref(), acoustid_budget, max_load, fpcalc)
+                {
                     Ok(s) => Some(s),
                     Err(e) => {
                         eprintln!("sacdfs tags: {}", safe_file::printable(&e));
                         return ExitCode::FAILURE;
                     }
-                },
+                }
+            } else {
+                None
             };
             let mut client = lookup::Client::new(lookup::Http::new());
             let s = lookup::fetch_with(&tags, &images, options, &mut client, session.as_mut(), |line| {
@@ -422,7 +418,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
     // Where this disc's "not kept" lines start.
     let listed = sum.not_kept.len();
     for row in rows {
-        let slot = if row.area == "Multichannel" { Slot::Multichannel } else { Slot::TwoChannel };
+        let slot = if row.area == crate::tree::MULTICHANNEL { Slot::Multichannel } else { Slot::TwoChannel };
         let Some(number) = row.track else { continue };
         let Some(i) = disc.toc().areas.iter().position(|a| a.slot == slot) else { continue };
         let area = &disc.toc().areas[i];
@@ -703,8 +699,6 @@ fn apic(b: &[u8]) -> Option<(u8, Vec<u8>)> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
 
     fn f(pairs: &[(&str, &str)]) -> Fields {

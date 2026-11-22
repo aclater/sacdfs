@@ -2,9 +2,10 @@
 
 //! The report of `sacdfs verify`: one tab-separated row per file, with a header row.
 //!
-//! Fields are escaped so that any path fits on one line: `\\`, `\\t`, `\\n`, `\\r`, and
-//! `\\xNN` for bytes of a path that are not UTF-8 and for the bytes of other control characters,
-//! format characters (bidi controls and the like) and U+2028/U+2029 (#448).
+//! Fields are escaped so that any path fits on one line: a backslash is written as two, a tab,
+//! line feed and carriage return as a backslash and `t`, `n` or `r`, and a backslash, `x` and two
+//! hex digits stand for each byte of a path that is not UTF-8 and for the bytes of other control
+//! characters, format characters (bidi controls and the like) and U+2028/U+2029 (#448).
 //!
 //! **A report under its own name is a finished run's.** Rows are written as they are made to
 //! `FILE.partial`, so an interrupted run leaves the rows it finished (which `--resume` keeps)
@@ -46,9 +47,22 @@ pub enum Pauses {
 }
 
 impl Pauses {
-    /// The mode of `--pauses kept` when `kept`.
-    pub fn of(kept: bool) -> Pauses {
-        if kept { Pauses::Kept } else { Pauses::Dropped }
+    /// The mode `--pauses` names: `kept`, or the default for anything else.
+    pub fn of_option(value: &str) -> Pauses {
+        if value == Pauses::Kept.as_str() { Pauses::Kept } else { Pauses::Dropped }
+    }
+
+    /// The other mode.
+    pub fn other(self) -> Pauses {
+        match self {
+            Pauses::Dropped => Pauses::Kept,
+            Pauses::Kept => Pauses::Dropped,
+        }
+    }
+
+    /// Whether tracks are served with their pauses.
+    pub fn kept(self) -> bool {
+        self == Pauses::Kept
     }
 
     /// Its name, as `--pauses` takes it.
@@ -119,6 +133,18 @@ impl Status {
     /// Whether sacdfs serves the extract's audio (the files whose deletion is safe for audio).
     pub fn is_match(self) -> bool {
         matches!(self, Status::Identical | Status::IdenticalPause | Status::IdenticalChain)
+    }
+
+    /// Whether the file found no track of its own, so that it may still match as one file of
+    /// a gapless chain (#442).
+    pub fn chain_may_match(self) -> bool {
+        matches!(self, Status::NoMatch | Status::Different)
+    }
+
+    /// Whether a check of gapless chains may give the file another row: it found no track of
+    /// its own, or matched as part of a chain (#442).
+    pub fn chain_may_change(self) -> bool {
+        self.chain_may_match() || self == Status::IdenticalChain
     }
 
     fn parse(s: &str) -> Option<Status> {
@@ -267,39 +293,23 @@ pub fn unescape(s: &str) -> Vec<u8> {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'\\' {
-            match b.get(i + 1) {
-                Some(b'\\') => {
-                    out.push(b'\\');
-                    i += 2;
-                    continue;
-                }
-                Some(b't') => {
-                    out.push(b'\t');
-                    i += 2;
-                    continue;
-                }
-                Some(b'n') => {
-                    out.push(b'\n');
-                    i += 2;
-                    continue;
-                }
-                Some(b'r') => {
-                    out.push(b'\r');
-                    i += 2;
-                    continue;
-                }
-                Some(b'x') => {
-                    if let Some(v) = b
-                        .get(i + 2..i + 4)
-                        .and_then(|h| std::str::from_utf8(h).ok())
-                        .and_then(|h| u8::from_str_radix(h, 16).ok())
-                    {
-                        out.push(v);
-                        i += 4;
-                        continue;
-                    }
-                }
-                _ => {}
+            // The byte an escape stands for, and the escape's length.
+            let escaped = match b.get(i + 1) {
+                Some(b'\\') => Some((b'\\', 2)),
+                Some(b't') => Some((b'\t', 2)),
+                Some(b'n') => Some((b'\n', 2)),
+                Some(b'r') => Some((b'\r', 2)),
+                Some(b'x') => b
+                    .get(i + 2..i + 4)
+                    .and_then(|h| std::str::from_utf8(h).ok())
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+                    .map(|v| (v, 4)),
+                _ => None,
+            };
+            if let Some((byte, len)) = escaped {
+                out.push(byte);
+                i += len;
+                continue;
             }
         }
         out.push(b[i]);

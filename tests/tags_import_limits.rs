@@ -5,7 +5,7 @@
 //! written but listed as not kept, with exit status 2, so that their extracts are kept. And
 //! everything it writes is served through the mount.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "a test fails by panicking")]
 
 mod common;
 

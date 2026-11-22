@@ -135,6 +135,13 @@ impl Candidate {
         &self.file.disc.path
     }
 
+    /// Names this candidate's image, area and track in `row`.
+    fn fill(&self, row: &mut Row) {
+        row.image = Some(self.image().to_owned());
+        row.area = self.area.clone();
+        row.track = Some(self.file.number);
+    }
+
     /// The SHA-256 of the served file's canonical audio, read once.
     fn digest(&self, engine: &Engine, read: &AtomicU64) -> Result<[u8; 32], String> {
         self.digest
@@ -446,8 +453,8 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
     if shape.is_empty() {
         // No track has its length: the extract may be a track with pauses kept, or a track cut
         // short (#93).
-        if with_pauses(&mut row, &audio, &mut src, &same_ch, ctx) {
-            return row;
+        if let Some((status, reason)) = with_pauses(&mut row, &audio, &mut src, &same_ch, ctx) {
+            return row.with(status, reason);
         }
         let why = match same_ch.iter().min_by_key(|c| c.file.layout.samples().abs_diff(audio.samples)) {
             None => format!("no area of the images in {where_} has {} channels", audio.channels),
@@ -503,25 +510,24 @@ fn check(item: &Item, ctx: &Ctx<'_>) -> Row {
             (Status::Different, c, why)
         }
     };
-    row.image = Some(cand.image().to_owned());
-    row.area = cand.area.clone();
-    row.track = Some(cand.file.number);
+    cand.fill(&mut row);
     row.loses = losses(&audio, &mut src, cand.tag(ctx.engine), cand.area_tracks);
     row.with(status, reason)
 }
 
 /// An extract of the right channel count whose length is no track's (#93): the served track
-/// inside it with pauses around it, or inside the served track (a track cut short). `Ok` is
-/// the row finished and true: IDENTICAL-PAUSE if everything beyond the common audio is silence, else
-/// NO-MATCH with the length and level of what is not; false leaves the row as it was when no track of
-/// about the extract's length is in it or contains it.
+/// inside it with pauses around it, or inside the served track (a track cut short). `Some` is
+/// the row's status and reason, the rest of the row filled in: IDENTICAL-PAUSE if everything
+/// beyond the common audio is silence, else NO-MATCH with the length and level of what is not.
+/// `None` leaves the row as it was when no track of about the extract's length is in it or
+/// contains it.
 fn with_pauses(
     row: &mut Row,
     audio: &container::Audio,
     src: &mut FileSource,
     same_ch: &[&Arc<Candidate>],
     ctx: &Ctx<'_>,
-) -> bool {
+) -> Option<(Status, String)> {
     let max_extra = pause::MAX_EXTRA_SECS * u64::from(SACD_RATE);
     let mut near: Vec<&Arc<Candidate>> = same_ch
         .iter()
@@ -548,7 +554,7 @@ fn with_pauses(
                 Some(d) => d,
                 None => match audio.digest(src, &ctx.read) {
                     Ok(d) => *extract_digest.insert(d),
-                    Err(p) => return decided(row, Status::Error, problem_text(p)),
+                    Err(p) => return Some((Status::Error, problem_text(p))),
                 },
             };
             pause::locate(&mut One::new(&served, &mut tsrc), &mut One::new(audio, src), &ed, &ctx.read)
@@ -559,47 +565,32 @@ fn with_pauses(
             Ok(None) => continue,
             Err(p) => {
                 // The extract is unreadable (served tracks read fine or fail alike above).
-                return decided(row, Status::Error, problem_text(p));
+                return Some((Status::Error, problem_text(p)));
             }
         };
-        if f.head.is_silence() && f.tail.is_silence() {
+        if f.is_silence() {
             row.sha256 = id3::hex(&digest);
-            row.image = Some(c.image().to_owned());
-            row.area = c.area.clone();
-            row.track = Some(c.file.number);
+            c.fill(row);
             row.loses = losses(audio, src, c.tag(ctx.engine), c.area_tracks);
             let reason = pause_reason(c, &f, extract_longer);
-            return decided(row, Status::IdenticalPause, reason);
+            return Some((Status::IdenticalPause, reason));
         }
         audio_found.get_or_insert((c, f));
     }
-    let Some((c, f)) = audio_found else { return false };
-    row.image = Some(c.image().to_owned());
-    row.area = c.area.clone();
-    row.track = Some(c.file.number);
+    let (c, f) = audio_found?;
+    c.fill(row);
     let longer = audio.samples > c.file.layout.samples();
     let reason = format!(
         "{}; that is not silence, so {}",
         pause_reason(c, &f, longer),
         if longer { "deleting the extract would lose it" } else { "the extract lacks audio sacdfs serves" }
     );
-    decided(row, Status::NoMatch, reason)
-}
-
-fn decided(row: &mut Row, status: Status, reason: String) -> bool {
-    row.status = status;
-    row.reason = reason;
-    true
+    Some((Status::NoMatch, reason))
 }
 
 /// "holds track 3 of Stereo (image) plus 2.350 s of digital silence before it and ...".
 fn pause_reason(c: &Candidate, f: &pause::Found, extract_longer: bool) -> String {
-    let parts: Vec<String> = [("before", &f.head), ("after", &f.tail)]
-        .iter()
-        .filter(|(_, r)| r.samples > 0)
-        .map(|(where_, r)| format!("{} {where_} it", r.describe()))
-        .collect();
-    let extras = parts.join(" and ");
+    let extras = f.around("it");
     let track = format!("{} track {} of {}", c.area, c.file.number, c.image().display());
     if extract_longer {
         format!("the extract holds {track} plus {extras}")
@@ -821,7 +812,7 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
     };
     // A row checked with the other `--pauses`, or by a version that didn't say which (#479), is
     // checked again: the mode decides what IDENTICAL means.
-    let mode = report::Pauses::of(args.pauses == "kept");
+    let mode = report::Pauses::of_option(&args.pauses);
     let unchanged = |path: &Path, meta: &fs::Metadata, mtime: &str| {
         earlier.get(path).filter(|r| {
             r.bytes == meta.len() && r.mtime == mtime && r.status != Status::Error && r.pauses == Some(mode)
@@ -834,10 +825,8 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         .filter(|(p, k, m)| *k == ExtractKind::Dsd && unchanged(p, m, &mtime_text(m)).is_none())
         .filter_map(|(p, _, _)| p.parent())
         .collect();
-    let chain_may_change = |r: &Row| {
-        matches!(r.status, Status::NoMatch | Status::Different | Status::IdenticalChain)
-            && r.path.parent().is_some_and(|d| changed_dirs.contains(d))
-    };
+    let chain_may_change =
+        |r: &Row| r.status.chain_may_change() && r.path.parent().is_some_and(|d| changed_dirs.contains(d));
     let mut kept = Vec::new();
     let mut items = Vec::new();
     for (path, kind, meta) in &found {
@@ -856,7 +845,7 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
     let tree = Tree::with_options(
         scanned.clone(),
         Tuning::default(),
-        Output { pauses_kept: args.pauses == "kept", ..Output::dsf_only() },
+        Output { pauses_kept: mode.kept(), ..Output::dsf_only() },
     );
 
     // The images of every folder needed, opened up front, on this thread: a worker never
@@ -912,7 +901,7 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
                         };
                         row.pauses = Some(mode);
                         // A row a chain may change waits for the chains (#442).
-                        if !matches!(row.status, Status::NoMatch | Status::Different) {
+                        if !row.status.chain_may_match() {
                             let mut w = out.lock().unwrap_or_else(|p| p.into_inner());
                             if let Err(e) = w.row(&row) {
                                 write_err.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert(e);
@@ -950,17 +939,14 @@ fn run_with(args: &Args, check: &(dyn Fn(&Item, &Ctx<'_>) -> Row + Sync)) -> io:
         fresh,
         &item_folders,
         &ctx,
-        &chain::OtherMode::new(&scanned, &root, args.pauses == "kept"),
+        &chain::OtherMode::new(&scanned, &root, mode),
         workers,
     );
     for r in &mut rows {
         r.pauses = Some(mode);
     }
     let mut out = out.into_inner().unwrap_or_else(|p| p.into_inner());
-    for r in rows[..fresh]
-        .iter()
-        .filter(|r| matches!(r.status, Status::NoMatch | Status::Different | Status::IdenticalChain))
-    {
+    for r in rows[..fresh].iter().filter(|r| r.status.chain_may_change()) {
         out.row(r)?;
     }
     rows.sort_by(|a, b| a.path.cmp(&b.path));
