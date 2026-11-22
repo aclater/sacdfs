@@ -7,9 +7,11 @@
 //! no root for a folder the user owns. On Linux, mounting NFS needs root.
 //!
 //! **A mount left behind** (the server killed with SIGKILL, or an unmount that failed) points
-//! at a port nothing answers on: reads fail after the `soft` timeout. Whoever then listens on
-//! that port answers for the mount. So the mount is always `nosuid,nodev,noexec`, whatever
-//! `-o` says, and root's default port is below 1024, where no other user can listen.
+//! at a port nothing answers on: reads fail after the `soft` timeout on Linux, and on macOS
+//! (`hard,deadtimeout=60`) after about a minute, when macOS unmounts the folder itself.
+//! Whoever listens on that port before then answers for the mount. So the mount is always
+//! `nosuid,nodev,noexec`, whatever `-o` says, and root's default port is below 1024, where no
+//! other user can listen.
 
 use std::io::{self, Read};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -32,8 +34,10 @@ pub const ROOT_PORT: u16 = 1007;
 
 /// The default port of user `uid`: one per user, so that two users of one Mac each get their
 /// own server without choosing a port, and the same one on every run, so that a restarted
-/// server is found again by the mount of the one before.
+/// server is found again by the mount of the one before. Users whose IDs differ by a multiple
+/// of 10,000 share a port: the second to start is told to choose one with `--port`.
 pub fn default_port(uid: u32) -> u16 {
+    // `uid % 10_000` is below 10,000: it fits in a u16, and the sum stays below 30,000.
     if uid == 0 { ROOT_PORT } else { PORT_BASE + (uid % 10_000) as u16 }
 }
 
@@ -74,6 +78,14 @@ const REFUSED: [&str; 4] = ["rw", "suid", "dev", "exec"];
 /// - `rsize=1048576`: reads as large as sacdfs answers ([`crate::vfs::MAX_READ`]);
 /// - `rdirplus`: listings with attributes (READDIRPLUS), one call per page instead of one
 ///   per entry.
+///
+/// Linux:
+/// - `mountproto=tcp`: the MOUNT call goes over TCP too, to the same port;
+/// - `nolock`: no lock manager is asked (the server has none); locks stay on the client;
+/// - `soft,timeo=10,retrans=30`: a call that gets no answer is sent again, first after 1 s
+///   (`timeo` counts tenths of a second), and fails after 30 tries (`retrans`), so a read
+///   waits while the server restarts but not for good for one that is gone. How long the
+///   30 tries take in all has not been measured.
 pub fn mount_options(port: u16, extra: &[String]) -> io::Result<Vec<String>> {
     if let Some(bad) = extra.iter().find(|e| REFUSED.contains(&e.trim().to_ascii_lowercase().as_str())) {
         return Err(io::Error::new(
@@ -227,15 +239,29 @@ struct Mounted<'a> {
     dev: u64,
 }
 
+/// Why [`unmount`] did not unmount.
+#[derive(Debug)]
+enum UnmountError {
+    /// The path was read and is on another device: it is not the mount made, and nothing
+    /// was tried.
+    NotOurs(io::Error),
+    /// The path could not be read, as when nothing answers for the mount any more: nothing
+    /// was tried, and the mount may still be there.
+    Unreadable(io::Error),
+    /// The plain and the forced unmount both failed: the mount is still there.
+    Failed(io::Error),
+}
+
 /// Unmounts `m`: a plain unmount (a few tries: a file closed just now keeps the mount busy for
-/// a moment), then a forced one. Nothing if the path is no longer this mount.
-fn unmount(m: Mounted<'_>) -> io::Result<()> {
-    let dev = std::fs::metadata(m.at).map(|x| x.dev());
-    if dev.as_ref().ok() != Some(&m.dev) {
-        return Err(io::Error::other(format!(
-            "{} is no longer this mount: not unmounting it",
-            m.at.display()
-        )));
+/// a moment), then a forced one. An error, and nothing unmounted, if the path is not seen to
+/// be this mount: it is on another device, or cannot be read.
+fn unmount(m: Mounted<'_>) -> Result<(), UnmountError> {
+    let not_this =
+        || io::Error::other(format!("{} is no longer this mount: not unmounting it", m.at.display()));
+    match std::fs::metadata(m.at).map(|x| x.dev()) {
+        Ok(dev) if dev == m.dev => {}
+        Ok(_) => return Err(UnmountError::NotOurs(not_this())),
+        Err(_) => return Err(UnmountError::Unreadable(not_this())),
     }
     let mut last = None;
     for i in 0..3 {
@@ -254,7 +280,101 @@ fn unmount(m: Mounted<'_>) -> io::Result<()> {
     }
     let mut c = umount_program();
     c.arg("-f").arg(m.at);
-    run_command(c, "umount -f", UMOUNT_TIMEOUT)
+    run_command(c, "umount -f", UMOUNT_TIMEOUT).map_err(UnmountError::Failed)
+}
+
+/// [`unmount`], with its outcome logged. A mount that is or may be still there is said to
+/// need unmounting by hand; a folder seen to be another mount is not.
+fn unmount_and_log(m: Mounted<'_>) -> io::Result<()> {
+    match unmount(m) {
+        Ok(()) => {
+            log::info!("unmounted {}", m.at.display());
+            Ok(())
+        }
+        Err(UnmountError::Failed(e) | UnmountError::Unreadable(e)) => {
+            log::error!("{e}: unmount {} by hand", m.at.display());
+            Err(e)
+        }
+        Err(UnmountError::NotOurs(e)) => {
+            log::error!("{e}");
+            Err(e)
+        }
+    }
+}
+
+/// The runtime's threads. They decode calls and frame replies; reads are done by the core's
+/// own threads, and a call waiting for the core holds none of these (`ask` in the parent module).
+const RUNTIME_THREADS: usize = 4;
+
+/// How long the runtime may take to end its tasks once the server has stopped.
+const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
+
+/// Runs `f` on the runtime's blocking pool: for the system commands, which wait.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> io::Result<T> + Send + 'static) -> io::Result<T> {
+    tokio::task::spawn_blocking(f).await.map_err(io::Error::other).and_then(|r| r)
+}
+
+/// The signals that stop the server.
+struct StopSignals {
+    term: tokio::signal::unix::Signal,
+    int: tokio::signal::unix::Signal,
+    hup: tokio::signal::unix::Signal,
+    quit: tokio::signal::unix::Signal,
+}
+
+impl StopSignals {
+    fn new() -> io::Result<StopSignals> {
+        use tokio::signal::unix::{SignalKind, signal};
+        Ok(StopSignals {
+            term: signal(SignalKind::terminate())?,
+            int: signal(SignalKind::interrupt())?,
+            hup: signal(SignalKind::hangup())?,
+            quit: signal(SignalKind::quit())?,
+        })
+    }
+
+    /// Waits for the first of them, and logs which it was.
+    async fn recv(&mut self) {
+        let name = tokio::select! {
+            _ = self.term.recv() => "SIGTERM",
+            _ = self.int.recv() => "SIGINT",
+            _ = self.hup.recv() => "SIGHUP",
+            _ = self.quit.recv() => "SIGQUIT",
+        };
+        log::info!("{name}: stopping");
+    }
+}
+
+/// Listens on `addr`, with a hint in the error if the port is taken.
+async fn listen(addr: SocketAddr, front: NfsFront) -> io::Result<NFSTcpListener<NfsFront>> {
+    NFSTcpListener::bind(addr, front).await.map_err(|e| {
+        let hint = if e.kind() == io::ErrorKind::AddrInUse {
+            " (another sacdfs-nfs, or another program, has it: choose another with --port)"
+        } else {
+            ""
+        };
+        io::Error::new(e.kind(), format!("cannot listen on {addr}: {e}{hint}"))
+    })
+}
+
+/// Mounts the server listening on `bound` as `m` says. The mount's device number, to
+/// recognise it when unmounting; `None` if it cannot be read (the mount is then left at the
+/// end).
+async fn mount_now(m: &Mount, bound: SocketAddr) -> io::Result<Option<u64>> {
+    let c = mount_command(bound, &m.at, &m.extra)?;
+    log::debug!("mounting: {c:?}");
+    blocking(move || run_command(c, "mount", MOUNT_TIMEOUT))
+        .await
+        .map_err(|e| io::Error::new(e.kind(), format!("cannot mount on {}: {e}", m.at.display())))?;
+    let dev = match std::fs::metadata(&m.at).map(|x| x.dev()) {
+        Ok(dev) => Some(dev),
+        Err(e) => {
+            log::warn!("{}: {e}: it will not be unmounted at the end", m.at.display());
+            None
+        }
+    };
+    log::info!("mounted on {}", m.at.display());
+    Ok(dev)
 }
 
 /// Serves `front` on `addr` until a stop signal, mounting it first if `mount` says so;
@@ -271,26 +391,15 @@ pub fn run(
         mount_options(addr.port(), &m.extra)?;
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
+        .worker_threads(RUNTIME_THREADS)
         .thread_name("sacdfs-nfs")
         .enable_all()
         .build()?;
     let closer = front.clone();
     let result = runtime.block_on(async move {
-        use tokio::signal::unix::{SignalKind, signal};
         // Before listening: a signal from then on stops the server cleanly.
-        let mut term = signal(SignalKind::terminate())?;
-        let mut int = signal(SignalKind::interrupt())?;
-        let mut hup = signal(SignalKind::hangup())?;
-        let mut quit = signal(SignalKind::quit())?;
-        let listener = NFSTcpListener::bind(addr, front.clone()).await.map_err(|e| {
-            let hint = if e.kind() == io::ErrorKind::AddrInUse {
-                " (another sacdfs-nfs, or another program, has it: choose another with --port)"
-            } else {
-                ""
-            };
-            io::Error::new(e.kind(), format!("cannot listen on {addr}: {e}{hint}"))
-        })?;
+        let mut stop = StopSignals::new()?;
+        let listener = listen(addr, front.clone()).await?;
         let bound = listener.local_addr()?;
         if !bound.ip().is_loopback() {
             log::warn!(
@@ -300,55 +409,38 @@ pub fn run(
         let idle = front.clone();
         tokio::spawn(async move {
             loop {
+                // Often enough that a file is closed within a quarter over its idle time.
                 tokio::time::sleep(super::IDLE / 4).await;
                 idle.close_idle();
             }
         });
         let mut server = tokio::spawn(async move { listener.handle_forever().await });
-        let mut mounted = None;
+        let mut mounted_dev = None;
         if let Some(m) = &mount {
-            let c = mount_command(bound, &m.at, &m.extra)?;
-            log::debug!("mounting: {c:?}");
-            let made = tokio::task::spawn_blocking(move || run_command(c, "mount", MOUNT_TIMEOUT))
-                .await
-                .map_err(io::Error::other)
-                .and_then(|r| r);
-            if let Err(e) = made {
-                server.abort();
-                return Err(io::Error::new(e.kind(), format!("cannot mount on {}: {e}", m.at.display())));
+            match mount_now(m, bound).await {
+                Ok(dev) => mounted_dev = dev,
+                Err(e) => {
+                    server.abort();
+                    return Err(e);
+                }
             }
-            let dev = std::fs::metadata(&m.at).map(|x| x.dev());
-            match dev {
-                Ok(dev) => mounted = Some(dev),
-                Err(e) => log::warn!("{}: {e}: it will not be unmounted at the end", m.at.display()),
-            }
-            log::info!("mounted on {}", m.at.display());
         }
         ready(bound);
         let served: io::Result<()> = tokio::select! {
-            _ = term.recv() => { log::info!("SIGTERM: stopping"); Ok(()) }
-            _ = int.recv() => { log::info!("SIGINT: stopping"); Ok(()) }
-            _ = hup.recv() => { log::info!("SIGHUP: stopping"); Ok(()) }
-            _ = quit.recv() => { log::info!("SIGQUIT: stopping"); Ok(()) }
+            () = stop.recv() => Ok(()),
             r = &mut server => Err(match r {
                 Ok(Err(e)) => e,
                 Ok(Ok(())) => io::Error::other("the server stopped"),
                 Err(e) => io::Error::other(e),
             }),
         };
-        // Every way out unmounts what was mounted, while the server still answers.
-        let unmounted = match (&mount, mounted) {
+        // Every way out unmounts what was mounted. After a signal the server still answers
+        // while it does; if the server itself ended, nothing answers the client's last calls
+        // and the unmount may need its forced step.
+        let unmounted = match (&mount, mounted_dev) {
             (Some(m), Some(dev)) => {
                 let at = m.at.clone();
-                let r = tokio::task::spawn_blocking(move || unmount(Mounted { at: &at, dev }))
-                    .await
-                    .map_err(io::Error::other)
-                    .and_then(|r| r);
-                match &r {
-                    Ok(()) => log::info!("unmounted {}", m.at.display()),
-                    Err(e) => log::error!("{e}: unmount {} by hand", m.at.display()),
-                }
-                r
+                blocking(move || unmount_and_log(Mounted { at: &at, dev })).await
             }
             _ => Ok(()),
         };
@@ -356,7 +448,7 @@ pub fn run(
         served.and(unmounted)
     });
     closer.close_all();
-    runtime.shutdown_timeout(Duration::from_secs(1));
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
     result
 }
 

@@ -66,6 +66,10 @@ All notable changes to sacdfs are recorded here. The format follows
   image; it named only the first cause.
 
 ### Fixed
+- **sacdfs-nfs: the log when the mount point is no longer its mount.** At the end, if another
+  mount had taken the folder, the log said it was not unmounting it and, in the same line, to
+  unmount it by hand. The hint is now left out when the folder is seen to be another mount; it
+  stays when unmounting failed or the folder could not be read.
 - **32-bit only: an ID3v2.3 extended header near 4 GiB (#498).** The fix for #457 checked the
   header's size, but the frame header after it could still end past a 32-bit `usize`, which
   panicked `sacdfs verify` and `sacdfs tags import` on such a tag in the i686 build. Found by the
