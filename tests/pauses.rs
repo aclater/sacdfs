@@ -57,9 +57,9 @@ fn kept_tracks_are_the_toc_pause_plus_track_range() {
         // The kept file is exactly the range's audio: 4704 bytes per channel per frame;
         // the plain file's audio sits inside it, after the lead-in.
         let (pc, kc) = (common::dsf_channels(pb), common::dsf_channels(kb));
-        let lead = (pf.start_frame - first) as usize * 4704;
+        let lead = (pf.start_frame - first) as usize * sacdfs::pcm::FRAME_BYTES;
         for (p, k) in pc.iter().zip(&kc) {
-            assert_eq!(k.len(), (end - first) as usize * 4704, "{kp:?}");
+            assert_eq!(k.len(), (end - first) as usize * sacdfs::pcm::FRAME_BYTES, "{kp:?}");
             assert_eq!(&k[lead..lead + p.len()], &p[..], "{kp:?}");
         }
         if kc[0].len() > pc[0].len() {

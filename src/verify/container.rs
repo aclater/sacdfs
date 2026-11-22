@@ -18,6 +18,8 @@
 
 use std::fs::File;
 use std::io;
+use std::path::Path;
+use std::sync::atomic::AtomicU64;
 
 use sha2::{Digest, Sha256};
 
@@ -62,7 +64,7 @@ impl FileSource {
     /// The open does not block: a FIFO or device put in place of a file after it was listed
     /// is refused instead of holding the caller forever. Blocking reads are restored once
     /// the descriptor is known to be a regular file.
-    pub fn open(path: &std::path::Path) -> io::Result<FileSource> {
+    pub fn open(path: &Path) -> io::Result<FileSource> {
         let file = crate::platform::open_regular(path)?;
         let len = file.metadata()?.len();
         Ok(FileSource { file, len })
@@ -103,11 +105,11 @@ pub trait Stream {
     /// returns false. `read` is increased by the bytes read.
     fn canonical_while(
         &mut self,
-        read: &std::sync::atomic::AtomicU64,
+        read: &AtomicU64,
         sink: &mut dyn FnMut(&[u8]) -> bool,
     ) -> Result<(), Problem>;
     /// The SHA-256 of the canonical stream.
-    fn digest(&mut self, read: &std::sync::atomic::AtomicU64) -> Result<[u8; 32], Problem> {
+    fn digest(&mut self, read: &AtomicU64) -> Result<[u8; 32], Problem> {
         let mut hash = Sha256::new();
         self.canonical_while(read, &mut |b| {
             hash.update(b);
@@ -145,7 +147,7 @@ impl Stream for One<'_> {
     }
     fn canonical_while(
         &mut self,
-        read: &std::sync::atomic::AtomicU64,
+        read: &AtomicU64,
         sink: &mut dyn FnMut(&[u8]) -> bool,
     ) -> Result<(), Problem> {
         self.audio.canonical_while(self.src, read, sink)
@@ -194,7 +196,7 @@ impl Stream for Joined<'_> {
     }
     fn canonical_while(
         &mut self,
-        read: &std::sync::atomic::AtomicU64,
+        read: &AtomicU64,
         sink: &mut dyn FnMut(&[u8]) -> bool,
     ) -> Result<(), Problem> {
         let mut go = true;
@@ -597,11 +599,7 @@ impl Audio {
 
     /// The SHA-256 of the canonical stream (see the module documentation). `read` is
     /// increased by the bytes read as they are read.
-    pub fn digest(
-        &self,
-        src: &mut dyn Source,
-        read: &std::sync::atomic::AtomicU64,
-    ) -> Result<[u8; 32], Problem> {
+    pub fn digest(&self, src: &mut dyn Source, read: &AtomicU64) -> Result<[u8; 32], Problem> {
         let mut hash = Sha256::new();
         self.canonical(src, read, &mut |b| hash.update(b))?;
         Ok(hash.finalize().into())
@@ -611,7 +609,7 @@ impl Audio {
     pub fn canonical(
         &self,
         src: &mut dyn Source,
-        read: &std::sync::atomic::AtomicU64,
+        read: &AtomicU64,
         sink: &mut dyn FnMut(&[u8]),
     ) -> Result<(), Problem> {
         self.canonical_while(src, read, &mut |b| {
@@ -624,7 +622,7 @@ impl Audio {
     pub fn canonical_while(
         &self,
         src: &mut dyn Source,
-        read: &std::sync::atomic::AtomicU64,
+        read: &AtomicU64,
         sink: &mut dyn FnMut(&[u8]) -> bool,
     ) -> Result<(), Problem> {
         use std::sync::atomic::Ordering::Relaxed;
@@ -767,7 +765,7 @@ mod tests {
 
     /// A DSF file of `ch` channels whose canonical stream is `canon` (MSB-first,
     /// interleaved), with blocks of `block` bytes and `tag` after the audio.
-    pub(crate) fn dsf(canon: &[u8], ch: usize, block: usize, lsb: bool, tag: &[u8]) -> Vec<u8> {
+    fn dsf(canon: &[u8], ch: usize, block: usize, lsb: bool, tag: &[u8]) -> Vec<u8> {
         let bpc = canon.len() / ch;
         let groups = bpc.div_ceil(block);
         let mut data = vec![0u8; groups * block * ch];
@@ -857,7 +855,7 @@ mod tests {
         }
     }
 
-    pub(crate) fn dff(canon: &[u8], ch: u16, cmpr: &[u8; 4], extra: &[u8]) -> Vec<u8> {
+    fn dff(canon: &[u8], ch: u16, cmpr: &[u8; 4], extra: &[u8]) -> Vec<u8> {
         let chunk = |id: &[u8], body: &[u8]| {
             let mut c = id.to_vec();
             c.extend_from_slice(&(body.len() as u64).to_be_bytes());

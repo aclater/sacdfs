@@ -29,7 +29,7 @@ use common::*;
 /// The process-wide cache, in a fresh directory, held by one test at a time.
 ///
 /// Every disc any test opens registers with this cache, and a flush writes the entries of
-/// all of them. A test that flushes while `hostile_entries_cost_only_speed` runs would
+/// all of them. A test that flushes while `damaged_and_stale_entries_cost_only_speed` runs would
 /// replace its hostile entries with the real points its discs learned (correctly: that
 /// is what a flush is for), so that fewer bad hints are left to catch. Hence the lock;
 /// the reads stay correct either way.
