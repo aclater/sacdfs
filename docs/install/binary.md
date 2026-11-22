@@ -114,7 +114,10 @@ Each archive holds `sacdfs`, `sacdfs-ctl`, `sacdfs.service`, `sacdfs.conf.exampl
 `README.md` and `CHANGELOG.md` (0.5.0 and earlier: no `sacdfs-ctl`, `sacdfs.service` or
 `sacdfs.conf.example`). Since 0.6.2 it also holds the installer, `install.sh`,
 and `nas-compose.yaml`: `sudo sh install.sh --iso-dir ...` in the unpacked folder uses the files
-next to it and downloads nothing ([the installer](README.md#the-installer-one-line)). The
+next to it and downloads nothing ([the installer](README.md#the-installer-one-line)). The released
+`install.sh` verifies the files beside it against checksums built into it when the release was
+packed, and uses only verified copies; if one is missing or doesn't match, it uses none of them and
+downloads the release. The
 installer is also a release asset of its own, `install.sh`, with its `.sha256` and attestation.
 
 **What it needs.** glibc 2.17 or later (0.4.1 and earlier needed 2.28); every release build is

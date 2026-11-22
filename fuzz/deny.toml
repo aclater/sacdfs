@@ -1,0 +1,25 @@
+# cargo-deny for the fuzz targets, which have their own lock file: the core's rules
+# (../deny.toml) plus the licence of libFuzzer. Checked by the cargo-deny workflow.
+# Locally, in fuzz/: cargo deny --all-features check advisories bans licenses sources
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# The core's licences (../deny.toml), plus NCSA: libFuzzer, in libfuzzer-sys.
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "BSD-2-Clause", "BSD-3-Clause", "GPL-3.0-or-later", "LGPL-2.1-or-later", "GPL-2.0-or-later", "ISC", "CDLA-Permissive-2.0", "NCSA"]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

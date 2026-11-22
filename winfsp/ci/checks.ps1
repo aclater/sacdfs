@@ -193,9 +193,7 @@ try {
     Stop-Mount $p 0 "Ctrl+C"
 }
 $p = Start-Mount
-try { } finally {
-    Stop-Mount $p 1 "Ctrl+Break"
-}
+Stop-Mount $p 1 "Ctrl+Break"
 Remove-Item $ctrl -ErrorAction SilentlyContinue
 if ($failed.Count) {
     "FAILED: $($failed -join ', ')"
