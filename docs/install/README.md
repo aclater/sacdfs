@@ -231,6 +231,13 @@ can change them, and checks that before it writes anything
   or later) or GNU Wget, which check the server's certificate; BusyBox's `wget` doesn't, so
   there it stops. `--archive` with a release's own archive is checked against the built-in
   value too.
+- **Release files next to `install.sh`:** run from an unpacked release archive, `install.sh`
+  verifies release files beside it against built-in checksums: it copies `sacdfs`,
+  `sacdfs-ctl`, `sacdfs.service` and `nas-compose.yaml` into its temporary folder, checks each
+  copy against the SHA-256 the release workflow built into it, and uses only those copies. If
+  one is missing or doesn't match, it says which, uses none of them and downloads the release
+  as the one-liner does. Only a released `install.sh` has these checksums: a copy of
+  `install.sh` from the repository (deploy/ in a clone, or main) always downloads.
 
 *(Checked on a 0.6.4 development build: in the BusyBox and Fedora 44 test containers that CI
 runs (deploy/ci-install-security-steps.sh: refusals, the folder names above, settings files of

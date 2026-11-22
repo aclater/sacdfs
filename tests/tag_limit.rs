@@ -6,7 +6,7 @@
 //! the tag layer. Both through scarletbook's tag builder (a text item) and through sacdfs's own
 //! appended frames (`tags::append_frames`).
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "a test fails by panicking")]
 
 mod common;
 

@@ -31,6 +31,7 @@ nl=$'\n'
 sub "$out/sacdfs.service" "for the release binary at /usr/local/bin/sacdfs." "as packaged (/usr/bin/sacdfs)."
 sub "$out/sacdfs.service" "# Install:  cp sacdfs.service /etc/systemd/system/ && systemctl daemon-reload$nl" ""
 sub "$out/sacdfs.service" "ExecStart=/usr/local/bin/sacdfs " "ExecStart=/usr/bin/sacdfs "
+# shellcheck disable=SC2016 # sacdfs-ctl's own text, not expanded here
 sub "$out/sacdfs-ctl" 'BIN=${SACDFS_BIN:-/usr/local/bin/sacdfs}' 'BIN=${SACDFS_BIN:-/usr/bin/sacdfs}'
 sub "$out/sacdfs.conf" "#SACDFS_BIN=/usr/local/bin/sacdfs" "#SACDFS_BIN=/usr/bin/sacdfs"
 sub "$out/sacdfs.conf" "Copy to /etc/default/sacdfs and change the paths." "Change the paths, then: systemctl enable --now sacdfs."
@@ -46,6 +47,7 @@ if [[ $fmt == rpm ]]; then
     sub "$out/sacdfs.service" "# Settings: /etc/default/sacdfs" "# Settings: $conf"
     sub "$out/sacdfs.service" "EnvironmentFile=/etc/default/sacdfs" "EnvironmentFile=$conf"
     sub "$out/sacdfs-ctl" "# Reads /etc/default/sacdfs," "# Reads $conf,"
+    # shellcheck disable=SC2016 # sacdfs-ctl's own text, not expanded here
     sub "$out/sacdfs-ctl" 'CONF=${SACDFS_CONF:-/etc/default/sacdfs}' "CONF=\${SACDFS_CONF:-$conf}"
 fi
 
@@ -57,5 +59,6 @@ grep -qx "EnvironmentFile=$conf" "$out/sacdfs.service" || fail "EnvironmentFile"
 grep -qx "CacheDirectory=sacdfs" "$out/sacdfs.service" || fail "CacheDirectory"
 grep -qx "Environment=XDG_CACHE_HOME=/var/cache" "$out/sacdfs.service" || fail "XDG_CACHE_HOME"
 grep -qF "CONF=\${SACDFS_CONF:-$conf}" "$out/sacdfs-ctl" || fail "sacdfs-ctl's settings file"
+# shellcheck disable=SC2016 # the unit's own text, which systemd expands
 grep -qx 'ExecStart=/usr/bin/sacdfs -f $SACDFS_OPTIONS ${SACDFS_IMAGES} ${SACDFS_MOUNT}' "$out/sacdfs.service" ||
     fail "ExecStart"

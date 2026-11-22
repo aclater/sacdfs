@@ -25,6 +25,29 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: deps
+  # The lock files of the fuzz targets and of the Windows front end, each its own workspace.
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      cargo-fuzz:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps
+  - package-ecosystem: cargo
+    directory: /winfsp
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      cargo-winfsp:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps
   # The base images of Containerfile, pinned by digest.
   - package-ecosystem: docker
     directory: /
