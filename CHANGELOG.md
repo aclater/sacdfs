@@ -96,6 +96,12 @@ All notable changes to sacdfs are recorded here. The format follows
   audio the scanners ask for.
 
 ### Fixed
+- **A tags file's track section that is not keyed by the plain number is reported.** `[track.03]`
+  or `[track."+3"]` was accepted and then never applied, without a word, because a track's fields
+  are looked up by its plain number (`3`). The section is still not applied, and the rest of the
+  file applies as before, but the mount now logs a warning that names the section and the one to
+  write instead (`[track.3]`), and `sacdfs tags import` lists it as `not applied:` and exits 2
+  when it reads such a tags file.
 - **`sacdfs-nfs --help`.** The command it shows for mounting by hand on macOS lacked
   `rsize=1048576` and `rdirplus`, which sacdfs-nfs itself mounts with; it now shows the same
   options, and SIGQUIT is named among the signals that stop the server. Errors are printed under
