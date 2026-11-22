@@ -14,6 +14,15 @@ All notable changes to sacdfs are recorded here. The format follows
   on the core's test code, equal copies and container hardening (`.github/scripts/check-copies.sh`),
   no function over 200 lines, and five performance lints.
 
+### Fixed
+
+- **Re-read the disc layout when an image file changes.** An image file replaced while mounted
+  (rsync without `--inplace` and sync tools rename a new copy over it) or rewritten in place now
+  has its TOC bytes read again before anything is read from the new file. The same disc reads on
+  without a break; another disc, another size, or a file whose TOC no longer reads gives I/O
+  errors on the files open on the old disc, and the folder's next listing shows the image as a
+  new one. Reads of unchanged images do no more work than before. See docs/design.md, "Open images".
+
 ## [0.7.1] - 2026-11-22
 
 This release contains security fixes; upgrading is recommended.
