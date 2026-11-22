@@ -817,9 +817,9 @@ impl Audio {
         if avail < 10 || src.read_at(at, &mut h).is_err() || &h[0..3] != b"ID3" {
             return Ok(None);
         }
-        let size = h[6..10].iter().fold(0u64, |a, &b| (a << 7) | u64::from(b & 0x7F));
-        // A footer (ID3v2.4 flag 0x10) adds 10 bytes.
-        let total = (10 + size + if h[5] & 0x10 != 0 { 10 } else { 0 }).min(avail);
+        let size = u64::from(super::id3::syncsafe(&h[6..10]));
+        // A footer (ID3v2.4) adds 10 bytes.
+        let total = (10 + size + if h[5] & super::id3::TAG_FOOTER != 0 { 10 } else { 0 }).min(avail);
         if total > MAX_TAG {
             return Err(total);
         }

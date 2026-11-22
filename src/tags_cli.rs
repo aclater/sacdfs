@@ -663,15 +663,15 @@ fn extract_tag(path: &Path) -> Result<Option<Vec<u8>>, String> {
 /// are skipped. Offsets use checked arithmetic, so that a size near 2^32 can't overflow a 32-bit
 /// `usize` (#457): such a tag has no cover.
 pub fn front_cover(tag: &[u8]) -> Option<Vec<u8>> {
-    if tag.len() < 10 || &tag[0..3] != b"ID3" || !(3..=4).contains(&tag[3]) || tag[5] & 0x80 != 0 {
+    if tag.len() < 10 || &tag[0..3] != b"ID3" || !(3..=4).contains(&tag[3]) || tag[5] & id3::TAG_UNSYNC != 0 {
         return None;
     }
     let major = tag[3];
-    let syncsafe = |b: &[u8]| b.iter().fold(0usize, |a, &x| (a << 7) | usize::from(x & 0x7F));
+    let syncsafe = |b: &[u8]| id3::syncsafe(b) as usize;
     let be = |b: &[u8]| b.iter().fold(0usize, |a, &x| (a << 8) | usize::from(x));
     let end = (10 + syncsafe(&tag[6..10])).min(tag.len());
     let mut at: usize = 10;
-    if tag[5] & 0x40 != 0 {
+    if tag[5] & id3::TAG_EXTENDED != 0 {
         let ext = tag.get(10..14)?;
         let ext_size = if major == 4 { syncsafe(ext) } else { be(ext).checked_add(4)? };
         at = at.checked_add(ext_size)?;
@@ -687,7 +687,13 @@ pub fn front_cover(tag: &[u8]) -> Option<Vec<u8>> {
         let Some(body_end) = (at + 10).checked_add(size) else { break };
         let body = tag.get(at + 10..body_end.min(end))?;
         at = body_end;
-        let packed = if major == 4 { h[9] & 0x0F != 0 } else { h[9] & 0xE0 != 0 };
+        // Skipped: v2.4 compressed, encrypted, unsynchronised or with a data length; v2.3
+        // compressed, encrypted or grouped.
+        let packed = if major == 4 {
+            h[9] & (id3::V4_COMPRESSED_OR_ENCRYPTED | id3::V4_UNSYNC | id3::V4_DATA_LENGTH) != 0
+        } else {
+            h[9] & (id3::V3_COMPRESSED_OR_ENCRYPTED | id3::V3_GROUPING) != 0
+        };
         if &h[0..4] != b"APIC" || packed {
             continue;
         }

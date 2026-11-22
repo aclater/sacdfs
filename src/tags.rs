@@ -41,6 +41,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::safe_file;
+use crate::verify::id3;
 
 /// The names of the TagSet items a tags file can set, with the ID3 frame each is written as.
 pub const ITEMS: [(&str, &str, TagItem); 12] = [
@@ -806,13 +807,9 @@ impl Watch {
 /// An ID3v2.4 frame: `id`, a body of `body`.
 fn frame(out: &mut Vec<u8>, id: [u8; 4], body: &[u8]) {
     out.extend_from_slice(&id);
-    out.extend_from_slice(&syncsafe(body.len() as u32));
+    out.extend_from_slice(&id3::to_syncsafe(body.len() as u32));
     out.extend_from_slice(&[0, 0]);
     out.extend_from_slice(body);
-}
-
-fn syncsafe(v: u32) -> [u8; 4] {
-    [(v >> 21) as u8 & 0x7F, (v >> 14) as u8 & 0x7F, (v >> 7) as u8 & 0x7F, v as u8 & 0x7F]
 }
 
 /// `tag` (an ID3v2.4 tag without footer, or empty) with the frames and the picture of `o`
@@ -858,9 +855,9 @@ pub fn append_frames(tag: &[u8], o: &Overrides) -> Option<Vec<u8>> {
     if out.len() > MAX_TAG_BYTES {
         return None;
     }
-    let size = syncsafe((out.len() - 10) as u32);
+    let size = id3::to_syncsafe((out.len() - 10) as u32);
     out[6..10].copy_from_slice(&size);
-    out[5] &= !0x10; // no footer
+    out[5] &= !id3::TAG_FOOTER; // no footer
     Some(out)
 }
 
