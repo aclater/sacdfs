@@ -107,6 +107,10 @@ All notable changes to sacdfs are recorded here. The format follows
   ID3v2.2 or unsynchronised tag) was passed over in silence, and import could exit 0 with that
   extract's art in no tags directory. It is now listed as `not kept:` with its extract and disc,
   and the exit status is 2, as the user guide says of every picture left out.
+- **Every option as an `-o` mount option.** `mount -t fuse.sacdfs` and fstab refused `tags`,
+  `pauses`, `listing_mb`, `request_timeout`, `stop_grace` and `no_multichannel_album_suffix` as
+  "not a sacdfs mount option", and so `musicbrainz` too, which needs `tags`. They are accepted now,
+  and a test keeps the `-o` options in step with the command line.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
 - **Windows: a picture named in a tags file is not embedded when it is a reparse point** (a
