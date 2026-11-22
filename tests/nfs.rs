@@ -9,6 +9,9 @@
 //!   but anyone may ping.
 //! - FSSTAT reports the volume's size.
 //! - A record longer than the bound ends the connection.
+//! - Other clients are answered while one reads its replies slowly.
+//! - While a new connection waits for a place, an idle one is closed to make room; while none
+//!   waits, idle connections stay open.
 //! - A folder is listed page by page from the cookie of the last entry read, by READDIR and
 //!   READDIRPLUS; a cookie that is no entry's is refused; `.` and `..` are looked up.
 
@@ -25,7 +28,7 @@ use std::time::Duration;
 
 use sacdfs::disc::Tuning;
 use sacdfs::engine::Engine;
-use sacdfs::nfs::proto::tcp::NFSTcpListener;
+use sacdfs::nfs::proto::tcp::{Limits, NFSTcpListener};
 use sacdfs::nfs::{Callers, NfsFront, handle};
 use sacdfs::tree::{Output, SourceDir, Tree};
 use sacdfs::vfs::Volume;
@@ -68,14 +71,27 @@ struct Server {
 }
 
 fn serve(source: &Path) -> Server {
+    serve_with(source, Limits::default())
+}
+
+/// [`serve`] with `limits`.
+fn serve_with(source: &Path, limits: Limits) -> Server {
+    serve_engine(source, limits, Engine::new(2, 16 << 20).unwrap())
+}
+
+/// [`serve`] with `limits` and `engine`.
+fn serve_engine(source: &Path, limits: Limits, engine: Engine) -> Server {
     let source = source.canonicalize().unwrap();
     let tree =
         Arc::new(Tree::with_options(SourceDir::scan(&source).unwrap(), Tuning::default(), Output::default()));
-    let engine = Arc::new(Engine::new(2, 16 << 20).unwrap());
+    let engine = Arc::new(engine);
     let volume = Arc::new(Volume::new(tree, engine, 4, UID, UID).unwrap());
     let front = NfsFront::new(volume.clone(), handle::volume_id(&source), Callers::User(UID));
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
-    let listener = runtime.block_on(NFSTcpListener::bind("127.0.0.1:0".parse().unwrap(), front)).unwrap();
+    let listener = runtime
+        .block_on(NFSTcpListener::bind("127.0.0.1:0".parse().unwrap(), front))
+        .unwrap()
+        .with_limits(limits);
     let addr = listener.local_addr().unwrap();
     runtime.spawn(async move { listener.handle_forever().await });
     Server { addr, volume, _runtime: runtime }
@@ -491,4 +507,137 @@ fn dot_and_dot_dot_are_looked_up() {
     assert_eq!(c.lookup(&dir, "."), dir);
     assert_eq!(c.lookup(&dir, ".."), root);
     assert_eq!(c.lookup(&root, ".."), root, "the root is its own parent");
+}
+
+/// The record of an NFS call from `UID`, as [`Client::call`] writes it.
+fn call_record(xid: u32, proc_: u32, args: &Xdr) -> Vec<u8> {
+    let body = Xdr::default().u32(0).opaque(b"test").u32(UID).u32(UID).u32(0);
+    let mut x = Xdr::default().u32(xid).u32(0).u32(2).u32(NFS).u32(3).u32(proc_).u32(1).opaque(&body.0);
+    x = x.u32(0).opaque(&[]);
+    x.0.extend_from_slice(&args.0);
+    let mut rec = ((x.0.len() as u32) | 1 << 31).to_be_bytes().to_vec();
+    rec.extend_from_slice(&x.0);
+    rec
+}
+
+#[test]
+fn other_clients_are_answered_while_one_reads_slowly() {
+    let src = source();
+    // Few calls answered at once in all: before, the calls of one connection whose replies were
+    // not read held them all.
+    let s = serve_with(src.path(), Limits { all_in_flight: 4, ..Limits::default() });
+    let mut c = Client::new(s.addr);
+    let root = c.mount();
+    let file = first_track(&mut c, &root, IMAGE);
+    let (_, size) = c.getattr(&file);
+    // Far more reply bytes than the sockets' buffers hold, never read.
+    let calls = (256 << 20) / size.max(1) + 64;
+    let mut stuck = TcpStream::connect(s.addr).unwrap();
+    let mut batch = Vec::new();
+    for xid in 0..calls as u32 {
+        batch.extend(call_record(xid + 1000, READ, &Xdr::default().opaque(&file).u64(0).u32(1 << 20)));
+    }
+    std::thread::spawn(move || {
+        let _ = stuck.write_all(&batch);
+        std::thread::sleep(Duration::from_secs(60));
+        drop(stuck);
+    });
+    std::thread::sleep(Duration::from_secs(1));
+    // Another client is answered at once, again and again.
+    let mut other = Client::new(s.addr);
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        assert_eq!(other.read(&file, 0, 4096).0, NFS3_OK);
+    }
+    assert!(start.elapsed() < Duration::from_secs(5), "answers took {:?}", start.elapsed());
+}
+
+#[test]
+fn an_idle_connection_makes_room_for_a_new_one() {
+    let src = source();
+    let idle = Duration::from_millis(200);
+    let s = serve_with(src.path(), Limits { max_connections: 2, idle_when_full: idle, ..Limits::default() });
+    let mut a = Client::new(s.addr);
+    let mut b = Client::new(s.addr);
+    a.mount();
+    b.mount();
+    // No one waits: idle connections stay.
+    std::thread::sleep(idle * 5);
+    a.mount();
+    b.mount();
+    // A third waits for a place, and gets one once a connection has been idle long enough.
+    let start = std::time::Instant::now();
+    let mut c = Client::new(s.addr);
+    c.mount();
+    assert!(start.elapsed() < Duration::from_secs(5), "waited {:?}", start.elapsed());
+    // One of the first two was closed for it, the other is still open.
+    let closed = |x: &mut Client| {
+        x.s.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+        let mut byte = [0u8; 1];
+        match x.s.read(&mut byte) {
+            Ok(n) => n == 0,
+            Err(e) => e.kind() == std::io::ErrorKind::ConnectionReset,
+        }
+    };
+    assert_eq!([closed(&mut a), closed(&mut b)].iter().filter(|c| **c).count(), 1);
+}
+
+/// Real discs: every stereo DSF file of the images read whole over one connection, with 1, 4
+/// and 16 READs of 1 MiB in flight, as an NFS client's read-ahead sends them; prints the rate
+/// of each, for comparing changes to how calls are answered per connection.
+#[test]
+#[ignore = "needs real disc images: set SACDFS_REAL_IMAGES"]
+fn real_discs_pipelined_reads() {
+    let (dir, images) = common::real_images_or_skip!();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
+    for depth in [1usize, 4, 16] {
+        // A new server each time: nothing cached.
+        let s = serve_engine(&dir, Limits::default(), Engine::new(threads, 64 << 20).unwrap());
+        let mut c = Client::new(s.addr);
+        let root = c.mount();
+        let mut files = Vec::new();
+        for image in &images {
+            let rel = image.strip_prefix(&dir).unwrap().with_extension("");
+            let mut fh = root.clone();
+            for part in rel.components() {
+                fh = c.lookup(&fh, &part.as_os_str().to_string_lossy());
+            }
+            let stereo = c.lookup(&fh, "Stereo");
+            let (_, entries, _) = c.readdir(&stereo, 0, 1 << 16);
+            for (name, _) in entries.iter().filter(|(n, _)| n.ends_with(".dsf")) {
+                let f = c.lookup(&stereo, name);
+                let size = c.getattr(&f).1;
+                files.push((f, size));
+            }
+        }
+        let started = std::time::Instant::now();
+        let mut total = 0u64;
+        let mut xid = 1_000_000u32;
+        for (fh, size) in &files {
+            let mut next = 0u64;
+            let mut out = 0usize;
+            loop {
+                while out < depth && next < *size {
+                    xid += 1;
+                    let rec = call_record(xid, READ, &Xdr::default().opaque(fh).u64(next).u32(1 << 20));
+                    c.s.write_all(&rec).unwrap();
+                    next += 1 << 20;
+                    out += 1;
+                }
+                if out == 0 {
+                    break;
+                }
+                let r = c.record().expect("a reply");
+                total += r.len() as u64;
+                out -= 1;
+            }
+        }
+        let secs = started.elapsed().as_secs_f64();
+        println!(
+            "{depth} READs in flight: {} files, {:.0} MB in {secs:.1} s, {:.1} MB/s",
+            files.len(),
+            total as f64 / 1e6,
+            total as f64 / 1e6 / secs
+        );
+    }
 }

@@ -18,7 +18,9 @@
 //! - `rpcwire`: a call whose credentials `permits` refuses gets AUTH_ERROR (procedure 0, the
 //!   ping, excepted); records are read with a bound ([`rpcwire::MAX_RECORD`]).
 //! - `tcp`: rewritten: bounded calls in flight per connection and connections at once; a
-//!   failed accept no longer stops the server.
+//!   failed accept no longer stops the server; a call holds the permit of all connections only
+//!   while it is answered, replies not written yet are bounded per connection, and an idle
+//!   connection makes room for a new one that waits.
 //! - `xdr`: variable-length data is read as it arrives, never allocated from its declared
 //!   length; the macros are not exported from the crate.
 //! - `transaction_tracker`: bounded; no panics on a poisoned lock or a clock near the epoch.

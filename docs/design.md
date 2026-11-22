@@ -2233,9 +2233,15 @@ approval.
   another user can write is refused, and the path is unmounted only while it is still this
   mount (its device number). `mount` and `umount` run by absolute path with a fixed
   environment, each with a time limit.
-- **Bounds against one client holding the server:** 16 calls in flight per connection, 128 in
-  all, 2 replies queued; a reply not taken within 30 s closes the connection, as does a first
-  call not sent within 10 s or 5 minutes of silence; 64 connections at once; listings are cut
+- **Bounds against one client holding the server:** 16 calls read and not yet answered per
+  connection; 4 per connection being answered or with their replies not yet written (a reply is
+  up to 1 MiB, so 64 connections hold at most 256 MiB of replies); 128 calls being answered in
+  all, a permit a call gives back as soon as it is answered, so a client that does not read its
+  replies holds only its own connection's 4 and never keeps other clients' calls waiting. A
+  reply not taken within 30 s closes the connection, as does a first call not sent within 10 s
+  or 5 minutes of silence; 64 connections at once, and while a new one waits for a place, a
+  connection with no call outstanding that has been silent for 10 s is closed to make room
+  (NFS clients connect again when they need to); listings are cut
   to 1 MiB and 1024 entries a call; 1024 files open for NFS reads, the least recently read
   closed first.
 - **Opens:** NFS has no open or close. A file is opened in the core on its first read and

@@ -22,6 +22,12 @@ All notable changes to sacdfs are recorded here. The format follows
   without a break; another disc, another size, or a file whose TOC no longer reads gives I/O
   errors on the files open on the old disc, and the folder's next listing shows the image as a
   new one. Reads of unchanged images do no more work than before. See docs/design.md, "Open images".
+- **sacdfs-nfs: tighter bounds on calls and replies per connection.** A call holds one of
+  the 128 places shared by all connections only while it is answered, no longer while its reply
+  waits for the client to read it; replies not yet written are bounded per connection (4, so at
+  most 256 MiB over 64 connections). While a new connection waits for one of the 64 places, a
+  connection that has had nothing outstanding for 10 s is closed to make room (NFS clients
+  connect again when they need to). See docs/design.md, "The NFS front end".
 
 ## [0.7.1] - 2026-11-22
 
