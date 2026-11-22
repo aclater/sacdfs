@@ -106,6 +106,8 @@ unsafe_code = "deny"
 unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"
+# Every unsafe block and unsafe impl says why it is sound, in a SAFETY comment.
+undocumented_unsafe_blocks = "deny"
 
 [profile.release]
 overflow-checks = true

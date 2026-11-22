@@ -896,7 +896,6 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "env_logger",
- "libc",
  "log",
  "sacdfs",
  "windows",
