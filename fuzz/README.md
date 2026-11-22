@@ -51,11 +51,13 @@ FUZZ_TRIPLE=i686-unknown-linux-gnu fuzz/run.sh 60 4
 
 That build has no AddressSanitizer, which Rust doesn't offer for i686; overflow checks stay on.
 
-`fuzz/run.sh` makes the seeds first (`examples/fuzz_seeds.rs`, into `fuzz/corpus/`): the test
-corpus's images, what sacdfs serves for them, and hand-made files of the kinds the readers tell
-apart. No seed is checked in. It prints one line per target and exits non-zero if a target
-crashed. A target's output is in `fuzz/logs/<target>.log`, and the input that crashed it in
-`fuzz/artifacts/<target>/`. To run one again:
+`fuzz/run.sh` first checks that `fuzz/Cargo.lock` matches the manifests, and stops with the
+command that updates it if not, so a build never rewrites the lock file. It then makes the
+seeds (`examples/fuzz_seeds.rs`, into `fuzz/corpus/`): the test corpus's images, what sacdfs
+serves for them, and hand-made files of the kinds the readers tell apart. No seed is checked
+in. It prints one line per target and exits non-zero if a target crashed. A target's output is
+in `fuzz/logs/<target>.log`, and the input that crashed it in `fuzz/artifacts/<target>/`. To
+run one again:
 
 ```sh
 cargo fuzz run TARGET fuzz/artifacts/TARGET/crash-...

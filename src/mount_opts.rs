@@ -53,6 +53,7 @@ const FLAGS: &[&str] = &[
     "allow_other",
     "no_allow_other",
     "no_index_cache",
+    "no_multichannel_album_suffix",
     "musicbrainz",
     "lookup_name",
     "lookup_durations",
@@ -61,17 +62,26 @@ const FLAGS: &[&str] = &[
 const VALUES: &[&str] = &[
     "threads",
     "cache_mb",
+    "listing_mb",
     "format",
+    "pauses",
     "pcm_rate",
     "pcm_cutoff",
     "pcm_gain",
     "start_burst",
     "start_burst_secs",
     "sidecars",
+    "tags",
     "index_cache",
     "max_open_images",
+    "request_timeout",
+    "stop_grace",
     "log_file",
 ];
+/// Command-line options that are not `-o` options: clap's own, and `verbose`, which
+/// [`option_list`] turns into `-v`s itself.
+#[cfg(test)]
+const NOT_MOUNT_OPTIONS: &[&str] = &["help", "version", "verbose"];
 
 /// The command line with every `-o OPTIONS` (also `-oOPTIONS` and `--options=...`) replaced
 /// by the options it stands for. `args[0]` is the program name.
@@ -182,5 +192,42 @@ mod tests {
         assert!(run(&["s", "-o", "bogus"]).is_err());
         assert!(run(&["s", "-o"]).is_err());
         assert!(run(&["s", "-o", "threads"]).is_err());
+    }
+
+    /// Every option of the command line is an `-o` option of the same kind (flag or value), and
+    /// the lists name nothing else: an option added to the command line and not here fails this.
+    #[test]
+    fn the_lists_match_the_command_line() {
+        let command = crate::linux_main::command();
+        let mut flags = Vec::new();
+        let mut values = Vec::new();
+        for arg in command.get_arguments() {
+            let Some(long) = arg.get_long() else { continue };
+            let name = long.replace('-', "_");
+            if NOT_MOUNT_OPTIONS.contains(&name.as_str()) {
+                continue;
+            }
+            if arg.get_action().takes_values() { values.push(name) } else { flags.push(name) }
+        }
+        let sorted = |names: &[&str]| {
+            let mut v: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+            v.sort();
+            v
+        };
+        flags.sort();
+        values.sort();
+        assert_eq!(sorted(FLAGS), flags, "options without a value");
+        assert_eq!(sorted(VALUES), values, "options with a value");
+    }
+
+    /// The expanded line is one the command line accepts, with an option that needs another.
+    #[test]
+    fn expanded_options_parse() {
+        let line = run(&[
+            "sacdfs", "/s", "/m", "-o",
+            "ro,tags=/t,musicbrainz,pauses=kept,listing_mb=64,request_timeout=30,stop_grace=5,no_multichannel_album_suffix",
+        ])
+        .unwrap();
+        crate::linux_main::command().try_get_matches_from(line).unwrap();
     }
 }
