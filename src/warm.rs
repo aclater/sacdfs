@@ -340,14 +340,14 @@ impl Warmer {
         };
         let quiet = self.quiet.as_millis() as u64;
         let mark = || (self.reads.load(Ordering::SeqCst), self.listings.load(Ordering::SeqCst));
-        if let Some(b) = st.burst.as_mut().filter(|b| !b.others && !b.taken)
-            && let Some((reader, extent)) = b.probe
-        {
-            if since < quiet {
-                return Ready::NotYet(quiet - since);
+        if let Some(b) = st.burst.as_mut().filter(|b| !b.others && !b.taken) {
+            if let Some((reader, extent)) = b.probe {
+                if since < quiet {
+                    return Ready::NotYet(quiet - since);
+                }
+                b.taken = true;
+                return Ready::Probe(Probe { file: b.file.clone(), reader, extent, listed: false }, mark());
             }
-            b.taken = true;
-            return Ready::Probe(Probe { file: b.file.clone(), reader, extent, listed: false }, mark());
         }
         let Some(l) = st.listed.as_mut().filter(|l| !l.taken) else {
             return Ready::Nothing;

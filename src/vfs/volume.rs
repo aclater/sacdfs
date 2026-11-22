@@ -600,10 +600,10 @@ impl Volume {
             What::new("readdirplus", Ino(ino)),
             reply,
             move |sh| {
-                if offset == 0
-                    && let Some(children) = sh.tree.children(ino)
-                {
-                    sh.listed(&warm, &children);
+                if offset == 0 {
+                    if let Some(children) = sh.tree.children(ino) {
+                        sh.listed(&warm, &children);
+                    }
                 }
                 sh.listing_plus(ino, offset)
             },
