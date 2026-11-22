@@ -40,6 +40,9 @@ const STATUS_UNEXPECTED_IO_ERROR: i32 = 0xC000_00E9_u32 as i32;
 const STATUS_END_OF_FILE: i32 = 0xC000_0011_u32 as i32;
 const STATUS_TOO_MANY_OPENED_FILES: i32 = 0xC000_011F_u32 as i32;
 
+/// The volume's sector and allocation unit, in bytes.
+pub(crate) const ALLOCATION_UNIT: u16 = 4096;
+
 /// Files larger than this are read past Windows's cache manager (see `open`).
 const NO_DATA_CACHE_ABOVE: u64 = 64 << 20;
 
@@ -80,8 +83,8 @@ pub fn status(e: vfs::Error) -> FspError {
         vfs::Error::Stale => nt(STATUS_FILE_INVALID),
         vfs::Error::BadHandle => nt(STATUS_INVALID_HANDLE),
         vfs::Error::Io => nt(STATUS_UNEXPECTED_IO_ERROR),
-        // The sidecar cap: the core's own `Os` code, an errno value.
-        vfs::Error::Os(libc::EMFILE) => nt(STATUS_TOO_MANY_OPENED_FILES),
+        // The sidecar cap: the core's own `Os` code, which on Windows is a Win32 error code too.
+        vfs::Error::Os(sacdfs::platform::TOO_MANY_OPEN_FILES) => nt(STATUS_TOO_MANY_OPENED_FILES),
         // A source file's own error: on Windows a Win32 error code.
         vfs::Error::Os(n) => FspError::WIN32(n as u32),
     }
@@ -149,7 +152,7 @@ impl DataReply for Fill {
 }
 
 /// 100-nanosecond intervals since 1601, from a time.
-fn filetime(t: SystemTime) -> u64 {
+pub(crate) fn filetime(t: SystemTime) -> u64 {
     const EPOCH_1601: u64 = 116_444_736_000_000_000;
     match t.duration_since(UNIX_EPOCH) {
         Ok(d) => EPOCH_1601 + d.as_secs() * 10_000_000 + u64::from(d.subsec_nanos()) / 100,
@@ -168,7 +171,8 @@ fn fill(info: &mut FileInfo, a: &Attr) {
     info.file_attributes = attributes(a.kind);
     info.reparse_tag = 0;
     info.file_size = a.size;
-    info.allocation_size = a.size.div_ceil(4096) * 4096;
+    let unit = u64::from(ALLOCATION_UNIT);
+    info.allocation_size = a.size.div_ceil(unit) * unit;
     info.creation_time = filetime(a.crtime);
     info.last_access_time = filetime(a.atime);
     info.last_write_time = filetime(a.mtime);
@@ -455,14 +459,14 @@ impl FileSystemContext for WinFs {
             let folder = self.paths.folder(context.attr.ino, &context.path, true).map_err(status)?;
             if context.path != "\\" {
                 for dot in [".", ".."] {
-                    let mut di: DirInfo<255> = DirInfo::new();
+                    let mut di: DirInfo<{ crate::names::MAX_UNITS }> = DirInfo::new();
                     di.set_name(dot)?;
                     fill(di.file_info_mut(), &context.attr);
                     lock.write(&mut di)?;
                 }
             }
             for e in &folder.entries {
-                let mut di: DirInfo<255> = DirInfo::new();
+                let mut di: DirInfo<{ crate::names::MAX_UNITS }> = DirInfo::new();
                 di.set_name(&e.name)?;
                 fill(di.file_info_mut(), &e.attr);
                 lock.write(&mut di)?;
@@ -497,7 +501,9 @@ impl FileSystemContext for WinFs {
         let fh = handle.fh;
         let want = buffer.len().min((size - offset) as usize);
         let buffer = &mut buffer[..want];
-        // Small reads in sequence: from a window read ahead (see `crate::ahead`).
+        // Small reads in sequence: from a window read ahead (see `crate::ahead`). The lock is
+        // kept while a window is read from the core: another read of this open waits for it,
+        // and is then answered from the window.
         let mut ahead = context.ahead.lock().unwrap_or_else(|p| p.into_inner());
         let mut how = "window";
         let got = match ahead.serve(offset, buffer) {

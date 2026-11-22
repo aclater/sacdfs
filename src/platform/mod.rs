@@ -61,10 +61,7 @@ pub fn file_id_at(path: &Path) -> io::Result<(Metadata, (u64, u64))> {
 /// every name literally (a trailing dot, a device name, more than 260 characters). Unchanged on
 /// other systems, where no path has that prefix.
 pub fn plain_text(text: &str) -> std::borrow::Cow<'_, str> {
-    if !cfg!(windows) || !text.contains(r"\\?\") {
-        return std::borrow::Cow::Borrowed(text);
-    }
-    std::borrow::Cow::Owned(text.replace(r"\\?\UNC\", r"\\").replace(r"\\?\", ""))
+    imp::plain_text(text)
 }
 
 /// The base folder for a per-user cache: `$XDG_CACHE_HOME`, else `~/.cache` on Unix;
@@ -200,8 +197,9 @@ pub fn hole_bound(file: &File) -> Option<u64> {
 
 /// A folder, open, that names are resolved under one at a time, so that nothing outside it is
 /// reached through a link (the sidecars' confinement to SOURCE). On Unix a descriptor
-/// (`O_PATH` on Linux, read-only on macOS, which has no `O_PATH`); on Windows its path, each
-/// folder on the way checked for a reparse point, which isn't race-free like `openat`.
+/// (`O_PATH` on Linux, read-only on macOS, which has no `O_PATH`); on Windows a handle that
+/// opens are made relative to, with the folder's path kept for [`read_link_at`], which reads
+/// a link by path, and for messages.
 pub use imp::Dir;
 
 /// What [`stat_at`], [`stat_dir`] and [`open_file_at`] tell of a file.
@@ -301,7 +299,7 @@ pub fn cpu_seconds() -> f64 {
 /// The 1-minute load average. *Fallback:* `None` where the system has no `/proc/loadavg` (macOS
 /// and Windows so far): nothing waits for the load there.
 pub fn load_average() -> Option<f64> {
-    std::fs::read_to_string("/proc/loadavg").ok()?.split_whitespace().next()?.parse().ok()
+    imp::load_average()
 }
 
 /// Sets `stop` on SIGINT or SIGTERM, and ends the process with status 130 on a second one
@@ -414,9 +412,8 @@ mod tests {
         symlink_file(outside.path().join("secret.jpg"), d.path().join("filelink.jpg")).unwrap();
         let root = open_root(d.path()).unwrap();
         assert!(open_dir_at(&root, &[OsStr::new("dirlink")]).is_err());
-        match open_file_at(&root, OsStr::new("filelink.jpg")) {
-            Ok((_, st)) => assert!(!st.regular, "a link is not a regular file"),
-            Err(_) => {}
+        if let Ok((_, st)) = open_file_at(&root, OsStr::new("filelink.jpg")) {
+            assert!(!st.regular, "a link is not a regular file");
         }
         assert!(!stat_at(&root, OsStr::new("filelink.jpg")).unwrap().regular);
     }
