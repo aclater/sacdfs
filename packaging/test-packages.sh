@@ -15,6 +15,7 @@ tardir=$(cd "$2" && pwd)
 images=$(cd "$3" && pwd)
 fail() { echo "FAIL: $*" >&2; exit 1; }
 step() { echo "=== $*"; }
+# shellcheck source=/dev/null # the test system's file
 . /etc/os-release
 echo "$PRETTY_NAME, $(uname -m)"
 

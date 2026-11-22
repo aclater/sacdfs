@@ -23,6 +23,12 @@ if [ -n "${FUZZ_TRIPLE:-}" ]; then
     export "CC_$t=$(printenv "CC_$t" || echo gcc)" "CXX_$t=$(printenv "CXX_$t" || echo g++)"
 fi
 
+# fuzz/Cargo.lock is checked in and is what the build uses: stop, rather than let the build
+# rewrite it, when it no longer matches the manifests.
+if ! cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null; then
+    echo "fuzz/Cargo.lock doesn't match fuzz/Cargo.toml and ../Cargo.toml: update it (cargo update --workspace --manifest-path fuzz/Cargo.toml) and commit it" >&2
+    exit 2
+fi
 cargo run --locked --quiet --example fuzz_seeds -- fuzz/corpus || exit 2
 cargo fuzz build "${fuzz_args[@]}" || exit 2
 
@@ -34,6 +40,7 @@ fi
 
 mkdir -p fuzz/logs
 # Inputs are parts of images and small files; 256 KiB holds a whole TOC region.
+# shellcheck disable=SC2329 # called by xargs through bash -c
 run_one() {
     local log="fuzz/logs/$1.log"
     # shellcheck disable=SC2086 # the options, one word each

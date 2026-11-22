@@ -5,6 +5,7 @@
 #   packaging/test-srpm.sh SRPM TARBALL_DIR IMAGES
 set -euo pipefail
 srpm=$(realpath "$1") tardir=$(cd "$2" && pwd) images=$(cd "$3" && pwd)
+# shellcheck source=/dev/null # the test system's file
 . /etc/os-release
 echo "$PRETTY_NAME, $(uname -m)"
 dnf -y -q --setopt=install_weak_deps=False install rpm-build 'dnf-command(builddep)' findutils util-linux systemd >/dev/null

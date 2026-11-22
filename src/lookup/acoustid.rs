@@ -20,13 +20,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use super::fingerprint::{self, FPCALC_TIMEOUT, Fed};
 use super::mb::{self, Hit, Transport, encode, is_mbid};
+use super::{now_secs, path_hash, stamp};
 use crate::disc::Disc;
 
 /// The service. Fixed, as MusicBrainz's is: what is sent, and to whom, has one documented answer.
@@ -155,20 +155,6 @@ struct State {
     day: u64,
     count: usize,
     entries: HashMap<String, Entry>,
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
-}
-
-fn path_hash(p: &Path) -> String {
-    crate::verify::id3::hex(&Sha256::digest(p.as_os_str().as_encoded_bytes())[..16])
-}
-
-fn stamp(image: &Path) -> Option<(u64, u64)> {
-    let meta = fs::metadata(image).ok()?;
-    let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-    Some((meta.len(), u64::try_from(mtime.as_nanos()).unwrap_or(u64::MAX)))
 }
 
 impl State {

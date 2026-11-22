@@ -9,8 +9,9 @@
 #
 # URL: the releases URL of that test's server. T: a folder with install.sh (checksums built
 # in), bad/install.sh (a wrong checksum built in), plain/install.sh (none built in),
-# sacdfs-ctl and archive.tar.gz (the release archive served, its install.sh with the
-# checksums of its release files). OLD: an earlier release's install.sh, sacdfs-ctl and sacdfs, for the upgrade.
+# sacdfs-ctl, archive.tar.gz (the release archive served, its install.sh with the checksums
+# of its release files) and other.tar.gz (another architecture's, served too, whose sacdfs
+# fails the first time it runs and then prints a version). OLD: an earlier release's install.sh, sacdfs-ctl and sacdfs, for the upgrade.
 # MUSIC: three corpus images (read-only); REF: sha256 lines of every file their mount shows.
 # Prints "RESULT <step>: pass|FAIL".
 url=$1 t=$2 old=$3 music=$4 ref=$5
@@ -195,6 +196,48 @@ else
     res "no-built-in-checksums-not-used" "FAIL (status $rc)"
 fi
 rm -rf /home/u1000 /opt/lv /srv/lv /tmp/ctl.orig /tmp/altered-ran
+
+# The install.sh published on its own takes only the release files of the archive it would
+# download for this machine: next to it, another architecture's (all matching their
+# checksums) are not used, and this machine's archive is downloaded. And a local binary that
+# doesn't start is replaced by the download for this machine (here with uname reporting the
+# other architecture, so that the other archive's files are this machine's): no stop.
+mkdir -p /home/u1000
+tar -C /home/u1000 -xzf "$t/other.tar.gz"
+opkg=$(cd /home/u1000 && echo sacdfs-*-linux)
+other=${opkg%-linux}
+other=${other##*-}
+lv=/home/u1000/$opkg
+cp "$t/install.sh" "$lv/install.sh"
+chown -R 1000 /home/u1000
+rm -f /tmp/other-ran
+SACDFS_RELEASES_URL=$url sh "$lv/install.sh" --iso-dir "$music" --platform linux --method ctl --prefix /opt/lv --dry-run >"$log" 2>&1
+rc=$?
+cat "$log"
+if [ "$rc" = 0 ] && [ ! -e /tmp/other-ran ] && grep -q "they are $opkg's, and this machine takes" "$log" &&
+    grep -q 'downloading .*/sacdfs-[^/]*-linux\.tar\.gz' "$log" && ! grep -q "downloading .*/$opkg\.tar\.gz" "$log" &&
+    grep -q 'checksum OK (built in)' "$log"; then
+    res "other-machines-files-not-used" "pass (not used, this machine's archive downloaded)"
+else
+    res "other-machines-files-not-used" "FAIL (status $rc)"
+fi
+mkdir -p /tmp/fakeuname
+real_uname=$(command -v uname)
+# shellcheck disable=SC2016 # $1 and $@ belong to the stand-in uname
+printf '#!/bin/sh\ncase $1 in -m) echo %s ;; *) exec %s "$@" ;; esac\n' "$other" "$real_uname" >/tmp/fakeuname/uname
+chmod 0755 /tmp/fakeuname/uname
+rm -f /tmp/other-ran
+PATH=/tmp/fakeuname:$PATH SACDFS_RELEASES_URL=$url sh "$lv/install.sh" --iso-dir "$music" --platform linux --method ctl --prefix /opt/lv --dry-run >"$log" 2>&1
+rc=$?
+cat "$log"
+if [ "$rc" = 0 ] && grep -q "match the checksums built in ($opkg): using them" "$log" &&
+    grep -q "the sacdfs next to install.sh doesn't run here" "$log" && grep -q "downloading .*/$opkg\.tar\.gz" "$log" &&
+    grep -q 'checksum OK (built in)' "$log" && grep -q '0.0.0-other runs here' "$log"; then
+    res "local-binary-not-starting-downloads" "pass (the download for this machine used, no stop)"
+else
+    res "local-binary-not-starting-downloads" "FAIL (status $rc)"
+fi
+rm -rf /home/u1000 /opt/lv /tmp/fakeuname /tmp/other-ran
 
 # --- 2. Folder names with &, spaces and brackets: a full install, the files, a second run
 # that changes nothing, uninstall. In the images folder, the prefix and the mount folder.

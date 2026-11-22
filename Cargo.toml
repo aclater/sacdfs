@@ -1,6 +1,6 @@
 [package]
 name = "sacdfs"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Read-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand"
@@ -108,6 +108,14 @@ expect_used = "warn"
 panic = "warn"
 # Every unsafe block and unsafe impl says why it is sound, in a SAFETY comment.
 undocumented_unsafe_blocks = "deny"
+# No function over 200 code lines (clippy.toml).
+too_many_lines = "warn"
+# Preventive performance lints.
+needless_collect = "warn"
+large_enum_variant = "warn"
+large_stack_arrays = "warn"
+large_futures = "warn"
+large_types_passed_by_value = "warn"
 
 [profile.release]
 overflow-checks = true

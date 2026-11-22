@@ -118,6 +118,19 @@ if grep -qx "MEMBER_SHA256='" "$work/pkg/$pkg/install.sh"; then
     sh "$members" check "$rel/download/v$version/$pkg.tar.gz"
 fi
 (cd "$rel/download/v$version" && sha256sum "$pkg.tar.gz" >"$pkg.tar.gz.sha256")
+# Another architecture's archive, packed the same way, for the tests of release files next to
+# install.sh that are not this machine's. Its sacdfs is a stand-in that fails the first time it
+# runs and then prints a version, so that a test can see a local binary that doesn't start
+# replaced by the download.
+case $arch in x86_64) other=aarch64 ;; *) other=x86_64 ;; esac
+opkg=sacdfs-$version-$other-linux
+if grep -qx "MEMBER_SHA256='" "$work/pkg/$pkg/install.sh"; then
+    cp -R "$work/pkg/$pkg" "$work/pkg/$opkg"
+    printf '#!/bin/sh\n[ -e /tmp/other-ran ] || { touch /tmp/other-ran; exit 1; }\necho "sacdfs 0.0.0-other"\n' >"$work/pkg/$opkg/sacdfs"
+    sh "$members" fill "$work/pkg/$opkg/install.sh" "$work/pkg/$opkg" >/dev/null
+    tar -C "$work/pkg" -czf "$rel/download/v$version/$opkg.tar.gz" "$opkg"
+    (cd "$rel/download/v$version" && sha256sum "$opkg.tar.gz" >"$opkg.tar.gz.sha256")
+fi
 # The installer as a release publishes it: the archive's checksum built in.
 mkdir -p "$work/t/bad" "$work/t/plain"
 if [ -n "${SECURITY_TREE:-}" ]; then
@@ -131,6 +144,7 @@ cp "$tree/install.sh" "$work/t/plain/install.sh"
 cp "$tree/sacdfs-ctl" "$work/t/sacdfs-ctl"
 # The release archive, for the tests of release files next to install.sh.
 cp "$rel/download/v$version/$pkg.tar.gz" "$work/t/archive.tar.gz"
+[ ! -f "$rel/download/v$version/$opkg.tar.gz" ] || cp "$rel/download/v$version/$opkg.tar.gz" "$work/t/other.tar.gz"
 install -m 0644 "$work/t/install.sh" "$rel/download/v$version/install.sh"
 install -m 0644 "$work/t/install.sh" "$rel/latest/download/install.sh"
 # Downloads cut short, for deploy/ci-install-fetch-steps.sh (#352): all but the last line, and

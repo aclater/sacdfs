@@ -8,6 +8,7 @@ name: sacdfs-nfs
 
 on:
   pull_request:
+    paths-ignore: ["**.md"]  # not a required check: a docs-only pull request skips it
   push:
     branches: [main]
 
@@ -40,6 +41,9 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends fuse3 nfs-common
       - run: cargo clippy --locked --features nfs --all-targets -- -D warnings
+      - run: cargo doc --no-deps --locked --features nfs
+        env:
+          RUSTDOCFLAGS: -D warnings
       - name: The NFS front end's tests
         run: |
           cargo test --locked --features nfs --lib nfs::
