@@ -880,7 +880,7 @@ pub struct DecodeRates {
 
 /// Fewest frames a batch has to decode to be measured ([`DecodeRates`]): a read's few frames
 /// leave most threads idle and say little about what a window of them takes.
-const RATE_BATCH: u32 = 4;
+pub(crate) const RATE_BATCH: u32 = 4;
 
 impl DecodeRates {
     fn slot(&self, kind: Kind, channels: u8) -> Option<&AtomicU32> {

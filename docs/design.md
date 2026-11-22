@@ -1745,6 +1745,28 @@ decoding them twice.
   probe read:* that is what the same player re-reads of the other files. *Trade-off:* about 3 s of
   an Atom-speed CPU per album probed and not played, and the heads stay in memory as before.
 
+  A listing of a folder of track files warms it the same way, with no probe (#456, 0.7.2): once it
+  has been the last such folder listed for 1 s and the mount has had no read for 2 s, every file
+  of the first listed file's area and format has its first 1.5 MiB of audio decoded, in order,
+  within the same budget. A listing of another folder of track files stops it and moves it there;
+  a listing of the same folder again warms it again, which costs nothing for heads still kept.
+  Any read stops it as above. On a machine whose decode speed is not measured yet (no decode
+  since the mount) the first batch is four frames, enough to measure it, and warming stops there
+  on a machine at or above the start burst. *Why:* in the reporter's `-vv` log of a start right
+  after opening the album, the player listed the folder (22 s and again 3 s before play) and probed
+  nothing, so the probe rule never fired. On play it read the head and tail of every file, one
+  file at a time, taking turns with its track; each of the 128 KiB re-reads decoded (99 to 193 ms
+  on average per second of the start, up to 600 ms), and for 7.4 s the track got 0.56 to 0.93 s
+  of audio a second, the stutter heard. Waiting a minute in the folder gave a clean start. *Why
+  1.5 MiB:* that player re-reads 12 reads of 128 KiB of each file (1572772 bytes of audio); 12
+  heads of a 6-channel album take about 18 MiB of the heads' budget. *Why settle 1 s:* that
+  player lists the folder's parent and siblings around the folder it shows, within a second, and
+  ends with the one it shows. *Trade-off:* a client that only lists folders, on a slow machine,
+  costs about 1 s of CPU per 6-channel head for the last folder it listed and then stays idle;
+  a library walk warms only the folder it listed last, when it pauses. A start sooner than about
+  the warming time after the listing still gets the heads warmed so far, in the order the player
+  re-reads them. With `--format both` only the format of the folder's first file is warmed.
+
   On any machine, a reader whose reads all end within the file's first 2 MiB gets no read-ahead
   while another file's decode-ahead runs or another reader plays, and a reader from the start of
   a file does not start its decode-ahead within that head while another file's runs; it may once

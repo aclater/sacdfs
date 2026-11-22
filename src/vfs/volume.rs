@@ -570,10 +570,15 @@ impl Volume {
         // Listing a directory the first time opens its images (reads their TOCs).
         let tree = self.shared.tree.clone();
         let refusing = move || tree.refusing();
+        let warm = self.warm.clone();
         self.serve(
             What::new("readdir", Ino(ino)),
             reply,
-            move |sh| sh.tree.children(ino).map(|c| (c, sh.tree.parent_of(ino))),
+            move |sh| {
+                let children = sh.tree.children(ino)?;
+                sh.listed(&warm, &children);
+                Some((children, sh.tree.parent_of(ino)))
+            },
             move |reply, found: Option<(Arc<Vec<Entry>>, u64)>| {
                 let Some(reply) = reply else { return };
                 let Some((children, parent)) = found else {
@@ -590,10 +595,18 @@ impl Volume {
     pub fn readdir_plus(&self, ino: u64, offset: u64, reply: impl Reply<ListingPlus>) {
         let tree = self.shared.tree.clone();
         let refusing = move || tree.refusing();
+        let warm = self.warm.clone();
         self.serve(
             What::new("readdirplus", Ino(ino)),
             reply,
-            move |sh| sh.listing_plus(ino, offset),
+            move |sh| {
+                if offset == 0
+                    && let Some(children) = sh.tree.children(ino)
+                {
+                    sh.listed(&warm, &children);
+                }
+                sh.listing_plus(ino, offset)
+            },
             move |reply, found| {
                 let Some(reply) = reply else { return };
                 let Some(entries) = found else {
@@ -770,6 +783,18 @@ impl Shared {
     /// what [`Shared::entry`] gives for each, for `readdirplus` (#205). A name whose node has
     /// just been let go of is left out (the next listing shows it again); `None` if `ino` is
     /// not a directory (or, short of memory, cannot be listed now).
+    /// Tells the warmer of a listing of a folder with track files in it (#456).
+    fn listed(&self, warm: &Arc<crate::warm::Warmer>, children: &[Entry]) {
+        let first =
+            children.iter().filter(|e| !e.is_dir).find_map(|e| match self.tree.loaded(e.ino).as_deref() {
+                Some(Node::File(f)) => Some(f.clone()),
+                _ => None,
+            });
+        if let Some(f) = first {
+            warm.listed(&f);
+        }
+    }
+
     fn listing_plus(&self, ino: u64, offset: u64) -> Option<ListingPlus> {
         let children = self.tree.children(ino)?;
         let parent = self.tree.parent_of(ino);

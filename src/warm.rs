@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Warming a folder's heads after a player's probe (#510).
+//! Warming a folder's heads after a player's probe (#510) or a listing of the folder (#456).
 //!
 //! A network player of #456 probes a track as soon as it lists the album, and when playback
 //! starts, minutes later, it re-reads the head of every other file of the album before (and
@@ -9,11 +9,20 @@
 //! head was probed and the mount then goes [`QUIET`], the other files of its folder have their
 //! heads decoded in the background, as far as the probe read, and kept as heads.
 //!
-//! - **Only after a probe of one file:** the reads of audio since the mount was last quiet were of
+//! - **After a probe of one file, or a listing of the folder:** the reads of audio since the mount was last quiet were of
 //!   one file only, from its start, past the kernel's read-ahead of a first read, and within its
 //!   head ([`Reader::probe_extent`]). A library scanner reads every file of a folder, so the
 //!   reads before a pause cover several files; a tagger stops within the kernel's read-ahead;
-//!   a player that plays reads past the head.
+//!   a player that plays reads past the head. A listing of a folder of track files warms that
+//!   folder's heads ([`LISTED_HEAD`] of each, from its first file) once it has been the last
+//!   folder listed for [`SETTLE`] and the mount has had no read for [`QUIET`]. *Why (#456,
+//!   0.7.2's `-vv` log):* the player listed the album, and when playback was started a few
+//!   seconds later it read the heads of all 12 files, one file at a time, taking turns with its
+//!   track: no probe of one file came first, so nothing was warm, and its track got 0.56 to 0.93
+//!   s of audio a second for 7.4 s while each re-read decoded (99 to 193 ms per 128 KiB on
+//!   average). After a wait it started cleanly. Listing another folder of track files moves the
+//!   warming there. On a machine whose speed is not measured yet the first frames decoded
+//!   measure it, and a fast one stops there.
 //! - **Only on a CPU slower than players' start-up bursts** (`--start-burst`): a fast one decodes
 //!   the heads in the moment the player asks.
 //! - **Only while the mount is idle:** it starts after [`QUIET`] with no read, and stops at the
@@ -29,7 +38,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use crate::engine::Engine;
-use crate::track::{Reader, TrackFile};
+use crate::track::{Format, Reader, TrackFile};
 use crate::tree::Tree;
 
 /// How long the mount goes without a read before warming starts. *Why 2 s:* a player starting a
@@ -37,28 +46,47 @@ use crate::tree::Tree;
 /// scanner goes on to the next file at once; the player of #456 waited 3 minutes after its probe.
 pub const QUIET: Duration = Duration::from_secs(2);
 
+/// How long a folder listed has to stay the last listed before its heads are warmed. *Why 1 s:*
+/// the player of #456 lists the folder it shows together with its parent and siblings (looking
+/// for disc folders in them) within a second, and ends with the one it shows.
+pub const SETTLE: Duration = Duration::from_secs(1);
+
+/// Bytes of audio of each file's head that a listing warms. *Why:* the player of #456 re-reads
+/// 12 reads of 128 KiB of each file, less the DSF header (1572772 bytes of audio), when it starts
+/// a track; 12 such heads of a 6-channel album take about 18 MiB of the heads' budget.
+pub const LISTED_HEAD: u64 = 1536 << 10;
+
 /// Warms a folder's heads after a probe; see the module.
 #[derive(Debug)]
 pub struct Warmer {
     engine: Weak<Engine>,
     tree: Weak<Tree>,
     quiet: Duration,
+    settle: Duration,
     clock: Clock,
     /// Reads so far: warming stops when this moves.
     reads: AtomicU64,
+    /// Changes of the folder listed last: warming stops when this moves.
+    listings: AtomicU64,
     /// When the last read came, in ms since `epoch` plus one (0: none yet).
     last: AtomicU64,
     state: Mutex<State>,
     wake: Condvar,
 }
 
-/// A probe of a file: the file, the reader's number and how far into the audio it read.
+/// A probe of a file: the file, the reader's number and how far into the audio it read. For a
+/// listing: the folder's first file, reader 0, [`LISTED_HEAD`].
 #[derive(Debug)]
 struct Probe {
     file: Arc<TrackFile>,
     reader: u64,
     extent: u64,
+    /// From a listing of the folder, not a probe.
+    listed: bool,
 }
+
+/// The reads and the listings so far: warming stops when either moves.
+type Mark = (u64, u64);
 
 /// The warmer's time, in ms plus one (0 stands for "no read yet"). *Why not `Instant` directly:*
 /// the tests set it, so that what counts as quiet does not hang on a busy machine's scheduling
@@ -84,8 +112,8 @@ impl Clock {
 
 /// What a burst of reads gives the warming thread now.
 enum Ready {
-    /// A probe, quiet since, and the reads so far.
-    Probe(Probe, u64),
+    /// A probe (or a listing), quiet since, and the reads and listings so far.
+    Probe(Probe, Mark),
     /// A probe, not yet quiet for this many ms.
     NotYet(u64),
     /// No probe to warm from.
@@ -100,6 +128,18 @@ struct State {
     thread: bool,
     /// The volume is gone: the thread ends.
     closed: bool,
+    /// The folder of track files listed last.
+    listed: Option<Listed>,
+}
+
+#[derive(Debug)]
+struct Listed {
+    /// Its first file.
+    file: Arc<TrackFile>,
+    /// When it was last listed, as [`Warmer::now_ms`].
+    at: u64,
+    /// Taken by the thread already, since it was last listed.
+    taken: bool,
 }
 
 #[derive(Debug)]
@@ -124,16 +164,24 @@ impl Warmer {
     }
 
     fn with_quiet(engine: &Arc<Engine>, tree: &Arc<Tree>, quiet: Duration) -> Arc<Warmer> {
-        Self::with_clock(engine, tree, quiet, Clock::Real(Instant::now()))
+        Self::with_clock(engine, tree, quiet, SETTLE, Clock::Real(Instant::now()))
     }
 
-    fn with_clock(engine: &Arc<Engine>, tree: &Arc<Tree>, quiet: Duration, clock: Clock) -> Arc<Warmer> {
+    fn with_clock(
+        engine: &Arc<Engine>,
+        tree: &Arc<Tree>,
+        quiet: Duration,
+        settle: Duration,
+        clock: Clock,
+    ) -> Arc<Warmer> {
         Arc::new(Warmer {
             engine: Arc::downgrade(engine),
             tree: Arc::downgrade(tree),
             quiet,
+            settle,
             clock,
             reads: AtomicU64::new(0),
+            listings: AtomicU64::new(0),
             last: AtomicU64::new(0),
             state: Mutex::default(),
             wake: Condvar::new(),
@@ -169,6 +217,11 @@ impl Warmer {
                 return;
             }
         }
+        self.run(&mut st);
+    }
+
+    /// Starts the thread if it does not run, or wakes it.
+    fn run(self: &Arc<Self>, st: &mut State) {
         if !st.thread && !st.closed {
             let me = Arc::downgrade(self);
             let spawned = std::thread::Builder::new().name("sacdfs-warm".to_owned()).spawn(move || {
@@ -198,6 +251,25 @@ impl Warmer {
         }
     }
 
+    /// Notes that a folder whose first track file is `file` was listed. A listing of another
+    /// folder than the last one stops warming.
+    pub fn listed(self: &Arc<Self>, file: &Arc<TrackFile>) {
+        let now = self.now_ms();
+        let mut st = self.lock();
+        match &mut st.listed {
+            // Listed again: warmed again (the heads warm already cost nothing), not stopped.
+            Some(l) if l.file.beside(file) => {
+                l.at = now;
+                l.taken = false;
+            }
+            l => {
+                *l = Some(Listed { file: file.clone(), at: now, taken: false });
+                self.listings.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        self.run(&mut st);
+    }
+
     /// Notes, after `reader` read the file's audio, how far it read as a probe, if it is one.
     pub fn done(&self, reader: &Reader, engine: &Engine) {
         let mut st = self.lock();
@@ -216,22 +288,22 @@ impl Warmer {
         self.wake.notify_all();
     }
 
-    /// Waits for a probe followed by quiet, and warms its folder; `false` when closed. Waits at
+    /// Waits for a probe or a listing followed by quiet, and warms its folder; `false` when closed. Waits at
     /// most a few seconds without one, so that the thread lets go of the warmer in between.
     fn next(&self) -> bool {
-        let Some((probe, reads)) = self.wait_for_probe(Duration::from_secs(10)) else {
+        let Some((probe, mark)) = self.wait_for_probe(Duration::from_secs(10)) else {
             return !self.lock().closed;
         };
         let (Some(engine), Some(tree)) = (self.engine.upgrade(), self.tree.upgrade()) else {
             return false;
         };
-        self.warm(&engine, &tree, &probe, reads);
+        self.warm(&engine, &tree, &probe, mark);
         true
     }
 
     /// The probe of a burst of reads of one file, once the mount has been quiet since for
     /// `quiet`, and the reads so far then; `None` if there is none within `wait`, or closed.
-    fn wait_for_probe(&self, wait: Duration) -> Option<(Probe, u64)> {
+    fn wait_for_probe(&self, wait: Duration) -> Option<(Probe, Mark)> {
         let deadline = Instant::now() + wait;
         let mut st = self.lock();
         loop {
@@ -241,7 +313,7 @@ impl Warmer {
             let now = Instant::now();
             let left = deadline.saturating_duration_since(now);
             match self.ready(&mut st) {
-                Ready::Probe(probe, reads) => return Some((probe, reads)),
+                Ready::Probe(probe, mark) => return Some((probe, mark)),
                 Ready::NotYet(ms) => {
                     let more = Duration::from_millis(ms);
                     st = self.wake.wait_timeout(st, more).unwrap_or_else(|p| p.into_inner()).0;
@@ -256,34 +328,43 @@ impl Warmer {
         }
     }
 
-    /// Takes the burst's probe if the mount has been quiet since for `quiet`; says how much longer
-    /// it has to be quiet if not yet.
+    /// Takes the burst's probe if the mount has been quiet since for `quiet`, or else the folder
+    /// listed last once it has settled; says how much longer to wait if not yet.
     fn ready(&self, st: &mut State) -> Ready {
-        let Some(b) = st.burst.as_mut().filter(|b| !b.others && !b.taken) else {
-            return Ready::Nothing;
-        };
-        let Some((reader, extent)) = b.probe else {
-            return Ready::Nothing;
-        };
-        let since = self.now_ms().saturating_sub(self.last.load(Ordering::SeqCst));
+        let now = self.now_ms();
+        let since = now.saturating_sub(self.last.load(Ordering::SeqCst));
         let quiet = self.quiet.as_millis() as u64;
-        if since < quiet {
-            return Ready::NotYet(quiet - since);
+        let mark = || (self.reads.load(Ordering::SeqCst), self.listings.load(Ordering::SeqCst));
+        if let Some(b) = st.burst.as_mut().filter(|b| !b.others && !b.taken)
+            && let Some((reader, extent)) = b.probe
+        {
+            if since < quiet {
+                return Ready::NotYet(quiet - since);
+            }
+            b.taken = true;
+            return Ready::Probe(Probe { file: b.file.clone(), reader, extent, listed: false }, mark());
         }
-        let reads = self.reads.load(Ordering::SeqCst);
-        b.taken = true;
-        Ready::Probe(Probe { file: b.file.clone(), reader, extent }, reads)
+        let Some(l) = st.listed.as_mut().filter(|l| !l.taken) else {
+            return Ready::Nothing;
+        };
+        let settle = (self.settle.as_millis() as u64).saturating_sub(now.saturating_sub(l.at));
+        let wait = quiet.saturating_sub(since).max(settle);
+        if wait > 0 {
+            return Ready::NotYet(wait);
+        }
+        l.taken = true;
+        Ready::Probe(Probe { file: l.file.clone(), reader: 0, extent: LISTED_HEAD, listed: true }, mark())
     }
 
-    /// Whether a read came since there were `reads`.
-    fn interrupted(&self, reads: u64) -> bool {
-        self.reads.load(Ordering::SeqCst) != reads
+    /// Whether a read, or a listing of another folder, came since `mark`.
+    fn interrupted(&self, mark: Mark) -> bool {
+        (self.reads.load(Ordering::SeqCst), self.listings.load(Ordering::SeqCst)) != mark
     }
 
     /// Decodes the heads of the files beside `probe`'s, as far as it read, until a read comes
     /// (the reads were `reads` before). How many files it went through, and whether a read
     /// stopped it.
-    fn warm(&self, engine: &Engine, tree: &Tree, probe: &Probe, reads: u64) -> (usize, bool) {
+    fn warm(&self, engine: &Engine, tree: &Tree, probe: &Probe, mark: Mark) -> (usize, bool) {
         let (file, extent) = (&probe.file, probe.extent);
         // Short of memory (#237): nothing more is decoded for later.
         if tree.refusing() {
@@ -293,25 +374,32 @@ impl Warmer {
         let Some(at) = files.iter().position(|f| Arc::ptr_eq(f, file) || f.number == file.number) else {
             return (0, false);
         };
-        // The files after the probed one first, as an album plays; the probed one last, so that
-        // its head is the most recently read and outlives the others' (an idle release keeps
-        // the most recent).
-        let order: Vec<_> = files[at + 1..].iter().chain(&files[..at]).chain(std::iter::once(file)).collect();
+        // After a probe: the files after the probed one first, as an album plays; the probed one
+        // last, so that its head is the most recently read and outlives the others' (an idle
+        // release keeps the most recent). After a listing: in order, as the player of #456
+        // re-reads them; none is its own.
+        let order: Vec<_> = if probe.listed {
+            files.iter().collect()
+        } else {
+            files[at + 1..].iter().chain(&files[..at]).chain(std::iter::once(file)).collect()
+        };
+        let own = !probe.listed;
+        let who = if probe.listed { "listed".to_owned() } else { format!("r={}", probe.reader) };
         let mut room = engine.cache().heads_budget();
         let began = Instant::now();
         crate::trace_line!(
-            "warm r={} start: {} files beside, {} bytes of audio each",
-            probe.reader,
-            order.len() - 1,
+            "warm {who} start: {} files beside, {} bytes of audio each",
+            order.len() - usize::from(own),
             extent
         );
-        let step = engine.threads().max(1) as u32;
+        let threads = engine.threads().max(1) as u32;
         let mut done = 0;
-        // The probed file's head is counted first: it must fit as well.
-        let own = file.head_frames(extent) as usize * file.cached_frame_bytes(engine);
-        room = room.saturating_sub(own);
+        if own {
+            // The probed file's head is counted first: it must fit as well.
+            room = room.saturating_sub(file.head_frames(extent) as usize * file.cached_frame_bytes(engine));
+        }
         for (i, f) in order.iter().enumerate() {
-            let last = i + 1 == order.len();
+            let last = own && i + 1 == order.len();
             let n = f.head_frames(extent);
             if !last {
                 let bytes = n as usize * f.cached_frame_bytes(engine);
@@ -323,14 +411,21 @@ impl Warmer {
             let reader = Reader::new(Arc::clone(f));
             let mut k = 0;
             while k < n {
-                if self.interrupted(reads) {
+                if self.interrupted(mark) {
                     crate::trace_line!(
-                        "warm r={} stopped: a read, after {done} files, took={}",
-                        probe.reader,
+                        "warm {who} stopped: a read or listing, after {done} files, took={}",
                         crate::trace::Ms(began.elapsed())
                     );
                     return (done, true);
                 }
+                // A probe only counts on a slow machine. A listing on one whose speed is not
+                // measured yet decodes enough frames to measure it, and stops on a fast one.
+                let slow = slow(engine, f);
+                if probe.listed && slow == Some(false) {
+                    crate::trace_line!("warm {who} stopped: a fast machine, after {done} files");
+                    return (done, false);
+                }
+                let step = if slow.is_none() { threads.max(crate::engine::RATE_BATCH) } else { threads };
                 let end = (k + step).min(n);
                 if let Err(e) = reader.warm(engine, k, end) {
                     log::debug!("warm: {}: {e}", f.disc.path.display());
@@ -342,20 +437,26 @@ impl Warmer {
                 done += 1;
             }
         }
-        crate::trace_line!(
-            "warm r={} done: {done} files, took={}",
-            probe.reader,
-            crate::trace::Ms(began.elapsed())
-        );
-        log::debug!("warm: decoded the heads of {done} files beside a probed one");
+        crate::trace_line!("warm {who} done: {done} files, took={}", crate::trace::Ms(began.elapsed()));
+        log::debug!("warm: decoded the heads of {done} files of a folder");
         (done, false)
     }
+}
+
+/// Whether `engine` decodes `f`'s frames slower than players' start-up bursts (`--start-burst`);
+/// `None` if not measured yet.
+fn slow(engine: &Engine, f: &TrackFile) -> Option<bool> {
+    let burst = engine.start_burst().rate;
+    if burst <= 0.0 {
+        return Some(false);
+    }
+    engine.rates().rate(f.format() == Format::Wav, f.layout.channels).map(|r| r < burst)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::track::{Format, TrackFile};
+    use crate::track::TrackFile;
 
     /// More than the kernel's read-ahead of a first read, less than the corpus's longest files.
     const PROBE: u64 = 300 << 10;
@@ -419,11 +520,19 @@ mod tests {
 
     /// The tests' quiet, in ms of the warmer's clock.
     const QUIET_MS: u64 = 50;
+    /// The tests' settle, in ms of the warmer's clock.
+    const SETTLE_MS: u64 = 20;
 
     /// A warmer on a clock that only the test moves (#563): reads, however long they take on a busy
     /// machine, come at the same instant unless the test moves the clock between them.
     fn manual(engine: &Arc<Engine>, tree: &Arc<Tree>) -> Arc<Warmer> {
-        Warmer::with_clock(engine, tree, Duration::from_millis(QUIET_MS), Clock::Manual(AtomicU64::new(0)))
+        Warmer::with_clock(
+            engine,
+            tree,
+            Duration::from_millis(QUIET_MS),
+            Duration::from_millis(SETTLE_MS),
+            Clock::Manual(AtomicU64::new(0)),
+        )
     }
 
     /// A warmer on the test's clock whose thread the test is: `read` starts none.
@@ -552,6 +661,103 @@ mod tests {
         w.advance(QUIET_MS);
         let (p, reads) = w.wait_for_probe(Duration::ZERO).unwrap();
         assert_eq!(w.warm(&engine, &tree, &p, reads), (0, false));
+    }
+
+    /// A file of another folder than `files`'.
+    fn elsewhere(tree: &Tree, files: &[Arc<TrackFile>]) -> Arc<TrackFile> {
+        tree.all_files().into_iter().map(|(_, f)| f).find(|f| !f.beside(&files[0])).expect("a second folder")
+    }
+
+    #[test]
+    fn a_listing_then_quiet_warms_the_folder() {
+        let tree = corpus();
+        let engine = slow_engine(64 << 20);
+        let files = folder(&tree, 3);
+        let w = driven(&engine, &tree);
+        w.advance(QUIET_MS);
+        w.listed(&files[0]);
+        // Not before it has settled: the listing of its parent and siblings may follow.
+        assert!(matches!(w.ready(&mut w.lock()), Ready::NotYet(SETTLE_MS)));
+        w.advance(SETTLE_MS);
+        let (p, mark) = w.wait_for_probe(Duration::ZERO).expect("settled and quiet");
+        assert!(p.listed);
+        assert_eq!(p.extent, LISTED_HEAD);
+        let (done, stopped) = w.warm(&engine, &tree, &p, mark);
+        assert!(!stopped);
+        assert_eq!(done, files.len());
+        for f in &files {
+            assert!(cached(&engine, f, f.head_frames(LISTED_HEAD)), "track {} not warmed", f.number);
+        }
+        // Once per listing; a listing again warms again.
+        assert!(w.wait_for_probe(Duration::ZERO).is_none());
+        w.listed(&files[1]);
+        w.advance(SETTLE_MS);
+        assert!(w.wait_for_probe(Duration::ZERO).is_some());
+    }
+
+    #[test]
+    fn a_listing_waits_for_quiet_and_a_read_or_another_folder_stops_it() {
+        let tree = corpus();
+        let engine = slow_engine(64 << 20);
+        let files = folder(&tree, 3);
+        let other = elsewhere(&tree, &files);
+        let w = driven(&engine, &tree);
+        // A player reading: the listing waits for the mount to be quiet.
+        probe(&w, &engine, &files[0], 64 << 10);
+        w.listed(&files[0]);
+        w.advance(SETTLE_MS);
+        assert!(matches!(w.ready(&mut w.lock()), Ready::NotYet(ms) if ms == QUIET_MS - SETTLE_MS));
+        w.advance(QUIET_MS);
+        let (p, mark) = w.wait_for_probe(Duration::ZERO).unwrap();
+        // Listing the same folder again does not stop it; a read does.
+        w.listed(&files[1]);
+        assert!(!w.interrupted(mark));
+        w.read(None);
+        assert_eq!(w.warm(&engine, &tree, &p, mark), (0, true));
+        // A listing of another folder stops it, and the next warming is of that folder.
+        w.advance(QUIET_MS);
+        let (_, mark) = w.wait_for_probe(Duration::ZERO).unwrap();
+        w.listed(&other);
+        assert!(w.interrupted(mark));
+        w.advance(SETTLE_MS);
+        let (p, _) = w.wait_for_probe(Duration::ZERO).unwrap();
+        assert!(p.file.beside(&other));
+    }
+
+    #[test]
+    fn a_listing_on_a_fast_machine_measures_it_and_stops() {
+        let tree = corpus();
+        let files = folder(&tree, 3);
+        // Not measured yet, and no machine is slower than this.
+        let burst = |rate| crate::engine::StartBurst { rate, secs: 8 };
+        let fast = Arc::new(Engine::new(2, 64 << 20).unwrap().with_start_burst(burst(1e-6)));
+        let w = driven(&fast, &tree);
+        w.advance(QUIET_MS);
+        w.listed(&files[0]);
+        w.advance(SETTLE_MS);
+        let (p, mark) = w.wait_for_probe(Duration::ZERO).unwrap();
+        assert_eq!(w.warm(&fast, &tree, &p, mark), (0, false));
+        let n = crate::engine::RATE_BATCH;
+        assert!(cached(&fast, &files[0], n), "the frames that measured it");
+        assert!(!cached(&fast, &files[0], files[0].head_frames(LISTED_HEAD)));
+        assert!(fast.rates().rate(false, files[0].layout.channels).is_some());
+        // The same, unmeasured, on a machine slower than every player: it warms the folder.
+        let slow = Arc::new(Engine::new(2, 64 << 20).unwrap().with_start_burst(burst(1e6)));
+        let w = driven(&slow, &tree);
+        w.advance(QUIET_MS);
+        w.listed(&files[0]);
+        w.advance(SETTLE_MS);
+        let (p, mark) = w.wait_for_probe(Duration::ZERO).unwrap();
+        assert_eq!(w.warm(&slow, &tree, &p, mark), (files.len(), false));
+        // With the help for slow machines off, nothing.
+        let off = Arc::new(Engine::new(2, 64 << 20).unwrap().with_start_burst(burst(0.0)));
+        let w = driven(&off, &tree);
+        w.advance(QUIET_MS);
+        w.listed(&files[0]);
+        w.advance(SETTLE_MS);
+        let (p, mark) = w.wait_for_probe(Duration::ZERO).unwrap();
+        assert_eq!(w.warm(&off, &tree, &p, mark), (0, false));
+        assert!(!cached(&off, &files[0], 1));
     }
 
     /// The deadlines here only keep a broken thread from hanging the test; nothing waits on them.
