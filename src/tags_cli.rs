@@ -412,11 +412,70 @@ pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
 fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut ImportSummary) -> io::Result<()> {
     let disc = Arc::new(Disc::open(image, 0, Tuning::default()).map_err(io::Error::other)?);
     let key = tags::disc_key(disc.toc());
+    // Where this disc's "not kept" lines start.
+    let listed = sum.not_kept.len();
+    let (areas, art) = collect_fields(&disc, image, rows, sum);
+    let mut file = lay_out(&disc, &areas);
+    let mut picture = None;
+    if let Some(bytes) = &art {
+        let ext = if tags::picture_mime(bytes) == Some("image/png") { "png" } else { "jpg" };
+        let name = format!("{key}.{ext}");
+        picture = Some(dir.join(&name));
+        file.album.insert(ART.to_owned(), name);
+    }
+    if file.is_empty() {
+        return Ok(());
+    }
+    let path = dir.join(format!("{key}.toml"));
+    let existing = match safe_file::read_text(&path, safe_file::MAX_TAGS_TEXT) {
+        Ok((text, _)) => {
+            Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", shown(&path))))?)
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", shown(&path)))),
+    };
+    let created = existing.is_none();
+    let mut merged = existing.unwrap_or_default();
+    let added = merge(&mut merged, &file);
+    // The file as it would be written, with what was there: over its bound, the disc gets
+    // nothing, and that is all there is to say about it.
+    let text = (added > 0).then(|| merged.to_text());
+    if let Some(t) = text.as_ref().filter(|t| t.len() > MAX_FILE_BYTES) {
+        sum.not_kept.truncate(listed);
+        sum.not_kept.push(format!(
+            "disc {}: its tags file {} would be {} KiB, over the {} KiB import writes; nothing added",
+            shown(image),
+            shown(&path),
+            t.len() >> 10,
+            MAX_FILE_BYTES >> 10
+        ));
+        return Ok(());
+    }
+    if let (Some(p), Some(bytes)) = (&picture, &art) {
+        if !p.exists() {
+            write_atomic(p, bytes)?;
+            sum.pictures += 1;
+        }
+    }
+    let Some(text) = text else { return Ok(()) };
+    write_atomic(&path, text.as_bytes())?;
+    sum.written += 1;
+    sum.created += usize::from(created);
+    sum.keys += added;
+    Ok(())
+}
+
+/// The fields of the extracts' tags (`rows`, of `image`) that sacdfs does not serve, by area and
+/// track, and the front cover; what can't be kept is listed in `sum`.
+fn collect_fields(
+    disc: &Arc<Disc>,
+    image: &Path,
+    rows: &[&verify::Row],
+    sum: &mut ImportSummary,
+) -> ([AreaFields; 2], Option<Vec<u8>>) {
     let mut areas: [AreaFields; 2] = Default::default();
     let mut art: Option<Vec<u8>> = None;
     let mut disc_bytes = 0;
-    // Where this disc's "not kept" lines start.
-    let listed = sum.not_kept.len();
     for row in rows {
         let slot = if row.area == crate::tree::MULTICHANNEL { Slot::Multichannel } else { Slot::TwoChannel };
         let Some(number) = row.track else { continue };
@@ -496,6 +555,12 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
             }
         }
     }
+    (areas, art)
+}
+
+/// The tags file of `areas` (stereo, then multichannel): what every track of an area shares
+/// at its album level, what both areas share at the disc's.
+fn lay_out(disc: &Disc, areas: &[AreaFields; 2]) -> TagsFile {
     let mut file = TagsFile::default();
     for (k, tracks) in areas.iter().enumerate() {
         let slot = if k == 0 { &Slot::TwoChannel } else { &Slot::Multichannel };
@@ -533,53 +598,7 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
         file.multichannel.album.remove(k);
     }
     file.album = shared;
-    let mut picture = None;
-    if let Some(bytes) = &art {
-        let ext = if tags::picture_mime(bytes) == Some("image/png") { "png" } else { "jpg" };
-        let name = format!("{key}.{ext}");
-        picture = Some(dir.join(&name));
-        file.album.insert(ART.to_owned(), name);
-    }
-    if file.is_empty() {
-        return Ok(());
-    }
-    let path = dir.join(format!("{key}.toml"));
-    let existing = match safe_file::read_text(&path, safe_file::MAX_TAGS_TEXT) {
-        Ok((text, _)) => {
-            Some(TagsFile::parse(&text).map_err(|e| io::Error::other(format!("{}: {e}", shown(&path))))?)
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", shown(&path)))),
-    };
-    let created = existing.is_none();
-    let mut merged = existing.unwrap_or_default();
-    let added = merge(&mut merged, &file);
-    // The file as it would be written, with what was there: over its bound, the disc gets
-    // nothing, and that is all there is to say about it.
-    let text = (added > 0).then(|| merged.to_text());
-    if let Some(t) = text.as_ref().filter(|t| t.len() > MAX_FILE_BYTES) {
-        sum.not_kept.truncate(listed);
-        sum.not_kept.push(format!(
-            "disc {}: its tags file {} would be {} KiB, over the {} KiB import writes; nothing added",
-            shown(image),
-            shown(&path),
-            t.len() >> 10,
-            MAX_FILE_BYTES >> 10
-        ));
-        return Ok(());
-    }
-    if let (Some(p), Some(bytes)) = (&picture, &art) {
-        if !p.exists() {
-            write_atomic(p, bytes)?;
-            sum.pictures += 1;
-        }
-    }
-    let Some(text) = text else { return Ok(()) };
-    write_atomic(&path, text.as_bytes())?;
-    sum.written += 1;
-    sum.created += usize::from(created);
-    sum.keys += added;
-    Ok(())
+    file
 }
 
 /// The fields every track of `all` has with the same value, if `tracks` holds them all
