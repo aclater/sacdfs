@@ -37,7 +37,7 @@ jobs:
     steps:
       - name: Packages
         shell: bash
-        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc shadow-utils util-linux ShellCheck systemd && dnf clean all
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc shadow-utils util-linux ShellCheck systemd python3 && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
@@ -52,9 +52,19 @@ jobs:
         shell: bash
         run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
       - run: cargo fmt --all --check
-      - name: NAS start/stop files (deploy/sacdfs-ctl, deploy/systemd/sacdfs.service)
+      - run: cargo fmt --manifest-path winfsp/Cargo.toml --check
+      - name: ShellCheck on every shell script, each in the dialect it declares
+        run: git ls-files -z '*.sh' deploy/sacdfs-ctl | xargs -0 shellcheck
+      # ruff, pinned by version and hash (.github/requirements/ruff.txt), at its default rules
+      # with the settings in ruff.toml.
+      - name: ruff on the Python scripts
+        shell: bash
         run: |
-          shellcheck -s sh deploy/sacdfs-ctl
+          python3 -m venv "$RUNNER_TEMP/ruff"
+          "$RUNNER_TEMP/ruff/bin/pip" install -q --require-hashes -r .github/requirements/ruff.txt
+          "$RUNNER_TEMP/ruff/bin/ruff" check --output-format=github
+      - name: NAS service file (deploy/systemd/sacdfs.service)
+        run: |
           sed 's|/usr/local/bin/sacdfs|/bin/true|' deploy/systemd/sacdfs.service > /tmp/sacdfs.service
           systemd-analyze verify /tmp/sacdfs.service
       - run: cargo clippy --all-targets --locked -- -D warnings
@@ -246,7 +256,7 @@ jobs:
       image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
     steps:
       - name: Packages
-        run: dnf -y -q --setopt=install_weak_deps=False install git-core findutils && dnf clean all
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core findutils gawk && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
@@ -259,3 +269,5 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           bash scripts/check-private-names.sh
+      - name: Equal copies and container hardening (.github/scripts/check-copies.sh)
+        run: sh .github/scripts/check-copies.sh

@@ -129,8 +129,11 @@ jobs:
           $p = Start-Process msiexec.exe -ArgumentList "/i", $msi, "/qn", "/norestart" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec: $($p.ExitCode)" }
           Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\WinFsp" | Select-Object InstallDir
-      - name: The core's library on Windows (clippy)
-        run: cargo clippy --lib --locked -- -D warnings
+      - name: The core's library on Windows (clippy, then clippy on its test code)
+        run: |
+          $ErrorActionPreference = "Stop"; $PSNativeCommandUseErrorActionPreference = $true
+          cargo clippy --lib --locked -- -D warnings
+          cargo clippy --lib --profile test --locked -- -D warnings
       - name: Front end (clippy, tests, release build)
         working-directory: winfsp
         env:

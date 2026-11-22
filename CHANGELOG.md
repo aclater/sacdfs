@@ -59,6 +59,11 @@ TrueNAS app) name this release (#529). Output bytes are those of 0.7.0.
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Changed
+- **Code acceptance rules.** CONTRIBUTING.md lists the rules a pull request must keep, each with
+  the CI check that enforces it. New checks: ShellCheck on every shell script, ruff on the Python
+  scripts, rustfmt on winfsp/, the MSRV build and the docs with the `nfs` feature, Windows clippy
+  on the core's test code, equal copies and container hardening (`.github/scripts/check-copies.sh`),
+  no function over 200 lines, and five performance lints.
 - **Files' heads are not kept in the cache (#456).** Test builds since #508 kept the frames of
   files' heads and tails in the cache through the idle release, and decoded a folder's heads after
   a player's probe on slow CPUs (#510), for a network player that re-reads an album's heads at each
