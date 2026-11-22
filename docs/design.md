@@ -303,11 +303,6 @@ under 64 MiB at the smallest, on the import replay, with straight reads and seek
   has gone unused for 60 s (`IDLE_RELEASE`), the cached frames are dropped, empty slabs
   unmapped, pooled decoders and converters dropped and the heap trimmed (`malloc_trim`).
   After a WAV import and a 300 MB read at the default cache, RSS went from 57 to 11 MiB.
-  The kept heads (#456) stay, the most recently read up to half the cache and at most 32 MiB,
-  in the slabs they are in (#510): a player that re-reads an album's heads at
-  each track start found them gone whenever more than a minute passed between starts, so on a
-  32-bit Atom every start decoded them again (3.5 to 4 s of CPU while the track started). A
-  release for memory pressure still drops everything.
   *Why:* a mount spends most of its life idle between scans and playback. *Why 60 s:* longer
   than any gap between a client's reads; a reader that comes back decodes its next frames
   again (a few ms), and the kernel's page cache usually still holds what it read.
@@ -1597,20 +1592,17 @@ decoding them twice.
   it would already be decoded); decoding only part of the head (the head is decoded once,
   and it is the reads' own frames).
 
-- **The heads and tails that readers read stay in the cache (#456).** The frames a read takes
-  from a file's first 2 MiB of audio, or its last frame, go to a second LRU list of the frame
-  cache, evicted only when no other frame is left, while it holds at most half the cache; past
-  that, its least recently read frames go back to the main list as the first to be evicted. A
-  frame decoded again replaces its kept copy. *Why:* a network player (a Zidoo over SMB in the
-  trace) re-reads the heads (1.6 MiB of each 6-channel DSF file, 0.6 MiB of each WAV file) and
-  tails of all the album's files each time it starts a track, and waits for them before it reads
-  much of the track it plays. The playing track's read-ahead had evicted them, so on a 4-thread
-  Atom every start decoded 13 to 15 MB of heads again, 3 to 4 s of its CPU, and the player read
-  its track at half real time for 8 s. *Why half:* an album of 12 tracks as 6-channel DSF and WAV
-  has about 27 MiB of heads; the rest of a 64 MiB cache still holds the start-of-track
-  decode-ahead (a quarter) and the free reserve. *Alternatives:* a separate cache on top of
-  `--cache-mb` (more memory than asked for); keeping them on disk (writes on every scan);
-  lowering the priority of the decode-ahead (the CPU is still short: the heads alone need it).
+- **Heads and tails that readers read are not kept apart in the cache (#456).** A network
+  player (a Zidoo over SMB in the trace) re-reads the heads (1.6 MiB of each 6-channel DSF file,
+  0.6 MiB of each WAV file) and tails of all the album's files each time it starts a track, and
+  the playing track's read-ahead evicts them, so on a 4-thread Atom every start decodes 13 to
+  15 MB of heads again. Keeping those frames in a second LRU list within half the cache (#508),
+  through the idle release, and decoding a folder's heads after a probe (#510) helped that player
+  but were withdrawn before 0.7.1: a plain sequential read of whole files with small reads
+  (`sha256sum`) then read about 1.75 times the image data and took twice as long, at any
+  `--cache-mb`. A change that keeps heads again must keep the image reads of sequential reads at
+  about 1 times the audio at any read size; `sequential_reads::real_discs_sequential_reads`
+  ([development](development.md#real-disc-tests)) checks it.
 
 - **The start of a track is decoded ahead in slices (#481).** A reader whose first read of audio
   was within the decode-ahead's frames below, and whose reads go on in order past the head
@@ -1700,26 +1692,6 @@ decoding them twice.
     furthest read when one does: a player that re-reads the album's heads as it starts a track and
     takes turns (its track's next read only after a re-read's reply) gets its track no faster
     than those re-reads, and on the Atom the run to the end made them 2 to 5 times slower.
-  The heads themselves stay decoded on every machine since #508 (kept heads, above).
-
-  On such a slow machine, a folder's heads are also decoded before the first start (#510,
-  `src/warm.rs`): once the audio reads since the mount was last quiet were all of one file, from
-  its start, past the kernel's read-ahead of a first read (256 KiB) and within its head (2 MiB),
-  and the mount then has no read for 2 s, the other files of the same area in the same format have
-  their first frames decoded as far as that probe read, one decoder batch (a frame per thread) at
-  a time, and kept as heads, the probed file's last so that it is the most recent. Any read stops
-  it after the batch in progress, and it does not start again until another probe. It stays within
-  the heads an idle release keeps (`FrameCache::heads_budget`), and does nothing while the mount
-  is short of memory. *Why:* the #456 player probes the track it shows as it lists the album, and
-  the user starts playback minutes later; that first start then re-read every other head, all
-  misses, about 4.5 s of the Atom's CPU before the track's handle opened. *Why only after quiet,
-  and stop at once:* decoding heads beside a track starting made the player's stalls 0.7 to 1.3 s
-  worse on Atom-speed cores (lane measurements for #510), so a start within 2 s of the probe is
-  left as it was. *Why one file and past 256 KiB:* library scanners read every file of a folder in
-  turn, and taggers (ffprobe, TagLib, Audio::Scan, MPD's scan) read less than the kernel's first
-  read-ahead; Roon's import also reads the middle of the file, past the head. *Why as far as the
-  probe read:* that is what the same player re-reads of the other files. *Trade-off:* about 3 s of
-  an Atom-speed CPU per album probed and not played, and the heads stay in memory as before.
 
   On any machine, a reader whose reads all end within the file's first 2 MiB gets no read-ahead
   while another file's decode-ahead runs or another reader plays, and a reader from the start of
@@ -1732,10 +1704,10 @@ decoding them twice.
   heads one file at a time, each closed before the next opened, and opened its track only after
   five to seven of them, so no file was starting while most were read. Each re-read past the
   first 1 MiB started its own decode-ahead and waited for it, about 250 ms per file on the Atom
-  though the kept heads held every frame it read, and each of those decoded 24 frames past the
-  head after its file closed. The track opened 1.5 to 1.9 s after the probe, and once its own read
-  of a kept head waited 2 s behind two such decode-aheads. *Why closed readers count:* the next
-  file is opened 20 to 100 ms after the last one closes. *Why 2 s, not the 1 s of #512:* with the
+  though the heads kept then (#508, since withdrawn) held every frame it read, and each of those
+  decoded 24 frames past the head after its file closed. The track opened 1.5 to 1.9 s after the
+  probe, and once its own read of a kept head waited 2 s behind two such decode-aheads. *Why
+  closed readers count:* the next file is opened 20 to 100 ms after the last one closes. *Why 2 s, not the 1 s of #512:* with the
   heads not decoded, a file's head took up to 1.4 s on cores held to the Atom's speed, and with
   1 s the next file's reader started its decode-ahead anyway, early enough to escape the rule
   for a file starting. A look at a file's tag counts as a read of its head.
@@ -1746,8 +1718,7 @@ decoding them twice.
   1.5 s of CPU): the 20 refusals marked "another reader plays" in the first trace were all such
   heads of other files while a track played, correctly refused under #363, and none was the start
   of a track played. A rescan decoded 11 to 26 MB again (3 to 7 s of the whole CPU) while the
-  track starting needed it (#508 keeps those heads; a mount's first start still decodes each
-  once). *Why measured and not a setting:* the same build runs on
+  track starting needed it. *Why measured and not a setting:* the same build runs on
   desktops that decode 6-channel DST many times faster than it plays and on the Atom at 1.8 times
   (1.07 for 6-channel WAV); a machine fast enough changes nothing but the head rule, and a
   measured rate follows the load it is under. *Why 3.5:* the fastest sustained start the player research

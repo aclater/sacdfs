@@ -290,14 +290,14 @@ impl Filesystem for SacdFs {
             let _ = config.set_max_readahead(nearest);
         }
         let _ = config.set_max_background(64);
-        // Lets the kernel NFS server export the mount: it then looks up `.` and `..` of
-        // inode numbers from file handles, which the tree finds again after a restart.
         // Listings with attributes when the kernel sees lookups follow listings (#205).
         if let Err(missing) =
             config.add_capabilities(InitFlags::FUSE_DO_READDIRPLUS | InitFlags::FUSE_READDIRPLUS_AUTO)
         {
             log::info!("the kernel offers no readdirplus ({missing:?})");
         }
+        // Lets the kernel NFS server export the mount: it then looks up `.` and `..` of
+        // inode numbers from file handles, which the tree finds again after a restart.
         if let Err(missing) = config.add_capabilities(InitFlags::FUSE_EXPORT_SUPPORT) {
             log::info!("the kernel offers no FUSE export support ({missing:?}): no NFS export");
         }

@@ -22,7 +22,9 @@
 # from DIR instead of this tree (to show what the security tests catch in an older release).
 #
 # Run from the repository root. RUNTIME: docker (default) or podman. LABEL_DISABLE=1 on an
-# SELinux host. Needs curl, python3 and the corpus in tests/corpus/images.
+# SELinux host. Needs curl, python3 and the corpus in tests/corpus/images. The archive's
+# install.sh, and the one served, carry the checksums of the archive's release files
+# (.github/scripts/stamp-members.sh), as a release packs them.
 set -euo pipefail
 
 mode=${1:-containers}
@@ -105,7 +107,16 @@ curl -fsSL -o "$work/pub/$pkg.tar.gz.sha256" "$gh_url.sha256"
 tar -C "$work/pub" -xzf "$work/pub/$pkg.tar.gz"
 install -m 0755 "$work/pub/$pkg/sacdfs" "$tree/sacdfs-ctl" "$tree/install.sh" "$work/pkg/$pkg/"
 install -m 0644 "$here/systemd/sacdfs.service" "$here/sacdfs.conf.example" "$here/nas-compose.yaml" "$work/pkg/$pkg/"
+# The archive's install.sh with the checksums of its release files built in, by the release's
+# own packing step, and the finished archive checked against them, as release.yml does.
+members=$here/../.github/scripts/stamp-members.sh
+if grep -qx "MEMBER_SHA256='" "$work/pkg/$pkg/install.sh"; then
+    sh "$members" fill "$work/pkg/$pkg/install.sh" "$work/pkg/$pkg" >/dev/null
+fi
 tar -C "$work/pkg" -czf "$rel/download/v$version/$pkg.tar.gz" "$pkg"
+if grep -qx "MEMBER_SHA256='" "$work/pkg/$pkg/install.sh"; then
+    sh "$members" check "$rel/download/v$version/$pkg.tar.gz"
+fi
 (cd "$rel/download/v$version" && sha256sum "$pkg.tar.gz" >"$pkg.tar.gz.sha256")
 # The installer as a release publishes it: the archive's checksum built in.
 mkdir -p "$work/t/bad" "$work/t/plain"
@@ -118,6 +129,8 @@ fi
 sed "s/^[0-9a-f]\{64\}  $pkg/$(printf '%064d' 0)  $pkg/" "$work/t/install.sh" >"$work/t/bad/install.sh"
 cp "$tree/install.sh" "$work/t/plain/install.sh"
 cp "$tree/sacdfs-ctl" "$work/t/sacdfs-ctl"
+# The release archive, for the tests of release files next to install.sh.
+cp "$rel/download/v$version/$pkg.tar.gz" "$work/t/archive.tar.gz"
 install -m 0644 "$work/t/install.sh" "$rel/download/v$version/install.sh"
 install -m 0644 "$work/t/install.sh" "$rel/latest/download/install.sh"
 # Downloads cut short, for deploy/ci-install-fetch-steps.sh (#352): all but the last line, and

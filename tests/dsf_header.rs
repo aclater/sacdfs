@@ -8,7 +8,7 @@ mod common;
 
 use common::*;
 use sacdfs::engine::Engine;
-use sacdfs::track::{Format, HEAD_WINDOW, Reader};
+use sacdfs::track::{Format, HEAD_SCAN, HEAD_WINDOW, Reader};
 use sacdfs::tree::{Output, SourceDir, Tree};
 
 /// The kernel's requests for a tagger that reads a DSF file's first 4 KiB, then its tag: the
@@ -56,11 +56,19 @@ fn real_discs_head_reads() {
             if cache == 0 || f.data_end() < 4 * HEAD_WINDOW {
                 continue;
             }
+            // The previous file's head was most likely read within `HEADS_SEQUENCE` (src/track.rs)
+            // on this engine, and a reader of a file's head from its start then waits until it is
+            // past the head (#456: a player going through an album's heads). So the start-ahead
+            // starts at the head window, or, held back, at the first read ending past `HEAD_SCAN`.
+            let held = (f.header_len() + HEAD_SCAN) / page * page;
             let player = Reader::new(f.clone());
-            let start = (0..2 * HEAD_WINDOW)
+            let start = (0..=held)
                 .step_by(page as usize)
                 .find(|&off| player.read(&engine, off, page).unwrap().1.is_some_and(|a| a.start));
-            assert_eq!(start, Some(HEAD_WINDOW), "{path:?}: the start-ahead starts past the head");
+            assert!(
+                start == Some(HEAD_WINDOW) || start == Some(held),
+                "{path:?}: the start-ahead starts at {start:?}, not past the head"
+            );
         }
     }
 }

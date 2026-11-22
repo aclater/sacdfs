@@ -9,6 +9,8 @@
 //!   but anyone may ping.
 //! - FSSTAT reports the volume's size.
 //! - A record longer than the bound ends the connection.
+//! - A folder is listed page by page from the cookie of the last entry read, by READDIR and
+//!   READDIRPLUS; a cookie that is no entry's is refused; `.` and `..` are looked up.
 
 #![cfg(feature = "nfs")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -29,8 +31,34 @@ use sacdfs::tree::{Output, SourceDir, Tree};
 use sacdfs::vfs::Volume;
 
 const UID: u32 = 4321;
+
+/// RPC program numbers.
 const NFS: u32 = 100_003;
 const MOUNT: u32 = 100_005;
+
+/// The procedures called, by their numbers in RFC 1813 (NFS) and its appendix I (MOUNT).
+const NULL: u32 = 0;
+const GETATTR: u32 = 1;
+const LOOKUP: u32 = 3;
+const READ: u32 = 6;
+const READDIR: u32 = 16;
+const READDIRPLUS: u32 = 17;
+const FSSTAT: u32 = 18;
+const MNT: u32 = 1;
+
+/// nfsstat3 values.
+const NFS3_OK: u32 = 0;
+const NFS3ERR_STALE: u32 = 70;
+const NFS3ERR_BADHANDLE: u32 = 10001;
+const NFS3ERR_BAD_COOKIE: u32 = 10003;
+
+/// auth_stat values.
+const AUTH_BADCRED: u32 = 1;
+const AUTH_TOOWEAK: u32 = 5;
+
+/// A fattr3 on the wire, in bytes, and where its `size` starts.
+const FATTR3_LEN: usize = 84;
+const FATTR3_SIZE_AT: usize = 20;
 
 /// A server over `source` on 127.0.0.1, on a runtime of its own; dropped, it stops.
 struct Server {
@@ -108,7 +136,7 @@ impl Reply {
     /// Skips a post_op_attr.
     fn post_op_attr(&mut self) {
         if self.u32() == 1 {
-            self.skip(84);
+            self.skip(FATTR3_LEN);
         }
     }
 }
@@ -187,7 +215,7 @@ impl Client {
 
     /// MNT "/": the root's handle.
     fn mount(&mut self) -> Vec<u8> {
-        let (a, mut r) = self.call(Cred::Sys(UID), MOUNT, 1, Xdr::default().opaque(b"/"));
+        let (a, mut r) = self.call(Cred::Sys(UID), MOUNT, MNT, Xdr::default().opaque(b"/"));
         assert_eq!(a, Answer::Accepted(0));
         assert_eq!(r.u32(), 0, "MNT3_OK");
         r.opaque()
@@ -195,31 +223,79 @@ impl Client {
 
     /// GETATTR: the status, and the size if NFS3_OK.
     fn getattr(&mut self, fh: &[u8]) -> (u32, u64) {
-        let (a, mut r) = self.call(Cred::Sys(UID), NFS, 1, Xdr::default().opaque(fh));
+        let (a, mut r) = self.call(Cred::Sys(UID), NFS, GETATTR, Xdr::default().opaque(fh));
         assert_eq!(a, Answer::Accepted(0));
         let st = r.u32();
-        if st != 0 {
+        if st != NFS3_OK {
             return (st, 0);
         }
-        r.skip(20);
+        r.skip(FATTR3_SIZE_AT);
         (st, r.u64())
     }
 
     fn lookup(&mut self, dir: &[u8], name: &str) -> Vec<u8> {
         let (a, mut r) =
-            self.call(Cred::Sys(UID), NFS, 3, Xdr::default().opaque(dir).opaque(name.as_bytes()));
+            self.call(Cred::Sys(UID), NFS, LOOKUP, Xdr::default().opaque(dir).opaque(name.as_bytes()));
         assert_eq!(a, Answer::Accepted(0));
-        assert_eq!(r.u32(), 0, "LOOKUP {name}");
+        assert_eq!(r.u32(), NFS3_OK, "LOOKUP {name}");
         r.opaque()
+    }
+
+    /// READDIR of `dir` after the entry whose cookie is `cookie` (0: from the start), for a
+    /// reply of about `count` bytes: the status, each entry's name and cookie, and `eof`.
+    fn readdir(&mut self, dir: &[u8], cookie: u64, count: u32) -> (u32, Vec<(String, u64)>, bool) {
+        let args = Xdr::default().opaque(dir).u64(cookie).u64(0).u32(count);
+        let (a, mut r) = self.call(Cred::Sys(UID), NFS, READDIR, args);
+        assert_eq!(a, Answer::Accepted(0));
+        let st = r.u32();
+        r.post_op_attr();
+        if st != NFS3_OK {
+            return (st, Vec::new(), false);
+        }
+        r.skip(8); // the cookie verifier
+        let mut entries = Vec::new();
+        while r.u32() == 1 {
+            r.u64(); // the file ID
+            let name = String::from_utf8(r.opaque()).unwrap();
+            entries.push((name, r.u64()));
+        }
+        (st, entries, r.u32() == 1)
+    }
+
+    /// READDIRPLUS, as [`Client::readdir`], for a reply of about `maxcount` bytes; each entry
+    /// also has its attributes and its handle, which are checked to be there.
+    fn readdirplus(&mut self, dir: &[u8], cookie: u64, maxcount: u32) -> (u32, Vec<(String, u64)>, bool) {
+        let args = Xdr::default().opaque(dir).u64(cookie).u64(0).u32(4096).u32(maxcount);
+        let (a, mut r) = self.call(Cred::Sys(UID), NFS, READDIRPLUS, args);
+        assert_eq!(a, Answer::Accepted(0));
+        let st = r.u32();
+        r.post_op_attr();
+        if st != NFS3_OK {
+            return (st, Vec::new(), false);
+        }
+        r.skip(8); // the cookie verifier
+        let mut entries = Vec::new();
+        while r.u32() == 1 {
+            r.u64(); // the file ID
+            let name = String::from_utf8(r.opaque()).unwrap();
+            let cookie = r.u64();
+            assert_eq!(r.u32(), 1, "{name}: attributes");
+            r.skip(FATTR3_LEN);
+            assert_eq!(r.u32(), 1, "{name}: a handle");
+            assert_eq!(r.opaque().len(), handle::LEN);
+            entries.push((name, cookie));
+        }
+        (st, entries, r.u32() == 1)
     }
 
     /// READ: the status and the bytes.
     fn read(&mut self, fh: &[u8], offset: u64, count: u32) -> (u32, Vec<u8>) {
-        let (a, mut r) = self.call(Cred::Sys(UID), NFS, 6, Xdr::default().opaque(fh).u64(offset).u32(count));
+        let (a, mut r) =
+            self.call(Cred::Sys(UID), NFS, READ, Xdr::default().opaque(fh).u64(offset).u32(count));
         assert_eq!(a, Answer::Accepted(0));
         let st = r.u32();
         r.post_op_attr();
-        if st != 0 {
+        if st != NFS3_OK {
             return (st, Vec::new());
         }
         r.u32();
@@ -232,15 +308,10 @@ impl Client {
 fn first_track(c: &mut Client, root: &[u8], image: &str) -> Vec<u8> {
     let dir = c.lookup(root, image.trim_end_matches(".iso"));
     let stereo = c.lookup(&dir, "Stereo");
-    let (a, mut r) = c.call(Cred::Sys(UID), NFS, 16, Xdr::default().opaque(&stereo).u64(0).u64(0).u32(4096));
-    assert_eq!(a, Answer::Accepted(0));
-    assert_eq!(r.u32(), 0, "READDIR");
-    r.post_op_attr();
-    r.skip(8);
-    assert_eq!(r.u32(), 1, "an entry");
-    r.u64();
-    let name = String::from_utf8(r.opaque()).unwrap();
-    c.lookup(&stereo, &name)
+    let (st, entries, _) = c.readdir(&stereo, 0, 4096);
+    assert_eq!(st, NFS3_OK, "READDIR");
+    let (name, _) = entries.first().expect("an entry");
+    c.lookup(&stereo, name)
 }
 
 const IMAGE: &str = "dsd-stereo-mch-2048.iso";
@@ -260,9 +331,9 @@ fn handles_survive_a_restart() {
     assert_eq!(root.len(), handle::LEN);
     let file = first_track(&mut c, &root, IMAGE);
     let (st, size) = c.getattr(&file);
-    assert_eq!(st, 0);
+    assert_eq!(st, NFS3_OK);
     let (st, before) = c.read(&file, 4096, 65536);
-    assert_eq!(st, 0);
+    assert_eq!(st, NFS3_OK);
     assert_eq!(before.len() as u64, 65536.min(size - 4096));
     drop(c);
     drop(s);
@@ -270,20 +341,20 @@ fn handles_survive_a_restart() {
     // A new server over the same SOURCE: the old handles, without a lookup first.
     let s = serve(src.path());
     let mut c = Client::new(s.addr);
-    assert_eq!(c.getattr(&root).0, 0, "the root's handle after a restart");
-    assert_eq!(c.getattr(&file), (0, size), "the file's handle after a restart");
-    assert_eq!(c.read(&file, 4096, 65536), (0, before), "the same bytes after a restart");
+    assert_eq!(c.getattr(&root).0, NFS3_OK, "the root's handle after a restart");
+    assert_eq!(c.getattr(&file), (NFS3_OK, size), "the file's handle after a restart");
+    assert_eq!(c.read(&file, 4096, 65536), (NFS3_OK, before), "the same bytes after a restart");
     drop(c);
     drop(s);
 
-    // Another SOURCE: stale (NFS3ERR_STALE, 70).
+    // Another SOURCE: stale.
     let other = tempfile::tempdir().unwrap();
     std::fs::copy(common::corpus().join("images").join(IMAGE), other.path().join(IMAGE)).unwrap();
     let s = serve(other.path());
     let mut c = Client::new(s.addr);
-    assert_eq!(c.getattr(&file).0, 70);
-    // Not a handle at all (NFS3ERR_BADHANDLE, 10001).
-    assert_eq!(c.getattr(&[0u8; 16]).0, 10001);
+    assert_eq!(c.getattr(&file).0, NFS3ERR_STALE);
+    // Not a handle at all.
+    assert_eq!(c.getattr(&[0u8; 16]).0, NFS3ERR_BADHANDLE);
 }
 
 #[test]
@@ -301,8 +372,8 @@ fn a_changed_image_makes_its_files_stale() {
     drop(f);
     let s = serve(src.path());
     let mut c = Client::new(s.addr);
-    assert_eq!(c.getattr(&root).0, 0, "a folder's handle stays");
-    assert_eq!(c.getattr(&file).0, 70, "a changed image's file is stale");
+    assert_eq!(c.getattr(&root).0, NFS3_OK, "a folder's handle stays");
+    assert_eq!(c.getattr(&file).0, NFS3ERR_STALE, "a changed image's file is stale");
 }
 
 #[test]
@@ -311,13 +382,15 @@ fn only_the_user_is_answered() {
     let s = serve(src.path());
     let mut c = Client::new(s.addr);
     let root = c.mount();
-    // AUTH_BADCRED (1) for another uid, AUTH_TOOWEAK (5) for AUTH_NONE.
-    assert_eq!(c.call(Cred::Sys(UID + 1), NFS, 1, Xdr::default().opaque(&root)).0, Answer::Denied(1));
-    assert_eq!(c.call(Cred::None, NFS, 1, Xdr::default().opaque(&root)).0, Answer::Denied(5));
-    assert_eq!(c.call(Cred::Sys(UID + 1), MOUNT, 1, Xdr::default().opaque(b"/")).0, Answer::Denied(1));
+    let getattr = |c: &mut Client, cred| c.call(cred, NFS, GETATTR, Xdr::default().opaque(&root)).0;
+    // Another uid, and AUTH_NONE.
+    assert_eq!(getattr(&mut c, Cred::Sys(UID + 1)), Answer::Denied(AUTH_BADCRED));
+    assert_eq!(getattr(&mut c, Cred::None), Answer::Denied(AUTH_TOOWEAK));
+    let mnt = c.call(Cred::Sys(UID + 1), MOUNT, MNT, Xdr::default().opaque(b"/")).0;
+    assert_eq!(mnt, Answer::Denied(AUTH_BADCRED));
     // Root, and anyone's ping.
-    assert_eq!(c.call(Cred::Sys(0), NFS, 1, Xdr::default().opaque(&root)).0, Answer::Accepted(0));
-    assert_eq!(c.call(Cred::None, NFS, 0, Xdr::default()).0, Answer::Accepted(0));
+    assert_eq!(getattr(&mut c, Cred::Sys(0)), Answer::Accepted(0));
+    assert_eq!(c.call(Cred::None, NFS, NULL, Xdr::default()).0, Answer::Accepted(0));
 }
 
 #[test]
@@ -326,9 +399,9 @@ fn fsstat_is_the_volume_size() {
     let s = serve(src.path());
     let mut c = Client::new(s.addr);
     let root = c.mount();
-    let (a, mut r) = c.call(Cred::Sys(UID), NFS, 18, Xdr::default().opaque(&root));
+    let (a, mut r) = c.call(Cred::Sys(UID), NFS, FSSTAT, Xdr::default().opaque(&root));
     assert_eq!(a, Answer::Accepted(0));
-    assert_eq!(r.u32(), 0);
+    assert_eq!(r.u32(), NFS3_OK);
     r.post_op_attr();
     let (tbytes, fbytes, abytes, tfiles) = (r.u64(), r.u64(), r.u64(), r.u64());
     let st = s.volume.statfs();
@@ -349,4 +422,73 @@ fn an_overlong_record_ends_the_connection() {
     // The server still serves others.
     let mut c = Client::new(s.addr);
     c.mount();
+}
+
+/// A SOURCE of `n` images, each in a folder of its own, so that the root lists `n` folders.
+fn source_of(n: usize) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..n {
+        let folder = dir.path().join(format!("Disc {i}"));
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::copy(common::corpus().join("images").join(IMAGE), folder.join(IMAGE)).unwrap();
+    }
+    dir
+}
+
+/// Lists `dir` with `list` (cookie to status, entries, eof), a page at a time, from each
+/// page's last cookie: the names in the order read, and the number of pages.
+fn all_pages(mut list: impl FnMut(u64) -> (u32, Vec<(String, u64)>, bool)) -> (Vec<String>, usize) {
+    let (mut names, mut cookie, mut pages) = (Vec::new(), 0, 0);
+    loop {
+        let (st, entries, eof) = list(cookie);
+        assert_eq!(st, NFS3_OK);
+        pages += 1;
+        assert!(pages < 100, "the listing does not end");
+        if let Some((_, last)) = entries.last() {
+            cookie = *last;
+        } else {
+            assert!(eof, "a page without entries that is not the last");
+        }
+        names.extend(entries.into_iter().map(|(name, _)| name));
+        if eof {
+            return (names, pages);
+        }
+    }
+}
+
+#[test]
+fn a_folder_is_listed_page_by_page() {
+    let src = source_of(5);
+    let s = serve(src.path());
+    let mut c = Client::new(s.addr);
+    let root = c.mount();
+    let (st, whole, eof) = c.readdir(&root, 0, 65536);
+    assert_eq!(st, NFS3_OK);
+    assert!(eof);
+    let whole: Vec<String> = whole.into_iter().map(|(name, _)| name).collect();
+    assert_eq!(whole.len(), 5, "{whole:?}");
+
+    // Replies too small for more than an entry or two: READDIR, then READDIRPLUS.
+    let (names, pages) = all_pages(|cookie| c.readdir(&root, cookie, 300));
+    assert_eq!(names, whole);
+    assert!(pages > 2, "{pages} pages");
+    let (names, pages) = all_pages(|cookie| c.readdirplus(&root, cookie, 500));
+    assert_eq!(names, whole);
+    assert!(pages > 2, "{pages} pages");
+
+    // A cookie that is no entry's.
+    assert_eq!(c.readdir(&root, 0xDEAD_BEEF, 4096).0, NFS3ERR_BAD_COOKIE);
+    assert_eq!(c.readdirplus(&root, 0xDEAD_BEEF, 4096).0, NFS3ERR_BAD_COOKIE);
+}
+
+#[test]
+fn dot_and_dot_dot_are_looked_up() {
+    let src = source();
+    let s = serve(src.path());
+    let mut c = Client::new(s.addr);
+    let root = c.mount();
+    let dir = c.lookup(&root, IMAGE.trim_end_matches(".iso"));
+    assert_eq!(c.lookup(&dir, "."), dir);
+    assert_eq!(c.lookup(&dir, ".."), root);
+    assert_eq!(c.lookup(&root, ".."), root, "the root is its own parent");
 }

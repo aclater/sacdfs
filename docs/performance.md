@@ -1797,7 +1797,7 @@ player starting a track wait or stall clearly longer than base did, on a CPU abo
   Each scenario mounts the disc afresh, so each is a first start after a mount: the player
   profiles in `tests/fixtures/players` (`scripts/trace-replay.py --player`) and two #456 traces
   replayed. One more, `zidoo-turns-warm-dsf.json@idle`, acts its profile out twice on one mount
-  80 s apart and measures the second start: after the idle release, with the kept heads (#510). Its
+  80 s apart and measures the second start: after the idle release (#510). Its
   player opens its track only after re-reading five files' heads (`play_after_heads`), as the
   #456 player does from its second start on. `zidoo-turns-warm-dsf.json@probe:20` first makes only
   the probe the player makes when it lists the album (the profile's `browse` reads), then starts

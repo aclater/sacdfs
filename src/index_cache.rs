@@ -417,6 +417,9 @@ impl IndexCache {
     }
 
     /// Writes one entry atomically: a new temporary file, then a rename over the old one.
+    /// The temporary file is made with `O_EXCL` and `O_NOFOLLOW`. It is not synced before the
+    /// rename, unlike [`crate::safe_file::write_atomic`]: an entry lost in a crash costs only
+    /// speed, and a sync per entry would slow the first listing of a large library.
     pub fn store(&self, key: &ImageKey, shapes: &[AreaShape], areas: &[Saved]) -> io::Result<()> {
         let bytes = encode(key, shapes, areas);
         if !self.dir.is_dir() {

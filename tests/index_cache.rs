@@ -29,7 +29,7 @@ use common::*;
 /// The process-wide cache, in a fresh directory, held by one test at a time.
 ///
 /// Every disc any test opens registers with this cache, and a flush writes the entries of
-/// all of them. A test that flushes while `hostile_entries_cost_only_speed` runs would
+/// all of them. A test that flushes while `damaged_and_stale_entries_cost_only_speed` runs would
 /// replace its hostile entries with the real points its discs learned (correctly: that
 /// is what a flush is for), so that fewer bad hints are left to catch. Hence the lock;
 /// the reads stay correct either way.
@@ -356,4 +356,51 @@ fn changed_image_misses_its_entry() {
     f.set_len(f.metadata().unwrap().len() + 2048).unwrap();
     f.set_modified(mtime).unwrap();
     assert_eq!(open().loaded_hints(0), 0, "size changed");
+}
+
+/// An entry replaced by a symbolic link or a FIFO: marking it used at a flush neither follows
+/// the link (its target keeps its time) nor waits on the FIFO.
+#[cfg(unix)]
+#[test]
+fn flush_neither_follows_links_nor_waits_on_fifos() {
+    use std::time::{Duration, SystemTime};
+    let dir = tempfile::tempdir().unwrap();
+    let local = Arc::new(IndexCache::open(&dir.path().join("cache")).unwrap());
+    let copy = dir.path().join("x.iso");
+    std::fs::copy(corpus().join("images/dst-features-2ch-6ch.iso"), &copy).unwrap();
+    // The entry's name: the one file a store of an empty entry for the image makes.
+    let key = ImageKey::new(&copy, &std::fs::metadata(&copy).unwrap()).unwrap();
+    local.store(&key, &[], &[]).unwrap();
+    let names: Vec<_> = std::fs::read_dir(local.dir()).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(names.len(), 1, "{names:?}");
+    let entry = names[0].clone();
+    let outside = dir.path().join("outside");
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    for planted in ["link", "fifo"] {
+        let _ = std::fs::remove_file(&entry);
+        if planted == "link" {
+            std::fs::write(&outside, b"not an entry").unwrap();
+            std::fs::File::options().write(true).open(&outside).unwrap().set_modified(old).unwrap();
+            std::os::unix::fs::symlink(&outside, &entry).unwrap();
+        } else {
+            nix::unistd::mkfifo(&entry, nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR)
+                .unwrap();
+        }
+        // A disc that learns nothing: its entry is only marked used at the flush.
+        let disc = Disc::open_with(&copy, 1, Tuning::default(), Some(&local)).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let flushing = Arc::clone(&local);
+        std::thread::spawn(move || tx.send(flushing.flush().map_err(|e| e.to_string())));
+        let flushed = rx.recv_timeout(Duration::from_secs(20));
+        if planted == "fifo" && flushed.is_err() {
+            // Release the flush blocked in its open, so the test process can end.
+            let _ = std::fs::File::options().write(true).open(&entry);
+        }
+        assert_eq!(flushed.expect("the flush returns").unwrap(), 0, "{planted}");
+        drop(disc);
+        if planted == "link" {
+            assert!(std::fs::symlink_metadata(&entry).unwrap().file_type().is_symlink());
+            assert_eq!(std::fs::metadata(&outside).unwrap().modified().unwrap(), old, "link followed");
+        }
+    }
 }
