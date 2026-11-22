@@ -9,6 +9,7 @@ name: windows
 
 on:
   pull_request:
+    paths-ignore: ["**.md"]  # not a required check: a docs-only pull request skips it
   push:
     branches: [main]
   workflow_dispatch:
@@ -76,6 +77,13 @@ jobs:
       - name: Rust and the build user (.github/scripts/ci-container-setup.sh)
         shell: bash
         run: .github/scripts/ci-container-setup.sh "$RUST_STABLE"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
+          prefix-key: v0-rust-ubi10
+      - name: The restored cache to the build user
+        shell: bash
+        run: chown -R ci "$GITHUB_WORKSPACE" "$HOME"
       - run: cargo build --release --locked
       - name: Mount the corpus and hash every file
         # As root: fusermount3 refuses the build user's mount here.
@@ -107,6 +115,12 @@ jobs:
         run: |
           rustup toolchain install $env:RUST_STABLE --profile minimal --component clippy
           rustup default $env:RUST_STABLE
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: |
+            . -> target
+            winfsp -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}  # PRs read main's cache, only main writes it
       - name: WinFsp (MSI, checked against its SHA-256)
         run: |
           $msi = Join-Path $env:RUNNER_TEMP "winfsp.msi"
