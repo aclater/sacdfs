@@ -18,25 +18,26 @@ OURS = re.compile(r"(sacdfs|scarletbook)[a-z_]*::")
 
 def parse(path):
     snaps, cur, stack = [], None, []
-    for line in open(path, errors="replace"):
-        line = line.rstrip("\n")
-        if line.startswith("snapshot="):
-            cur = {"tree": None}
-            snaps.append(cur)
-            stack = []
-        elif cur is not None and "=" in line and not line.startswith(" ") and not line.startswith("n"):
-            k, _, v = line.partition("=")
-            cur[k] = v
-        elif cur is not None and re.match(r"^ *n\d+: ", line):
-            depth = len(line) - len(line.lstrip(" "))
-            m = re.match(r"^ *n\d+: (\d+) (.*)$", line)
-            node = {"bytes": int(m.group(1)), "fn": m.group(2), "kids": []}
-            del stack[depth:]
-            if stack:
-                stack[-1]["kids"].append(node)
-            else:
-                cur["tree"] = node
-            stack.append(node)
+    with open(path, errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line.startswith("snapshot="):
+                cur = {"tree": None}
+                snaps.append(cur)
+                stack = []
+            elif cur is not None and "=" in line and not line.startswith(" ") and not line.startswith("n"):
+                k, _, v = line.partition("=")
+                cur[k] = v
+            elif cur is not None and re.match(r"^ *n\d+: ", line):
+                depth = len(line) - len(line.lstrip(" "))
+                m = re.match(r"^ *n\d+: (\d+) (.*)$", line)
+                node = {"bytes": int(m.group(1)), "fn": m.group(2), "kids": []}
+                del stack[depth:]
+                if stack:
+                    stack[-1]["kids"].append(node)
+                else:
+                    cur["tree"] = node
+                stack.append(node)
     return snaps
 
 

@@ -1,4 +1,5 @@
 # cargo-deny: dependency licences (GPL-3.0-compatible), security advisories, bans and sources.
+# The core's lock file, then the fuzz targets' (fuzz/deny.toml); winfsp/ has its own job in windows.yml.
 name: cargo-deny
 
 on:
@@ -44,3 +45,8 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cargo --version
           "$RUNNER_TEMP/$deny/cargo-deny" --log-level warn --all-features check advisories bans licenses sources
+      - name: cargo-deny on the fuzz targets' own lock file (fuzz/deny.toml)
+        shell: bash
+        working-directory: fuzz
+        run: |
+          "$RUNNER_TEMP/cargo-deny-$DENY_VERSION-x86_64-unknown-linux-musl/cargo-deny" --log-level warn --all-features check advisories bans licenses sources

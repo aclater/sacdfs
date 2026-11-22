@@ -234,7 +234,6 @@ fn run(args: Args) -> io::Result<()> {
             open_files,
         },
     )?;
-    // SAFETY-free: getuid/getgid cannot fail.
     let (uid, gid) = ids();
     let tags_tree = tree.clone();
     let shedding = engine.clone();

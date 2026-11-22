@@ -43,24 +43,43 @@ stop_sacdfs() {
     # Unmount (retried while the kernel still holds the mount busy); sacdfs then exits.
     for _ in $(seq 200); do
         mountpoint -q "$mnt" || break
-        umount "$mnt" 2>/dev/null && break
+        umount "$mnt" 2> /dev/null && break
         sleep 0.1
     done
     if mountpoint -q "$mnt"; then
         echo "the mount stays busy" >&2
-        grep -r . /proc/fs/nfsd/filecache 2>/dev/null | head -5 >&2
+        grep -r . /proc/fs/nfsd/filecache 2> /dev/null | head -5 >&2
         return 1
     fi
     wait "$pid"
 }
 
+# Exports the mount to loopback clients.
+export_mount() {
+    # FUSE has no device number of its own: an export needs an fsid (any number, the same
+    # after the restart, since it is part of the clients' file handles).
+    exportfs -i -o ro,fsid=4242,no_subtree_check,no_root_squash,insecure "127.0.0.1:$mnt"
+}
+
+# Starts the kernel NFS server: without NFSv4 (see above), 8 threads.
+start_nfsd() {
+    rpc.nfsd -N 4 8
+}
+
+# Stops the kernel NFS server and forgets the export, so that nothing keeps the mount busy.
+stop_nfs() {
+    rpc.nfsd 0
+    exportfs -ua
+    exportfs -f
+}
+
 cleanup() {
     set +e
-    umount -f -l "$client" 2>/dev/null
-    rpc.nfsd 0 2>/dev/null
-    exportfs -ua 2>/dev/null
-    [ -n "$pid" ] && kill "$pid" 2>/dev/null
-    fusermount3 -u -z "$mnt" 2>/dev/null
+    umount -f -l "$client" 2> /dev/null
+    rpc.nfsd 0 2> /dev/null
+    exportfs -ua 2> /dev/null
+    [ -n "$pid" ] && kill "$pid" 2> /dev/null
+    fusermount3 -u -z "$mnt" 2> /dev/null
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -70,18 +89,17 @@ mountpoint -q /proc/fs/nfsd || mount -t nfsd nfsd /proc/fs/nfsd
 # The state files the nfs-server service would create.
 mkdir -p /var/lib/nfs /run/rpcbind
 touch /var/lib/nfs/etab /var/lib/nfs/rmtab
-rpcbind -w 2>/dev/null || rpcbind
+rpcbind -w 2> /dev/null || rpcbind
 start_sacdfs
-# FUSE has no device number of its own: an export needs an fsid.
-exportfs -i -o ro,fsid=4242,no_subtree_check,no_root_squash,insecure "127.0.0.1:$mnt"
+export_mount
 rpc.mountd
-rpc.nfsd -N 4 8
+start_nfsd
 mount -t nfs -o vers=3,proto=tcp,nolock,hard,timeo=50 "127.0.0.1:$mnt" "$client"
 
 # The client opens files, reads half of each, and waits; meanwhile sacdfs restarts.
 fifo=$work/go
 mkfifo "$fifo"
-python3 - "$client" "$mnt" "$fifo" <<'EOF' &
+python3 - "$client" "$mnt" "$fifo" << 'EOF' &
 import os, sys, hashlib
 client, mnt, fifo = sys.argv[1:4]
 files = []
@@ -116,32 +134,37 @@ EOF
 reader=$!
 
 read -r line < "$fifo"
-[ "$line" = ready ]
+if [ "$line" != ready ]; then
+    echo "the client said '$line', not 'ready'" >&2
+    exit 1
+fi
 echo "restarting sacdfs"
 # As a NAS app update: stop serving, restart sacdfs, serve again.
-rpc.nfsd 0
-exportfs -ua
-exportfs -f
+stop_nfs
 stop_sacdfs
 start_sacdfs
-exportfs -i -o ro,fsid=4242,no_subtree_check,no_root_squash,insecure "127.0.0.1:$mnt"
-rpc.nfsd -N 4 8
+export_mount
+start_nfsd
 echo restarted > "$fifo"
 wait "$reader"
 
 # A changed image: its open file goes stale instead of reading other data.
 exec 3< "$(find "$client/Artist/Album" -name '*.dsf' | head -1)"
-rpc.nfsd 0; exportfs -ua; exportfs -f
+stop_nfs
 stop_sacdfs
 touch -d '2001-01-01' "$src/Artist/Album/dsd.iso"
 start_sacdfs
-exportfs -i -o ro,fsid=4242,no_subtree_check,no_root_squash,insecure "127.0.0.1:$mnt"
-rpc.nfsd -N 4 8
-if out=$(dd bs=4096 count=1 skip=1 iflag=direct status=none <&3 2>&1 >/dev/null); then
+export_mount
+start_nfsd
+if out=$(dd bs=4096 count=1 skip=1 iflag=direct status=none <&3 2>&1 > /dev/null); then
     echo "read of a changed image's file through an old handle succeeded" >&2
     exit 1
 fi
 echo "changed image: $out"
-case $out in *"Stale file handle"*) ;; *) echo "expected ESTALE" >&2; exit 1 ;; esac
+case $out in *"Stale file handle"*) ;; *)
+    echo "expected ESTALE" >&2
+    exit 1
+    ;;
+esac
 exec 3<&-
 echo "nfs loopback: ok"

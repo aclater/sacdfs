@@ -57,6 +57,8 @@ fn server() -> &'static Server {
             vfs: Arc::new(front),
             mount_signal: None,
             export_name: Arc::new("/".to_owned()),
+            // Shared by every input on purpose: it is how the target reaches the retransmission
+            // branch and the tracker's MAX_TRACKED housekeeping.
             transaction_tracker: Arc::new(TransactionTracker::new(Duration::from_secs(60))),
         };
         Server { runtime, context }
