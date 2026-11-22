@@ -288,3 +288,32 @@ fn not_kept_names_are_escaped() {
     assert!(!say.chars().any(|c| c.is_control() && c != '\n'), "{say:?}");
     assert!(say.contains("TXXX:Notes\\x0aFORGED line\\x1b]0;t\\x07\\x1b[2J"), "{say}");
 }
+
+/// A cover import cannot read (here a GIF) is listed as not kept, with exit status 2: verify
+/// says the extract's art would be lost, and before this fix import said nothing and exited 0.
+#[test]
+fn import_lists_a_cover_it_cannot_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = dir.path().join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    let iso = format!("{TAGGED}.iso");
+    common::link(common::corpus().join("images").join(&iso), lib.join(&iso)).unwrap();
+    let ext = dir.path().join("ext");
+    let numbers = write_extracts(&lib, &ext, |_, _, tag| {
+        frame(tag, b"APIC", b"\x00image/gif\x00\x03\x00GIF89a not a JPEG or PNG");
+    });
+    let tags_dir = dir.path().join("tags");
+    let (code, say) = import(&lib, &ext, &tags_dir);
+    assert_eq!(code, Some(2), "{say}");
+    let not_kept: Vec<&str> = say.lines().filter(|l| l.starts_with("not kept: ")).collect();
+    assert_eq!(not_kept.len(), numbers.len(), "{say}");
+    for n in &numbers {
+        let listed =
+            |l: &&&str| l.contains(&format!("{n:02}.dsf")) && l.contains("picture that import cannot read");
+        assert_eq!(not_kept.iter().filter(listed).count(), 1, "{say}");
+    }
+    assert!(say.contains("keep those extracts"), "{say}");
+    // Nothing was written for it: no picture, no `art` key.
+    let names: Vec<_> = fs::read_dir(&tags_dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, [".last-import.tsv"], "{say}");
+}

@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Helpers shared by the integration tests: the corpus manifest and DSF decoding.
+//! Helpers shared by the integration tests: skips, FUSE mounts, replies of the core's API, the
+//! corpus manifest and DSF decoding.
 
 #![allow(dead_code, unused_macros, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 
+use sacdfs::vfs::{DataReply, Error, Reply};
+use sacdfs::watchdog::Fail;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -214,6 +218,55 @@ pub fn unmount_retrying(mountpoint: &Path) {
         assert!(start.elapsed() < Duration::from_secs(20), "the mount stays busy");
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Whether a FUSE file system is mounted at `mountpoint`.
+pub fn is_mounted(mountpoint: &Path) -> bool {
+    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    let mp = mountpoint.to_str().unwrap();
+    // Field 5 is the mount point; after " - " come the type ("fuse" or "fuse.sacdfs",
+    // depending on how it was mounted) and the source.
+    info.lines().any(|l| {
+        l.split(' ').nth(4) == Some(mp) && l.split(" - ").nth(1).is_some_and(|t| t.starts_with("fuse"))
+    })
+}
+
+/// Waits for `cond`, looking every 20 ms, and fails the test after 30 s with `what`.
+pub fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while !cond() {
+        assert!(start.elapsed() < Duration::from_secs(30), "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A reply of the core's API ([`sacdfs::vfs::Volume`]) that hands its answer to the test, as a
+/// front end that must answer before its callback returns would wait for it.
+pub struct To<T>(Sender<Result<T, Error>>);
+
+impl<T: Send + 'static> Fail for To<T> {
+    fn fail(self, err: Error) {
+        let _ = self.0.send(Err(err));
+    }
+}
+
+impl<T: Send + 'static> Reply<T> for To<T> {
+    fn reply(self, r: Result<T, Error>) {
+        let _ = self.0.send(r);
+    }
+}
+
+impl DataReply for To<Vec<u8>> {
+    fn data(self, data: &[u8]) {
+        let _ = self.0.send(Ok(data.to_vec()));
+    }
+}
+
+/// The answer to the request `f` makes with a [`To`], waited for up to 60 s.
+pub fn ask<T: Send + 'static>(f: impl FnOnce(To<T>)) -> Result<T, Error> {
+    let (tx, rx) = mpsc::channel::<Result<T, Error>>();
+    f(To(tx));
+    rx.recv_timeout(Duration::from_secs(60)).expect("no answer")
 }
 
 /// The corpus directory.

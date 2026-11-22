@@ -17,6 +17,7 @@ pub trait XDR {
 
 /// Serializes a basic enumeration.
 /// Casts everything as u32 BigEndian
+// sacdfs: this macro and the two below are not `#[macro_export]`ed: they stay inside sacdfs.
 #[allow(non_camel_case_types)]
 macro_rules! xdr_enum_serde {
     ($t:ident) => {
