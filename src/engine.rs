@@ -657,6 +657,11 @@ impl FrameCache {
                 if let Some(old) = g.lru.pop(&k) {
                     copied.push(old);
                 }
+                // A key is in one of the two caches at most: `head_bytes` counts each head once.
+                debug_assert!(
+                    !g.lru.contains(&k) && !g.heads.contains(&k),
+                    "a frame kept as a head is also in the other cache"
+                );
                 g.head_bytes += f.data.len();
                 g.heads.put(k, f);
             } else {
