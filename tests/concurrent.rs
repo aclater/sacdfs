@@ -83,7 +83,7 @@ fn fast_readers_share_a_quarter_of_the_cache() {
         .iter()
         .find(|(p, _)| p.extension().is_some_and(|e| e == "dsf"))
         .expect("a DSF file in the corpus");
-    let frame = 4704 * u64::from(f.layout.channels);
+    let frame = sacdfs::dsf::FRAME_BYTES * u64::from(f.layout.channels);
     let cache = 32usize << 20;
     let quarter = (cache as u64 / 4 / frame) as u32;
     let by_threads = 32 * 32;

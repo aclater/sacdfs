@@ -47,10 +47,23 @@ All notable changes to sacdfs are recorded here. The format follows
   above base's. See docs/performance.md, "The CI stall gate".
 
 ### Changed
+- **install.sh verifies release files beside it against built-in checksums.** Run from an
+  unpacked release archive, it copies `sacdfs`, `sacdfs-ctl`, `sacdfs.service` and
+  `nas-compose.yaml` into its temporary folder and uses those copies only when each matches the
+  SHA-256 the release workflow built into it (the copy in each archive carries that archive's,
+  the installer published on its own every archive's); if one is missing or doesn't match, it
+  uses none of them and downloads the release, as the one-liner does. A copy of `install.sh`
+  from the repository has no such checksums and always downloads. Unpacking as yourself and
+  running `sudo sh install.sh` works as before. See docs/install/README.md.
 - **The installer on 32-bit x86 (#500)** (an `i686` kernel, or an x86-64 kernel with 32-bit
   programs) still stops before downloading anything, but now names the release's `i686` archive
   with its download link and links docs/install/binary.md, "32-bit x86", instead of the
   unsupported-system report and form.
+- **Clearer log lines for tags files and pauses.** The warnings about a tags file that is not
+  applied, or whose frames and art do not fit, now name the image and read
+  `IMAGE: AREA track N: ...` like the other listing lines. The line for a track shown without its
+  pause (`--pauses kept`) says that with the pause it overlaps another track or does not fit the
+  image; it named only the first cause.
 
 ### Fixed
 - **sacdfs-nfs: the log when the mount point is no longer its mount.** At the end, if another
@@ -61,8 +74,20 @@ All notable changes to sacdfs are recorded here. The format follows
   header's size, but the frame header after it could still end past a 32-bit `usize`, which
   panicked `sacdfs verify` and `sacdfs tags import` on such a tag in the i686 build. Found by the
   new i686 fuzz job. Mounting is not affected, and released builds are 64-bit.
+- **Windows: a source file's error 24 is no longer reported as "too many open files".**
+  sacdfs-win compared the core's code for its limit on open sidecar files with the C library's
+  `EMFILE` (24) where the core sends Windows's `ERROR_TOO_MANY_OPEN_FILES` (4). The limit itself
+  was reported correctly before and still is (`STATUS_TOO_MANY_OPENED_FILES`).
+- **`sacdfs tags import` lists a cover it cannot read as not kept.** An extract whose embedded
+  picture import cannot read (anything but a plain JPEG or PNG: a GIF, a compressed frame, an
+  ID3v2.2 or unsynchronised tag) was passed over in silence, and import could exit 0 with that
+  extract's art in no tags directory. It is now listed as `not kept:` with its extract and disc,
+  and the exit status is 2, as the user guide says of every picture left out.
 - **CI: a skip marker printed right after another test's `ok` was not read.** The skip check then
   reported the guarded test as no longer skipping and failed the job, at random.
+- **CI: the folder-warming tests failed on busy runners (#563).** They took wall-clock gaps
+  between reads as the mount's quiet; they now set the warmer's clock themselves. Tests only; the
+  warmer behaves as before.
 - **The first start after a mount on slow CPUs (#510).** The player of #456 probes a track when
   it lists the album, and when playback starts, often minutes later, re-reads the head of every
   other file of the album before it opens the track. On a 32-bit Atom the first start after a
