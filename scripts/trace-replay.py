@@ -362,7 +362,7 @@ def located(where, size, audio, trace_audio):
 def profile(handles, play, before, secs, wav_start):
     """What the trace shows of the player of reader `play`, as a profile for --player."""
     p = handles[play]
-    hs, t0, t1 = window(handles, play, before, secs)
+    hs, _t0, t1 = window(handles, play, before, secs)
     audio_of = lambda h: 92 if h.ext == "dsf" else wav_start
     first = p.reads[0][0]
     probes = []
@@ -658,15 +658,14 @@ def main():
     t = time.monotonic()
     res = replay(hs, t0, t1, mapping)
     out["wall_s"] = round(time.monotonic() - t, 1)
-    path, lmap = mapping[a.play]
+    _path, lmap = mapping[a.play]
     lp = local[(p.channels, p.ext)][tracks[(p.channels, p.track)]]
     reads = sorted(res[a.play])
     first_local = lmap(p.reads[0][1], p.reads[0][2])[0]
     out["replay"] = numbers(reads, first_local, lp[2], lp[3], a.prebuf)
     if a.reads:
         with open(a.reads, "w") as f:
-            for s, e, off, n in reads:
-                f.write(f"{s:.4f}\t{e:.4f}\t{off}\t{n}\t{(e - s) * 1000:.1f}\n")
+            f.writelines(f"{s:.4f}\t{e:.4f}\t{off}\t{n}\t{(e - s) * 1000:.1f}\n" for s, e, off, n in reads)
     print(json.dumps(out))
 
 

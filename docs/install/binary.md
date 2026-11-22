@@ -114,7 +114,10 @@ Each archive holds `sacdfs`, `sacdfs-ctl`, `sacdfs.service`, `sacdfs.conf.exampl
 `README.md` and `CHANGELOG.md` (0.5.0 and earlier: no `sacdfs-ctl`, `sacdfs.service` or
 `sacdfs.conf.example`). Since 0.6.2 it also holds the installer, `install.sh`,
 and `nas-compose.yaml`: `sudo sh install.sh --iso-dir ...` in the unpacked folder uses the files
-next to it and downloads nothing ([the installer](README.md#the-installer-one-line)). The
+next to it and downloads nothing ([the installer](README.md#the-installer-one-line)). The released
+`install.sh` verifies the files beside it against checksums built into it when the release was
+packed, and uses only verified copies; if one is missing or doesn't match, it uses none of them and
+downloads the release. The
 installer is also a release asset of its own, `install.sh`, with its `.sha256` and attestation.
 
 **What it needs.** glibc 2.17 or later (0.4.1 and earlier needed 2.28); every release build is
@@ -153,7 +156,10 @@ no `install.sh` or `nas-compose.yaml`: the installer and the container image are
 install it by hand with [the NAS steps](nas-binary.md), `i686` in place of `x86_64` in the file
 names. From 0.7.1, the installer run on 32-bit x86 (an `i686` kernel, or an x86-64 kernel with
 32-bit programs) stops before downloading anything, names this archive and links here. DST
-decoding takes about 2.3 to 2.5 times the CPU time of the x86_64 build on the same core.
+decoding takes about 2.3 to 2.5 times the CPU time of the x86_64 build on the same core. If MPD
+or Jellyfin scans the mount, use `--format dsf`: at Atom speed their first scan costs about 25 to
+40 s of the whole CPU per disc with WAV files and about 1 s without
+([deployment](../deployment.md#players-that-scan-the-library-mpd-moode-volumio-jellyfin-plex)).
 
 On a kernel older than 3.16 with system call auditing on (`auditd` running), starting any current
 static program can crash the kernel (CVE-2014-4508), and sacdfs is no exception: check that no

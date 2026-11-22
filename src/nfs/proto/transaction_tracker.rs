@@ -24,6 +24,7 @@ impl TransactionTracker {
     /// Returns `true` if the transaction is a retransmission, `false` otherwise.
     pub fn is_retransmission(&self, xid: u32, client_addr: &str) -> bool {
         let key = (xid, client_addr.to_string());
+        // sacdfs: a poisoned lock is taken anyway (here and below); nfsserve panicked.
         let mut transactions = self.transactions.lock().unwrap_or_else(|p| p.into_inner());
         housekeeping(&mut transactions, self.retention_period);
         if let hash_map::Entry::Vacant(e) = transactions.entry(key) {
@@ -50,6 +51,7 @@ impl TransactionTracker {
 const MAX_TRACKED: usize = 8192;
 
 fn housekeeping(transactions: &mut HashMap<(u32, String), TransactionState>, max_age: Duration) {
+    // sacdfs: no panic if the clock is within `max_age` of the epoch.
     let cutoff = SystemTime::now().checked_sub(max_age).unwrap_or(SystemTime::UNIX_EPOCH);
     transactions.retain(|_, v| match v {
         TransactionState::InProgress => true,

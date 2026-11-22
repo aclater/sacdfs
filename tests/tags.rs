@@ -5,7 +5,7 @@
 //! generation and mtime; a disc without a tags file is byte for byte as without the layer;
 //! and the binary's `--tags` serves the same through the kernel.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "a test fails by panicking")]
 
 mod common;
 

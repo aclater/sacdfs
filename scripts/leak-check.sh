@@ -47,6 +47,7 @@ for l in sys.stdin:
     fi
     # No --error-exitcode: it would change the exit status of the sacdfs processes the tests
     # start and check. The verdict comes from the logs instead.
+    # shellcheck disable=SC2054 # the commas are inside valgrind's own option values
     local vg=(valgrind --leak-check=full --show-leak-kinds=definite,indirect
         --errors-for-leak-kinds=definite,indirect --trace-children=yes
         "--trace-children-skip=*fusermount3,*/kill,*/sh,*/bash,*/python3,/usr/bin/*,/bin/*"
@@ -77,6 +78,7 @@ massif() {
     local hours
     hours=$(python3 -I -c "print($minutes / 60)")
     # The watchdog's timeout is longer under valgrind, which runs the decoder ~30x slower.
+    # shellcheck disable=SC2086 # SOAK_ARGS is a list of options, split on purpose
     python3 -I scripts/soak.py --sacdfs target/release/sacdfs --images "$images" --hours "$hours" \
         --interval 30 --warmup 120 --readers 2 --read-pause 0.5 --request-timeout 60 \
         --stall-every 240 --remount-every 300 --out "$OUT/massif-soak.tsv" ${SOAK_ARGS:-} \
