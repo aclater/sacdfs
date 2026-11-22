@@ -4,7 +4,7 @@
 
   scripts/trace-replay.py TRACE MOUNT --play R [--before 3] [--secs 20] [--prebuf 0.5]
   scripts/trace-replay.py TRACE --play R            # the trace's own numbers, no replay
-  scripts/trace-replay.py TRACE --anonymise OUT.gz  # without names, paths or process ids
+  scripts/trace-replay.py TRACE --anonymise OUT.gz  # without names, paths, pids or exact sizes
   scripts/trace-replay.py TRACE --play R --profile  # R's player profile, as JSON
   scripts/trace-replay.py --player PROFILE MOUNT    # a player that profile describes, on a mount
 
@@ -219,11 +219,26 @@ def numbers(reads, first_off, audio_start, rate, prebuf):
     }
 
 
-def anonymise(src, out):
+# --anonymise rounds file sizes up to a multiple of this, so a trace doesn't show the exact sizes
+# of an album's files, which can tell which disc it is. 64 MiB is half a minute of a 6-channel DSF
+# track, a minute and a half of a stereo one. A replay loses nothing: it maps reads by their
+# distance from a file's start or end, and uses the traced size only to tell which it is.
+ROUND = 64 << 20
+# The unit the kernel reads a file's tail in: the distance of a tail read from the end is rounded
+# up to it, so it doesn't show the size's last bytes.
+PAGE = 4096
+
+
+def anonymise(src, out, unit=ROUND):
     """Writes the trace's open, read, close and decode-ahead lines without the log's prefix,
-    file names (kept: track number, channels and format), paths or process ids."""
-    with opener(src) as f, opener(out, "wt") as o:
-        o.write("# A read trace, anonymised by scripts/trace-replay.py --anonymise.\n")
+    file names (kept: track number, channels and format), paths or process ids. With a `unit`,
+    each file's size is rounded up to a multiple of it. A read that starts in the first half of
+    its file keeps its offset; one in the second half keeps its distance from the end, rounded up
+    to a whole PAGE: a tail read is still the tail, a head read the head, and the reads near
+    either end keep their offsets from each other. A file whose reads come from both ends to
+    within `unit` of each other would show its size by where they meet: it is refused."""
+    lines, size_of = [], {}
+    with opener(src) as f:
         for line in f:
             m = LINE.search(line)
             if not m:
@@ -232,8 +247,43 @@ def anonymise(src, out):
             if m[2] == "open":
                 g = OPEN.match(rest)
                 n = NAME.search(g[5])
+                size_of[g[1]] = int(g[4])
                 rest = f'fh={g[1]} r={g[2]} pid=0 size={g[4]} "{n[0] if n else ""}"'
-            o.write(f"{m[1]} {m[2]} {rest}\n")
+            lines.append((m[1], m[2], rest))
+    if unit:
+        # Where each file's reads from its start end and those from its end begin, by size: the
+        # handles of one file have its size, so their reads are taken together.
+        head, tail = {}, {}
+        for _, ev, rest in lines:
+            g = READ.match(rest) if ev == "read" else None
+            if g and g[1] in size_of:
+                size, off, n = size_of[g[1]], int(g[2]), int(g[3])
+                if off > size // 2:
+                    tail[size] = min(tail.get(size, size), off)
+                else:
+                    head[size] = max(head.get(size, 0), min(off + n, size))
+        for size in head.keys() & tail.keys():
+            if tail[size] - head[size] < unit:
+                raise SystemExit(f"a file of the trace is read from both ends to within {unit} bytes, so its "
+                                 "size would show: anonymise a shorter trace, or keep exact sizes with --round 0")
+    with opener(out, "wt") as o:
+        o.write("# A read trace, anonymised by scripts/trace-replay.py --anonymise.\n")
+        for t, ev, rest in lines:
+            if unit and ev == "open":
+                g = OPEN.match(rest)
+                size = -(-int(g[4]) // unit) * unit
+                rest = f'fh={g[1]} r={g[2]} pid=0 size={size} "{g[5]}"'
+            elif unit and ev == "read":
+                g = READ.match(rest)
+                if g and g[1] in size_of:
+                    size, off, n = size_of[g[1]], int(g[2]), int(g[3])
+                    if off > size // 2:
+                        rounded = -(-size // unit) * unit
+                        back = -(-(size - off) // PAGE) * PAGE
+                        off = rounded - back
+                        got = f" got={back}" if back < n else ""
+                        rest = f"fh={g[1]} off={off} len={n}{got} {g[4]} q={g[5]} sw={g[6]} dec={g[7]}"
+            o.write(f"{t} {ev} {rest}\n")
 
 
 def window(handles, play, before, secs):
@@ -586,6 +636,8 @@ def main():
     ap.add_argument("mount", nargs="?")
     ap.add_argument("--play", type=int, help="the playing reader's number (r=)")
     ap.add_argument("--anonymise", metavar="OUT", help="write TRACE without names, paths or pids to OUT (.gz: gzip)")
+    ap.add_argument("--round", type=int, default=ROUND, metavar="BYTES",
+                    help=f"with --anonymise: round file sizes up to a multiple of BYTES (default {ROUND}; 0: exact)")
     ap.add_argument("--before", type=float, default=3.0, help="seconds before its open to start")
     ap.add_argument("--secs", type=float, default=20.0, help="seconds after its open to stop")
     ap.add_argument("--prebuf", type=float, default=0.5, help="seconds of audio before playback starts")
@@ -615,7 +667,7 @@ def main():
         print(json.dumps(out))
         return
     if a.anonymise:
-        anonymise(a.trace, a.anonymise)
+        anonymise(a.trace, a.anonymise, a.round)
         return
     if a.play is None:
         ap.error("--play is needed")

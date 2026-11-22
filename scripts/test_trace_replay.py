@@ -8,6 +8,8 @@
   of one whose playing handle opens after the heads).
 - A read keeps its place from trace to local file: header, audio and tail.
 - The simulated player stalls when replies come later than it plays, and not otherwise.
+- --anonymise rounds file sizes, keeps head and tail reads in place, and refuses a trace that
+  would show a size where reads from both ends meet.
 """
 
 import importlib.util
@@ -15,6 +17,7 @@ import itertools
 import json
 import shlex
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -80,6 +83,50 @@ class Profiles(unittest.TestCase):
         # Another file: audio at the same byte of the audio, the tail at the same distance from its end.
         self.assertEqual(tr.located(["a", 1000, 10], 5000000, 200, 92), (1200, 10))
         self.assertEqual(tr.located(["e", -452, 4096], 5000000, 200, 92), (5000000 - 452, 4096))
+
+
+class Anonymise(unittest.TestCase):
+    SIZE = 788668824  # not a multiple of 4 KiB
+    TAIL = 788668416  # the page the size's last bytes are in
+
+    def run_on(self, reads, unit=tr.ROUND):
+        lines = [f'1.0 open fh=1 r=0 pid=7 size={self.SIZE} "/music/A/#2 6ch .dsf"']
+        lines += [f"{2 + i}.0 read fh=1 off={o} len={n} miss q=0.1 sw=0.0 dec=1.0" for i, (o, n) in enumerate(reads)]
+        with tempfile.TemporaryDirectory() as d:
+            src, out = Path(d, "in.log"), Path(d, "out.trace")
+            src.write_text("\n".join(lines) + "\n")
+            tr.anonymise(str(src), str(out), unit)
+            text = out.read_text()
+            return text, tr.parse(str(out))[0]
+
+    def test_sizes_are_rounded_and_reads_keep_their_place(self):
+        reads = [(0, 131072), (self.TAIL, 4096), (131072, 131072), (self.TAIL - 65536, 65536)]
+        text, h = self.run_on(reads)
+        self.assertNotIn(str(self.SIZE), text)
+        self.assertNotIn("/music", text)
+        self.assertEqual(h.size % tr.ROUND, 0)
+        self.assertGreaterEqual(h.size, self.SIZE)
+        self.assertEqual([o for _, o, _, _ in h.reads],
+                         [0, h.size - 4096, 131072, h.size - 4096 - 65536])
+        for (o, n), (_, o2, n2, _) in zip(reads, h.reads):
+            self.assertEqual(tr.place(o, n, self.SIZE, 92)[0], tr.place(o2, n2, h.size, 92)[0])
+        # Again: nothing changes.
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "a").write_text(text)
+            tr.anonymise(str(Path(d, "a")), str(Path(d, "b")))
+            self.assertEqual(Path(d, "b").read_text(), text)
+
+    def test_exact_sizes_on_request(self):
+        text, h = self.run_on([(self.TAIL, 4096)], unit=0)
+        self.assertEqual((h.size, h.reads[0][1]), (self.SIZE, self.TAIL))
+
+    def test_reads_meeting_in_the_middle_are_refused(self):
+        with self.assertRaises(SystemExit):
+            self.run_on([(0, self.SIZE // 2 + 4096), (self.SIZE // 2 + 4096, 1 << 20)])
+
+    def test_new_fixtures_have_rounded_sizes(self):
+        h = tr.parse(str(ROOT / "tests" / "fixtures" / "traces" / "session-456-f.trace.gz"))
+        self.assertTrue(all(x.size % tr.ROUND == 0 for x in h.values()))
 
 
 class Numbers(unittest.TestCase):

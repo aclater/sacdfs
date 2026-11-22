@@ -1126,6 +1126,13 @@ scripts/trace-replay.py /tmp/sacdfs-trace.log /mnt/sacd --play 12           # re
 scripts/trace-replay.py /tmp/sacdfs-trace.log --anonymise session.trace.gz  # no names or paths
 ```
 
+`--anonymise` also rounds each file's size up to a multiple of 64 MiB (`--round BYTES`; 0 keeps
+the exact sizes), because an album's exact file sizes can tell which disc it is. A read in the
+first half of a file keeps its offset; one in the second half keeps its distance from the end,
+rounded up to 4 KiB, so a tail read stays the tail and a replay maps it as before. A trace whose
+reads of a file come from both ends to within 64 MiB of each other would show the size where
+they meet, so it is refused: anonymise a shorter part of the log.
+
 `tests/fixtures/traces/session-456.trace.gz` is one recorded session, anonymised: a network
 player on a 32-bit Atom NAS starting 6-channel DSF and WAV tracks from stopped (#456). `session-456-b.trace.gz` is
 a later one on the same NAS with #489: four 6-channel WAV starts, three of them while the player
@@ -1134,7 +1141,8 @@ replay it with `--wav-audio-start 268864`. `session-456-c.trace.gz` is a third, 
 three starts of the same 6-channel WAV file, each while the player re-read the heads and tails of
 the album's other files (`--wav-audio-start 268864` too). `session-456-d.trace.gz` is a fourth, with `--format dsf` and #509: a
 6-channel DSF start while the player re-read the other 11 files' heads, taking turns with them
-(#512).
+(#512). `session-456-f.trace.gz`, with 0.7.2, is a 6-channel DSF start right after the player
+listed the album (#591); it and later traces have rounded sizes.
 
 **Player profiles.** `--profile` prints what a trace shows of one player's start, as JSON: its
 probe handles' reads, where its playing handle's first read lands and how big its reads are, how
