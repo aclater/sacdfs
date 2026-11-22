@@ -26,8 +26,8 @@ below, macOS starts them; downloaded with a browser, macOS refuses them until yo
    ```sh
    mkdir -p ~/sacdfs
    cd ~/sacdfs
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs-0.7.1-aarch64-macos.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs-0.7.1-aarch64-macos.tar.gz.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-aarch64-macos.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-aarch64-macos.tar.gz.sha256
    ```
 
    On an Intel Mac, the same with `x86_64` (not run in the VM, which is Apple Silicon):
@@ -35,8 +35,8 @@ below, macOS starts them; downloaded with a browser, macOS refuses them until yo
    ```sh
    mkdir -p ~/sacdfs
    cd ~/sacdfs
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs-0.7.1-x86_64-macos.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs-0.7.1-x86_64-macos.tar.gz.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-macos.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-macos.tar.gz.sha256
    ```
 
    The rest of this guide shows the Apple Silicon names; on Intel, put `x86_64` for `aarch64`.
@@ -44,28 +44,28 @@ below, macOS starts them; downloaded with a browser, macOS refuses them until yo
 2. **Check the download:**
 
    ```sh
-   shasum -a 256 -c sacdfs-0.7.1-aarch64-macos.tar.gz.sha256
+   shasum -a 256 -c sacdfs-0.7.2-aarch64-macos.tar.gz.sha256
    ```
 
-   *You should see* `sacdfs-0.7.1-aarch64-macos.tar.gz: OK`. On a computer with the GitHub CLI,
-   `gh attestation verify sacdfs-0.7.1-aarch64-macos.tar.gz -R aclater/sacdfs` also checks that
+   *You should see* `sacdfs-0.7.2-aarch64-macos.tar.gz: OK`. On a computer with the GitHub CLI,
+   `gh attestation verify sacdfs-0.7.2-aarch64-macos.tar.gz -R aclater/sacdfs` also checks that
    GitHub's release workflow built it.
 
 3. **Unpack it:**
 
    ```sh
-   tar -xzf sacdfs-0.7.1-aarch64-macos.tar.gz
-   ~/sacdfs/sacdfs-0.7.1-aarch64-macos/sacdfs-nfs --version
+   tar -xzf sacdfs-0.7.2-aarch64-macos.tar.gz
+   ~/sacdfs/sacdfs-0.7.2-aarch64-macos/sacdfs-nfs --version
    ```
 
-   *You should see* `sacdfs-nfs 0.7.1`. The folder holds `sacdfs-nfs` (the mount), `sacdfs`
+   *You should see* `sacdfs-nfs 0.7.2`. The folder holds `sacdfs-nfs` (the mount), `sacdfs`
    (`verify` and `tags`), and the licences.
 
 4. **Make an empty folder to mount on, and start sacdfs.**
 
    ```sh
    mkdir -p ~/SACD
-   ~/sacdfs/sacdfs-0.7.1-aarch64-macos/sacdfs-nfs ~/Music/"SACD images" ~/SACD
+   ~/sacdfs/sacdfs-0.7.2-aarch64-macos/sacdfs-nfs ~/Music/"SACD images" ~/SACD
    ```
 
    *You should see* `mounted on /Users/you/SACD` and `serving ... on 127.0.0.1:20501` (the
@@ -85,11 +85,11 @@ you unpack it**:
 
 ```sh
 cd ~/Downloads
-shasum -a 256 -c sacdfs-0.7.1-aarch64-macos.tar.gz.sha256
-xattr -d com.apple.quarantine sacdfs-0.7.1-aarch64-macos.tar.gz
+shasum -a 256 -c sacdfs-0.7.2-aarch64-macos.tar.gz.sha256
+xattr -d com.apple.quarantine sacdfs-0.7.2-aarch64-macos.tar.gz
 mkdir -p ~/sacdfs
-tar -xzf sacdfs-0.7.1-aarch64-macos.tar.gz -C ~/sacdfs
-~/sacdfs/sacdfs-0.7.1-aarch64-macos/sacdfs-nfs --version
+tar -xzf sacdfs-0.7.2-aarch64-macos.tar.gz -C ~/sacdfs
+~/sacdfs/sacdfs-0.7.2-aarch64-macos/sacdfs-nfs --version
 ```
 
 Then go on with step 4.
@@ -133,14 +133,14 @@ screen.
 
    *You should see* `Installed package sacdfs ...` (`executables sacdfs, sacdfs-nfs`), then
    `sacdfs-nfs` and its version. The programs are in `~/.cargo/bin`: use
-   `~/.cargo/bin/sacdfs-nfs` where this guide says `~/sacdfs/sacdfs-0.7.1-aarch64-macos/sacdfs-nfs`.
+   `~/.cargo/bin/sacdfs-nfs` where this guide says `~/sacdfs/sacdfs-0.7.2-aarch64-macos/sacdfs-nfs`.
 
 ## Start it at each login
 
 Instead of step 4, write a launch agent with the same command and `--launch-agent`:
 
 ```sh
-~/sacdfs/sacdfs-0.7.1-aarch64-macos/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD
+~/sacdfs/sacdfs-0.7.2-aarch64-macos/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD
 launchctl load -w ~/Library/LaunchAgents/io.github.aclater.sacdfs-nfs.plist
 ```
 

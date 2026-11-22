@@ -8,8 +8,8 @@ package manager installs with it). About 5 minutes.
 
 | System | Package |
 |---|---|
-| Fedora 44 and 45, RHEL 9 and 10 | `sacdfs-0.7.1-1.x86_64.rpm`, `sacdfs-0.7.1-1.aarch64.rpm` |
-| Debian 12 and 13, Ubuntu 22.04 and 24.04 | `sacdfs_0.7.1-1_amd64.deb`, `sacdfs_0.7.1-1_arm64.deb` |
+| Fedora 44 and 45, RHEL 9 and 10 | `sacdfs-0.7.2-1.x86_64.rpm`, `sacdfs-0.7.2-1.aarch64.rpm` |
+| Debian 12 and 13, Ubuntu 22.04 and 24.04 | `sacdfs_0.7.2-1_amd64.deb`, `sacdfs_0.7.2-1_arm64.deb` |
 
 The packages are not signed with a package key. Check each download against its `.sha256`
 file, and, on a computer with the GitHub CLI, against its attestation, which shows that
@@ -23,19 +23,19 @@ The commands below are for x86_64; on aarch64 (`uname -m` prints `aarch64`) use 
 1. **Download the package and its checksum, and check it:**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs-0.7.1-1.x86_64.rpm
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs-0.7.1-1.x86_64.rpm.sha256
-   sha256sum -c sacdfs-0.7.1-1.x86_64.rpm.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm.sha256
+   sha256sum -c sacdfs-0.7.2-1.x86_64.rpm.sha256
    ```
 
-   *You should see* `sacdfs-0.7.1-1.x86_64.rpm: OK`. With the GitHub CLI,
-   `gh attestation verify sacdfs-0.7.1-1.x86_64.rpm -R aclater/sacdfs` also checks where it
+   *You should see* `sacdfs-0.7.2-1.x86_64.rpm: OK`. With the GitHub CLI,
+   `gh attestation verify sacdfs-0.7.2-1.x86_64.rpm -R aclater/sacdfs` also checks where it
    was built.
 
 2. **Install it:**
 
    ```sh
-   sudo dnf install ./sacdfs-0.7.1-1.x86_64.rpm
+   sudo dnf install ./sacdfs-0.7.2-1.x86_64.rpm
    ```
 
    *You should see* `Complete!`, with `fuse3` installed too if it wasn't there.
@@ -80,13 +80,13 @@ sudo curl -fsSL -o /etc/yum.repos.d/aclater-sacdfs.repo https://copr.fedorainfra
 sudo dnf install sacdfs
 ```
 
-*You should see* `Complete!`; `sacdfs --version` then prints `sacdfs 0.7.1`. On RHEL,
+*You should see* `Complete!`; `sacdfs --version` then prints `sacdfs 0.7.2`. On RHEL,
 `sudo dnf copr enable aclater/sacdfs` alone looks for an EPEL build, which this project
 doesn't have; with `dnf-plugins-core` installed, `sudo dnf copr enable aclater/sacdfs
 rhel-9-x86_64` works too. Then go on with step 3 above (settings, then start).
 
-A COPR build sorts newer than the release's `.rpm` of the same version (`0.7.1-1.el9` after
-`0.7.1-1`), so once the repository is enabled, `dnf upgrade` replaces a downloaded package with
+A COPR build sorts newer than the release's `.rpm` of the same version (`0.7.2-1.el9` after
+`0.7.2-1`), so once the repository is enabled, `dnf upgrade` replaces a downloaded package with
 it. The files are laid out the same; the program is built from the release's source by COPR
 instead of being the release archive's.
 
@@ -95,19 +95,19 @@ instead of being the release archive's.
 1. **Download the package and its checksum, and check it:**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs_0.7.1-1_amd64.deb
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.1/sacdfs_0.7.1-1_amd64.deb.sha256
-   sha256sum -c sacdfs_0.7.1-1_amd64.deb.sha256
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb.sha256
+   sha256sum -c sacdfs_0.7.2-1_amd64.deb.sha256
    ```
 
-   *You should see* `sacdfs_0.7.1-1_amd64.deb: OK`. With the GitHub CLI,
-   `gh attestation verify sacdfs_0.7.1-1_amd64.deb -R aclater/sacdfs` also checks where it was
+   *You should see* `sacdfs_0.7.2-1_amd64.deb: OK`. With the GitHub CLI,
+   `gh attestation verify sacdfs_0.7.2-1_amd64.deb -R aclater/sacdfs` also checks where it was
    built.
 
 2. **Install it:**
 
    ```sh
-   sudo apt install ./sacdfs_0.7.1-1_amd64.deb
+   sudo apt install ./sacdfs_0.7.2-1_amd64.deb
    ```
 
 3. **Name your folders** in `/etc/default/sacdfs` (`sudoedit /etc/default/sacdfs`), as in
