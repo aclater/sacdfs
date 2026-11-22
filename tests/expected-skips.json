@@ -13,13 +13,18 @@
       ]
     },
     {
+      "why": "Needs real disc images, which no CI job has: test images in the repository are synthetic. Measures NFS read rates by hand on local discs; built only with the nfs feature, which of the test jobs only coverage enables.",
+      "reason": "needs real disc images: set SACDFS_REAL_IMAGES",
+      "jobs": ["coverage"],
+      "tests": ["nfs::real_discs_pipelined_reads"]
+    },
+    {
       "why": "Needs real disc images, which no CI job has: test images in the repository are synthetic. Run by hand on local discs with scripts/real-discs.sh, as a release step (docs/test-plan.md).",
       "reason": "needs real disc images: set SACDFS_REAL_IMAGES",
       "jobs": ["tests", "tests-arm64", "tests-i686", "coverage"],
       "tests": [
         "dsf_header::real_discs_head_reads",
         "library_index::real_discs",
-        "nfs::real_discs_pipelined_reads",
         "sequential_reads::real_discs_sequential_reads",
         "wav::real_discs"
       ]
