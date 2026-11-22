@@ -19,6 +19,7 @@
       "tests": [
         "dsf_header::real_discs_head_reads",
         "library_index::real_discs",
+        "sequential_reads::real_discs_sequential_reads",
         "wav::real_discs"
       ]
     },

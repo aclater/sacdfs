@@ -47,7 +47,7 @@ const SLACK_BYTES: u64 = 16 << 10;
 
 /// The request timeout: its watchdog thread wakes every half second, and ends at the first
 /// wake after the unmount.
-const WATCHDOG: Duration = Duration::from_secs(2);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 const IMAGE: &str = "dsd-stereo-mch-2048";
 const CHURN: &str = "dst-features-2ch-6ch";
@@ -93,8 +93,10 @@ fn cycle(i: usize, lib: &Path, mp: &Path, tags_file: &Path) {
     let meta = fs::metadata(lib).unwrap();
     let (uid, gid) = (meta.uid(), meta.gid());
     let tree = Arc::new(tree);
-    let fs =
-        SacdFs::new(tree, engine.clone(), 4, uid, gid).unwrap().with_request_timeout(Some(WATCHDOG)).unwrap();
+    let fs = SacdFs::new(tree, engine.clone(), 4, uid, gid)
+        .unwrap()
+        .with_request_timeout(Some(REQUEST_TIMEOUT))
+        .unwrap();
     let mut config = Config::default();
     config.mount_options = vec![MountOption::RO, MountOption::FSName("sacdfs-no-growth".to_owned())];
     config.n_threads = Some(2);

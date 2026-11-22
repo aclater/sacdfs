@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use super::container::{self, FileSource, Joined, Source, Stream};
 use super::pause::{self, Found};
+use super::report::Pauses;
 use super::{
     Candidate, Ctx, Row, SACD_RATE, Status, TrackSource, folder_candidates, id3, leading_number, losses,
 };
@@ -26,11 +27,11 @@ use crate::disc::Tuning;
 use crate::tree::{Output, SourceDir, Tree};
 
 /// Samples per channel in a DSF block of 4096 bytes.
-pub const BLOCK_SAMPLES: u64 = 4096 * 8;
+pub(super) const BLOCK_SAMPLES: u64 = 4096 * 8;
 
 /// The files of one chain, as indexes into the rows, in track order.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Chain {
+pub(super) struct Chain {
     /// The rows, one per track from `first`.
     pub members: Vec<usize>,
     /// The track number of the first file.
@@ -47,15 +48,10 @@ fn is_dsf(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dsf"))
 }
 
-/// Whether a row's status leaves it to be matched as part of a chain.
-fn unmatched(s: Status) -> bool {
-    matches!(s, Status::NoMatch | Status::Different)
-}
-
 /// The chains among `rows` worth comparing: files of one folder numbered as consecutive tracks,
 /// of one channel count, every one but the last a whole number of blocks, at least two of them,
 /// and among them one that `fresh` (checked in this run) says is NO-MATCH or DIFFERENT.
-pub fn find(rows: &[Row], fresh: &dyn Fn(usize) -> bool) -> Vec<Chain> {
+pub(super) fn find(rows: &[Row], fresh: &dyn Fn(usize) -> bool) -> Vec<Chain> {
     let mut by_dir: BTreeMap<&Path, Vec<(u32, usize)>> = BTreeMap::new();
     for (i, r) in rows.iter().enumerate() {
         if !is_dsf(&r.path) || matches!(r.status, Status::Error | Status::Unsupported | Status::NotComparable)
@@ -74,7 +70,8 @@ pub fn find(rows: &[Row], fresh: &dyn Fn(usize) -> bool) -> Vec<Chain> {
         files.sort();
         let mut run: Vec<(u32, usize)> = Vec::new();
         let mut close = |run: &mut Vec<(u32, usize)>| {
-            let worth = run.len() >= 2 && run.iter().any(|&(_, i)| unmatched(rows[i].status) && fresh(i));
+            let worth =
+                run.len() >= 2 && run.iter().any(|&(_, i)| rows[i].status.chain_may_match() && fresh(i));
             if worth {
                 out.push(Chain { members: run.iter().map(|&(_, i)| i).collect(), first: run[0].0 });
             }
@@ -100,24 +97,22 @@ pub fn find(rows: &[Row], fresh: &dyn Fn(usize) -> bool) -> Vec<Chain> {
 /// The served tracks in the other pause mode, made only when a chain needs them: an extract
 /// made with `-z -b` holds every pause, which only `--pauses kept` serves, and one made with
 /// `-z` alone none of them.
-pub struct OtherMode<'a> {
-    /// "kept" or "dropped".
-    pub name: &'static str,
+pub(super) struct OtherMode<'a> {
+    /// The other mode.
+    mode: Pauses,
     scanned: &'a SourceDir,
     root: &'a Path,
-    kept: bool,
     tree: OnceLock<Tree>,
     folders: Mutex<HashMap<PathBuf, Arc<Vec<Arc<Candidate>>>>>,
 }
 
 impl<'a> OtherMode<'a> {
-    /// The mode other than `kept`, over the images of `scanned`.
-    pub fn new(scanned: &'a SourceDir, root: &'a Path, kept: bool) -> OtherMode<'a> {
+    /// The mode other than `mode`, over the images of `scanned`.
+    pub(super) fn new(scanned: &'a SourceDir, root: &'a Path, mode: Pauses) -> OtherMode<'a> {
         OtherMode {
-            name: if kept { "dropped" } else { "kept" },
+            mode: mode.other(),
             scanned,
             root,
-            kept: !kept,
             tree: OnceLock::new(),
             folders: Mutex::new(HashMap::new()),
         }
@@ -128,7 +123,7 @@ impl<'a> OtherMode<'a> {
             Tree::with_options(
                 self.scanned.clone(),
                 Tuning::default(),
-                Output { pauses_kept: self.kept, ..Output::dsf_only() },
+                Output { pauses_kept: self.mode.kept(), ..Output::dsf_only() },
             )
         });
         let mut f = self.folders.lock().unwrap_or_else(|p| p.into_inner());
@@ -149,22 +144,18 @@ struct Hit<'c> {
 
 impl Hit<'_> {
     fn silent(&self) -> bool {
-        self.found.head.is_silence() && self.found.tail.is_silence()
+        self.found.is_silence()
     }
 
     /// "Stereo tracks 1 to 3 of IMAGE", with what lies beyond the common audio.
     fn describe(&self, first: u32, last: u32) -> String {
         let c = self.tracks[0];
         let what = format!("{} tracks {first} to {last} of {}", c.area, c.image().display());
-        let parts: Vec<String> = [("before", &self.found.head), ("after", &self.found.tail)]
-            .iter()
-            .filter(|(_, r)| r.samples > 0)
-            .map(|(w, r)| format!("{} {w} them", r.describe()))
-            .collect();
-        match (parts.is_empty(), self.chain_longer) {
+        let extras = self.found.around("them");
+        match (extras.is_empty(), self.chain_longer) {
             (true, _) => what,
-            (false, true) => format!("{what}, plus {}", parts.join(" and ")),
-            (false, false) => format!("{what}, less {} that sacdfs serves", parts.join(" and ")),
+            (false, true) => format!("{what}, plus {extras}"),
+            (false, false) => format!("{what}, less {extras} that sacdfs serves"),
         }
     }
 }
@@ -253,7 +244,7 @@ fn search<'c>(
 }
 
 /// Compares one chain; the rows to replace, by index.
-pub fn check(
+pub(super) fn check(
     chain: &Chain,
     rows: &[Row],
     folders: &[PathBuf],
@@ -274,7 +265,7 @@ pub fn check(
         chain
             .members
             .iter()
-            .filter(|&&i| unmatched(rows[i].status))
+            .filter(|&&i| rows[i].status.chain_may_match())
             .map(|&i| {
                 let mut r = rows[i].clone();
                 r.reason = if r.reason.is_empty() { why.clone() } else { format!("{}; {why}", r.reason) };
@@ -287,14 +278,12 @@ pub fn check(
             let digest = digest.map(|d| id3::hex(&d)).unwrap_or_default();
             let mut out = Vec::new();
             for (k, &i) in chain.members.iter().enumerate() {
-                if !unmatched(rows[i].status) {
+                if !rows[i].status.chain_may_match() {
                     continue;
                 }
                 let c = h.tracks[k];
                 let mut r = rows[i].clone();
-                r.image = Some(c.image().to_owned());
-                r.area = c.area.clone();
-                r.track = Some(c.file.number);
+                c.fill(&mut r);
                 r.sha256 = digest.clone();
                 r.loses = match FileSource::open(&r.path) {
                     Ok(mut src) => match container::parse(&mut src) {
@@ -331,7 +320,7 @@ pub fn check(
                         "{files} are a gapless chain (sacd_extract -z) of {} as sacdfs serves them with \
                          --pauses {}: check again with that option",
                         h.describe(first, last),
-                        other.name
+                        other.mode.as_str()
                     ),
                 ),
                 _ => Vec::new(),

@@ -4,7 +4,7 @@
 //! tag, and the file's name as it was. In a test binary of its own, since the tag store is
 //! process-wide and the lookup's other tests read the disc's own tags.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "a test fails by panicking")]
 
 mod common;
 

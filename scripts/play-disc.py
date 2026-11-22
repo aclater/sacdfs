@@ -197,11 +197,9 @@ def main():
     master = master_toc(toc1, toc2)
     with open(a.out, "wb") as o:
         o.write(bytes(MASTER_TOC * S))
-        for _ in range(3):
-            o.write(master)
+        o.writelines(master for _ in range(3))
         o.write(toc)
-        for s in sectors:
-            o.write(s)
+        o.writelines(sectors)
         o.write(toc)
 
 
