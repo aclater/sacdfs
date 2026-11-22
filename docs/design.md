@@ -1746,9 +1746,9 @@ decoding them twice.
   an Atom-speed CPU per album probed and not played, and the heads stay in memory as before.
 
   A listing of a folder of track files warms it the same way, with no probe (#456, 0.7.2): once it
-  has been the last such folder listed for 1 s and the mount has had no read for 2 s, every file
-  of the first listed file's area and format has its first 1.5 MiB of audio decoded, in order,
-  within the same budget. A listing of another folder of track files stops it and moves it there;
+  has been the last such folder listed for 1 s and the mount has had no read for 2 s (or none
+  since the mount), every file of the first listed file's area and format has its first 1.5 MiB
+  of audio decoded, in order, within the same budget. A listing of another folder of track files stops it and moves it there;
   a listing of the same folder again warms it again, which costs nothing for heads still kept.
   Any read stops it as above. On a machine whose decode speed is not measured yet (no decode
   since the mount) the first batch is four frames, enough to measure it, and warming stops there
@@ -1766,6 +1766,12 @@ decoding them twice.
   a library walk warms only the folder it listed last, when it pauses. A start sooner than about
   the warming time after the listing still gets the heads warmed so far, in the order the player
   re-reads them. With `--format both` only the format of the folder's first file is warmed.
+  *Measured (stall gate, i686 build on two Atom-family Gracemont cores at 41 to 43 % quota, 3
+  rounds, `zidoo-start-dsf`):* listed 20 s before the start, stalls in the first 15 s went from
+  2.5 to 2.8 s to none, re-reads from 77 to 79 ms to 18 to 21 ms, and the track opened after
+  0.2 s instead of 3.0 to 3.2 s. Started at once after the listing, it is unchanged. Listed 3 s
+  before (about 1 s of warming, one or two heads), the track opened 1.6 s sooner and stalled
+  0.4 to 0.7 s more of the 15 s after it opened, within the gate's margins.
 
   On any machine, a reader whose reads all end within the file's first 2 MiB gets no read-ahead
   while another file's decode-ahead runs or another reader plays, and a reader from the start of

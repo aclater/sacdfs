@@ -15,7 +15,8 @@
 //!   reads before a pause cover several files; a tagger stops within the kernel's read-ahead;
 //!   a player that plays reads past the head. A listing of a folder of track files warms that
 //!   folder's heads ([`LISTED_HEAD`] of each, from its first file) once it has been the last
-//!   folder listed for [`SETTLE`] and the mount has had no read for [`QUIET`]. *Why (#456,
+//!   folder listed for [`SETTLE`] and the mount has had no read for [`QUIET`] (or none since it
+//!   was mounted). *Why (#456,
 //!   0.7.2's `-vv` log):* the player listed the album, and when playback was started a few
 //!   seconds later it read the heads of all 12 files, one file at a time, taking turns with its
 //!   track: no probe of one file came first, so nothing was warm, and its track got 0.56 to 0.93
@@ -332,7 +333,11 @@ impl Warmer {
     /// listed last once it has settled; says how much longer to wait if not yet.
     fn ready(&self, st: &mut State) -> Ready {
         let now = self.now_ms();
-        let since = now.saturating_sub(self.last.load(Ordering::SeqCst));
+        // No read since the mount: as quiet as can be.
+        let since = match self.last.load(Ordering::SeqCst) {
+            0 => u64::MAX,
+            last => now.saturating_sub(last),
+        };
         let quiet = self.quiet.as_millis() as u64;
         let mark = || (self.reads.load(Ordering::SeqCst), self.listings.load(Ordering::SeqCst));
         if let Some(b) = st.burst.as_mut().filter(|b| !b.others && !b.taken)
@@ -674,7 +679,7 @@ mod tests {
         let engine = slow_engine(64 << 20);
         let files = folder(&tree, 3);
         let w = driven(&engine, &tree);
-        w.advance(QUIET_MS);
+        // No read since the mount: only the settling counts.
         w.listed(&files[0]);
         // Not before it has settled: the listing of its parent and siblings may follow.
         assert!(matches!(w.ready(&mut w.lock()), Ready::NotYet(SETTLE_MS)));
