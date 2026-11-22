@@ -170,9 +170,7 @@ impl Candidate {
 }
 
 fn problem_text(p: Problem) -> String {
-    match p {
-        Problem::Unsupported(s) | Problem::Error(s) => s,
-    }
+    p.into_text()
 }
 
 /// A track file served by sacdfs, read as the mount reads it.
