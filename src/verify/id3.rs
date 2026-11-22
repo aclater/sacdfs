@@ -9,6 +9,8 @@
 //! description for TXXX, COMM and UFID) and a value (its text, or a hash of its bytes).
 //! Every tag is untrusted; sizes are checked against the bytes there are.
 
+#![warn(clippy::cast_possible_truncation)]
+
 use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
@@ -431,6 +433,7 @@ impl Losses {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "test data of known small sizes")]
 pub(crate) mod tests {
     use super::*;
 

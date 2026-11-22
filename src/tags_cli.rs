@@ -6,6 +6,8 @@
 //! sacdfs that uses the network ([`crate::lookup`], #185). Nothing but the tags directory is
 //! written.
 
+#![warn(clippy::cast_possible_truncation)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
@@ -34,7 +36,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Print each image's disc key: its tags file is DIR/<key>.toml.
+    /// Print each image's disc key: its tags file is DIR/KEY.toml.
     Key {
         /// The tags directory, to print the tags file's path and whether it exists.
         #[arg(long, value_name = "DIR")]
@@ -142,21 +144,17 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> ExitCode {
                 no_suffix: no_multichannel_album_suffix,
                 only_wanting: false,
             };
-            let mut session = match acoustid {
-                false => None,
-                true => match acoustid_session(
-                    &tags,
-                    acoustid_key_file.as_deref(),
-                    acoustid_budget,
-                    max_load,
-                    fpcalc,
-                ) {
+            let mut session = if acoustid {
+                match acoustid_session(&tags, acoustid_key_file.as_deref(), acoustid_budget, max_load, fpcalc)
+                {
                     Ok(s) => Some(s),
                     Err(e) => {
                         eprintln!("sacdfs tags: {}", safe_file::printable(&e));
                         return ExitCode::FAILURE;
                     }
-                },
+                }
+            } else {
+                None
             };
             let mut client = lookup::Client::new(lookup::Http::new());
             let s = lookup::fetch_with(&tags, &images, options, &mut client, session.as_mut(), |line| {
@@ -416,123 +414,10 @@ pub fn import(dir: &Path, mut args: verify::Args) -> io::Result<ImportSummary> {
 fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut ImportSummary) -> io::Result<()> {
     let disc = Arc::new(Disc::open(image, 0, Tuning::default()).map_err(io::Error::other)?);
     let key = tags::disc_key(disc.toc());
-    let mut areas: [AreaFields; 2] = Default::default();
-    let mut art: Option<Vec<u8>> = None;
-    let mut disc_bytes = 0;
     // Where this disc's "not kept" lines start.
     let listed = sum.not_kept.len();
-    for row in rows {
-        let slot = if row.area == "Multichannel" { Slot::Multichannel } else { Slot::TwoChannel };
-        let Some(number) = row.track else { continue };
-        let Some(i) = disc.toc().areas.iter().position(|a| a.slot == slot) else { continue };
-        let area = &disc.toc().areas[i];
-        let Some(track) = area.tracks.iter().find(|t| t.number == number) else { continue };
-        // Compared with the file as sacdfs serves it without a tags file, and without what
-        // comes from the image's path: that is no copy of the extract's tag (#185).
-        let served = TrackFile::new(disc.clone(), i, track).map(|f| f.stored_frames()).unwrap_or_default();
-        let tag = match extract_tag(&row.path) {
-            Ok(Some(tag)) => tag,
-            // No tag: nothing to keep.
-            Ok(None) => continue,
-            Err(e) => {
-                sum.failed.push(format!("{}: {e}", shown(&row.path)));
-                continue;
-            }
-        };
-        sum.files += 1;
-        let frames = id3::frames(&tag);
-        let fields = areas[usize::from(slot == Slot::Multichannel)].entry(number).or_default();
-        for f in &frames {
-            let context: Vec<id3::Frame> = if f.key == "TDRC" || f.key == "TDAT" {
-                frames.iter().filter(|g| g.key == "TDRC" || g.key == "TDAT").cloned().collect()
-            } else {
-                vec![f.clone()]
-            };
-            if id3::Losses::between(&context, &served, area.tracks.len()).is_empty() {
-                continue;
-            }
-            if f.key == "APIC" {
-                if art.is_none() {
-                    art = front_cover(&tag).filter(|p| {
-                        let fits = p.len() <= tags::MAX_ART_BYTES;
-                        if !fits {
-                            sum.not_kept.push(format!(
-                                "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
-                                shown(&row.path),
-                                shown(image),
-                                p.len() >> 10,
-                                tags::MAX_ART_BYTES >> 10
-                            ));
-                        }
-                        fits
-                    });
-                }
-                continue;
-            }
-            let binary = f.value.len() == 65 && f.value.starts_with('#');
-            match Key::of(&f.key) {
-                Some(_) if !binary => {
-                    let name =
-                        tags::ITEMS.iter().find(|(_, id, _)| *id == f.key).map_or(f.key.as_str(), |i| i.0);
-                    if !fields.contains_key(name) {
-                        match fit(fields, name, &f.value, disc_bytes) {
-                            Ok(c) => {
-                                disc_bytes += c;
-                                fields.insert(name.to_owned(), f.value.clone());
-                            }
-                            Err(why) => sum.not_kept.push(format!(
-                                "{} (disc {}): {}, {why}",
-                                shown(&row.path),
-                                shown(image),
-                                safe_file::one_line(name)
-                            )),
-                        }
-                    }
-                }
-                _ if f.key == "TDAT" => {}
-                _ => {
-                    sum.skipped.insert(f.key.clone());
-                }
-            }
-        }
-    }
-    let mut file = TagsFile::default();
-    for (k, tracks) in areas.iter().enumerate() {
-        let slot = if k == 0 { &Slot::TwoChannel } else { &Slot::Multichannel };
-        if tracks.is_empty() {
-            continue;
-        }
-        let all: BTreeSet<u8> =
-            disc.toc().area(*slot).map(|a| a.tracks.iter().map(|t| t.number).collect()).unwrap_or_default();
-        let level = match slot {
-            Slot::TwoChannel => &mut file.stereo,
-            _ => &mut file.multichannel,
-        };
-        level.album = common(tracks, &all);
-        for (n, f) in tracks {
-            let rest: Fields = f
-                .iter()
-                .filter(|(k, _)| !level.album.contains_key(*k))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            if !rest.is_empty() {
-                level.track.insert(n.to_string(), rest);
-            }
-        }
-    }
-    // What both areas share at album level is the album's.
-    let shared: Fields = file
-        .stereo
-        .album
-        .iter()
-        .filter(|(k, v)| file.multichannel.album.get(*k) == Some(*v))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    for k in shared.keys() {
-        file.stereo.album.remove(k);
-        file.multichannel.album.remove(k);
-    }
-    file.album = shared;
+    let (areas, art) = collect_fields(&disc, image, rows, sum);
+    let mut file = lay_out(&disc, &areas);
     let mut picture = None;
     if let Some(bytes) = &art {
         let ext = if tags::picture_mime(bytes) == Some("image/png") { "png" } else { "jpg" };
@@ -580,6 +465,142 @@ fn import_disc(dir: &Path, image: &Path, rows: &[&verify::Row], sum: &mut Import
     sum.created += usize::from(created);
     sum.keys += added;
     Ok(())
+}
+
+/// The fields of the extracts' tags (`rows`, of `image`) that sacdfs does not serve, by area and
+/// track, and the front cover; what can't be kept is listed in `sum`.
+fn collect_fields(
+    disc: &Arc<Disc>,
+    image: &Path,
+    rows: &[&verify::Row],
+    sum: &mut ImportSummary,
+) -> ([AreaFields; 2], Option<Vec<u8>>) {
+    let mut areas: [AreaFields; 2] = Default::default();
+    let mut art: Option<Vec<u8>> = None;
+    let mut disc_bytes = 0;
+    for row in rows {
+        let slot = if row.area == crate::tree::MULTICHANNEL { Slot::Multichannel } else { Slot::TwoChannel };
+        let Some(number) = row.track else { continue };
+        let Some(i) = disc.toc().areas.iter().position(|a| a.slot == slot) else { continue };
+        let area = &disc.toc().areas[i];
+        let Some(track) = area.tracks.iter().find(|t| t.number == number) else { continue };
+        // Compared with the file as sacdfs serves it without a tags file, and without what
+        // comes from the image's path: that is no copy of the extract's tag (#185).
+        let served = TrackFile::new(disc.clone(), i, track).map(|f| f.stored_frames()).unwrap_or_default();
+        let tag = match extract_tag(&row.path) {
+            Ok(Some(tag)) => tag,
+            // No tag: nothing to keep.
+            Ok(None) => continue,
+            Err(e) => {
+                sum.failed.push(format!("{}: {e}", shown(&row.path)));
+                continue;
+            }
+        };
+        sum.files += 1;
+        let frames = id3::frames(&tag);
+        let fields = areas[usize::from(slot == Slot::Multichannel)].entry(number).or_default();
+        for f in &frames {
+            let context: Vec<id3::Frame> = if f.key == "TDRC" || f.key == "TDAT" {
+                frames.iter().filter(|g| g.key == "TDRC" || g.key == "TDAT").cloned().collect()
+            } else {
+                vec![f.clone()]
+            };
+            if id3::Losses::between(&context, &served, area.tracks.len()).is_empty() {
+                continue;
+            }
+            if f.key == "APIC" {
+                if art.is_none() {
+                    // A cover that is not kept is listed, whatever the reason: its extract
+                    // still holds something the tags directory lacks.
+                    match front_cover(&tag) {
+                        Some(p) if p.len() <= tags::MAX_ART_BYTES => art = Some(p),
+                        Some(p) => sum.not_kept.push(format!(
+                            "{} (disc {}): picture of {} KiB, over the {} KiB the mount embeds",
+                            shown(&row.path),
+                            shown(image),
+                            p.len() >> 10,
+                            tags::MAX_ART_BYTES >> 10
+                        )),
+                        None => sum.not_kept.push(format!(
+                            "{} (disc {}): picture that import cannot read (not a plain JPEG or PNG)",
+                            shown(&row.path),
+                            shown(image)
+                        )),
+                    }
+                }
+                continue;
+            }
+            let binary = f.value.len() == 65 && f.value.starts_with('#');
+            match Key::of(&f.key) {
+                Some(_) if !binary => {
+                    let name =
+                        tags::ITEMS.iter().find(|(_, id, _)| *id == f.key).map_or(f.key.as_str(), |i| i.0);
+                    if !fields.contains_key(name) {
+                        match fit(fields, name, &f.value, disc_bytes) {
+                            Ok(c) => {
+                                disc_bytes += c;
+                                fields.insert(name.to_owned(), f.value.clone());
+                            }
+                            Err(why) => sum.not_kept.push(format!(
+                                "{} (disc {}): {}, {why}",
+                                shown(&row.path),
+                                shown(image),
+                                safe_file::one_line(name)
+                            )),
+                        }
+                    }
+                }
+                _ if f.key == "TDAT" => {}
+                _ => {
+                    sum.skipped.insert(f.key.clone());
+                }
+            }
+        }
+    }
+    (areas, art)
+}
+
+/// The tags file of `areas` (stereo, then multichannel): what every track of an area shares
+/// at its album level, what both areas share at the disc's.
+fn lay_out(disc: &Disc, areas: &[AreaFields; 2]) -> TagsFile {
+    let mut file = TagsFile::default();
+    for (k, tracks) in areas.iter().enumerate() {
+        let slot = if k == 0 { &Slot::TwoChannel } else { &Slot::Multichannel };
+        if tracks.is_empty() {
+            continue;
+        }
+        let all: BTreeSet<u8> =
+            disc.toc().area(*slot).map(|a| a.tracks.iter().map(|t| t.number).collect()).unwrap_or_default();
+        let level = match slot {
+            Slot::TwoChannel => &mut file.stereo,
+            _ => &mut file.multichannel,
+        };
+        level.album = common(tracks, &all);
+        for (n, f) in tracks {
+            let rest: Fields = f
+                .iter()
+                .filter(|(k, _)| !level.album.contains_key(*k))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            if !rest.is_empty() {
+                level.track.insert(n.to_string(), rest);
+            }
+        }
+    }
+    // What both areas share at album level is the album's.
+    let shared: Fields = file
+        .stereo
+        .album
+        .iter()
+        .filter(|(k, v)| file.multichannel.album.get(*k) == Some(*v))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for k in shared.keys() {
+        file.stereo.album.remove(k);
+        file.multichannel.album.remove(k);
+    }
+    file.album = shared;
+    file
 }
 
 /// The fields every track of `all` has with the same value, if `tracks` holds them all
@@ -633,9 +654,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// The ID3 tag of an extract, read only.
 fn extract_tag(path: &Path) -> Result<Option<Vec<u8>>, String> {
     let mut src = container::FileSource::open(path).map_err(|e| format!("cannot open: {e}"))?;
-    let audio = container::parse(&mut src).map_err(|e| match e {
-        container::Problem::Unsupported(s) | container::Problem::Error(s) => s,
-    })?;
+    let audio = container::parse(&mut src).map_err(container::Problem::into_text)?;
     audio.read_id3(&mut src).map_err(|size| format!("a tag of {size} bytes is too large to read"))
 }
 
@@ -704,9 +723,8 @@ fn apic(b: &[u8]) -> Option<(u8, Vec<u8>)> {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation, reason = "test data of known small sizes")]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
 
     fn f(pairs: &[(&str, &str)]) -> Fields {

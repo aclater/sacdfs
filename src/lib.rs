@@ -42,6 +42,5 @@ pub mod track_ranges;
 pub mod tree;
 pub mod verify;
 pub mod vfs;
-pub mod warm;
 pub mod watchdog;
 pub mod wav;

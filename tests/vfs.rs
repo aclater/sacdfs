@@ -11,49 +11,18 @@ mod common;
 
 use std::ffi::{OsStr, OsString};
 use std::sync::Arc;
-use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
+use common::{To, ask};
 use sacdfs::disc::Tuning;
 use sacdfs::engine::Engine;
 use sacdfs::track::Reader;
 use sacdfs::tree::{Node, Output, ROOT, SourceDir, Tree};
-use sacdfs::vfs::{
-    Access, Attr, DataReply, DirOpen, Error, Kind, Listing, ListingPlus, Lookup, Reply, StatFs, TTL, Volume,
-};
-use sacdfs::watchdog::Fail;
+use sacdfs::vfs::{Access, Attr, DirOpen, Error, Kind, Listing, ListingPlus, Lookup, StatFs, TTL, Volume};
 
 const IMAGE: &str = "images/dsd-stereo-mch-2048.iso";
 /// DST-coded, stereo and multichannel.
 const DST_IMAGE: &str = "images/dst-features-2ch-6ch.iso";
-
-/// A reply that hands its answer to the test, as a front end that must answer before its
-/// callback returns would wait for it.
-struct To<T>(Sender<Result<T, Error>>);
-
-impl<T: Send + 'static> Fail for To<T> {
-    fn fail(self, err: Error) {
-        let _ = self.0.send(Err(err));
-    }
-}
-
-impl<T: Send + 'static> Reply<T> for To<T> {
-    fn reply(self, r: Result<T, Error>) {
-        let _ = self.0.send(r);
-    }
-}
-
-impl DataReply for To<Vec<u8>> {
-    fn data(self, data: &[u8]) {
-        let _ = self.0.send(Ok(data.to_vec()));
-    }
-}
-
-fn ask<T: Send + 'static>(f: impl FnOnce(To<T>)) -> Result<T, Error> {
-    let (tx, rx) = mpsc::channel::<Result<T, Error>>();
-    f(To(tx));
-    rx.recv_timeout(Duration::from_secs(60)).expect("no answer")
-}
 
 fn volume(image: &str, output: Output) -> (Volume, Arc<Tree>, Arc<Engine>) {
     let tree = Arc::new(Tree::with_options(
