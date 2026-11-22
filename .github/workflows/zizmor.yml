@@ -40,12 +40,3 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/zizmor"
           "$RUNNER_TEMP/zizmor/bin/pip" install -q --require-hashes -r .github/requirements/zizmor.txt
           "$RUNNER_TEMP/zizmor/bin/zizmor" --offline --format=github .github
-
-      # ruff, pinned by version and hash (.github/requirements/ruff.txt), at its default rules
-      # with the settings in ruff.toml.
-      - name: ruff
-        shell: bash
-        run: |
-          python3 -m venv "$RUNNER_TEMP/ruff"
-          "$RUNNER_TEMP/ruff/bin/pip" install -q --require-hashes -r .github/requirements/ruff.txt
-          "$RUNNER_TEMP/ruff/bin/ruff" check --output-format=github

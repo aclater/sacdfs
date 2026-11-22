@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Packages
         shell: bash
-        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc shadow-utils util-linux ShellCheck systemd && dnf clean all
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc shadow-utils util-linux ShellCheck systemd python3 && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
@@ -49,6 +49,14 @@ jobs:
       - run: cargo fmt --manifest-path winfsp/Cargo.toml --check
       - name: ShellCheck on every shell script, each in the dialect it declares
         run: git ls-files -z '*.sh' deploy/sacdfs-ctl | xargs -0 shellcheck
+      # ruff, pinned by version and hash (.github/requirements/ruff.txt), at its default rules
+      # with the settings in ruff.toml.
+      - name: ruff on the Python scripts
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ruff"
+          "$RUNNER_TEMP/ruff/bin/pip" install -q --require-hashes -r .github/requirements/ruff.txt
+          "$RUNNER_TEMP/ruff/bin/ruff" check --output-format=github
       - name: NAS service file (deploy/systemd/sacdfs.service)
         run: |
           sed 's|/usr/local/bin/sacdfs|/bin/true|' deploy/systemd/sacdfs.service > /tmp/sacdfs.service

@@ -54,7 +54,7 @@ A pull request is merged only when it keeps these rules. Each is checked in CI.
 | Every `unsafe` block and `unsafe impl` has a `// SAFETY:` comment. | `undocumented_unsafe_blocks = "deny"` in Cargo.toml and winfsp/Cargo.toml (clippy jobs) |
 | Every long option of the mount command is an `-o` option or listed in `NOT_MOUNT_OPTIONS`. | unit test `the_lists_match_the_command_line` (ci, tests) |
 | Every shell script passes ShellCheck in the dialect it declares; a disable says why. | `shellcheck` over `git ls-files '*.sh' deploy/sacdfs-ctl` (ci, fmt + clippy) |
-| Python passes `ruff check` at its default rules (ruff.toml). | ruff 0.17.3, pinned by hash in .github/requirements/ruff.txt (zizmor) |
+| Python passes `ruff check` at its default rules (ruff.toml). | ruff 0.17.3, pinned by hash in .github/requirements/ruff.txt (ci, fmt + clippy) |
 | Every Cargo.lock is built `--locked` and checked by cargo-deny. | deny.yml (core, fuzz), windows.yml (winfsp); fuzz/run.sh stops when fuzz/Cargo.lock is stale |
 | winfsp/ is formatted. | `cargo fmt --manifest-path winfsp/Cargo.toml --check` (ci, fmt + clippy) |
 | The minimum Rust version builds the `nfs` feature too. | `cargo check --all-targets --locked --features nfs` (msrv) |

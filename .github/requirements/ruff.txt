@@ -1,4 +1,4 @@
-# ruff for the zizmor job in .github/workflows/zizmor.yml (ruff.toml holds its settings),
+# ruff for the fmt + clippy job in .github/workflows/ci.yml (ruff.toml holds its settings),
 # installed with `pip install --require-hashes`.
 # Bump the version and the hashes together: https://pypi.org/project/ruff/#files
 ruff==0.17.3 \
