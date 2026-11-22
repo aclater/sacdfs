@@ -100,7 +100,7 @@ pub fn fit_overlaps(spans: &[Span]) -> Vec<Fit> {
 /// [`check_track`]).
 pub fn capacity(area: &Area, image_sectors: u64) -> u64 {
     let (start, end) = audio_sector_range(area, image_sectors);
-    (end - start).saturating_mul(FRAMES_PER_SECTOR)
+    end.saturating_sub(start).saturating_mul(FRAMES_PER_SECTOR)
 }
 
 /// Why a track is listed differently from its TOC range, or not at all.

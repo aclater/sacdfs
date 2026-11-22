@@ -98,7 +98,7 @@ pub fn data_sectors(disc: &Disc, area: &Area) -> u64 {
     let (start, end) = audio_sector_range(area, n);
     // The area's existing sectors become [start, end - gaps): `audio_sector_range` ends
     // at the smaller of the area's end and the image's count.
-    (end - gaps.min(end - start)).max(start)
+    (end - gaps.min(end.saturating_sub(start))).max(start)
 }
 
 /// Whether holes of at most `bound` bytes in an image of `n` sectors of `stored` bytes each
