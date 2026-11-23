@@ -91,7 +91,7 @@ fn bench(c: &mut Criterion) {
     }
     g.finish();
 
-    // Making a converter (scarletbook-pcm's plan and buffers).
+    // Making a converter (dsd2pcm's plan and buffers).
     let mut g = c.benchmark_group("pcm-new");
     for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
         let cfg = PcmConfig { cutoff, ..PcmConfig::default() };

@@ -754,10 +754,10 @@ proptest! {
     }
 }
 
-/// The output for a fixed input, pinned: any change to scarletbook-pcm's filters or
-/// arithmetic shows up here (and needs a `WAV_VERSION` bump, src/ident.rs). scarletbook-pcm
-/// gives the same bytes on every CPU and code path, which its own tests check; CI runs this
-/// on its machines too.
+/// The output for a fixed input, pinned: any change to the converter's filters or
+/// arithmetic shows up here (and needs a `WAV_VERSION` bump, src/ident.rs). dsd2pcm, like
+/// scarletbook-pcm 0.7.0 before it (same hashes), gives the same bytes on every CPU and
+/// code path, which its own tests check; CI runs this on its machines too.
 #[test]
 fn golden_output() {
     use sha2::{Digest, Sha256};
@@ -804,8 +804,8 @@ const GOLDEN: [&str; 8] = [
 ];
 
 /// The same pinning for 1, 2 and 6 channels and for gains of -3, 0 and +6 dB (#89): the
-/// gain path and the multichannel interleave are scarletbook-pcm's too, so a change there
-/// must show up here. Noise input at 3 frames, seeded; one entry per (channels, gain,
+/// gain path and the multichannel interleave are dsd2pcm's too, so a change there must
+/// show up here. Noise input at 3 frames, seeded; one entry per (channels, gain,
 /// cutoff, rate) in loop order, valid combinations only.
 #[test]
 fn golden_output_channels_and_gains() {

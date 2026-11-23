@@ -24,8 +24,10 @@ include = [
 # The engine: SACD parsing, demultiplexing and DST decoding, from crates.io, pinned exactly
 # (published from the release tag).
 scarletbook = "=0.7.0"
-# The DSD-to-PCM converter behind the WAV files (#84), from the same release as the engine.
-scarletbook-pcm = "=0.7.0"
+# The DSD-to-PCM converter behind the WAV files: dsd2pcm, which reproduces scarletbook-pcm
+# 0.7.0's output byte for byte (#84 chose that converter's filters) and is faster. Pinned
+# exactly; without its FLAC reader (default feature `flac`), which sacdfs does not use.
+dsd2pcm = { version = "=0.1.1", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 libc = "0.2"

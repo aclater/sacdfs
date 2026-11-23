@@ -3,8 +3,10 @@
 //! DSD to PCM conversion: DSD64 (2.8224 MHz, 1 bit) to 24-bit PCM at 88.2, 176.4 or
 //! 352.8 kHz, one SACD frame (or a short run of frames) at a time, for the WAV files.
 //!
-//! The conversion itself is scarletbook-rs's `scarletbook-pcm` (owner decision in #84: it
-//! met the targets and the 15 % leeway on 0.5.3, so sacdfs's own converter was deleted).
+//! The conversion itself is the `dsd2pcm` crate's frame-run converter. It reproduces, byte
+//! for byte, scarletbook-rs's `scarletbook-pcm` 0.7.0, the converter sacdfs used from #84
+//! (owner decision: it met the targets and the 15 % leeway on 0.5.3, so sacdfs's own
+//! converter was deleted) to 0.7.2, and it is faster on the CPUs measured.
 //! This module keeps sacdfs's settings and interface around it: the options `--pcm-rate`,
 //! `--pcm-cutoff` and `--pcm-gain` map to them, and the engine's frame cache feeds it
 //! frames in place and takes 24-bit bytes and per-frame clip counts back.
@@ -21,11 +23,12 @@
 //! neighbour (the edge of an area) counts as DSD silence, so an area that starts or ends
 //! in silence starts or ends in digital silence.
 //!
-//! **The same on every machine.** scarletbook-pcm's arithmetic is integer arithmetic, its
+//! **The same on every machine.** dsd2pcm's arithmetic is integer arithmetic, its
 //! code chosen at run time (AVX2 where the CPU has it), with the same bytes on every path.
 //! The measured quality is in `docs/pcm-quality.md`.
 
-use scarletbook_pcm as sb;
+use dsd2pcm::frames as sb;
+use dsd2pcm::{Cutoff as SbCutoff, PcmRate as SbRate};
 
 /// DSD bytes per channel in one SACD frame (1/75 s): [`crate::dsf::FRAME_BYTES`] as a `usize`.
 pub const FRAME_BYTES: usize = crate::dsf::FRAME_BYTES as usize;
@@ -37,7 +40,7 @@ pub const SAMPLE_BYTES: usize = 3;
 /// last frame of an area. It converts to exact zero.
 pub const DSD_SILENCE: u8 = 0x69;
 
-/// A conversion that failed (#388): scarletbook-pcm refused the run. The output buffer then
+/// A conversion that failed (#388): dsd2pcm refused the run. The output buffer then
 /// holds zeros, never what it held before.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConvertError;
@@ -87,7 +90,7 @@ impl PcmRate {
     }
 }
 
-/// The top of the pass band. Each is scarletbook-pcm's cutoff of the same band
+/// The top of the pass band. Each is dsd2pcm's (and scarletbook-pcm's) cutoff of the same band
 /// (`Default`, `Low`, `Wide`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Cutoff {
@@ -139,20 +142,20 @@ impl PcmConfig {
     }
 }
 
-/// scarletbook-pcm's configuration for `cfg` (made [`effective`](PcmConfig::effective)) and
+/// dsd2pcm's configuration for `cfg` (made [`effective`](PcmConfig::effective)) and
 /// `channels` (clamped to 1 to 6). A gain that is not finite counts as 0 dB; one outside
-/// scarletbook-pcm's -120 to +24 dB (sacdfs's options allow -60 to +24) is clamped.
+/// dsd2pcm's -120 to +24 dB (sacdfs's options allow -60 to +24) is clamped.
 fn sb_config(channels: u8, cfg: &PcmConfig) -> sb::PcmConfig {
     let cfg = cfg.effective();
     let rate = match cfg.rate {
-        PcmRate::R88200 => sb::PcmRate::Hz88200,
-        PcmRate::R176400 => sb::PcmRate::Hz176400,
-        PcmRate::R352800 => sb::PcmRate::Hz352800,
+        PcmRate::R88200 => SbRate::Hz88200,
+        PcmRate::R176400 => SbRate::Hz176400,
+        PcmRate::R352800 => SbRate::Hz352800,
     };
     let cutoff = match cfg.cutoff {
-        Cutoff::Khz40 => sb::Cutoff::Standard,
-        Cutoff::Khz30 => sb::Cutoff::Low,
-        Cutoff::Wide80 => sb::Cutoff::Wide,
+        Cutoff::Khz40 => SbCutoff::Standard,
+        Cutoff::Khz30 => SbCutoff::Low,
+        Cutoff::Wide80 => SbCutoff::Wide,
     };
     let db = if cfg.gain_db.is_finite() { f64::from(cfg.gain_db) } else { 0.0 };
     let gain = sb::Gain::from_db(db.clamp(sb::Gain::MIN_DB, sb::Gain::MAX_DB)).unwrap_or(sb::Gain::UNITY);
@@ -160,7 +163,7 @@ fn sb_config(channels: u8, cfg: &PcmConfig) -> sb::PcmConfig {
 }
 
 /// Converts DSD frames to PCM, one frame or one short run at a time. Make one per worker
-/// thread: it holds scarletbook-pcm's converter and a few small buffers, so converting
+/// thread: it holds dsd2pcm's converter and a few small buffers, so converting
 /// allocates nothing after the first call.
 #[derive(Debug)]
 pub struct Converter {
@@ -173,7 +176,7 @@ pub struct Converter {
     /// Output that does not fit the caller's buffer, and per-frame clip counts.
     spill: Vec<u8>,
     counts: Vec<u64>,
-    /// Tests only: every conversion fails, as if scarletbook-pcm had refused it.
+    /// Tests only: every conversion fails, as if dsd2pcm had refused it.
     #[cfg(test)]
     fail: bool,
 }
@@ -185,9 +188,9 @@ impl Converter {
     /// reports.
     pub fn new(channels: u8, cfg: &PcmConfig) -> Converter {
         let sc = sb_config(channels.max(1), cfg);
-        // `sb_config` only makes configurations scarletbook-pcm accepts.
+        // `sb_config` only makes configurations dsd2pcm accepts.
         #[allow(clippy::expect_used)]
-        let conv = sb::Converter::new(sc).expect("a valid scarletbook-pcm configuration");
+        let conv = sb::Converter::new(sc).expect("a valid dsd2pcm configuration");
         Converter {
             channels: usize::from(sc.channels),
             cfg: cfg.effective(),
@@ -254,7 +257,7 @@ impl Converter {
     ///
     /// # Errors
     ///
-    /// [`ConvertError`] if scarletbook-pcm refuses the conversion.
+    /// [`ConvertError`] if dsd2pcm refuses the conversion.
     pub fn try_convert(
         &mut self,
         prev: Option<&[u8]>,
@@ -290,7 +293,7 @@ impl Converter {
     ///
     /// # Errors
     ///
-    /// [`ConvertError`] if scarletbook-pcm refuses the conversion.
+    /// [`ConvertError`] if dsd2pcm refuses the conversion.
     pub fn try_convert_run(
         &mut self,
         prev: Option<&[u8]>,
@@ -419,20 +422,33 @@ mod tests {
     }
 
     #[test]
-    fn options_map_to_scarletbook() {
-        // The band of each cutoff (sacdfs's targets, #5): stop from 48 kHz, 36 kHz, and for
-        // the wide filter from Nyquist at 176.4 kHz and about 100 kHz at 352.8 kHz.
+    fn options_map_to_dsd2pcm() {
+        // The band of each cutoff (sacdfs's targets, #5), as dsd2pcm documents its cutoffs:
+        // `Standard` stops from 48 kHz, `Low` from 36 kHz, `Wide` from Nyquist at 176.4 kHz
+        // and 96 kHz at 352.8 kHz.
         let at = |rate, cutoff| {
             let s = sb_config(2, &PcmConfig { rate, cutoff, gain_db: 0.0 });
-            (s.cutoff.passband_hz(), s.cutoff.stopband_hz_at(s.rate))
+            (s.rate, s.cutoff)
         };
-        assert_eq!(at(PcmRate::R176400, Cutoff::Khz40), (40_000, 48_000));
-        assert_eq!(at(PcmRate::R176400, Cutoff::Khz30), (30_000, 36_000));
-        assert_eq!(at(PcmRate::R176400, Cutoff::Wide80), (80_000, 88_200));
-        assert!(at(PcmRate::R352800, Cutoff::Wide80).1 <= 100_000);
-        // Gains: not finite counts as 0 dB.
-        let g = sb_config(2, &PcmConfig { gain_db: f32::NAN, ..PcmConfig::default() }).gain;
-        assert_eq!(g.db(), 0.0);
+        assert_eq!(at(PcmRate::R176400, Cutoff::Khz40), (SbRate::Hz176400, SbCutoff::Standard));
+        assert_eq!(at(PcmRate::R88200, Cutoff::Khz30), (SbRate::Hz88200, SbCutoff::Low));
+        assert_eq!(at(PcmRate::R352800, Cutoff::Wide80), (SbRate::Hz352800, SbCutoff::Wide));
+        // The wide filter at 88.2 kHz falls back to 40 kHz.
+        assert_eq!(at(PcmRate::R88200, Cutoff::Wide80), (SbRate::Hz88200, SbCutoff::Standard));
+        for rate in [PcmRate::R88200, PcmRate::R176400, PcmRate::R352800] {
+            let s = sb_config(2, &PcmConfig { rate, ..PcmConfig::default() });
+            assert_eq!(u64::try_from(rate.decimation()).ok(), Some(s.rate.decimation()));
+            assert_eq!(s.rate.hz(), rate.hz());
+        }
+        // Channels are clamped to 1 to 6.
+        assert_eq!(sb_config(0, &PcmConfig::default()).channels, 1);
+        assert_eq!(sb_config(9, &PcmConfig::default()).channels, 6);
+        // Gains: not finite counts as 0 dB; beyond -120 or +24 dB is clamped.
+        let g = |gain_db| sb_config(2, &PcmConfig { gain_db, ..PcmConfig::default() }).gain.db();
+        assert_eq!(g(f32::NAN), 0.0);
+        assert_eq!(g(-6.0), -6.0);
+        assert_eq!(g(-200.0), -120.0);
+        assert_eq!(g(30.0), 24.0);
     }
 
     #[test]
