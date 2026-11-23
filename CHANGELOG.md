@@ -18,6 +18,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- **macOS programs signed and notarised.** From this release, `sacdfs-nfs` and `sacdfs` in the
+  macOS archives are signed with a Developer ID (hardened runtime, secure timestamp) and
+  notarised by Apple, so macOS starts them after a browser download too; the first start
+  checks with Apple online, since a bare program can't carry the ticket. The release stops
+  rather than publish them unsigned. Dry runs build and test them unsigned, named
+  `-unsigned`. The Windows program is signed once the certificate is in place: the release
+  workflow can sign it through SSL.com eSigner, switched by the repository variable
+  `WINDOWS_SIGNING` (`off` for now).
+
 - **scarletbook 1.0.1 (`=1.0.1`); scarletbook-pcm stays at 0.7.0.** 1.0.0 is 0.7.0's code under
   a 1.0 version, with the Rust API frozen under Semantic Versioning, and 1.0.1 is 1.0.0 released
   again so that `scarletbook-ffi` 1.x reaches crates.io
@@ -61,12 +70,18 @@ All notable changes to sacdfs are recorded here. The format follows
   than on 0.5.9, on P-cores and E-cores alike
   ([figures](docs/performance.md#by-scarletbook-release-070-596)).
 
+- **The installer on TrueNAS points to the catalog app.** It names Apps, Discover Apps,
+  search sacdfs, Install, as the [TrueNAS guide](docs/install/truenas-scale.md) does, instead
+  of the custom app in YAML, which the guide keeps for settings the catalog form doesn't have.
+
 ### Fixed
 
 - **Short reads on a fresh mount got slower in 0.7.2 (#589).** A kept head (#456) was copied
   into a slab of heads at the read, a cost per mount and per file that long tracks hide. The
   copy now waits until the frame pool maps more than half the cache, or an idle release keeps
-  the heads. Sequential real-disc reads are unchanged.
+  the heads. Sequential real-disc reads are unchanged. The rest of the slowdown, 0.05 ms per
+  mount, is the SHA-256 of the disc's TOC that detects a replaced image file (#573); it stays,
+  and is written up in docs/design.md.
 - **An image rewritten in place with another disc while mounted
   ([#588](https://github.com/aclater/sacdfs/issues/588)).** `rsync --inplace` or `dd
   conv=notrunc` over a mounted image left the old disc listed and its cached frames served until

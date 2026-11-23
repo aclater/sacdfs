@@ -478,7 +478,7 @@ a damaged disc change nothing.
   most about 4.6 times the image's size for stereo (a 9408-byte frame per 2048-byte
   sector), 13.8 times for 6 channels, and WAV files at 176.4 kHz about 1.5 times that. A
   hole of any size is found where the file system reports it.
-- *Cost (harrison, `performance` profile, warm cache, 30 runs):* the whole corpus lists in
+- *Cost (Ryzen AI Max+ 395, `performance` profile, warm cache, 30 runs):* the whole corpus lists in
   5.7 ms before and after. A 4 GiB image on btrfs with zstd compression (128 KiB extents)
   takes 0.8 ms to list against 0.1 ms, nearly all of it the one `SEEK_HOLE` call walking
   the extents; a 400 MB image with written zeros, which is sampled, 0.2 ms against 0.1 ms.
@@ -2350,16 +2350,23 @@ approval.
   unmounts the folder itself, which also ends a mount left behind; `soft` failed every read
   after 6 to 8 s on macOS 27.2, whatever `timeo` and `retrans` said), `rsize=1048576` and
   `rdirplus`. On Linux: `soft,timeo=10,retrans=30`.
-- **Signing and notarisation: the owner's decision, nothing bought.** The release archives hold
-  binaries signed ad hoc by the linker (which Apple Silicon needs to run them) and nothing more.
-  The options:
-  - *As now:* free. Files fetched with `curl` aren't marked by macOS and run; a browser
+- **Signing and notarisation: Developer ID from 0.8.0.** The owner chose Developer ID signing
+  and notarisation, so a browser download starts like any other signed program and the guide's
+  quarantine step is only for older releases. The release job `macos-sign` (tag runs only, in
+  the environment `release`, which allows only `v*` tags and waits for its reviewer) imports
+  the certificate into a temporary keychain, signs both programs with the hardened runtime and
+  a secure timestamp, sends them to `notarytool` with an App Store Connect API key, requires
+  the verdict Accepted and `codesign --check-notarization` on each, then packs the archive and
+  runs the mount test on it. Without the secrets it fails and nothing is published. Through
+  0.7.2 the archives held binaries signed ad hoc by the linker (which Apple Silicon needs to
+  run them) and nothing more. The options that were weighed:
+  - *Unsigned (through 0.7.2):* free. Files fetched with `curl` aren't marked by macOS and run; a browser
     download needs `xattr -d com.apple.quarantine` first (the guide says so).
   - *Developer ID signing and notarisation:* an Apple Developer Program membership (99 USD a
     year; the account's name is what macOS shows users). The release job would import the
     certificate into a temporary keychain, sign with the hardened runtime and a timestamp, and
     send each archive to `notarytool` with an App Store Connect API key, all three kept as
-    repository secrets. A bare binary can't carry the notarisation ticket (only an app, a
+    secrets. A bare binary can't carry the notarisation ticket (only an app, a
     disk image or an installer package can), so Gatekeeper checks it online on first run;
     a `.pkg` installer would carry it.
   - *Homebrew:* a formula in a tap of this project's, building from source or fetching the
@@ -2592,7 +2599,12 @@ open would. A disc that is dropped closes its handle.
   until a remount, and so would a source whose filesystem does not keep inode numbers.
   *Cost:* none on a read or an open of an unchanged file (a comparison of the `fstat` already
   made); a changed file costs one more read of the TOC (6 to 8 calls), not counted as audio
-  reads.
+  reads. Each mount pays for the SHA-256 of the TOC bytes as they are read: 110,600 bytes on a
+  corpus image, 0.05 ms on a Zen 2 core, 4 % of the corpus plain-DSD row of the by-mount
+  benchmark and nothing a real track shows (#589). *Why it stays:* the bytes must be hashed as
+  they are read, because the file at the path may be replaced before anything reads them
+  again; keeping them instead would hold 110 KB for every mounted disc, and a hash that is
+  not cryptographic would let a crafted image pass as the disc it replaces.
 - *Noticing an in-place rewrite (#588):* a rewrite of the image's own bytes changes neither
   its folder's modification time nor, with `--inplace` or `dd`, its inode, so nothing in the
   folder watch shows it. Three checks do, all looking at the image file as the TOC check above

@@ -217,12 +217,15 @@ Run on the release they describe, following the docs as written, in a clean envi
   image. arm64 runs natively under CI only: there is no arm64 NAS to test on, and the docs say so;
   on an x86-64 host with `qemu-user` binfmt, `podman run --platform linux/arm64` can start the
   arm64 image for a smoke test of SMB.
-- **crates.io:** `cargo install --locked sacdfs` in a clean container. 0.4.1 is the first release
-  published by the workflow rather than by hand, so also confirm the published version and its
-  source.
+- **crates.io:** `cargo install --locked sacdfs` in a clean container; confirm the published
+  version and its source. The release workflow publishes every final version (0.4.0 was
+  published by hand, 0.4.1 to 0.7.2 by the workflow).
 - **NAS guides:** TrueNAS SCALE (the catalog app from Apps, Discover Apps, once the catalog
-  carries the release, and the YAML) and OpenMediaVault are re-run. Synology, QNAP, Unraid and UGOS stay
-  marked "not yet validated" until someone runs them on that system.
+  carries the release, and the YAML) and OpenMediaVault are re-run. Each other guide says at
+  its top what it was checked on, and stays that way until it is re-run: Synology (DSM 7.4.1)
+  and QNAP (QuTScloud 5.2.9) on 0.6.0 in VMs, not on vendor hardware; UGOS Pro on 0.6.0 only on
+  a Linux system with UGREEN's kernel in a VM; Unraid not tested. Steps not run are marked
+  *(untested)*.
 - **fstab and systemd** recipes in a VM.
 
 ## Upgrade and rollback
@@ -1163,7 +1166,7 @@ What was run on `main` before the release (aa049f53; the release-workflow dry ru
 | Local read, real disc, plain DSD, DSF / WAV | 0.487 / 1.12 s | 0.486 / 1.12 s | 0.494 / 1.13 s | 1.02 / 1.01 | 1.04 / 1.01 |
 | Local read, corpus, DST stereo / multichannel / plain DSD, DSF | 0.074 / 0.153 / 0.018 s | 0.073 / 0.153 / 0.018 s | 0.077 / 0.164 / 0.020 s | 1.07 / 1.06 / 1.12 | 1.05 / 1.07 / 1.13 |
 
-The corpus rows are slower on main in every round: each reads one area through 20 fresh mounts, so this is 0.1 to 0.5 ms more per mount ([#589](https://github.com/aclater/sacdfs/issues/589)). Partly explained: on an i9-13900H (P-cores, 7 to 21 rounds), main with #580 reverted is back at 0.97 to 1.02 times 0.7.1, but a later run with the kept heads and the folder warmer switched off was still 1.05 to 1.09 times 0.7.1 on the plain and multichannel rows, so the kept heads explain about half of the slowdown and the remainder is under investigation in #589. The cost is per mount and per file head, not per byte: each read copies its frames into a head slab (an extra slab mapping per frame size, page faults and the copy; the corpus files are smaller than the 2 MiB head, so every byte is copied), and the folder warmer's thread start adds 0.05 to 0.08 ms. Real-disc reads, where it is amortised, are unchanged.
+The corpus rows are slower on main in every round: each reads one area through 20 fresh mounts, so this is 0.1 to 0.5 ms more per mount ([#589](https://github.com/aclater/sacdfs/issues/589)). Partly explained: on an i9-13900H (P-cores, 7 to 21 rounds), main with #580 reverted is back at 0.97 to 1.02 times 0.7.1, but a later run with the kept heads and the folder warmer switched off was still 1.05 to 1.09 times 0.7.1 on the plain and multichannel rows, so the kept heads explain about half of the slowdown. The rest is the SHA-256 that #573 takes of the 110,600 bytes of a disc's TOC at every mount (0.05 ms): bisecting 0.7.1 to 0.7.2 on a Zen 2 core (9 rounds, builds rotated, one CCX) puts it at 1.00 / 1.00 / 1.045 times 0.7.1 for DST multichannel / DST stereo / plain DSD after #573 alone, and a #573 build without the hash is back at 1.00 on the plain-DSD row (11 rounds). It is kept on purpose (docs/design.md, re-reading the disc layout). The cost is per mount and per file head, not per byte: each read copies its frames into a head slab (an extra slab mapping per frame size, page faults and the copy; the corpus files are smaller than the 2 MiB head, so every byte is copied), and the folder warmer's thread start adds 0.05 to 0.08 ms. Real-disc reads, where it is amortised, are unchanged.
 
 **Not run:** Finder, Spotlight and players on macOS; the file-handle tests as root; Roon and Plex at scale; the NAS OS VMs; the installer VM scenarios (smoke test only); a physical Windows PC, Mac or NAS; aarch64 on hardware; a soak of the published binaries or on real discs; NFSv4 through sacdfs-nfs (it serves NFSv3); a cold first listing; the #456 player on its own hardware (asked on #456); and the release's own artifacts (checked after the tag).
 

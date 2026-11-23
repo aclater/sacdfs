@@ -9,10 +9,11 @@ expected, what happened, and a log: run in the foreground with `sacdfs -f -vv ..
 attach copyrighted disc images. **Security problems** go through a private report instead:
 see [SECURITY.md](SECURITY.md).
 
-That applies to contributors and agents too. If you find a vulnerability while working on the
-code, don't open an issue or a pull request for it and don't describe it in a commit message:
-open a draft advisory and follow
-[How a report is handled](SECURITY.md#how-a-report-is-handled).
+If you find a security problem while working on the code (as a maintainer, contributor or
+agent), it is handled internally: fix it in an ordinary pull request that describes the change
+without vulnerability detail (no attack recipe, no severity), with no issue, draft advisory or
+CVE. If a released version was exploitable, the fixing release's notes get one line saying it
+contains security fixes. See [How a report is handled](SECURITY.md#how-a-report-is-handled).
 
 ## Changing code
 
@@ -45,7 +46,10 @@ open a draft advisory and follow
    which are generated: `cargo run --features man,nfs -- --generate-man-pages man`, and CI
    checks them with `.github/scripts/check-man.py`), docs/design.md when the design changes, with
    the reason for each decision, docs/performance.md with new measurements, and CHANGELOG.md
-   under "Unreleased".
+   under "Unreleased". `python3 scripts/check-docs.py` checks relative links, anchors and the
+   old repository name offline, and `python3 scripts/check-version-drift.py` checks that the
+   install guides, deploy files, scarletbook pin quotes and CHANGELOG dates match Cargo.toml
+   and the releases; CI runs both (docs-check.yml).
 
 ## Code acceptance rules
 

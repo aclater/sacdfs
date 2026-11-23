@@ -1,0 +1,89 @@
+# Offline checks of the docs, on every pull request and push to main (no paths filter, so it
+# can be a required check: a workflow skipped by `paths` leaves its check pending), and weekly.
+#   - docs links (offline): relative links and #anchors in every Markdown file, links to this
+#     repository's main branch, and no mention of the old repository name (now aclater/dsd-toolbox)
+#     (scripts/check-docs.py). No network, so GitHub's 429 and 503 answers can't fail it; the
+#     external links are docs-links.yml's job.
+#   - docs version drift: Cargo.toml's version against the install guides and deploy files,
+#     the scarletbook pin quoted in the docs, CHANGELOG dates against the releases
+#     (scripts/check-version-drift.py; reads the releases through the API).
+# A failed weekly run opens an issue, or comments on the open one.
+
+name: docs-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 7 * * 1"  # weekly
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+
+permissions:
+  contents: read
+
+jobs:
+  links:
+    name: docs links (offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      # UBI 10 (ubi10/ubi 10.3), pinned by digest; its python3 runs the check.
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+    steps:
+      - name: Packages
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core && dnf clean all
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: scripts/check-docs.py
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 -I scripts/check-docs.py
+
+  drift:
+    name: docs version drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: registry.access.redhat.com/ubi10/ubi@sha256:1e9193f051ac70582821c8a941325c5053488c54c75cd0c31b577d871ac29dba
+    steps:
+      - name: Packages
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core && dnf clean all
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: scripts/check-version-drift.py
+        env:
+          GH_TOKEN: ${{ github.token }}  # read-only (contents: read): the releases list
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 -I scripts/check-version-drift.py
+
+  report:
+    name: weekly report
+    needs: [links, drift]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Weekly docs check failed"
+          body="The weekly docs-check run failed: $RUN_URL. Run scripts/check-docs.py and scripts/check-version-drift.py locally for the list."
+          n=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label documentation --label P3 --milestone Docs
+          fi
