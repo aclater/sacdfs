@@ -550,6 +550,32 @@ impl FrameCache {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// Drops the cached frames, heads included, of the disc numbered `disc`: the image file
+    /// now holds another disc. Frames readers still hold stay until dropped. Returns how many.
+    pub fn purge_disc(&self, disc: u32) -> usize {
+        let frames: Vec<Arc<Frame>> = {
+            let mut g = self.lock();
+            let keys: Vec<Key> = g.lru.iter().map(|(k, _)| *k).filter(|k| k.disc == disc).collect();
+            let mut v = Vec::with_capacity(keys.len());
+            for k in keys {
+                if let Some(f) = g.lru.pop(&k) {
+                    g.bytes -= f.data.len();
+                    v.push(f);
+                }
+            }
+            let keys: Vec<Key> = g.heads.iter().map(|(k, _)| *k).filter(|k| k.disc == disc).collect();
+            for k in keys {
+                if let Some(f) = g.heads.pop(&k) {
+                    g.bytes -= f.data.len();
+                    g.head_bytes -= f.data.len();
+                    v.push(f);
+                }
+            }
+            v
+        };
+        frames.len()
+    }
+
     /// Drops every cached frame and unmaps the slabs left empty, if the cache has not been
     /// used for `idle`; whether it did (#150). Frames readers still hold stay until dropped.
     pub fn release_if_idle(&self, idle: Duration) -> bool {
@@ -1095,6 +1121,15 @@ impl Engine {
     /// Who is reading at the moment: players and fast readers.
     pub fn traffic(&self) -> &Arc<crate::track::Traffic> {
         &self.traffic
+    }
+
+    /// Drops everything cached of `disc`, whose image file now holds another disc
+    /// ([`Disc::fresh`]); once per disc.
+    pub fn purge(&self, disc: &Disc) {
+        if disc.mark_purged() {
+            let n = self.cache.purge_disc(disc.id);
+            log::debug!("{}: {n} cached frames dropped: the image file was replaced", disc.path.display());
+        }
     }
 
     /// The frame cache.

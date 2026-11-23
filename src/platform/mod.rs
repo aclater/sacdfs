@@ -41,6 +41,19 @@ pub fn mtime(m: &Metadata) -> (i64, i64) {
     imp::mtime(m)
 }
 
+/// A file's change time (any write or change of its attributes moves it, and a user can't set
+/// it), as seconds and nanoseconds since the epoch; (0, 0) where the system has none (Windows).
+pub fn ctime(m: &Metadata) -> (i64, i64) {
+    imp::ctime(m)
+}
+
+/// Whether the times of open `file` may not show a write by another client: it is on a network
+/// or FUSE filesystem (NFS, SMB, FUSE), or the system can't tell. Such a file's TOC is also
+/// read again now and then to tell whether it holds the same disc ([`crate::disc::Disc`]).
+pub fn unreliable_times(file: &File) -> bool {
+    imp::unreliable_times(file)
+}
+
 /// The identity of open `file`, whose metadata is `m`: its device (volume) and file numbers.
 /// Two files with the same identity are the same file. Unix reads them from `m`; Windows asks
 /// the handle for the volume serial number and file index. *Fallback:* (0, 0) if the system

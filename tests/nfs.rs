@@ -392,6 +392,86 @@ fn a_changed_image_makes_its_files_stale() {
     assert_eq!(c.getattr(&file).0, NFS3ERR_STALE, "a changed image's file is stale");
 }
 
+/// An image rewritten in place with another disc (#588): its files' handles answer `ESTALE`
+/// from the next read on, and the folder lists the new disc, whose files read its bytes, also
+/// with the modification time put back.
+fn rewritten_in_place(restore_mtime: bool) {
+    sacdfs::handles::global().set_revalidate_every(Duration::ZERO);
+    const FIRST: &str = "no-igl.iso";
+    const SECOND: &str = "no-text.iso";
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("disc.iso");
+    std::fs::copy(common::corpus().join("images").join(FIRST), &image).unwrap();
+    let other = std::fs::read(common::corpus().join("images").join(SECOND)).unwrap();
+    let source = dir.path().canonicalize().unwrap();
+    let tree = Arc::new(
+        Tree::with_options(SourceDir::scan(&source).unwrap(), Tuning::default(), Output::default())
+            .watching(&sacdfs::sidecar::Sidecars::none())
+            .with_refresh(Duration::ZERO),
+    );
+    let engine = Arc::new(Engine::new(2, 16 << 20).unwrap());
+    let volume = Arc::new(Volume::new(tree, engine, 4, UID, UID).unwrap());
+    let front = NfsFront::new(volume, handle::volume_id(&source), Callers::User(UID));
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let listener = runtime.block_on(NFSTcpListener::bind("127.0.0.1:0".parse().unwrap(), front)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    runtime.spawn(async move { listener.handle_forever().await });
+
+    let mut c = Client::new(addr);
+    let root = c.mount();
+    let first_file = |c: &mut Client| {
+        let mut at = c.lookup(&root, "disc");
+        for _ in 0..2 {
+            let (st, entries, _) = c.readdir(&at, 0, 4096);
+            assert_eq!(st, NFS3_OK, "READDIR");
+            at = c.lookup(&at, &entries.first().expect("an entry").0);
+        }
+        at
+    };
+    let file = first_file(&mut c);
+    let (st, before) = c.read(&file, 0, 65536);
+    assert_eq!(st, NFS3_OK);
+
+    let mtime = std::fs::metadata(&image).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    let f = std::fs::File::options().write(true).open(&image).unwrap();
+    common::write_all_at(&f, &other, 0).unwrap();
+    if restore_mtime {
+        f.set_modified(mtime).unwrap();
+    }
+    drop(f);
+
+    // Never the old bytes, and never other bytes under the old open: stale at the next read.
+    let (st, _) = c.read(&file, 0, 65536);
+    assert_eq!(st, NFS3ERR_STALE, "a rewritten image's file is stale");
+    // The folder lists the new disc: its first file reads as the other image's.
+    let start = std::time::Instant::now();
+    let fresh = loop {
+        let now = first_file(&mut c);
+        let (st, bytes) = c.read(&now, 0, 65536);
+        if st == NFS3_OK && bytes != before {
+            break now;
+        }
+        assert!(start.elapsed() < Duration::from_secs(15), "the new disc is never listed");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    // A track of another size has another generation, so the old handle stays stale; when
+    // the new disc's file has the same one (same size and time), the handle names it.
+    if fresh != file {
+        assert_eq!(c.getattr(&file).0, NFS3ERR_STALE, "the old handle stays stale");
+    }
+}
+
+#[test]
+fn an_image_rewritten_in_place_makes_its_files_stale() {
+    rewritten_in_place(false);
+}
+
+#[test]
+fn an_image_rewritten_in_place_with_its_time_kept_is_read_anew() {
+    rewritten_in_place(true);
+}
+
 #[test]
 fn only_the_user_is_answered() {
     let src = source();
