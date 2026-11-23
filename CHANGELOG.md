@@ -8,6 +8,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- **scarletbook 1.0.1 (`=1.0.1`); scarletbook-pcm stays at 0.7.0.** 1.0.0 is 0.7.0's code under
+  a 1.0 version, with the Rust API frozen under Semantic Versioning, and 1.0.1 is 1.0.0 released
+  again so that `scarletbook-ffi` 1.x reaches crates.io
+  ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v1.0.1)). No API change:
+  only the version moves. The corpus and eight real discs are byte-identical to 0.7.0's, so `DSF_VERSION` and `WAV_VERSION` stay, and whole-area reads on an i9-13900H take the same time ([figures](docs/performance.md#by-scarletbook-release-101)). `scarletbook-pcm` is outside the freeze and keeps 0.7.0; it does not
+  depend on `scarletbook`, so the build holds one copy of each.
+
 - **scarletbook and scarletbook-pcm 0.7.0 (`=0.7.0`).** The release that removes the items
   0.6.0 deprecated, none of which sacdfs used
   ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.7.0)). It carries
