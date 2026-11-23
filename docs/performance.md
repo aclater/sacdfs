@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Performance
+
 # Performance
 
 How fast sacdfs is, against the targets of [#6](https://github.com/aclater/sacdfs/issues/6),
@@ -15,7 +17,7 @@ from a network share (client-side). The design behind these figures is in
   on a local NVMe disk unless noted.
 - **Two builds**, as released: generic x86-64 (`-C target-cpu=x86-64`) and x86-64-v3. Figures
   are for the generic build unless a column says otherwise.
-- **Means of 3** runs, each on a fresh mount with `--no-index-cache` unless noted, under a
+- **Means of 3** runs, each on a fresh mount with `--index-cache off` unless noted, under a
   benchmark lock so that no other benchmark ran at the same time.
 - **A quiet machine:** each part waited until the load average was under 2 (and under 4 at its
   start, by the lock). A virtual machine that sometimes shares the host was shut off for the
@@ -303,7 +305,7 @@ images in the page cache; ms per file, mean of 3 rounds, and the image calls and
 
 ## Straight reads
 
-`cat`-like reads (1 MiB) of every file of an area on a fresh mount, `--no-index-cache`, images
+`cat`-like reads (1 MiB) of every file of an area on a fresh mount, `--index-cache off`, images
 in the page cache; seconds, means of 3, and sacdfs's CPU time:
 
 | Area | DSF / WAV bytes | DSF | WAV | WAV/DSF | CPU, DSF / WAV | `bench decode` |
@@ -324,7 +326,7 @@ in the page cache; seconds, means of 3, and sacdfs's CPU time:
 
 ## Straight reads against the library (#210)
 
-`cp -r` of an area's DSF files out of a fresh mount (`--no-index-cache`) against scarletbook 0.5.8's
+`cp -r` of an area's DSF files out of a fresh mount (`--index-cache off`) against scarletbook 0.5.8's
 `bench dsf` (generic build) of the same area, images in the page cache, to a RAM disk unless noted.
 Wall seconds, medians of 5 alternating rounds (3 for the first row), on the machine above under the
 benchmark lock, with the firmware's `performance` platform profile throughout. pysacd on the same
@@ -568,7 +570,7 @@ Where the time goes, for those who want to take it further:
 
 ### By scarletbook release (0.7.0, #596)
 
-`cat` of a whole area out of a fresh local mount (`--no-index-cache`) to `/dev/null`, one
+`cat` of a whole area out of a fresh local mount (`--index-cache off`) to `/dev/null`, one
 reader with 1 MiB reads, sacdfs built from main with scarletbook 0.5.9, 0.6.2 and 0.7.0 (same
 compiler), the three rotated each round, 7 rounds under the benchmark lock on an Intel i9-13900H.
 P-cores: sacdfs on 12 logical CPUs (6 P-cores), the reader on another core. E-cores: sacdfs on
@@ -589,6 +591,34 @@ byte-identical across the three.
 0.7.0 reads as fast as 0.6.2 (within 0.6 %) and 2 to 12 % faster than 0.5.9. 0.6.1, in an
 earlier run of 1 to 3 rounds on the same machine, was within 0.6 % of 0.6.2 too: the lone
 6-channel frame that 0.6.2 sped up (scarletbook-rs #378) is too rare in a whole-area read to show.
+
+### By scarletbook release (1.0.1)
+
+scarletbook 1.0.0 and 1.0.1 are 0.7.0's code under a new version, so no change is expected.
+`cat` of a whole area of a real disc out of a fresh local mount (`--no-index-cache`) to
+`/dev/null`, sacdfs built from main with scarletbook 0.7.0 and from this change with 1.0.1 (same
+compiler, generic build), alternating each round, under the benchmark lock on an Intel
+i9-13900H. All threads: 7 rounds, sacdfs on all 20 CPUs. One thread: 5 rounds, `--threads 1`
+with sacdfs on the 12 logical CPUs of the P-cores and the reader on another core. Medians in
+seconds, then the median of the per-round ratios [range]. Whole-area reads of the corpus
+(910 files) and eight real discs (248 files) are byte-identical.
+
+| Threads | Area, format | 0.7.0 | 1.0.1 | 1.0.1 / 0.7.0 |
+|---|---|---|---|---|
+| all | plain DSD stereo, DSF | 0.845 | 0.786 | 0.945 [0.843-1.232] |
+| all | plain DSD stereo, WAV | 2.571 | 2.512 | 0.975 [0.923-1.101] |
+| all | DST stereo, DSF | 10.095 | 10.105 | 1.001 [0.997-1.007] |
+| all | DST stereo, WAV | 13.329 | 13.136 | 0.984 [0.979-0.997] |
+| all | DST 6 ch., DSF | 9.579 | 9.528 | 0.995 [0.991-1.005] |
+| all | DST 6 ch., WAV | 12.637 | 12.691 | 1.002 [0.988-1.007] |
+| 1 | plain DSD stereo, DSF | 0.454 | 0.480 | 1.058 [1.033-1.079] |
+| 1 | plain DSD stereo, WAV | 6.341 | 6.305 | 0.993 [0.982-1.004] |
+| 1 | DST stereo, DSF | 93.975 | 93.948 | 0.999 [0.995-1.004] |
+| 1 | DST stereo, WAV | 110.635 | 110.902 | 1.002 [0.999-1.003] |
+
+No area is more than 10 % slower. The one cell above 1.05, a 0.45 s plain-DSD read on one
+thread (26 ms), is within the spread of such short reads: the same read with all threads is 5 %
+faster.
 
 ## Converter throughput
 
@@ -621,7 +651,7 @@ Multiples of real time per stereo stream:
 - **Frame by frame** (no runs), 176.4 kHz with the 40 kHz filter: 287x (generic) and 265x (v3).
 
 **Through the mount.** The method:
-- WAV files read with `cat` on a fresh mount with `--no-index-cache`, images in the page cache, means of 3;
+- WAV files read with `cat` on a fresh mount with `--index-cache off`, images in the page cache, means of 3;
 - cold WAV seeks as above, 40 per mount on 3 mounts;
 - the same build with either converter (#85's switch), at 176.4 kHz with the 40 kHz filter.
 
@@ -638,7 +668,7 @@ Everything is within the owner's 15 % leeway. The largest gap is the plain DSD W
 
 The scenario of #6, for 30 s: four players each reading 128 KiB at a time in real time with a
 2 s buffer from a random position, and a tagger walking the whole mount over and over (`stat`,
-the first 4 KiB, the tags), on a fresh mount with `--no-index-cache`; 3 rounds. Worst read and
+the first 4 KiB, the tags), on a fresh mount with `--index-cache off`; 3 rounds. Worst read and
 99th percentile in ms, without each player's first read; peak memory is sacdfs's peak resident
 set (`VmHWM`).
 
@@ -669,7 +699,7 @@ stereo images, generic build:
 
 **Parallel readers at full speed (#28, 2026-11-02):** 1, 4 and 8 readers each reading 240 MiB
 of a different stereo DSF file at once, 1 MiB per call, on a fresh mount with
-`--no-index-cache`; "one image" is 8 tracks of one DST stereo area, "different images" is the
+`--index-cache off`; "one image" is 8 tracks of one DST stereo area, "different images" is the
 first track of 8 mounts of that same image file (each its own disc, handle and seek index);
 local images (page cache), generic build, 32-thread machine under `benchlock`.
 
@@ -774,7 +804,7 @@ Under the benchmark lock on an idle machine, 2026-11-06 and 07.
 
 ## Cache size (#150)
 
-`--cache-mb` swept over 8 to 256 MiB on the five bench images, a fresh mount (`--no-index-cache`)
+`--cache-mb` swept over 8 to 256 MiB on the five bench images, a fresh mount (`--index-cache off`)
 per run, medians of 3 runs under benchlock, on a 32-thread host. Seconds, then peak RSS in MiB.
 Straight reads: every DSF or WAV file of one area, 1 MiB reads. Seeks: 200 reads of 128 KiB
 at random places in DST files (warm: after 200 others). Four readers: four 6-channel DST
@@ -975,7 +1005,7 @@ one request per entry, so the 16 of the report are the macOS 15 client's own.
 
 ## 0.4.1-rc.1 against 0.4.0 (release test, 2026-11-05)
 
-The release binaries (generic build), each read through a fresh mount with `--no-index-cache` and
+The release binaries (generic build), each read through a fresh mount with `--index-cache off` and
 the default cache (32 MiB), 11 alternating rounds (the order swaps every round), medians in
 seconds with the range in brackets; one warm-up pass of each read is not counted. The discs are
 three of the five test discs: plain DSD stereo (3.1 GiB of DSF), DST stereo (2.0 GiB) and DST
@@ -1875,7 +1905,7 @@ scripts/stall-gate.py --base OLD_SACDFS --head NEW_SACDFS --source /tmp/disc --c
 ```sh
 # straight read of an area, against scarletbook's own decoder
 bench decode IMAGE --area 2ch --threads 0 --sink raw /dev/shm/out
-sacdfs -f --no-index-cache IMAGE /mnt/x &
+sacdfs -f --index-cache off IMAGE /mnt/x &
 time cat /mnt/x/*/Stereo/*.dsf > /dev/null      # or *.wav
 fusermount3 -u /mnt/x
 # calls, bytes and time per seek without FUSE, cold and with a warm seek index
@@ -1884,5 +1914,13 @@ cargo run --release --example seek_latency -- --seeks 200 --cache /tmp/idx IMAGE
 RUSTFLAGS="-C target-cpu=x86-64" cargo bench --bench pcm
 ```
 
-Seeks are one `pread` of 128 KiB on a fresh mount (with `--no-index-cache` for cold seeks);
+Seeks are one `pread` of 128 KiB on a fresh mount (with `--index-cache off` for cold seeks);
 the concurrency scenario is four real-time readers and a tagger as described above.
+
+## See also
+
+- [Design](design.md)
+- [PCM quality](pcm-quality.md)
+- [Deployment: small NAS sizing](deployment.md#small-nas-sizing)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

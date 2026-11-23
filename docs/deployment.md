@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Deploying sacdfs on a NAS
+
 # Deploying sacdfs on a NAS
 
 > **Installing?** Start with the short [install guides](install/README.md): one per NAS system
@@ -270,8 +272,8 @@ All settings are environment variables.
 | `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |
 | `SACDFS_TAGS` | (none) | `--tags`: the tags directory inside the container, for example `/tags` (mount a host directory there; read-only is enough unless `SACDFS_MUSICBRAINZ` is on); see the [user guide](user-guide.md#your-own-tags---tags) |
 | `SACDFS_MUSICBRAINZ` | `0` | `1` for `--musicbrainz`: look up discs without track titles, album or artist on MusicBrainz in the background, and write what matches to `SACDFS_TAGS`, which must then be mounted read-write. The container needs outbound HTTPS to musicbrainz.org. Off by default; see the [user guide](user-guide.md#in-the-background---musicbrainz) for what is sent |
-| `SACDFS_LOOKUP_NAME` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-name` (also search by album and artist) |
-| `SACDFS_LOOKUP_DURATIONS` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--lookup-durations` (also ask by the tracks' start times) |
+| `SACDFS_LOOKUP_NAME` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--musicbrainz=name` (also search by album and artist) |
+| `SACDFS_LOOKUP_DURATIONS` | `0` | with `SACDFS_MUSICBRAINZ=1`: `1` for `--musicbrainz=durations` (also ask by the tracks' start times) |
 | `SACDFS_SIDECARS` | (`default`) | `--sidecars`: which folder art, scans and playlists are passed through next to the images, for example `default,cue` or `none` ([user guide](user-guide.md#sidecar-files-art-scans-playlists)) |
 | `SACDFS_CACHE_MB` | (32, or 16 under a limit below 256 MiB) | `--cache-mb`: decoded-frame cache in MiB. The default suits a NAS; see [Memory](#memory) |
 | `SACDFS_LISTING_MB` | (no bound, or 3/8 of the limit) | `--listing-mb`: memory kept for what listed images hold, in MiB; `0` for no bound. See [Under a memory limit](#under-a-memory-limit) |
@@ -282,7 +284,7 @@ All settings are environment variables.
 | `SACDFS_REQUEST_TIMEOUT` | (30) | `--request-timeout` in seconds: a read, lookup or listing that waits longer for the images (a stalled disk or share) fails with an I/O error, and is logged, instead of hanging the SMB or NFS client; `0` waits for good. See [Troubleshooting](#troubleshooting) |
 | `SACDFS_STOP_GRACE` | (10) | `--stop-grace` in seconds: after the stop signal sacdfs serves files still held open on the mount (by a player on the same host, say; the SMB and NFS servers are stopped first) for this long, then exits anyway. `0` waits for the last file. Keep the container's stop timeout (30 s in the compose files and the Unraid template) above this plus 10 s for the servers |
 | `SACDFS_MOUNT_TIMEOUT` | `300` | seconds the container waits for sacdfs to mount (it lists every image first, so a large library on a slow disk takes longer) before it exits with an error; a whole number from 1 to 86400. Keep the health check's start period (300 s in the image, the compose file and the commands in this guide) at least as long if you raise it. See [Troubleshooting](#troubleshooting) |
-| `SACDFS_INDEX_CACHE` | `/cache` | `--index-cache` directory (keep it on a volume so it survives updates); `off` for `--no-index-cache` |
+| `SACDFS_INDEX_CACHE` | `/cache` | `--index-cache` directory (keep it on a volume so it survives updates); `off` keeps none (`--index-cache off`) |
 | `SACDFS_VERBOSE` | `1` | `0` warnings only, `1` (`-v`), `2` (`-vv`) |
 | `SMB` | `1` | `0` to turn the SMB server off |
 | `NFS` | `1` | `0` to turn the NFS server off (then `CAP_DAC_READ_SEARCH` isn't needed, and no process keeps it) |
@@ -1081,7 +1083,7 @@ The same YAML, without the TrueNAS paths, works on other NAS systems that run Do
 (Unraid, Synology Container Manager, OpenMediaVault), as far as they allow `/dev/fuse` and
 the capabilities.
 
-#### Roon on the same NAS
+### Roon on the same NAS
 
 Tested with Roon Server's official image (`ghcr.io/roonlabs/roonserver`) as a TrueNAS app with
 host networking, on the same NAS as sacdfs.
@@ -1457,7 +1459,7 @@ for tags, and the share setting only made its copies a little slower, so the con
 
 File managers open `smb://nas/sacd` directly.
 
-#### On other ports
+### On other ports
 
 If the container publishes other ports (TrueNAS, step 2), give them to the client:
 
@@ -1850,7 +1852,7 @@ an NFS share of images on hard disks, these are the measured findings (#71,
   - `rsize` below the default 1 MiB, and `nconnect=4`;
   - `--threads 4` (it made every start-up read slower), and `--cache-mb 1024`.
 - **What does help:**
-  - keep the seek index (the default; `--no-index-cache` turns it off): a seek that the
+  - keep the seek index (the default; `--index-cache off` turns it off): a seek that the
     index knows reads the image once instead of 3 to 5 times;
   - more disks working at once, or a NAS cache that holds the images;
   - best of all, run sacdfs on the NAS ([above](#deploying-sacdfs-on-a-nas)), where sacdfs's
@@ -2058,3 +2060,12 @@ is killed and the restart policy starts it again, without the reader being resta
 `deploy/ci-compose-test.sh` brings up `deploy/nas-compose.yaml` (the file the NAS guides use) with
 the image under test: it must be valid, healthy and open on ports 10445 and 12049, and eight stops
 2 s after a start must each exit normally in under 8 s (#283).
+
+## See also
+
+- [Install guide](install/README.md)
+- [Options](options.md)
+- [Clients](clients.md)
+- [User guide](user-guide.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

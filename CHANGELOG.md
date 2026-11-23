@@ -6,7 +6,48 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Manual pages (#581).** `sacdfs(1)`, `sacdfs-nfs(1)` and `sacdfs-ctl(8)`, with every option
+  (the tuning options too), the `-o` mount options, exit status, environment, files and
+  examples. `sacdfs(1)` and `sacdfs-nfs(1)` are generated from the command lines
+  (`sacdfs --generate-man-pages DIR`, in a build with the `man` feature), so they cannot drift
+  from `--help`; CI builds them again and compares, and checks that `sacdfs(1)` and
+  docs/options.md list the same options. The RPM and deb packages install them, the Linux and
+  macOS release archives carry them in `man/`, and the container image has `sacdfs(1)`.
+
 ### Changed
+
+- **scarletbook 1.0.1 (`=1.0.1`); scarletbook-pcm stays at 0.7.0.** 1.0.0 is 0.7.0's code under
+  a 1.0 version, with the Rust API frozen under Semantic Versioning, and 1.0.1 is 1.0.0 released
+  again so that `scarletbook-ffi` 1.x reaches crates.io
+  ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v1.0.1)). No API change:
+  only the version moves. The corpus and eight real discs are byte-identical to 0.7.0's, so `DSF_VERSION` and `WAV_VERSION` stay, and whole-area reads on an i9-13900H take the same time ([figures](docs/performance.md#by-scarletbook-release-101)). `scarletbook-pcm` is outside the freeze and keeps 0.7.0; it does not
+  depend on `scarletbook`, so the build holds one copy of each.
+
+- **Fewer command-line options (#560).** `sacdfs --help` lists 12 options instead of 27. The
+  tuning options (`--threads`, `--cache-mb`, `--listing-mb`, `--start-burst`,
+  `--start-burst-secs`, `--max-open-images`, `--request-timeout`, `--stop-grace`,
+  `--pcm-cutoff`, `--pcm-gain`, `--no-multichannel-album-suffix`) are hidden from it and
+  described in docs/options.md under Tuning; they work as before. Related options are
+  folded: `--musicbrainz[=name,durations]` takes `--lookup-name` and `--lookup-durations`,
+  `--allow-other[=yes|no]` takes `--no-allow-other`, and `--index-cache off` takes
+  `--no-index-cache`, also as `-o` options (`musicbrainz=name+durations`, `allow_other=no`,
+  `index_cache=off`). The old spellings still work, on the command line, as `-o` options and
+  in `SACDFS_OPTIONS`, hidden from `--help` and logging one line that names the new form.
+  `sacdfs-nfs` follows; `sacdfs-win` takes the `--musicbrainz` and `--index-cache` forms, and
+  keeps `--no-allow-other`. The container's variables do not change.
+- **The folder warmer cools down while the listed folder keeps changing.** A client that lists
+  a different folder every few seconds no longer keeps the CPU decoding heads on an idle mount
+  ([#593](https://github.com/aclater/sacdfs/issues/593)): from the third listing in a run
+  (each within 30 s of the last), the folder must stay the last listed for 2 s, 4 s, 8 s and so
+  on up to 32 s more than before it is warmed, and the count starts over after 30 s. A folder
+  that stays put is warmed as before.
+- **The area capacity check is scarletbook's.** sacdfs's own copy of the rule (an area's audio
+  sectors in the image, at 7 frames a sector) is replaced by `Disc::area_capacity` and
+  `audio::area_capacity` ([#595](https://github.com/aclater/sacdfs/issues/595)). Listings are
+  unchanged: a test compares the library's figure with the old formula on every corpus area
+  at the image's own sector count and at counts around the area's edges.
 
 - **scarletbook and scarletbook-pcm 0.7.0 (`=0.7.0`).** The release that removes the items
   0.6.0 deprecated, none of which sacdfs used
@@ -21,6 +62,19 @@ All notable changes to sacdfs are recorded here. The format follows
   ([figures](docs/performance.md#by-scarletbook-release-070-596)).
 
 ### Fixed
+
+- **Short reads on a fresh mount got slower in 0.7.2 (#589).** A kept head (#456) was copied
+  into a slab of heads at the read, a cost per mount and per file that long tracks hide. The
+  copy now waits until the frame pool maps more than half the cache, or an idle release keeps
+  the heads. Sequential real-disc reads are unchanged.
+- **An image rewritten in place with another disc while mounted
+  ([#588](https://github.com/aclater/sacdfs/issues/588)).** `rsync --inplace` or `dd
+  conv=notrunc` over a mounted image left the old disc listed and its cached frames served until
+  the folder changed. The change is now noticed within a second of a read (by the file's size,
+  modification time and change time) and at the folder's next listing, and on NFS, SMB and
+  FUSE sources by the TOC read again every 30 s. The files of the old disc then fail (`ESTALE`)
+  instead of serving cached or mixed bytes, their cached frames are dropped, and the folder
+  lists the new disc. Reads cost no extra system call.
 
 - **First start on a slow NAS right after opening the album.** On a machine that decodes slower
   than players' start-up bursts, listing a folder of track files now decodes the first 1.5 MiB of

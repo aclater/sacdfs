@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Release test plan
+
 # Release test plan
 
 CI proves that sacdfs does what its tests say. Real clients have repeatedly shown things CI could
@@ -591,7 +593,7 @@ Not run on Windows: large-icon view in a real Explorer window, CJK names, foobar
 
 **macOS:** not run on 0.6.2-rc.1. The Apple hardware that hosts the macOS VM was not available.
 
-## Results: Installer on 0.6.2
+## Results: installer on 0.6.2
 
 The installer of the 0.6.2 release (Part of #340), taken from GitHub's `latest` address, which
 serves 0.6.2's `install.sh` (`DEFAULT_VERSION=0.6.2`; its attestation passes), in two forms: the
@@ -785,7 +787,7 @@ On the v0.6.3-rc.1 release binary and image, with 0.6.2 (and 0.6.1 for the playe
 
 Not run: Roon and Plex at scale (the project's own Roon and Plex test deployments run the candidate since the soak passed; the players weren't driven), Tier 2 tools, the NFS player-beside-copies cells, and a physical Windows or macOS client here (Windows above).
 
-## Results: Installer restarts and the container route on NAS VMs (main, 0.6.3 release files)
+## Results: installer restarts and the container route on NAS VMs (main, 0.6.3 release files)
 
 The installer from `main` (Part of #340), run as `sh install.sh --iso-dir ... --version 0.6.3`,
 so that it downloaded the 0.6.3 release archive or image from GitHub and checked it. Each run
@@ -1141,7 +1143,7 @@ What was run on `main` before the release (aa049f53; the release-workflow dry ru
 - **The #456 player** (`scripts/stall-gate.py`, 5 rounds, sacdfs at 11 % of one CPU, 0.7.1 as base, a 6-channel real disc): starting after the idle release, it opens its track 0.27 s after its probe instead of 4.60 s, with no stall in its first 15 s instead of 2.75 s, and holds 7.55 s of audio after 5 s instead of 3.40 s. Starting 20 s after the probe it opens at the same time (3.61 s), stalls 2.58 s instead of 3.79 s. Both pass.
 - **Audio:** all 910 corpus files are byte-identical to 0.7.1's in five output configurations (default, 88.2 and 352.8 kHz WAV, flattened, DSF only), on the x86_64 and x86_64-v3 builds. On eight real discs all 248 DSF and WAV files are identical to 0.7.1's.
 - **Whole library** (over 400 images): the default listing (13,948 entries) and a DSF-only listing (9,037) are identical to 0.7.1's in names, types, sizes and mtimes. The folder warmer read nothing after a listing. Memory with a DSF-only mount, listed / after reading the first and last 64 KiB of every file / after 10 minutes idle: 0.7.1 28.3 / 73.6 / 33.5 MiB, main 29.1 / 74.1 / 50.1 MiB (the heads now stay through the idle release). Exported by sacdfs-nfs to a Fedora 44 client, the first listing took 1.35 s (0.7.1: 1.28 s), with the images' TOCs in the page cache.
-- **Image replaced while mounted (#573),** on corpus copies, over FUSE and sacdfs-nfs: a replace by rename (rsync without `--inplace`) with another disc is served with the new disc's layout and bytes after 1.2 to 1.4 s over FUSE and after the NFS client's attribute cache (71 s); 0.7.1 kept the old layout. An in-place rewrite with another disc refuses reads of the old disc's files (EIO, or ESTALE over NFS), but the folder lists the old disc until its modification time changes, and frames already in the cache are served with the old bytes, as docs/design.md says (#588); 0.7.1 never updated. A file held open across a replace gets EIO, no crash or hang.
+- **Image replaced while mounted (#573),** on corpus copies, over FUSE and sacdfs-nfs: a replace by rename (rsync without `--inplace`) with another disc is served with the new disc's layout and bytes after 1.2 to 1.4 s over FUSE and after the NFS client's attribute cache (71 s); 0.7.1 kept the old layout. An in-place rewrite with another disc refuses reads of the old disc's files (EIO, or ESTALE over NFS), but the folder lists the old disc until its modification time changes, and frames already in the cache are served with the old bytes, as docs/design.md said then (#588); 0.7.1 never updated. Since #588 the old files give ESTALE, the cache drops their frames and the folder lists the new disc (tests/replaced_images.rs, tests/rewritten_mount.rs, tests/nfs.rs, tests/toc_fingerprint.rs). A file held open across a replace gets EIO, no crash or hang.
 - **sacdfs-nfs bounds (#574):** 80 clients reading for 60 s: no errors or wrong bytes, 64 served at once as designed, server memory about 35 MB. A silent connection is closed after 300 s and its client reconnects and reads correctly, also a Linux kernel client. With 64 idle connections holding every place, a new Linux mount succeeds after 9.5 s and reads correctly (0.7.1: the mount failed after 184 s).
 - **Soak.** `scripts/soak.py --hours 2 --sample-paths --warmup 600` on a 32-thread Zen 5 machine, main side by side with 0.7.1 on the same five corpus images, each on 4 CPUs under a 6 GiB limit: main passes. Read 219.5 / 219.4 GB (main / 0.7.1), warm resident size 53.4 / 50.5 MiB, second-half trend −2.15 / −0.44 MiB/h, threads peak 30 / 31, 38 stalls and 23 remounts each, no unexpected read error. 0.7.1 failed one stall check: the soak's own reads of the stalled image got no error, while sacdfs's log shows the watchdog failing the held read after 3.3 s; main had none, and 0.7.1 passed in its own gate.
 - **Stop checks,** both builds, same results: SIGTERM with a file held open (#276), 200 SIGTERMs 0 to 40 ms after the start (#334) and 100 outside `fusermount3 -u` while idle (#333).
@@ -1161,6 +1163,14 @@ What was run on `main` before the release (aa049f53; the release-workflow dry ru
 | Local read, real disc, plain DSD, DSF / WAV | 0.487 / 1.12 s | 0.486 / 1.12 s | 0.494 / 1.13 s | 1.02 / 1.01 | 1.04 / 1.01 |
 | Local read, corpus, DST stereo / multichannel / plain DSD, DSF | 0.074 / 0.153 / 0.018 s | 0.073 / 0.153 / 0.018 s | 0.077 / 0.164 / 0.020 s | 1.07 / 1.06 / 1.12 | 1.05 / 1.07 / 1.13 |
 
-The corpus rows are slower on main in every round: each reads one area through 20 fresh mounts, so this is 0.1 to 0.5 ms more per mount ([#589](https://github.com/aclater/sacdfs/issues/589)). Explained: on an i9-13900H (P-cores, 7 to 21 rounds), main with #580 reverted is back at 0.97 to 1.02 times 0.7.1, so the kept heads cause all of it. The cost is per mount and per file head, not per byte: each read copies its frames into a head slab (an extra slab mapping per frame size, page faults and the copy; the corpus files are smaller than the 2 MiB head, so every byte is copied), and the folder warmer's thread start adds 0.05 to 0.08 ms. Real-disc reads, where it is amortised, are unchanged.
+The corpus rows are slower on main in every round: each reads one area through 20 fresh mounts, so this is 0.1 to 0.5 ms more per mount ([#589](https://github.com/aclater/sacdfs/issues/589)). Partly explained: on an i9-13900H (P-cores, 7 to 21 rounds), main with #580 reverted is back at 0.97 to 1.02 times 0.7.1, but a later run with the kept heads and the folder warmer switched off was still 1.05 to 1.09 times 0.7.1 on the plain and multichannel rows, so the kept heads explain about half of the slowdown and the remainder is under investigation in #589. The cost is per mount and per file head, not per byte: each read copies its frames into a head slab (an extra slab mapping per frame size, page faults and the copy; the corpus files are smaller than the 2 MiB head, so every byte is copied), and the folder warmer's thread start adds 0.05 to 0.08 ms. Real-disc reads, where it is amortised, are unchanged.
 
 **Not run:** Finder, Spotlight and players on macOS; the file-handle tests as root; Roon and Plex at scale; the NAS OS VMs; the installer VM scenarios (smoke test only); a physical Windows PC, Mac or NAS; aarch64 on hardware; a soak of the published binaries or on real discs; NFSv4 through sacdfs-nfs (it serves NFSv3); a cold first listing; the #456 player on its own hardware (asked on #456); and the release's own artifacts (checked after the tag).
+
+## See also
+
+- [Releasing](release.md)
+- [Clients](clients.md)
+- [Development](development.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

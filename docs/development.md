@@ -1,7 +1,11 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Development: leak hunting, memory profiling, skipped tests and real-disc tests
+
 # Development: leak hunting, memory profiling, skipped tests and real-disc tests
 
 sacdfs runs for days on a NAS, so memory it keeps alive by mistake adds up. A map that only
-grows, nodes kept after a re-read, or the buffers of abandoned requests all count. In Rust,
+grows, nodes kept after a re-read, or the buffers of abandoned requests all count.
+
+In Rust,
 leaks are usually of this kind, not a missing `free`. There are four tools for finding them
 (#151). Only the first runs on every pull request; the owner asked to keep CI fast.
 
@@ -389,3 +393,12 @@ week, as 64-bit and as 32-bit x86 programs (#498). See [fuzz/README.md](../fuzz/
 
 What these tools found, and what was fixed, is in docs/design.md under "Leaks", and in the
 pull request for #151.
+
+## See also
+
+- [Contributing](../CONTRIBUTING.md)
+- [Design](design.md)
+- [Performance](performance.md)
+- [Release test plan](test-plan.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

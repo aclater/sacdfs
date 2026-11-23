@@ -21,14 +21,14 @@ env:
   RUST_STABLE: 1.99.1
 
 jobs:
-  # Docs-only pull requests skip the jobs (changes.yml); skipped, they report success.
+  # Docs-only pull requests skip the jobs (changes.yml), and so do pull requests that touch nothing Rust or CI uses; skipped, they report success.
   changes:
     uses: $/.github/workflows/changes.yml
 
   coverage:
     name: coverage
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

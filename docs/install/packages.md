@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Linux packages: .rpm and .deb
+
 # Linux packages: .rpm and .deb
 
 Each release from 0.6.5 has sacdfs as `.rpm` and `.deb` packages, for x86_64 and aarch64, and
@@ -160,3 +162,11 @@ sacdfs restarts on the new program.
   and install steps against the published x86_64 files on UBI 10 and Debian 13 (containers):
   `OK`, `sacdfs 0.7.2`, and the settings file and unit in place; the COPR repository has 0.7.2-1
   for every chroot listed above.
+
+## See also
+
+- [Linux without a container](binary.md)
+- [User guide](../user-guide.md)
+- [Options](../options.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

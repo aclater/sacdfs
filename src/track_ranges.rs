@@ -24,13 +24,13 @@
 //!    track keeps its pause.
 //!
 //! The listed tracks then never share a frame and all end within the area's play time and
-//! capacity ([`capacity`]), so their total stays within one area's worth. A normal disc's tracks do not
+//! capacity (`capacity`), so their total stays within one area's worth. A normal disc's tracks do not
 //! overlap and fit, and are listed exactly as before.
 
 use std::fmt;
 use std::path::Path;
 
-use scarletbook::audio::{FRAMES_PER_SECTOR, audio_sector_range, check_range, check_track};
+use scarletbook::audio::{check_range, check_track};
 use scarletbook::{Area, Slot, Track};
 
 /// A track's frame range `[start, end)`, by track number.
@@ -93,14 +93,6 @@ pub fn fit_overlaps(spans: &[Span]) -> Vec<Fit> {
         }
     }
     fits
-}
-
-/// An area's capacity in frames for an image of `image_sectors` sectors: the frames its
-/// existing audio sectors can hold at most (specification 4, 4.8 item 3, the rule of
-/// [`check_track`]).
-pub fn capacity(area: &Area, image_sectors: u64) -> u64 {
-    let (start, end) = audio_sector_range(area, image_sectors);
-    end.saturating_sub(start).saturating_mul(FRAMES_PER_SECTOR)
 }
 
 /// Why a track is listed differently from its TOC range, or not at all.
@@ -215,11 +207,14 @@ pub fn listed(area: &Area, image_sectors: u64, pauses: bool) -> Vec<Listed> {
         keep_pauses(area, image_sectors, &mut out);
     }
     debug_assert!(
-        listed_frames(&out) <= capacity(area, image_sectors).min(u64::from(area.playtime_frames())),
+        listed_frames(&out)
+            <= scarletbook::audio::area_capacity(area, image_sectors)
+                .capacity
+                .min(u64::from(area.playtime_frames())),
         "{} track frames listed in a {} area of capacity {} and play time {}",
         listed_frames(&out),
         area.slot,
-        capacity(area, image_sectors),
+        scarletbook::audio::area_capacity(area, image_sectors).capacity,
         area.playtime_frames()
     );
     out

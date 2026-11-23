@@ -23,10 +23,11 @@ include = [
 [dependencies]
 # The engine: SACD parsing, demultiplexing and DST decoding, from crates.io, pinned exactly
 # (published from the release tag).
-scarletbook = "=0.7.0"
-# The DSD-to-PCM converter behind the WAV files (#84), from the same release as the engine.
+scarletbook = "=1.0.1"
+# The DSD-to-PCM converter behind the WAV files (#84); outside the 1.0 freeze, so it keeps 0.7.0.
 scarletbook-pcm = "=0.7.0"
 clap = { version = "4.5", features = ["derive"] }
+clap_mangen = { version = "0.2", optional = true }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 libc = "0.2"
 log = "0.4"
@@ -77,6 +78,9 @@ tempfile = "3"
 [features]
 # `sacdfs-nfs` and `sacdfs::nfs`, the NFS front end (#420): macOS's, and NFS clients' without FUSE.
 nfs = ["dep:tokio", "dep:async-trait", "dep:byteorder", "dep:num-derive", "dep:num-traits"]
+
+# `sacdfs --generate-man-pages DIR`: the manual pages, built from the command lines (#581).
+man = ["dep:clap_mangen"]
 
 [[bin]]
 name = "sacdfs"

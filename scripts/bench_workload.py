@@ -34,7 +34,7 @@ def unmount(mountpoint: str) -> None:
 
 
 def one_pass(binary: str, image: Path, areas: list[str], mountpoint: str) -> float:
-    subprocess.run([binary, "--no-index-cache", "--format", "dsf", str(image), mountpoint], check=True)
+    subprocess.run([binary, "--index-cache", "off", "--format", "dsf", str(image), mountpoint], check=True)
     try:
         start = time.perf_counter()
         for area in areas:

@@ -266,7 +266,7 @@ fn a_stalled_image_fails_its_requests_and_holds_up_no_other() {
         std::os::unix::fs::symlink(&outer, src.join(dir).join(format!("{id}.iso"))).unwrap();
     }
     let secs = TIMEOUT.as_secs().to_string();
-    let m = Mount::new(&src, &["--request-timeout", &secs, "--no-index-cache"]);
+    let m = Mount::new(&src, &["--request-timeout", &secs, "--index-cache", "off"]);
     let mnt = m.path.clone();
 
     // A file of "Listed" is found (its image opened, its TOC read) while all is well.
@@ -345,7 +345,7 @@ fn stalled_wav_reads_hold_no_decoder_thread() {
     }
     // Two decoder threads, as a small NAS has: two stalled reads were enough to take them.
     let secs = TIMEOUT.as_secs().to_string();
-    let m = Mount::new(&src, &["--threads", "2", "--request-timeout", &secs, "--no-index-cache"]);
+    let m = Mount::new(&src, &["--threads", "2", "--request-timeout", &secs, "--index-cache", "off"]);
     let stalled = files_below(&m.path.join("Stalled"), "wav");
     let other_dsf = files_below(&m.path.join("Other"), "dsf");
     let other_wav = files_below(&m.path.join("Other"), "wav");
@@ -432,7 +432,7 @@ fn retrying_clients_of_a_stalled_image_leave_threads_to_the_others() {
         std::os::unix::fs::symlink(&outer, src.join(dir).join(format!("{id}.iso"))).unwrap();
     }
     let secs = TIMEOUT.as_secs().to_string();
-    let m = Mount::new(&src, &["--threads", "2", "--request-timeout", &secs, "--no-index-cache"]);
+    let m = Mount::new(&src, &["--threads", "2", "--request-timeout", &secs, "--index-cache", "off"]);
     let pid = m.child.as_ref().unwrap().id();
     let stalled = files_below(&m.path.join("Stalled"), "wav");
     let mut other = files_below(&m.path.join("Other"), "dsf");

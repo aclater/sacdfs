@@ -36,7 +36,7 @@ use sacdfs::tree::SourceDir;
 /// sacdfs serves, before they are deleted: see `sacdfs verify --help`. `sacdfs tags` keeps
 /// user tags for the files (`--tags`): see `sacdfs tags --help`.
 #[derive(Debug, Parser)]
-#[command(version, about)]
+#[command(version, about, after_help = serve::TUNING_HELP)]
 struct Args {
     /// An SACD image file, or a directory of them.
     source: PathBuf,
@@ -50,17 +50,18 @@ struct Args {
     serve: serve::Options,
     /// Let other users read the mount: the default when run as root (the mount is read-only).
     /// A user other than root needs `user_allow_other` in /etc/fuse.conf for it.
-    #[arg(long)]
-    allow_other: bool,
-    /// Only the user who mounted may read the mount, also when run as root.
-    #[arg(long, conflicts_with = "allow_other")]
+    #[arg(long, value_name = "yes|no", num_args = 0..=1, require_equals = true,
+          default_missing_value = "yes", value_parser = serve::parse_yes_no)]
+    allow_other: Option<bool>,
+    /// Same as `--allow-other=no`.
+    #[arg(long, hide = true, conflicts_with = "allow_other")]
     no_allow_other: bool,
     #[command(flatten)]
     limits: serve::Limits,
     /// Seconds after SIGINT, SIGTERM or SIGHUP that sacdfs keeps serving files clients still hold
     /// open before it exits anyway (the mount is detached at once, so nothing new opens); those
     /// clients then get I/O errors. 0 waits for the last file to close, however long.
-    #[arg(long, default_value_t = DEFAULT_STOP_GRACE, value_name = "SECS")]
+    #[arg(long, hide = true, default_value_t = DEFAULT_STOP_GRACE, value_name = "SECS")]
     stop_grace: u64,
     /// Append the log to FILE instead of standard error, at info level unless -v says more.
     /// Without it a background mount logs nowhere, except to the journal under systemd.
@@ -71,8 +72,24 @@ struct Args {
     verbose: u8,
 }
 
+/// `sacdfs --generate-man-pages DIR`: writes the manual pages (#581).
+#[cfg(feature = "man")]
+pub(crate) fn generate_man_pages(dir: Option<std::ffi::OsString>) -> ExitCode {
+    let Some(dir) = dir else {
+        eprintln!("usage: sacdfs --generate-man-pages DIR");
+        return ExitCode::from(2);
+    };
+    match sacdfs::man::write_all(command(), std::path::Path::new(&dir)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("sacdfs: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// The command line, for the test that keeps the `-o` option lists in step with it.
-#[cfg(test)]
+#[cfg(any(test, feature = "man"))]
 pub(crate) fn command() -> clap::Command {
     <Args as clap::CommandFactory>::command()
 }
@@ -257,8 +274,12 @@ fn run(args: Args) -> io::Result<()> {
         MountOption::CUSTOM(format!("max_read={MAX_READ}")),
     ];
     // Root lets other users read by default (#282): see docs/design.md, "Other users".
-    if startup::allow_other(args.allow_other, args.no_allow_other, uid) {
-        log::info!("other users may read the mount (--no-allow-other turns it off)");
+    if args.no_allow_other {
+        log::warn!("--no-allow-other is deprecated: use --allow-other=no");
+    }
+    let refused = args.no_allow_other || args.allow_other == Some(false);
+    if startup::allow_other(args.allow_other == Some(true), refused, uid) {
+        log::info!("other users may read the mount (--allow-other=no turns it off)");
         config.acl = SessionACL::All;
     }
     config.n_threads = Some(4);

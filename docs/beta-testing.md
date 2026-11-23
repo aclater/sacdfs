@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Beta testing sacdfs on a NAS
+
 # Beta testing sacdfs on a NAS
 
 **We want to hear from NAS owners, at any skill level.** Most people who keep Super Audio CD
@@ -164,3 +166,11 @@ Check with `ls /path/to/mountpoint`, which should now be empty, and with
 Ask in the report, or in [an issue](https://github.com/aclater/sacdfs/issues). Reports so far are listed
 under the [nas-test-report label](https://github.com/aclater/sacdfs/issues?q=label%3Anas-test-report). Other ways to help are
 in [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## See also
+
+- [Install guide](install/README.md)
+- [Clients](clients.md)
+- [User guide: troubleshooting](user-guide.md#troubleshooting)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

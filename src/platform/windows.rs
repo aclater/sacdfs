@@ -35,6 +35,15 @@ pub fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Re
     Ok(())
 }
 
+/// Windows has no change time in the metadata: none (the fingerprint covers it).
+pub fn ctime(_m: &Metadata) -> (i64, i64) {
+    (0, 0)
+}
+
+pub fn unreliable_times(_file: &std::fs::File) -> bool {
+    true
+}
+
 pub fn mtime(m: &Metadata) -> (i64, i64) {
     match m.modified().map(|t| t.duration_since(std::time::UNIX_EPOCH)) {
         Ok(Ok(d)) => (i64::try_from(d.as_secs()).unwrap_or(i64::MAX), i64::from(d.subsec_nanos())),

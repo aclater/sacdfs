@@ -41,7 +41,9 @@ open a draft advisory and follow
    [docs/development.md](docs/development.md).
 4. Update the documentation with the code: README.md, docs/options.md and docs/user-guide.md for anything a
    user sees (the options table in docs/options.md must match `sacdfs --help`; CI checks it with
-   `.github/scripts/check-readme-options.py`), docs/design.md when the design changes, with
+   `.github/scripts/check-readme-options.py`; a changed option also changes the manual pages,
+   which are generated: `cargo run --features man,nfs -- --generate-man-pages man`, and CI
+   checks them with `.github/scripts/check-man.py`), docs/design.md when the design changes, with
    the reason for each decision, docs/performance.md with new measurements, and CHANGELOG.md
    under "Unreleased".
 
@@ -53,6 +55,7 @@ A pull request is merged only when it keeps these rules. Each is checked in CI.
 |---|---|
 | Every `unsafe` block and `unsafe impl` has a `// SAFETY:` comment. | `undocumented_unsafe_blocks = "deny"` in Cargo.toml and winfsp/Cargo.toml (clippy jobs) |
 | Every long option of the mount command is an `-o` option or listed in `NOT_MOUNT_OPTIONS`. | unit test `the_lists_match_the_command_line` (ci, tests) |
+| The manual pages in man/ are current, and `sacdfs(1)` lists the options of docs/options.md. | `.github/scripts/check-man.py` (ci, readme options) |
 | Every shell script passes ShellCheck in the dialect it declares; a disable says why. | `shellcheck` over `git ls-files '*.sh' deploy/sacdfs-ctl` (ci, fmt + clippy) |
 | Python passes `ruff check` at its default rules (ruff.toml). | ruff 0.17.3, pinned by hash in .github/requirements/ruff.txt (ci, fmt + clippy) |
 | Every Cargo.lock is built `--locked` and checked by cargo-deny. | deny.yml (core, fuzz), windows.yml (winfsp); fuzz/run.sh stops when fuzz/Cargo.lock is stale |
@@ -103,94 +106,8 @@ each issue.
 
 ## Releasing
 
-The owner tags releases; everything after the tag is automatic (`.github/workflows/release.yml`).
-Version tags (`v*`) are immutable, so a tag that went wrong is followed by a new version,
-never moved.
-
-1. **Before:** `main` is green, the scarletbook pin is the one meant for the release, and
-   the docs describe the release (README, docs/).
-2. **Test:** run the [release test plan](docs/test-plan.md) on a release candidate; its exit criteria
-   decide whether the final version is tagged.
-3. **Dry run:** Actions, "release", "Run workflow" on `main` (or
-   `gh workflow run release.yml -R aclater/sacdfs --ref main`). It builds and tests every
-   archive, package and the image, runs the container share test, and publishes nothing; its summary
-   lists the assets and checksums a tag would publish. Pull requests that change the release
-   files run it too.
-4. **Release pull request:** bump `version` in `Cargo.toml` (and `Cargo.lock`, with
-   `cargo update -p sacdfs --offline`), and rename `## [Unreleased]` in CHANGELOG.md to
-   `## [X.Y.Z] - YYYY-MM-DD`, with a new empty `## [Unreleased]` above it. That section
-   becomes the release notes. At the end of the file, point `[Unreleased]` at
-   `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: .../compare/v<previous>...vX.Y.Z`, so every
-   heading links to its changes. Merge it once its checks pass.
-5. **Tag** the merge commit on `main`: `git tag -a vX.Y.Z -m "sacdfs X.Y.Z" && git push origin vX.Y.Z`.
-   The workflow stops before building anything if the tag isn't `v` plus Cargo.toml's
-   version, if CHANGELOG.md has no section for it, or if the tagged commit is on neither `main`
-   nor a `release/*` branch (`.github/scripts/check-tag-reachable.sh`). A patch release cut
-   from an earlier tag instead of `main` is pushed as a branch `release/X.Y.Z` first and tagged
-   there.
-6. **After:** the release has its archives, packages and `install.sh`, each with `.sha256` and
-   `.intoto.jsonl`, and `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
-   `gh attestation verify`; the workflow's last image step has verified the image index, each
-   architecture's image by its digest and each `-<arch>` tag (#379). A version with a hyphen
-   (`0.2.0-rc.1`) is marked as a pre-release and doesn't move `:latest`.
-7. **Install instructions:** point them at the new version in a docs pull request: the guides
-   in `docs/install/`, `deploy/nas-compose.yaml`, the Unraid template
-   (`deploy/unraid/sacdfs.xml`, `<Repository>`) and the TrueNAS catalog app
-   (`deploy/truenas/sacdfs/ix_values.yaml`, `images.image.tag`, and `app_version` in
-   `app.yaml`; then the catalog's `generate_metadata.py` raises `version` by one patch step,
-   as [store-apps.md](docs/install/store-apps.md#checked-with-the-stores-own-tooling) describes).
-8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/dsd-toolbox/blob/main/RELEASES.md)
-   in aclater/dsd-toolbox (the minor version's summary and release list).
-
-**macOS archives of an earlier release.** Every release run builds and tests both macOS
-archives; the release gets them only when the repository variable `SACDFS_MACOS_RELEASE` is
-`true`. To add them later to a release whose run held them back, while the run's artifacts
-last (7 days): `gh workflow run release.yml -R aclater/sacdfs --ref main -f macos_run=RUN_ID
--f tag=vX.Y.Z`. The job `macos-publish` checks that the run is the tag's successful release
-run and that the release has no macOS assets yet, verifies the checksums, attests the two
-archives, uploads them with their `.sha256` and `.intoto.jsonl`, appends their two lines to
-`SHA256SUMS` (the other lines stay byte for byte) and adds the macOS lines to the notes. It
-builds nothing and leaves the tag and the other assets alone. It needs
-docs/install/macos.md on `main` to describe the archives, since the notes link to it. It runs
-alone in the concurrency group `release-assets-<tag>`, and stops before replacing
-`SHA256SUMS` if the file changed since it read it. A run that
-fails after its first upload leaves the release half done, and a new run stops at "already has
-macOS assets": delete the macOS assets it uploaded (`gh release delete-asset`), put back
-`SHA256SUMS` from the run's log if it was replaced, and run it again.
-
-**Linux packages of an earlier release (#460).** Every release run packs and tests the `.rpm`
-and `.deb` packages and the source RPM (`packaging/`). To add them to a release made before
-that: `gh workflow run release.yml -R aclater/sacdfs --ref main -f packages_tag=vX.Y.Z`. The run
-checks the release's x86_64 and aarch64 archives against `SHA256SUMS` and their attestations,
-packs them and the tag's source, runs the package and SRPM tests, then (job
-`packages-publish`) attests the five files, uploads them with their `.sha256` and
-`.intoto.jsonl`, appends their lines to `SHA256SUMS` (the other lines stay byte for byte) and
-adds the package lines to the notes. It builds no binary and leaves the tag and the other
-assets alone. A run that fails after its first upload leaves the release half done, and a new
-run stops at "already has packages": delete the package assets it uploaded
-(`gh release delete-asset`), put back `SHA256SUMS` from the run's log if it was replaced, and
-run it again.
-
-**crates.io (#155).** On a tag of a final version (no hyphen, so not `0.4.0-rc.1`), the
-`crates-publish` job runs after the GitHub release: it asks the crates.io API whether that
-version is there already, and if so logs it and stops; otherwise it publishes with
-crates.io trusted publishing (`rust-lang/crates-io-auth-action`, no stored token). The crate
-holds only what `cargo install` and `cargo build` need (`include` in Cargo.toml): check
-with `cargo package --list` when adding files that the build reads. Pre-releases are not
-published to crates.io.
-
-**The first publish, once, by the owner.** Trusted publishing can only be set up on a
-crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:
-
-1. Tag v0.4.0 as above and let the release workflow finish. Its `crates-publish` job fails,
-   saying sacdfs is not on crates.io yet; that is expected.
-2. From a clean checkout of the tag: `cargo publish --locked`, with a crates.io token
-   (scope `publish-new`, short expiry), entered with `cargo login` or `CARGO_REGISTRY_TOKEN`.
-   Revoke the token afterwards.
-3. On crates.io, the crate's Settings, "Trusted Publishing": add GitHub, repository
-   `aclater/sacdfs`, workflow `release.yml`, no environment.
-4. Re-run the failed `crates-publish` job: it finds 0.4.0 on crates.io and succeeds without
-   publishing. From 0.4.1 on, the job publishes by itself.
+The release steps, the repair runs for an earlier release and crates.io publishing are in
+[docs/release.md](docs/release.md).
 
 ## Ground rules
 
@@ -228,4 +145,4 @@ crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:
 - **Commits.** Small commits with a message that says why. Set your git identity in every clone before committing *or merging*: a merge made without one takes the machine's default, which can leak a private host name. CI's "no private names" check (`scripts/check-private-names.sh`) fails on private details in commit identities and tracked files. Actions in workflows are pinned
   by full commit SHA with a version comment.
 
-- **CI speed.** A pull request's required checks finish in about 6 min, and a new push cancels the superseded run (`concurrency`; main runs are never cancelled). Rust jobs restore a cargo cache that only main writes (`Swatinem/rust-cache`, `save-if`); a job that main never runs reads another job's cache with `shared-key` and saves none, so pull requests don't fill the cache space. A pull request that changes only Markdown files (other than `docs/options.md`) skips the build and test jobs. A required check must still report, and a workflow skipped by a `paths` filter leaves its checks pending, so the workflows with required checks call `.github/workflows/changes.yml` and skip the jobs by `if` (a skipped job reports success), or the steps for a matrix job, whose skipped job would not expand its name. Only workflows with no required check use `paths` or `paths-ignore`, such as the informational `benchmark` job (about 2 min, [docs/performance.md](docs/performance.md#the-ci-benchmark)). Keep new jobs short, and put slow, rarely-failing ones on main, tags or a schedule.
+- **CI speed.** A pull request's required checks finish in about 6 min, and a new push cancels the superseded run (`concurrency`; main runs are never cancelled). Rust jobs restore a cargo cache that only main writes (`Swatinem/rust-cache`, `save-if`); a job that main never runs reads another job's cache with `shared-key` and saves none, so pull requests don't fill the cache space. A pull request that changes only Markdown files (other than `docs/options.md`) skips the build and test jobs. A required check must still report, and a workflow skipped by a `paths` filter leaves its checks pending, so the workflows with required checks call `.github/workflows/changes.yml` and skip the jobs by `if` (a skipped job reports success), or the steps for a matrix job, whose skipped job would not expand its name. The same `changes.yml` also answers whether a pull request touches Rust or CI files (`rust`: coverage, `nfs export`), the container image's files (`container`) or `.github` (`workflows`: CodeQL's `actions` analysis); a pull request that touches none of them reports those checks as skipped, which counts as success. Concurrency groups are per workflow and ref for pull requests, which a new push cancels, and per run for main, tags and schedules, which are never cancelled. The macOS and Windows workflows (`core-portable`, `sacdfs-nfs`, `windows`) run on a pull request only when platform-specific code changes, and always on main pushes, release tags and a nightly schedule, as do the container and `nfs` checks. Only workflows with no required check use `paths` or `paths-ignore`, such as the informational `benchmark` job (about 2 min, [docs/performance.md](docs/performance.md#the-ci-benchmark)). Keep new jobs short, and put slow, rarely-failing ones on main, tags or a schedule.

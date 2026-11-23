@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › sacdfs design
+
 # sacdfs design
 
 sacdfs is a read-only FUSE filesystem that shows the audio of Super Audio CD disc images
@@ -47,7 +49,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.7.0, from crates.io (`=0.7.0`)**, on main for 0.8.0; the 0.7.x releases ship 0.6.1 (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 1.0.1, from crates.io (`=1.0.1`)**, on main for 0.8.0; the 0.7.x releases ship 0.6.1 (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -76,6 +78,11 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   0.7.0 (with 0.6.2's change: single DST frames of 5 and 6 channels back near 0.5.x speed,
   scarletbook-rs#378): removes the items 0.6.0 deprecated, none of which sacdfs used; *why:*
   same rule; bytes unchanged, gated as above.
+  1.0.1: 0.7.0's code under the 1.0 version (1.0.0), released again so that `scarletbook-ffi`
+  reaches crates.io; no API change, so only the version moves; *why:* same rule, and from 1.0
+  the API follows Semantic Versioning, so later pins are less likely to need a port; bytes
+  unchanged, gated as above. `scarletbook-pcm` stays at `=0.7.0`: it is outside the 1.0 freeze,
+  is being deprecated, and does not depend on `scarletbook`, so there is one copy of each.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -1334,7 +1341,7 @@ the locator, (b) scarletbook, both on scarletbook 0.5.2:
 ### Persistent seek index
 
 Each image's seek indexes are kept across mounts in a cache directory
-(`$XDG_CACHE_HOME/sacdfs`, `--index-cache DIR`, off with `--no-index-cache`), without their
+(`$XDG_CACHE_HOME/sacdfs`, `--index-cache DIR`, off with `--index-cache off`), without their
 exact checkpoints (`AreaIndex::without_checkpoints`: the seek hints, saved confirmations and the
 TOC fingerprint, a few kilobytes per area), so that a seek after a remount or a reboot near a
 range read before starts at a hint: one call to the image instead of three or four. *Why:*
@@ -1625,7 +1632,10 @@ decoding them twice.
   heads, evicted last, held a slot in most slabs; a frame of another length (stereo against
   6-channel, DSD against PCM) then found no slab to map and evicted the read-ahead of the file
   being read, so `sha256sum` of every file of two real discs read 1.76 times the image data and
-  took twice as long (4.76 GB in 39.7 s against 2.71 GB in 19.5 s). And a reader that began at
+  took twice as long (4.76 GB in 39.7 s against 2.71 GB in 19.5 s). The copy waits until the
+  pool maps more than half the cache (or an idle release keeps the heads): before that no slab
+  is short, and a mount that reads a few small files, such as a scanner's, never pays the copy
+  (#589). It moves 16 frames at a time under the cache's lock. And a reader that began at
   the file's start and read on past its head (a copy, a checksum) puts that file's head back
   among the other frames, as the first to be evicted, and keeps no tail. *Why:* every file such a
   reader read kept its head, so half the cache held heads no one would re-read, and three such
@@ -1753,6 +1763,14 @@ decoding them twice.
   since the mount), every file of the first listed file's area and format has its first 1.5 MiB
   of audio decoded, in order, within the same budget. A listing of another folder of track files stops it and moves it there;
   a listing of the same folder again warms it again, which costs nothing for heads still kept.
+  *Cool-down (#593):* a client that keeps switching folders would otherwise keep the CPU on heads
+  while the mount is idle. Each listing that arms the warming again (another folder, or the same
+  one after it was warmed) within 30 s of the last such listing counts as a repeat. From the
+  third arming in a run the folder must stay the last listed for the 1 s settle plus 2 s,
+  doubling at each further repeat up to 32 s; a listing more than 30 s after the last arming
+  starts the count over. So browsing a few albums costs nothing extra, while a client that
+  cycles through folders gets at most one warming per 33 s. *Why no setting:* the figures only
+  bound background work on an idle mount, and no client has needed another.
   Any read stops it as above. On a machine whose decode speed is not measured yet (no decode
   since the mount) the first batch is four frames, enough to measure it, and warming stops there
   on a machine at or above the start burst. *Why:* in the reporter's `-vv` log of a start right
@@ -2299,7 +2317,7 @@ approval.
   boundary: **any local user can read the served files**, as with `--allow-other` on Linux.
   `--allow-other` answers every uid, as clients on other computers need; it is the default as
   root, as for `sacdfs` ([Other users](#other-users-on-by-default-as-root)), and
-  `--no-allow-other` turns it off.
+  `--allow-other=no` turns it off.
 - **Listening:** 127.0.0.1 by default; `--listen` takes another address, with a warning. The
   default port is 20000 plus the user ID modulo 10000: one per user of a Mac, below the
   ephemeral port ranges, and the same on every run, so that a restarted server is found by the
@@ -2575,6 +2593,35 @@ open would. A disc that is dropped closes its handle.
   *Cost:* none on a read or an open of an unchanged file (a comparison of the `fstat` already
   made); a changed file costs one more read of the TOC (6 to 8 calls), not counted as audio
   reads.
+- *Noticing an in-place rewrite (#588):* a rewrite of the image's own bytes changes neither
+  its folder's modification time nor, with `--inplace` or `dd`, its inode, so nothing in the
+  folder watch shows it. Three checks do, all looking at the image file as the TOC check above
+  does. (1) A disc looks at its file's size, modification time and *change time* (`ctime`, which
+  every write moves and no tool can put back, so a copy that keeps the modification time is seen)
+  at most once per second, on the first read after that, from the same clock reading as the
+  handle check (no system call in between: an atomic load and the process clock) and when its
+  folder is listed (the folder's listing is stale when an image it shows is found replaced; the
+  check is one `stat` per listed image per refresh interval). A change reads the TOC again, as
+  above. (2) On a network or FUSE filesystem (NFS, SMB, FUSE, found by `fstatfs` at the open,
+  and every Windows image) another client's write may not show in the times for a while, so
+  every 30 s the bytes the TOC was read from are read again and compared (6 to 8 small reads).
+  (3) Every read first asks the disc whether it is still current, before the frame cache is
+  asked: a disc found to hold another disc serves nothing from then on, cached frames
+  included, and its frames are dropped from the cache (`FrameCache::purge_disc`). A read that
+  was decoding when the change was found is dropped too. The error is `ESTALE` over FUSE and
+  NFS (an open file read in place of a new one is the old disc's), and an NFS front end that
+  gets it closes its open of the file, so the next read opens the new one. *Why not serve the old
+  snapshot to open files:* the image is one file that is rewritten in place, so the old bytes
+  are gone and what is left would be mixed; an error is the only consistent answer. Pages the
+  kernel already holds from before are its own snapshot and are served until it drops them.
+  *Why `ctime` is a hint and not an identity:* a `chmod` or a link moves it too, which costs one
+  re-read of the TOC and no more. *Not covered:* an in-place rewrite that keeps the TOC bytes
+  (the same disc with other audio: a re-encode with the same layout), and a rewrite that
+  keeps size, times and TOC; the mount shows the old audio until the next rewrite that changes
+  the TOC or a remount. *Not done:* the sweep for scanners (#123) looks at folders only, so
+  the folders above a rewritten image show a new modification time only when someone lists them.
+  *Cost:* none on a read (an atomic load and the process clock; one `stat` a second when
+  reading, as before), 6 to 8 small reads every 30 s per image on a network filesystem.
 - *Why the cache drops handles instead of closing them:* a handle is shared (`Arc`), so a
   read in progress on an evicted handle finishes on it, and the file is closed when that
   read ends. No lock is held while opening a file, and the cache's lock never waits for a
@@ -2803,7 +2850,7 @@ by unit tests only, as no AppArmor host was available to run them on.
 ### Other users: on by default as root
 
 **Decision.** When sacdfs runs as root, other users may read the mount (FUSE's `allow_other`)
-unless `--no-allow-other` is given. For other users nothing changes: it stays off unless
+unless `--allow-other=no` is given. For other users nothing changes: it stays off unless
 `--allow-other` is given, which FUSE allows them only with `user_allow_other` in
 `/etc/fuse.conf`.
 
@@ -2823,7 +2870,7 @@ warning on a background start goes nowhere without `--log-file`, and the user wo
 mount for themselves. `allow_root` (root and the owner): fuser enforces it itself, and it would
 not help Samba guests or app users, which are neither.
 
-**Trade-off.** A root mount that should be private now needs `--no-allow-other`, and a reader
+**Trade-off.** A root mount that should be private now needs `--allow-other=no`, and a reader
 of a root-only mount's files is no longer limited to root. The container already ran with
 `--allow-other`; it keeps passing it.
 
@@ -2831,7 +2878,7 @@ of a root-only mount's files is no longer limited to root. The container already
 
 `.github/workflows/release.yml` builds, tests and publishes a release on a `v*` tag, and does
 everything but publish when run by hand or on a pull request that changes it (a dry run).
-The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its reason:
+The checklist is in [release.md](release.md). The decisions, each with its reason:
 
 - **glibc 2.17 through zig (#244), not static musl, not container-only.** *Why:* the release
   binary built on UBI 8 needed glibc 2.28, and QNAP's QuTScloud 5.2.9 has glibc 2.21: the binary
@@ -2847,7 +2894,7 @@ The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its r
   newer glibc symbol than 2.17.
 
   Measured on the benchmark host (real discs, stereo area read straight through a fresh mount,
-  `--no-index-cache`, image warm in the page cache, 6 alternating rounds, medians, ratio to the
+  `--index-cache off`, image warm in the page cache, 6 alternating rounds, medians, ratio to the
   glibc 2.28 build of the same commit; peak = the sacdfs process's VmHWM). The served bytes were
   identical across all builds:
 
@@ -3003,7 +3050,7 @@ MusicBrainz IDs on 26.
   ("latency is important"); putting the tags directory's mtime in every folder's would make a
   scanner rescan the whole library for one edit. *Trade-off:* a stale entry (an image
   replaced under the same path) only moves a few mtimes once, and the image's own change
-  moves them anyway; without a cache directory (`--no-index-cache`), an image not yet opened
+  moves them anyway; without a cache directory (`--index-cache off`), an image not yet opened
   in this mount is found on its first listing only. A single-image SOURCE does not watch:
   there an edit shows after a remount.
 - **Import** runs `verify` with the user's arguments and keeps only IDENTICAL and
@@ -3212,7 +3259,7 @@ through the mount's images and calls the same code as `tags fetch` for each disc
   (nothing missing, no confident match) goes to a file in the seek index cache directory, keyed by a
   hash of the image's path with its size and mtime, so no path is stored. *Why there, not in the
   tags directory:* it is the mount's state, not the user's tags, and a file written there after
-  every disc would move the directory the tag layer watches. *Trade-off:* with `--no-index-cache`,
+  every disc would move the directory the tag layer watches. *Trade-off:* with `--index-cache off`,
   each mount reads every TOC and asks again about the discs without a match. A disc without a match
   is asked about again after 30 days, since MusicBrainz grows; *alternative:* never, which leaves a
   disc unmatched for good once it was refused.
@@ -3665,3 +3712,12 @@ Not to FUSE: Performance of User-Space File Systems", FAST 2017. GPL/LGPL FUSE a
 filesystems (fuse-zip, archivemount, mount-zip, rar2fs). sacdfs is GPL-3.0-or-later, so
 code from compatibly licensed projects may be adapted, with attribution (see
 CONTRIBUTING.md); SACD parsing and DST decoding still come only from scarletbook.
+
+## See also
+
+- [Performance](performance.md)
+- [PCM quality](pcm-quality.md)
+- [Development](development.md)
+- [Decision log of the DSD Toolbox](https://github.com/aclater/dsd-toolbox/blob/main/DECISIONS.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

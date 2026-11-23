@@ -1827,7 +1827,12 @@ impl Tree {
         }
         l.checked = Instant::now();
         l.served = served;
+        // An image file rewritten in place changes neither its folder's time nor any other
+        // watched path's: each image listed here is looked at (one `stat`, at most once per
+        // refresh interval, as the folders are), and a listing that names a disc the file no
+        // longer holds is made again (#588).
         l.watch.iter().any(|(p, m)| mtime_of(p) != *m)
+            || l.entries.iter().any(|e| e.is_dir && !self.image_current(e.ino))
     }
 
     /// Whether image `path`'s open failing with `e` is a passing condition: its folder is then

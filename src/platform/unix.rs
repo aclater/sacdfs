@@ -27,6 +27,36 @@ pub fn mtime(m: &Metadata) -> (i64, i64) {
     (m.mtime(), m.mtime_nsec())
 }
 
+pub fn ctime(m: &Metadata) -> (i64, i64) {
+    (m.ctime(), m.ctime_nsec())
+}
+
+/// Whether `file` is on a filesystem whose attributes (times, change time) another client's
+/// writes may not show at once, or not at all: NFS, SMB, FUSE and the like. On macOS always.
+pub fn unreliable_times(file: &File) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use nix::sys::statfs::{FUSE_SUPER_MAGIC, FsType, NFS_SUPER_MAGIC, SMB_SUPER_MAGIC, fstatfs};
+        // CIFS and SMB2 (the kernel client's magic numbers), which nix has no names for.
+        const CIFS: u64 = 0xFF53_4D42;
+        const SMB2: u64 = 0xFE53_4D42;
+        match fstatfs(file) {
+            Ok(s) => {
+                let t = s.filesystem_type();
+                [NFS_SUPER_MAGIC, SMB_SUPER_MAGIC, FUSE_SUPER_MAGIC].contains(&t)
+                    || [CIFS, SMB2].iter().any(|&m| FsType(m as _) == t)
+            }
+            // Can't tell: treat as unreliable, the fingerprint costs a few reads a while.
+            Err(_) => true,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = file;
+        true
+    }
+}
+
 pub fn file_id(_file: &File, m: &Metadata) -> (u64, u64) {
     (m.dev(), m.ino())
 }

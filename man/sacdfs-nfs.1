@@ -1,0 +1,193 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH sacdfs-nfs 1  sacdfs sacdfs
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+sacdfs\-nfs \- Read\-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBsacdfs\-nfs\fR [\fB\-\-threads\fR] [\fB\-\-cache\-mb\fR] [\fB\-\-listing\-mb\fR] [\fB\-\-start\-burst\fR] [\fB\-\-start\-burst\-secs\fR] [\fB\-\-format\fR] [\fB\-\-pauses\fR] [\fB\-\-pcm\-rate\fR] [\fB\-\-pcm\-cutoff\fR] [\fB\-\-pcm\-gain\fR] [\fB\-\-no\-multichannel\-album\-suffix\fR] [\fB\-\-tags\fR] [\fB\-\-musicbrainz\fR] [\fB\-\-flatten\fR] [\fB\-\-sidecars\fR] [\fB\-\-listen\fR] [\fB\-\-port\fR] [\fB\-\-allow\-other\fR] [\fB\-o\fR|\fB\-\-mount\-options\fR] [\fB\-\-index\-cache\fR] [\fB\-\-max\-open\-images\fR] [\fB\-\-request\-timeout\fR] [\fB\-\-launch\-agent\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fISOURCE\fR> [\fIMOUNTPOINT\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Serve the audio of SACD disc images as DSF and WAV files over NFSv3 (version 3 of the Network File System), for this computer\*(Aqs own NFS client, and mount it on MOUNTPOINT.
+.PP
+SOURCE is an image file or a folder searched recursively for *.iso files. It runs in the foreground until SIGINT, SIGTERM, SIGHUP or SIGQUIT, then unmounts and stops. Without MOUNTPOINT it only serves; on macOS, mount it with `mount_nfs \-o vers=3,tcp,port=PORT,mountport=PORT,nfc,locallocks,hard,intr,deadtimeout=60,rsize=1048576,rdirplus,rdonly,nosuid,nodev,noexec localhost:/ MOUNTPOINT`.
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-\-threads\fR \fI<N>\fR [default: 0]
+DST decoder threads (0: one per CPU; under a memory limit, at most one per 64 MiB of it, and at least 2)
+.TP
+\fB\-\-cache\-mb\fR \fI<N>\fR
+Size of the cache of decoded and converted frames, in MiB (default: 32, or 16 under a memory limit below 256 MiB)
+.TP
+\fB\-\-listing\-mb\fR \fI<N>\fR
+Memory kept for what listed images hold (their TOCs and files), in MiB; past it, those not used lately are read again when next used. 0: no bound (default: no bound, or 3/8 of the memory limit under one)
+.TP
+\fB\-\-start\-burst\fR \fI<X>\fR [default: 3.5]
+How fast players read a track they start, in times real time (#504). Where this machine decodes a format slower than that (measured as it serves), a starting track is decoded ahead without waiting for the player\*(Aqs reads. 0: off
+.TP
+\fB\-\-start\-burst\-secs\fR \fI<SECS>\fR [default: 8]
+Seconds of audio decoded ahead when a track starts playing, within a quarter of the cache
+.TP
+\fB\-\-format\fR \fI<LIST>\fR [default: dsf,wav]
+Which files to show: dsf, wav, or both (dsf,wav)
+.TP
+\fB\-\-pauses\fR \fI<MODE>\fR [default: dropped]
+Pauses: dropped (the default: each file is the track\*(Aqs own range) or kept (each file is the track with its pause, as extractors that keep pauses write it)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+dropped
+.IP \(bu 2
+kept
+.RE
+.TP
+\fB\-\-pcm\-rate\fR \fI<HZ>\fR [default: 176400]
+Sample rate of the WAV files, in Hz: 88200, 176400 or 352800
+.TP
+\fB\-\-pcm\-cutoff\fR \fI<KHZ>\fR [default: 40]
+Low\-pass cutoff of the PCM conversion: 40 or 30 (kHz), or wide (about 80 kHz; needs a \-\-pcm\-rate of 176400 or 352800)
+.TP
+\fB\-\-pcm\-gain\fR \fI<DB>\fR [default: 0]
+Gain of the PCM conversion in dB, \-60 to +24; samples that would clip are clamped
+.TP
+\fB\-\-no\-multichannel\-album\-suffix\fR
+Do not add " (Multichannel)" to the album tag of the files of the multichannel area (by default they get it, so players and servers show them as an album of their own)
+.TP
+\fB\-\-tags\fR \fI<DIR>\fR
+Directory of tags files (#81), one per disc, named by its disc key (`sacdfs tags key IMAGE`): their tags override and add to the TOC\*(Aqs. Without it, or for a disc without a file, the files are as the TOC gives them
+.TP
+\fB\-\-musicbrainz\fR[=\fI<LOOKUPS>\fR]
+Look up, on MusicBrainz, discs without a track title, album or artist, in the background, and write what matches to the \-\-tags directory (which must be writable), as `sacdfs tags fetch` does: by barcode or catalogue number, confirmed by track count, durations and ISRCs. Off by default; nothing else in a mount uses the network. At most 1 request per second, once per disc; no client request waits for it.
+
+Takes `=LOOKUPS`, `name`, `durations` or both (`name,durations`), to try more when that finds nothing: `name` also searches by album and artist, from the disc\*(Aqs text or the image\*(Aqs path (sends those names); `durations` also asks by the tracks\*(Aq start times (a disc of 4 tracks or more; sends the times).
+.TP
+\fB\-\-flatten\fR
+Collapse each chain of folders below the top level that holds a single image into its outermost folder, which then holds the image\*(Aqs Stereo/Multichannel folders
+.TP
+\fB\-\-sidecars\fR \fI<LIST>\fR [default: default]
+Files passed through from SOURCE, byte for byte, next to the images\*(Aq folders: a comma\-separated list of extensions and folder names ending in / (whose whole content passes). `default` is jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/; `\-item` removes an item (default,\-webp), `none` passes nothing
+.TP
+\fB\-\-listen\fR \fI<ADDR>\fR [default: 127.0.0.1]
+Address to listen on. The default, 127.0.0.1, takes connections from this computer only; any other address serves the files to whoever can reach it
+.TP
+\fB\-\-port\fR \fI<PORT>\fR
+Port to listen on (default: 20000 plus the user ID\*(Aqs last four digits, so one per user; 1007 for root, below 1024 so that no other user can take it over). 0: any free port
+.TP
+\fB\-\-allow\-other\fR[=\fI<yes|no>\fR]
+Answer every caller: the default when run as root, as for `sacdfs`. Otherwise only calls made as this user (or root) are answered: a guard against mistakes, not a security boundary (any program on this computer can claim to be this user). Needed for clients on other computers, whose user IDs differ
+.TP
+\fB\-o\fR, \fB\-\-mount\-options\fR \fI<LIST>\fR
+More options for the mount, comma\-separated (macOS: nobrowse hides it from the Finder)
+.TP
+\fB\-\-index\-cache\fR \fI<DIR|off>\fR
+Directory of the persistent seek index, which lets seeks after a remount skip most of their search (default: $XDG_CACHE_HOME/sacdfs, else ~/.cache/sacdfs). `off`: keep none, so that every mount starts with an empty one
+.TP
+\fB\-\-max\-open\-images\fR \fI<N>\fR [default: 64]
+Most image files kept open at once (1 to 1024); the least recently used is closed first, and any closes after 5 minutes unused
+.TP
+\fB\-\-request\-timeout\fR \fI<SECS>\fR [default: 30]
+Seconds a request (a read, a lookup, a listing) may wait for the source before it fails with an I/O error and a log line, so that a stalled share never hangs a client; 0 waits for good
+.TP
+\fB\-\-launch\-agent\fR
+macOS: instead of serving, write a launchd agent that runs this same command (without this option) at each login, to ~/Library/LaunchAgents/io.github.aclater.sacdfs\-nfs.plist, and say how to start and stop it
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Log more (repeat for more still); RUST_LOG overrides it
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fISOURCE\fR>
+An SACD image file, or a folder of them
+.TP
+[\fIMOUNTPOINT\fR]
+A folder to mount on (on Linux, mounting needs root). Without it, nothing is mounted
+.SH "EXIT STATUS"
+.TP
+.B 0
+The server ended normally.
+.TP
+.B 1
+It could not start, or an option or a folder was refused; the one line on standard error says why.
+.TP
+.B 2
+Usage error.
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Overrides the level set by
+.BR \-v .
+.TP
+.B XDG_CACHE_HOME
+Where the seek index lives by default:
+.IR $XDG_CACHE_HOME/sacdfs ,
+else
+.IR ~/.cache/sacdfs .
+.SH FILES
+.TP
+.I $XDG_CACHE_HOME/sacdfs
+The persistent seek index (see
+.BR \-\-index\-cache ).
+.TP
+.I ~/Library/LaunchAgents/io.github.aclater.sacdfs\-nfs.plist
+Written by
+.B \-\-launch\-agent
+on macOS.
+.SH EXAMPLES
+On macOS, serve the images to this computer and mount them on ~/SACD:
+.PP
+.RS
+.nf
+sacdfs\-nfs ~/Music/"SACD images" ~/SACD
+.fi
+.RE
+.PP
+Start it at each login:
+.PP
+.RS
+.nf
+sacdfs\-nfs \-\-launch\-agent ~/Music/"SACD images" ~/SACD
+.fi
+.RE
+.PP
+Serve to other computers without mounting here (the server is then open to whoever can reach
+it):
+.PP
+.RS
+.nf
+sacdfs\-nfs \-\-listen 0.0.0.0 \-\-allow\-other /srv/sacd
+.fi
+.RE
+.SH "DEPRECATED OPTIONS"
+These still work and log one line naming the new form.
+.TP
+.B \-\-lookup\-name
+Use
+.BR \-\-musicbrainz=name .
+.TP
+.B \-\-lookup\-durations
+Use
+.BR \-\-musicbrainz=durations .
+.TP
+.B \-\-no\-allow\-other
+Use
+.BR \-\-allow\-other=no .
+.TP
+.B \-\-no\-index\-cache
+Use
+.BR "\-\-index\-cache off" .
+.SH "SEE ALSO"
+.BR sacdfs (1),
+.BR sacdfs\-ctl (8).

@@ -1,6 +1,9 @@
+[sacdfs](../README.md) › [Documentation](README.md) › PCM quality
+
 # PCM quality
 
 How good the DSD-to-PCM conversion behind sacdfs's WAV files is, and how that was measured.
+
 Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (from 0.5.3; main pins 0.7.0, the
 0.7.x releases 0.6.1); `sacdfs::pcm` maps
 sacdfs's options to it and feeds it the engine's frames. The output decisions (rates,
@@ -107,3 +110,11 @@ scarletbook-pcm's own documentation describes its designs. They are Parks-McClel
 | `--pcm-cutoff wide` (176.4 and 352.8 kHz only) | `Cutoff::Wide` | 80 kHz | 88.2 kHz at 176.4 kHz (its Nyquist frequency), 96 kHz at 352.8 kHz |
 
 At 88.2 kHz the band ends at 44.1 kHz, so the wide filter isn't offered there. Owner decision (2026-10-31, #11): the wide option follows the Philips blind tests, which found 80-100 kHz filters undetectable and a 50 kHz one detectable. 40 kHz stays the default.
+
+## See also
+
+- [Performance: converter throughput](performance.md#converter-throughput)
+- [Design: PCM conversion](design.md#pcm-conversion)
+- [Options](options.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

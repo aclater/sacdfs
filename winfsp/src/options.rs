@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(pcm_rate(a.options.pcm_rate), Some(PcmRate::R352800));
         assert_eq!(a.options.pcm_cutoff, Cutoff::Wide80);
         assert_eq!(a.options.pcm_gain, -6.0);
-        assert!(a.options.flatten && a.options.musicbrainz);
+        assert!(a.options.flatten && a.options.musicbrainz.is_some());
         assert_eq!(a.options.cache_mb, Some(64));
     }
 

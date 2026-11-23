@@ -24,6 +24,11 @@ fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_some_and(|a| a == "tags") {
         return sacdfs::tags_cli::main(std::env::args_os().skip(1));
     }
+    // `sacdfs --generate-man-pages DIR` (#581): only in a build with the `man` feature.
+    #[cfg(all(feature = "man", target_os = "linux"))]
+    if std::env::args_os().nth(1).is_some_and(|a| a == "--generate-man-pages") {
+        return linux_main::generate_man_pages(std::env::args_os().nth(2));
+    }
     mount()
 }
 

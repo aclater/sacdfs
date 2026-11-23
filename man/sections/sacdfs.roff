@@ -1,0 +1,175 @@
+.SH "MOUNT OPTIONS"
+.B mount \-t fuse.sacdfs
+runs
+.B sacdfs SOURCE MOUNTPOINT \-o OPTIONS .
+Each long option above is an
+.B \-o
+option with the dashes written as underscores:
+.BR allow_other ,
+.BR cache_mb=64 ,
+.BR pcm_rate=88200 ,
+.BR flatten ,
+.BR tags=/etc/sacdfs/tags ,
+.BR index_cache=off ,
+.BR verbose=2 .
+A comma separates
+.B \-o
+options, so a list value uses
+.B +
+instead:
+.BR format=dsf+wav ,
+.BR sidecars=default+cue ,
+.BR musicbrainz=name+durations .
+The options of
+.BR mount (8)
+and fstab (\c
+.BR ro ,
+.BR noauto ,
+.BR nofail ,
+.BR _netdev ,
+.BR nosuid ,
+.BR nodev ,
+.B x\-systemd.*
+and similar) are accepted and ignored: sacdfs is always read\-only. Any other option is an error.
+.SH "EXIT STATUS"
+.TP
+.B 0
+The mount ended normally (a background mount returns once the filesystem is mounted).
+.TP
+.B 1
+The mount failed, or an option or a folder was refused; the one line on standard error says why
+and what to type.
+.TP
+.B 2
+Usage error (an unknown option or a missing argument).
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Overrides the level set by
+.BR \-v ,
+for example
+.BR RUST_LOG=sacdfs=debug ,
+or
+.B RUST_LOG=info,sacdfs::trace=debug
+for the read trace without the rest of the debug log.
+.TP
+.B XDG_CACHE_HOME
+Where the seek index lives by default:
+.IR $XDG_CACHE_HOME/sacdfs ,
+else
+.IR ~/.cache/sacdfs .
+.TP
+.B FUSERMOUNT_PATH
+The FUSE mount helper to use, instead of
+.B fusermount3
+or
+.BR fusermount .
+.SH FILES
+.TP
+.I $XDG_CACHE_HOME/sacdfs
+The persistent seek index (see
+.BR \-\-index\-cache ).
+Deleting it is always safe.
+.TP
+.I /etc/fuse.conf
+Needs the line
+.B user_allow_other
+for
+.B \-\-allow\-other
+by a user other than root.
+.TP
+.I /etc/sysconfig/sacdfs
+.TQ
+.I /etc/default/sacdfs
+The settings of the packaged systemd unit and of
+.BR sacdfs\-ctl (8):
+the first in the RPM, the second in the deb package and the release archive.
+.SH EXAMPLES
+A one\-off mount in the foreground, with a log:
+.PP
+.RS
+.nf
+sacdfs \-f \-v /srv/sacd /mnt/sacd
+.fi
+.RE
+.PP
+Unmount it with
+.B umount /mnt/sacd
+as root, else
+.BR "fusermount3 \-u /mnt/sacd" .
+.PP
+An fstab line:
+.PP
+.RS
+.nf
+/srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,format=dsf,_netdev,nofail  0 0
+.fi
+.RE
+.PP
+A systemd unit (the packages ship a hardened one, which reads
+.IR /etc/sysconfig/sacdfs ):
+.PP
+.RS
+.nf
+[Service]
+Type=notify
+CacheDirectory=sacdfs
+ExecStart=/usr/bin/sacdfs \-f \-\-index\-cache %C/sacdfs /srv/sacd /mnt/sacd
+Restart=on\-failure
+.fi
+.RE
+.PP
+The container image on a NAS, which mounts and shares over SMB and NFS (tuning is set through
+its environment variables, such as
+.BR SACDFS_CACHE_MB ):
+.PP
+.RS
+.nf
+docker run \-d \-\-name sacdfs \-\-restart unless\-stopped \e
+  \-\-device /dev/fuse \-\-cap\-drop ALL \e
+  \-\-cap\-add SYS_ADMIN \-\-cap\-add DAC_OVERRIDE \-\-cap\-add DAC_READ_SEARCH \e
+  \-\-cap\-add SETUID \-\-cap\-add SETGID \-\-cap\-add NET_BIND_SERVICE \-\-cap\-add SETPCAP \e
+  \-\-security\-opt no\-new\-privileges:true \-\-security\-opt apparmor=unconfined \e
+  \-p 445:445 \-p 2049:2049 \-v /path/to/images:/images:ro \-v sacdfs\-cache:/cache sacdfs
+.fi
+.RE
+.PP
+Look discs up on MusicBrainz in the background, writing tags files to a folder:
+.PP
+.RS
+.nf
+sacdfs \-\-tags ~/sacd\-tags \-\-musicbrainz=name,durations ~/sacd\-images ~/sacd
+.fi
+.RE
+.SH "DEPRECATED OPTIONS"
+These still work, on the command line, as
+.B \-o
+options and in
+.BR SACDFS_OPTIONS ,
+and log one line naming the new form. They are kept through 1.0 at least.
+.TP
+.B \-\-lookup\-name
+Use
+.BR \-\-musicbrainz=name .
+.TP
+.B \-\-lookup\-durations
+Use
+.BR \-\-musicbrainz=durations .
+.TP
+.B \-\-no\-allow\-other
+Use
+.BR \-\-allow\-other=no .
+.TP
+.B \-\-no\-index\-cache
+Use
+.BR "\-\-index\-cache off" .
+.SH "SEE ALSO"
+.BR sacdfs\-nfs (1),
+.BR sacdfs\-ctl (8),
+.BR fusermount3 (1),
+.BR mount.fuse3 (8).
+.PP
+The user guide and
+.I docs/options.md
+in the source, and
+.I https://github.com/aclater/sacdfs

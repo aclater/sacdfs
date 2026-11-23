@@ -72,7 +72,7 @@ impl Mount {
             .arg(format!("ulimit -Sn {SOFT} && ulimit -Hn {NOFILE} && exec \"$0\" \"$@\""))
             .arg(env!("CARGO_BIN_EXE_sacdfs"))
             .env("XDG_CACHE_HOME", cache.path())
-            .args(["-f", "--no-allow-other"])
+            .args(["-f", "--allow-other=no"])
             .arg(source)
             .arg(&path)
             .spawn()

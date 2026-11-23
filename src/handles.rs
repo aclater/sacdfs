@@ -51,13 +51,15 @@ pub const REVALIDATE_EVERY: Duration = Duration::from_secs(1);
 /// holding it is done.
 pub type SharedFile = Arc<File>;
 
-/// What identifies the content of an image file: the file, its size and modification time.
+/// What identifies the content of an image file: the file, its size, modification time and
+/// change time (a write moves it even where the modification time is put back).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stamp {
     dev: u64,
     ino: u64,
     len: u64,
     mtime: (i64, i64),
+    ctime: (i64, i64),
 }
 
 impl Stamp {
@@ -73,7 +75,7 @@ impl Stamp {
     }
 
     fn with_id(m: &Metadata, (dev, ino): (u64, u64)) -> Stamp {
-        Stamp { dev, ino, len: m.len(), mtime: crate::platform::mtime(m) }
+        Stamp { dev, ino, len: m.len(), mtime: crate::platform::mtime(m), ctime: crate::platform::ctime(m) }
     }
 }
 
@@ -129,6 +131,11 @@ impl Handles {
     /// Changes how often a handle is checked against its path (tests use zero).
     pub fn set_revalidate_every(&self, every: Duration) {
         self.revalidate_ms.store(every.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// How often a handle is checked against its path.
+    pub fn revalidate_every(&self) -> Duration {
+        Duration::from_millis(self.revalidate_ms.load(Ordering::Relaxed))
     }
 
     fn lock(&self) -> MutexGuard<'_, LruCache<u64, Entry>> {
