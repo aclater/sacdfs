@@ -26,7 +26,13 @@ never moved.
    `## [X.Y.Z] - YYYY-MM-DD`, with a new empty `## [Unreleased]` above it. That section
    becomes the release notes. At the end of the file, point `[Unreleased]` at
    `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: .../compare/v<previous>...vX.Y.Z`, so every
-   heading links to its changes. Merge it once its checks pass.
+   heading links to its changes. Date the heading with the day the tag will be pushed (UTC).
+   In the same pull request, point the install instructions at the new version: the guides
+   in `docs/install/`, `deploy/nas-compose.yaml`, the Unraid template
+   (`deploy/unraid/sacdfs.xml`, `<Repository>`) and the TrueNAS catalog app
+   (`deploy/truenas/sacdfs/ix_values.yaml`, `images.image.tag`, and `app_version` in
+   `app.yaml`). The required check "docs version drift" (`scripts/check-version-drift.py`)
+   fails while any of them names another version. Merge it once its checks pass.
 5. **Tag** the merge commit on `main`: `git tag -a vX.Y.Z -m "sacdfs X.Y.Z" && git push origin vX.Y.Z`.
    The workflow stops before building anything if the tag isn't `v` plus Cargo.toml's
    version, if CHANGELOG.md has no section for it, or if the tagged commit is on neither `main`
@@ -38,12 +44,11 @@ never moved.
    `gh attestation verify`; the workflow's last image step has verified the image index, each
    architecture's image by its digest and each `-<arch>` tag (#379). A version with a hyphen
    (`0.2.0-rc.1`) is marked as a pre-release and doesn't move `:latest`.
-7. **Install instructions:** point them at the new version in a docs pull request: the guides
-   in `docs/install/`, `deploy/nas-compose.yaml`, the Unraid template
-   (`deploy/unraid/sacdfs.xml`, `<Repository>`) and the TrueNAS catalog app
-   (`deploy/truenas/sacdfs/ix_values.yaml`, `images.image.tag`, and `app_version` in
-   `app.yaml`; then the catalog's `generate_metadata.py` raises `version` by one patch step,
-   as [store-apps.md](install/store-apps.md#checked-with-the-stores-own-tooling) describes).
+7. **TrueNAS catalog:** the catalog's own update pull requests take the release. Once it is
+   published there, set `version` in `deploy/truenas/sacdfs/app.yaml` to the number the
+   catalog published it under (the catalog numbers its app itself;
+   [store-apps.md](install/store-apps.md#checked-with-the-stores-own-tooling)), and pin the
+   image digest in `ix_values.yaml`.
 8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/dsd-toolbox/blob/main/RELEASES.md)
    in aclater/dsd-toolbox (the minor version's summary and release list).
 
