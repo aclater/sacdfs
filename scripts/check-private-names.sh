@@ -20,22 +20,44 @@ if [ -n "${PRIVATE_NAMES:-}" ]; then
 fi
 status=0
 
-# This script spells the patterns out, and the known-commits list names a domain
-if git ls-files -z | grep -zvE '^scripts/(check-private-names\.sh|private-names-known-commits)$' \
-        | xargs -0 grep -nIiE "$files" -- 2>/dev/null; then
-    echo "::error::private details found in tracked files (matches above)"
-    status=1
+# A search has three outcomes: git grep and grep exit 0 (a hit), 1 (clean) or anything else
+# (the check itself failed). Only 0 and 1 are answers; a failure stops the check (exit 2)
+# instead of passing it, e.g. for an invalid PRIVATE_NAMES regex.
+# An empty alternative (a leading or trailing |, or only blanks) would match every line.
+if [ -n "${PRIVATE_NAMES:-}" ] && printf '%s' "$PRIVATE_NAMES" | grep -qE '^[[:space:]]*$|^\||\|$|\|\||\(\||\|\)'; then
+    echo "::error::PRIVATE_NAMES has an empty alternative or is blank; refusing to run"
+    exit 2
 fi
+failed() { echo "::error::the check itself failed ($1)"; exit 2; }
+
+# This script spells the patterns out, and the known-commits list names a domain
+rc=0
+git grep -nIiE -e "$files" -- . ':(exclude)scripts/check-private-names.sh' \
+    ':(exclude)scripts/private-names-known-commits' \
+    ':(exclude)scripts/test-check-private-names.sh' || rc=$?
+case $rc in
+    0) echo "::error::private details found in tracked files (matches above)"; status=1 ;;
+    1) ;;
+    *) failed "$rc" ;;
+esac
 
 range=HEAD
 if [ -n "${BASE_SHA:-}" ] && [ "${BASE_SHA}" != "0000000000000000000000000000000000000000" ] \
         && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
     range="${BASE_SHA}..HEAD"
 fi
-known=$(grep -oE '^[0-9a-f]{7,40}' scripts/private-names-known-commits 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+# An empty or missing list is fine (grep exits 1); the list is data, not a search for a private name
+known=$({ grep -oE '^[0-9a-f]{7,40}' scripts/private-names-known-commits 2>/dev/null || true; } | tr '\n' '|' | sed 's/|$//')
 if git rev-parse --verify -q HEAD >/dev/null; then
-    hits=$(git log --format='%H %h %an <%ae> %cn <%ce>' "$range" | grep -iE "$ids" || true)
-    [ -n "$known" ] && hits=$(printf '%s\n' "$hits" | grep -vE "^($known)" || true)
+    log=$(git log --format='%H %h %an <%ae> %cn <%ce>' "$range") || failed "git log $?"
+    rc=0
+    hits=$(printf '%s\n' "$log" | grep -iE -e "$ids") || rc=$?
+    [ "$rc" -le 1 ] || failed "$rc"
+    if [ -n "$known" ] && [ -n "$hits" ]; then
+        rc=0
+        hits=$(printf '%s\n' "$hits" | grep -vE "^($known)") || rc=$?
+        [ "$rc" -le 1 ] || failed "$rc"
+    fi
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" | cut -d' ' -f2-
         echo "::error::private details found in commit identities (matches above)"
