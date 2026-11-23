@@ -1303,6 +1303,12 @@ impl Reader {
         trace: Option<&mut crate::trace::ReadTrace>,
     ) -> Result<(Vec<u8>, Option<ReadAhead>), ReadError> {
         let f = &self.file;
+        // The image file may hold another disc since this file was listed: then nothing is
+        // served, from the cache or the file, so that a read never mixes old and new bytes. A
+        // look at the file at most once a second, no system call otherwise.
+        if !f.disc.fresh() {
+            return Err(self.replaced(engine));
+        }
         let end = offset.saturating_add(len).min(f.size);
         let (k0, k1) = f.frames_for(offset, end);
         if let Some(t) = trace {
@@ -1316,11 +1322,22 @@ impl Reader {
             self.wait_for_start(engine, k0, k1);
         }
         let frames = if k0 < k1 { self.decoded(engine, k0, k1, true)? } else { Vec::new() };
+        // Found replaced while it decoded: those frames are not served.
+        if f.disc.is_replaced() {
+            return Err(self.replaced(engine));
+        }
         let data = f.assemble(offset, len, k0, &frames);
         // Read ahead only after reads of audio: a tagger reading the header or the tags must
         // not make the file decode (and convert) its first seconds in the background.
         let ahead = if k0 < k1 { self.plan_read_ahead(engine, offset, end, k0, k1) } else { None };
         Ok((data, ahead))
+    }
+
+    /// The error of a read of a disc whose image file holds another disc now; drops what is
+    /// cached of the disc.
+    fn replaced(&self, engine: &Engine) -> ReadError {
+        engine.purge(&self.file.disc);
+        ReadError::Io(std::io::Error::other("image file holds another disc than when it was listed"))
     }
 
     /// Notes that a read arrived, as soon as it does and before it waits for a thread: it is in

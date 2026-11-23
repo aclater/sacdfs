@@ -24,7 +24,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use scarletbook::audio::audio_sector_range;
 use scarletbook::{
@@ -180,8 +180,29 @@ struct SourceInner {
     /// disc ([`Source::open`]).
     layout: Mutex<Layout>,
     /// Set once the file at the path was found to hold another disc, or another length: the
-    /// image is then opened as a new one at its folder's next listing ([`Disc::current`]).
+    /// image is then opened as a new one at its folder's next listing ([`Disc::current`]), and
+    /// no read of this disc is served any more, from the cache or the file ([`Disc::fresh`]).
     replaced: AtomicBool,
+    /// Whether the file's times can't be relied on to show a rewrite (a network or FUSE
+    /// filesystem, or no change time): its TOC is then read again every [`FINGERPRINT_EVERY`].
+    unreliable: bool,
+    /// When the file was last looked at by [`Disc::fresh`], in ms of [`now_ms`] (0: never).
+    checked: AtomicU64,
+    /// When its TOC was last read again for the fingerprint, in ms of [`now_ms`].
+    printed: AtomicU64,
+    /// Set once the disc's cached frames were dropped ([`Disc::mark_purged`]).
+    purged: AtomicBool,
+}
+
+/// How often the TOC of an image on a filesystem whose times can't be relied on is read again
+/// to tell whether the file still holds the same disc (a few small reads).
+pub const FINGERPRINT_EVERY: Duration = Duration::from_secs(30);
+
+/// Milliseconds on a clock of the process, never 0: the gates of [`Disc::fresh`] compare these.
+/// No system call (a read of the vDSO clock).
+fn now_ms() -> u64 {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    EPOCH.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64 + 1
 }
 
 /// The file an image's TOC was read from, and which bytes of it the TOC was read from.
@@ -198,7 +219,7 @@ struct Layout {
 }
 
 impl Source {
-    fn new(key: u64, path: &Path, len: u64, stamp: Stamp) -> Source {
+    fn new(key: u64, path: &Path, len: u64, stamp: Stamp, unreliable: bool) -> Source {
         Source {
             inner: Arc::new(SourceInner {
                 key,
@@ -214,6 +235,10 @@ impl Source {
                     digest: None,
                 }),
                 replaced: AtomicBool::new(false),
+                unreliable,
+                checked: AtomicU64::new(0),
+                printed: AtomicU64::new(now_ms()),
+                purged: AtomicBool::new(false),
             }),
         }
     }
@@ -385,8 +410,9 @@ impl Disc {
         // network share, #26).
         let handle = crate::handles::next_key();
         let stamp = Stamp::of(&file, &meta);
+        let unreliable = crate::platform::unreliable_times(&file);
         crate::handles::global().insert(handle, file, stamp);
-        let source = Source::new(handle, path, meta.len(), stamp);
+        let source = Source::new(handle, path, meta.len(), stamp, unreliable);
         let mut lib = match scarletbook::Disc::open(ReadAtReader::new(source.clone())) {
             Ok(d) => d,
             Err(e) => {
@@ -536,21 +562,93 @@ impl Disc {
 
     /// Whether the image file at the disc's path still holds this disc: `false` once a re-open
     /// found another disc or another length there ([`Source::open`]). A file that changed since
-    /// it was last read (another identity or modification time) is checked here, and if it
-    /// holds the same disc, kept open for the reads. Called when the image's folder is listed
-    /// again, so that an image replaced by another disc is then opened as a new image.
+    /// it was last read (another identity, size, modification time or change time) is checked
+    /// here, and if it holds the same disc, kept open for the reads. On a filesystem whose times
+    /// can't be relied on ([`FINGERPRINT_EVERY`]) the TOC is also read again now and then, and
+    /// compared. Called when the image's folder is listed again, so that an image replaced by
+    /// another disc, or rewritten in place with one, is then opened as a new image.
     pub(crate) fn current(&self) -> bool {
-        let s = &self.source;
-        if s.inner.replaced.load(Ordering::Relaxed) {
+        let s = &self.source.inner;
+        if s.replaced.load(Ordering::Relaxed) {
             return false;
         }
-        let known = s.layout().stamp;
-        if Stamp::at(&s.inner.path).is_ok_and(|now| now != known) {
-            if let Ok((file, stamp)) = s.open() {
-                crate::handles::global().insert(s.inner.key, file, stamp);
+        let known = self.source.layout().stamp;
+        match Stamp::at(&s.path) {
+            Ok(now) if now != known => {
+                if let Ok((file, stamp)) = self.source.open() {
+                    crate::handles::global().insert(s.key, file, stamp);
+                }
             }
+            Ok(_) if s.unreliable => self.fingerprint(false),
+            _ => {}
         }
-        !s.inner.replaced.load(Ordering::Relaxed)
+        !s.replaced.load(Ordering::Relaxed)
+    }
+
+    /// Reads the bytes the TOC was read from again, at most once per [`FINGERPRINT_EVERY`], and
+    /// notes the disc replaced if they differ. The file is read through the cached handle, so
+    /// that a file put in place meanwhile is found by its handle's own check.
+    fn fingerprint(&self, force: bool) {
+        let s = &self.source.inner;
+        let (now, last) = (now_ms(), s.printed.load(Ordering::Relaxed));
+        if !force
+            && (now.saturating_sub(last) < FINGERPRINT_EVERY.as_millis() as u64
+                || s.printed.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_err())
+        {
+            return;
+        }
+        let (ranges, digest) = {
+            let l = self.source.layout();
+            match l.digest {
+                Some(d) => (l.ranges.clone(), d),
+                None => return,
+            }
+        };
+        let Ok(file) = crate::handles::global().get(s.key, &s.path, || self.source.open()) else {
+            return;
+        };
+        // Unreadable now (a passing error of the share) is not another disc.
+        if toc_digest(&file, &ranges).is_ok_and(|d| d != digest) {
+            log::info!("{}: the image file's TOC changed: the disc was replaced", s.path.display());
+            s.replaced.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether this disc still stands for the file at its path, for a read to go on: at most
+    /// once per [`crate::handles::Handles::revalidate_every`] it looks at the file ([`Disc::current`]); in
+    /// between, one atomic load and the process clock, no system call. `false` once the file
+    /// holds another disc: nothing of this disc is served from then on, cached or not, so that
+    /// a file open on it never reads old and new bytes mixed.
+    pub fn fresh(&self) -> bool {
+        let s = &self.source.inner;
+        if s.replaced.load(Ordering::Relaxed) {
+            return false;
+        }
+        let every = crate::handles::global().revalidate_every().as_millis() as u64;
+        let (now, last) = (now_ms(), s.checked.load(Ordering::Relaxed));
+        if now.saturating_sub(last) >= every
+            && s.checked.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_ok()
+        {
+            return self.current();
+        }
+        true
+    }
+
+    /// Reads the bytes the TOC was read from again now, whatever the interval, as the
+    /// fingerprint of an image on an unreliable filesystem does (for tests).
+    #[doc(hidden)]
+    pub fn fingerprint_now(&self) {
+        self.fingerprint(true);
+    }
+
+    /// Whether the file at the disc's path was found to hold another disc ([`Disc::current`]).
+    pub fn is_replaced(&self) -> bool {
+        self.source.inner.replaced.load(Ordering::Relaxed)
+    }
+
+    /// Notes that the disc's cached frames are being dropped; `true` for the first call only.
+    pub fn mark_purged(&self) -> bool {
+        !self.source.inner.purged.swap(true, Ordering::Relaxed)
     }
 
     /// Calls to the image for audio sectors so far.

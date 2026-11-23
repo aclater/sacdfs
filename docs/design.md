@@ -2593,6 +2593,35 @@ open would. A disc that is dropped closes its handle.
   *Cost:* none on a read or an open of an unchanged file (a comparison of the `fstat` already
   made); a changed file costs one more read of the TOC (6 to 8 calls), not counted as audio
   reads.
+- *Noticing an in-place rewrite (#588):* a rewrite of the image's own bytes changes neither
+  its folder's modification time nor, with `--inplace` or `dd`, its inode, so nothing in the
+  folder watch shows it. Three checks do, all looking at the image file as the TOC check above
+  does. (1) A disc looks at its file's size, modification time and *change time* (`ctime`, which
+  every write moves and no tool can put back, so a copy that keeps the modification time is seen)
+  at most once per second, on the first read after that, from the same clock reading as the
+  handle check (no system call in between: an atomic load and the process clock) and when its
+  folder is listed (the folder's listing is stale when an image it shows is found replaced; the
+  check is one `stat` per listed image per refresh interval). A change reads the TOC again, as
+  above. (2) On a network or FUSE filesystem (NFS, SMB, FUSE, found by `fstatfs` at the open,
+  and every Windows image) another client's write may not show in the times for a while, so
+  every 30 s the bytes the TOC was read from are read again and compared (6 to 8 small reads).
+  (3) Every read first asks the disc whether it is still current, before the frame cache is
+  asked: a disc found to hold another disc serves nothing from then on, cached frames
+  included, and its frames are dropped from the cache (`FrameCache::purge_disc`). A read that
+  was decoding when the change was found is dropped too. The error is `ESTALE` over FUSE and
+  NFS (an open file read in place of a new one is the old disc's), and an NFS front end that
+  gets it closes its open of the file, so the next read opens the new one. *Why not serve the old
+  snapshot to open files:* the image is one file that is rewritten in place, so the old bytes
+  are gone and what is left would be mixed; an error is the only consistent answer. Pages the
+  kernel already holds from before are its own snapshot and are served until it drops them.
+  *Why `ctime` is a hint and not an identity:* a `chmod` or a link moves it too, which costs one
+  re-read of the TOC and no more. *Not covered:* an in-place rewrite that keeps the TOC bytes
+  (the same disc with other audio: a re-encode with the same layout), and a rewrite that
+  keeps size, times and TOC; the mount shows the old audio until the next rewrite that changes
+  the TOC or a remount. *Not done:* the sweep for scanners (#123) looks at folders only, so
+  the folders above a rewritten image show a new modification time only when someone lists them.
+  *Cost:* none on a read (an atomic load and the process clock; one `stat` a second when
+  reading, as before), 6 to 8 small reads every 30 s per image on a network filesystem.
 - *Why the cache drops handles instead of closing them:* a handle is shared (`Arc`), so a
   read in progress on an evicted handle finishes on it, and the file is closed when that
   read ends. No lock is held while opening a file, and the cache's lock never waits for a

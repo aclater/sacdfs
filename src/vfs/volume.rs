@@ -499,6 +499,18 @@ impl Volume {
                         });
                     }
                 }
+                Ok(Err(e)) if reader.file.disc.is_replaced() => {
+                    // The image file holds another disc now: the client's open file is stale.
+                    let path = reader.file.disc.path.display();
+                    crate::errlog::failed(
+                        &path.to_string(),
+                        format_args!(
+                            "{path} track {} (inode {ino}): read at {offset}: {e}: ESTALE",
+                            reader.file.number
+                        ),
+                    );
+                    reply.fail(Error::Stale);
+                }
                 Ok(Err(e)) => {
                     let path = reader.file.disc.path.display();
                     crate::errlog::failed(

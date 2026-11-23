@@ -322,7 +322,17 @@ impl NFSFileSystem for NfsFront {
         let core_fh = self.open_in_core(id).await?;
         let count = count.min(MAX_READ);
         let v = self.volume.clone();
-        let data: Vec<u8> = ask(move |r| v.read(id, core_fh, offset, count, r)).await?;
+        let read: Result<Vec<u8>, nfsstat3> = ask(move |r| v.read(id, core_fh, offset, count, r)).await;
+        // A stale answer ends this open: the image behind it was rewritten (#588), and a file
+        // kept open would answer stale for good, though the handle may name the new disc's file
+        // (its generation is the same when the rewrite kept the modification time). The next
+        // read opens the file again.
+        if matches!(read, Err(nfsstat3::NFS3ERR_STALE)) {
+            if let Some(o) = self.opened().remove(&id) {
+                self.volume.release(o.core_fh);
+            }
+        }
+        let data = read?;
         // The core answers fewer bytes only at the end of the file.
         let eof = data.len() < count as usize;
         Ok((data, eof))

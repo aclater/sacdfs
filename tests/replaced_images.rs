@@ -287,3 +287,81 @@ fn an_image_of_another_size_is_listed_anew() {
     until(&tree, "the new disc", |t| !t.all_files().is_empty() && !Arc::ptr_eq(&listed_disc(t), &file.disc));
     assert_eq!(first_file(&tree).1, expected);
 }
+
+/// Writes `content` over the image at `path` in place (the same inode, as `dd conv=notrunc` and
+/// `rsync --inplace` do) and puts its modification time back to `mtime`: only the change time
+/// shows it.
+fn rewrite_in_place(path: &Path, content: &[u8], mtime: SystemTime) {
+    let f = std::fs::File::options().write(true).open(path).unwrap();
+    common::write_all_at(&f, content, 0).unwrap();
+    f.set_modified(mtime).unwrap();
+}
+
+/// An image rewritten in place with another disc of the same size, its modification time put
+/// back (#588): the open file and every later read fail instead of serving the cached frames of
+/// the old disc, the cached frames are dropped, and the folder lists the new disc without its
+/// own time having moved.
+#[test]
+fn an_image_rewritten_in_place_is_listed_anew() {
+    sacdfs::handles::global().set_revalidate_every(Duration::ZERO);
+    let other = std::fs::read(common::corpus().join(OTHER)).unwrap();
+    let expected = reference(OTHER);
+    for flatten in [false, true] {
+        let (_dir, lib) = library(IMAGE);
+        let path = lib.join("artist/album/disc.iso");
+        let folder = std::fs::metadata(path.parent().unwrap()).unwrap().modified().unwrap();
+        let tree = watching(&lib, flatten);
+        let (file, whole) = first_file(&tree);
+        // Read through one engine, so that the old disc's frames are cached.
+        let engine = Engine::new(1, 8 << 20).unwrap();
+        let open = Reader::new(file.clone());
+        let (cached, _) = open.read(&engine, 0, whole.len() as u64).unwrap();
+        assert_eq!(cached, whole);
+        assert!(engine.cache().bytes() > 0, "the frames are cached");
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        rewrite_in_place(&path, &other, mtime);
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime, "mtime kept");
+        assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().modified().unwrap(), folder);
+
+        // The cached frames are not served: not to the open file, nor to a new reader of the
+        // file; and they are dropped.
+        let e = open.read(&engine, 0, whole.len() as u64).unwrap_err();
+        assert!(e.to_string().contains("another disc"), "flatten {flatten}: {e}");
+        assert!(file.disc.is_replaced());
+        assert_eq!(engine.cache().bytes(), 0, "flatten {flatten}: frames of the old disc are kept");
+        assert!(Reader::new(file.clone()).read(&engine, 0, 4096).is_err());
+
+        // The folder lists the new disc, though its own time did not move.
+        until(&tree, "the rewritten disc", |t| {
+            !t.all_files().is_empty() && !Arc::ptr_eq(&listed_disc(t), &file.disc)
+        });
+        assert_eq!(first_file(&tree).1, expected, "flatten {flatten}");
+        assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().modified().unwrap(), folder);
+    }
+}
+
+/// An image rewritten in place with the same disc (a sync tool, a tagger's rewrite) reads on:
+/// the cached frames are kept and the disc stays listed.
+#[test]
+fn an_image_rewritten_in_place_with_the_same_disc_reads_on() {
+    sacdfs::handles::global().set_revalidate_every(Duration::ZERO);
+    let (_dir, lib) = library(IMAGE);
+    let path = lib.join("artist/album/disc.iso");
+    let tree = watching(&lib, false);
+    let (file, whole) = first_file(&tree);
+    let engine = Engine::new(1, 8 << 20).unwrap();
+    let open = Reader::new(file.clone());
+    assert_eq!(open.read(&engine, 0, whole.len() as u64).unwrap().0, whole);
+    let cached = engine.cache().bytes();
+    let content = std::fs::read(&path).unwrap();
+    let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    rewrite_in_place(&path, &content, mtime);
+    assert_eq!(open.read(&engine, 0, whole.len() as u64).unwrap().0, whole);
+    assert_eq!(engine.cache().bytes(), cached, "the frames stay cached");
+    std::thread::sleep(Duration::from_millis(30));
+    tree.sweep();
+    assert!(!file.disc.is_replaced());
+    assert!(Arc::ptr_eq(&listed_disc(&tree), &file.disc), "the disc was opened again");
+}

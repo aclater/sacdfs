@@ -67,6 +67,15 @@ All notable changes to sacdfs are recorded here. The format follows
   into a slab of heads at the read, a cost per mount and per file that long tracks hide. The
   copy now waits until the frame pool maps more than half the cache, or an idle release keeps
   the heads. Sequential real-disc reads are unchanged.
+- **An image rewritten in place with another disc while mounted
+  ([#588](https://github.com/aclater/sacdfs/issues/588)).** `rsync --inplace` or `dd
+  conv=notrunc` over a mounted image left the old disc listed and its cached frames served until
+  the folder changed. The change is now noticed within a second of a read (by the file's size,
+  modification time and change time) and at the folder's next listing, and on NFS, SMB and
+  FUSE sources by the TOC read again every 30 s. The files of the old disc then fail (`ESTALE`)
+  instead of serving cached or mixed bytes, their cached frames are dropped, and the folder
+  lists the new disc. Reads cost no extra system call.
+
 - **First start on a slow NAS right after opening the album.** On a machine that decodes slower
   than players' start-up bursts, listing a folder of track files now decodes the first 1.5 MiB of
   each file's audio while the mount is idle, as a probe of one file already did. A player that
