@@ -80,7 +80,7 @@ done
 # The documents as listed by the package (Debian's container images don't install docs).
 [[ $fmt == rpm ]] && copying=/usr/share/licenses/sacdfs/COPYING || copying=/usr/share/doc/sacdfs/COPYING
 if [[ $fmt == rpm ]]; then files=$(rpm -qlp "${cur[0]}"); else files=$(dpkg-deb -c "${cur[0]}" | awk '{print substr($6, 2)}'); fi
-for f in "$copying" /usr/share/doc/sacdfs/README.md /usr/share/doc/sacdfs/CHANGELOG.md; do
+for f in "$copying" /usr/share/man/man1/sacdfs.1 /usr/share/man/man8/sacdfs-ctl.8 /usr/share/doc/sacdfs/README.md /usr/share/doc/sacdfs/CHANGELOG.md; do
     grep -qx "$f" <<<"$files" || fail "$f not in the package"
 done
 grep -qx "EnvironmentFile=$conf" /usr/lib/systemd/system/sacdfs.service || fail "unit's EnvironmentFile"

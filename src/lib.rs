@@ -23,6 +23,8 @@ pub mod handles;
 pub mod ident;
 pub mod index_cache;
 pub mod lookup;
+#[cfg(feature = "man")]
+pub mod man;
 pub mod memory;
 pub mod names;
 // The NFS front end (#420): Unix only (macOS and Linux).

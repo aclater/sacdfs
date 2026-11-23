@@ -1,0 +1,77 @@
+.SH "EXIT STATUS"
+.TP
+.B 0
+The server ended normally.
+.TP
+.B 1
+It could not start, or an option or a folder was refused; the one line on standard error says why.
+.TP
+.B 2
+Usage error.
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Overrides the level set by
+.BR \-v .
+.TP
+.B XDG_CACHE_HOME
+Where the seek index lives by default:
+.IR $XDG_CACHE_HOME/sacdfs ,
+else
+.IR ~/.cache/sacdfs .
+.SH FILES
+.TP
+.I $XDG_CACHE_HOME/sacdfs
+The persistent seek index (see
+.BR \-\-index\-cache ).
+.TP
+.I ~/Library/LaunchAgents/io.github.aclater.sacdfs\-nfs.plist
+Written by
+.B \-\-launch\-agent
+on macOS.
+.SH EXAMPLES
+On macOS, serve the images to this computer and mount them on ~/SACD:
+.PP
+.RS
+.nf
+sacdfs\-nfs ~/Music/"SACD images" ~/SACD
+.fi
+.RE
+.PP
+Start it at each login:
+.PP
+.RS
+.nf
+sacdfs\-nfs \-\-launch\-agent ~/Music/"SACD images" ~/SACD
+.fi
+.RE
+.PP
+Serve to other computers without mounting here (the server is then open to whoever can reach
+it):
+.PP
+.RS
+.nf
+sacdfs\-nfs \-\-listen 0.0.0.0 \-\-allow\-other /srv/sacd
+.fi
+.RE
+.SH "DEPRECATED OPTIONS"
+These still work and log one line naming the new form.
+.TP
+.B \-\-lookup\-name
+Use
+.BR \-\-musicbrainz=name .
+.TP
+.B \-\-lookup\-durations
+Use
+.BR \-\-musicbrainz=durations .
+.TP
+.B \-\-no\-allow\-other
+Use
+.BR \-\-allow\-other=no .
+.TP
+.B \-\-no\-index\-cache
+Use
+.BR "\-\-index\-cache off" .
+.SH "SEE ALSO"
+.BR sacdfs (1),
+.BR sacdfs\-ctl (8).

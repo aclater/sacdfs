@@ -6,6 +6,16 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Manual pages (#581).** `sacdfs(1)`, `sacdfs-nfs(1)` and `sacdfs-ctl(8)`, with every option
+  (the tuning options too), the `-o` mount options, exit status, environment, files and
+  examples. `sacdfs(1)` and `sacdfs-nfs(1)` are generated from the command lines
+  (`sacdfs --generate-man-pages DIR`, in a build with the `man` feature), so they cannot drift
+  from `--help`; CI builds them again and compares, and checks that `sacdfs(1)` and
+  docs/options.md list the same options. The RPM and deb packages install them, the Linux and
+  macOS release archives carry them in `man/`, and the container image has `sacdfs(1)`.
+
 ### Changed
 
 - **Fewer command-line options (#560).** `sacdfs --help` lists 12 options instead of 27. The

@@ -58,6 +58,10 @@ target/release/sacdfs --version | grep -qx "sacdfs %{upstream_version}"
 %install
 install -Dpm 0755 target/release/sacdfs %{buildroot}%{_bindir}/sacdfs
 install -Dpm 0755 pkgfiles/sacdfs-ctl %{buildroot}%{_bindir}/sacdfs-ctl
+%{_mandir}/man1/sacdfs.1*
+%{_mandir}/man8/sacdfs-ctl.8*
+install -Dpm 0644 man/sacdfs.1 %{buildroot}%{_mandir}/man1/sacdfs.1
+install -Dpm 0644 man/sacdfs-ctl.8 %{buildroot}%{_mandir}/man8/sacdfs-ctl.8
 install -Dpm 0644 pkgfiles/sacdfs.service %{buildroot}%{_unitdir}/sacdfs.service
 install -Dpm 0644 pkgfiles/sacdfs.conf %{buildroot}%{_sysconfdir}/sysconfig/sacdfs
 

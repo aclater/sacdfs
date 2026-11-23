@@ -7,6 +7,12 @@ it matches `--help`); the [tuning options](#tuning) are left out of `--help`. Wh
 sacdfs [OPTIONS] SOURCE MOUNTPOINT
 ```
 
+The same options, with the `-o` mount options, exit status, environment, files and examples,
+are in the manual pages `sacdfs(1)`, `sacdfs-nfs(1)` and `sacdfs-ctl(8)`, which the RPM and deb
+packages, the Linux and macOS release archives (in `man/`) and the container image carry
+(`man sacdfs`; from an archive, `man -l man/sacdfs.1`). `sacdfs(1)` and `sacdfs-nfs(1)` are
+generated from the command lines, so they list the tuning options too.
+
 `SOURCE` is an SACD image file, or a directory searched recursively for `*.iso` files (any
 case). `MOUNTPOINT` is an existing directory, normally empty, and not `SOURCE` or a directory
 above it.
