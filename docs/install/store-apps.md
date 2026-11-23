@@ -138,7 +138,7 @@ Unraid.
   Run on a Linux host with rootless Podman standing in for Docker. Up to 0.6.3 one message was
   logged on every render: "No cap_drop for service: sacdfs", because the app kept the runtime's
   default capabilities; from 0.6.4 the app drops them all (see above).
-- **0.7.2:** the image tag set to 0.7.2, `app_version` 0.7.2 and `version` 1.0.5, by hand as for 0.7.1, pinned by digest to the release's multi-arch index (`0.7.2@sha256:f385ba80…`). The catalog tooling and a TrueNAS install were not re-run on 0.7.2.
+- **0.7.2:** the image tag set to 0.7.2, `app_version` 0.7.2 and `version` 1.0.4, the number the catalog published 0.7.2 under (the catalog numbers its app itself; this copy follows it), pinned by digest to the release's multi-arch index (`0.7.2@sha256:f385ba80…`). The catalog tooling and a TrueNAS install were not re-run on 0.7.2.
 - **0.7.1:** the image tag set to 0.7.1, `app_version` 0.7.1 and `version` 1.0.4, by hand as the catalog's `generate_metadata.py` sets them, pinned by digest to the release's multi-arch index (`0.7.1@sha256:51191f1c…`). The catalog tooling and a TrueNAS install were not re-run on 0.7.1.
 - **0.6.5:** the image tag set to 0.6.5, pinned by digest (`0.6.5@sha256:73eb56cb…`, the release's multi-arch index), `app_version` 0.6.5 and `version` 1.0.3, by hand as the catalog's `generate_metadata.py` sets them; the catalog tooling and a TrueNAS install were not re-run on 0.6.5.
 - **Re-run for 0.6.4 (#386):** `ci.py --render-only` with the catalog's library 2.3.18 renders

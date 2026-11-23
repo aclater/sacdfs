@@ -61,6 +61,10 @@ All notable changes to sacdfs are recorded here. The format follows
   than on 0.5.9, on P-cores and E-cores alike
   ([figures](docs/performance.md#by-scarletbook-release-070-596)).
 
+- **The installer on TrueNAS points to the catalog app.** It names Apps, Discover Apps,
+  search sacdfs, Install, as the [TrueNAS guide](docs/install/truenas-scale.md) does, instead
+  of the custom app in YAML, which the guide keeps for settings the catalog form doesn't have.
+
 ### Fixed
 
 - **Short reads on a fresh mount got slower in 0.7.2 (#589).** A kept head (#456) was copied
