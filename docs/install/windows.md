@@ -34,7 +34,8 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
    Windows 10 doesn't include winget. There, and on any PC without winget, download
    `winfsp-2.1.25156.msi` from [WinFsp's releases](https://github.com/winfsp/winfsp/releases)
-   and open it.
+   and open it. That is the version sacdfs was checked with; WinFsp 2.2, which winget now
+   installs, has not been checked yet.
 
 2. **Download sacdfs-win and its checksum.**
 

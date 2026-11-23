@@ -2,8 +2,9 @@
 
 **We want to hear from NAS owners, at any skill level.** Most people who keep Super Audio CD
 images keep them on a NAS: Synology, QNAP, UGREEN, Unraid, TrueNAS, ASUSTOR, TerraMaster, OpenMediaVault
-or a home-built box. So far sacdfs has been checked on those systems only in virtual machines, which
-cannot tell us what real hardware does. A report from your NAS can.
+or a home-built box. So far sacdfs has been checked on most of those systems only in virtual machines, which
+cannot tell us what real hardware does (real NAS hardware so far: an ASUSTOR AS-302T,
+[#456](https://github.com/aclater/sacdfs/issues/456)). A report from your NAS can.
 
 ## What to do
 
@@ -160,6 +161,6 @@ Check with `ls /path/to/mountpoint`, which should now be empty, and with
 
 ## Questions
 
-Ask in the report, or in [an issue](https://github.com/aclater/sacdfs/issues). Progress on NAS
-systems is collected in [#82](https://github.com/aclater/sacdfs/issues/82). Other ways to help are
+Ask in the report, or in [an issue](https://github.com/aclater/sacdfs/issues). Reports so far are listed
+under the [nas-test-report label](https://github.com/aclater/sacdfs/issues?q=label%3Anas-test-report). Other ways to help are
 in [CONTRIBUTING.md](../CONTRIBUTING.md).

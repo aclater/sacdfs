@@ -155,8 +155,8 @@ Upgrading from 0.4.0 with albums catalogued by beets-pysacd: follow
 - **Without a container, on any Linux host:** a [release binary](binary.md#binaries), or
   `cargo install --locked sacdfs` ([from source](binary.md#from-source)).
 - **Unraid and TrueNAS app-store entries:** [store-apps.md](store-apps.md).
-- **Have a NAS we have not run on?** Reports from real hardware are welcome on
-  [#82](https://github.com/aclater/sacdfs/issues/82); see [beta testing](../beta-testing.md).
+- **Have a NAS we have not run on?** Reports from real hardware are welcome through the
+  [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml); see [beta testing](../beta-testing.md).
 
 ### The installer in detail
 
@@ -181,7 +181,7 @@ against the checksum built into the release's `install.sh` (since 0.6.4; see bel
 the binary before installing anything. It never writes
 under `--iso-dir`. A second run changes nothing, `--uninstall` removes what it installed (your
 images stay), and `--help` lists the rest (`--mount`, `--prefix`, `--share-name`, `--method`,
-`--report`). Not root, it stops before changing anything and prints the exact line to run with
+`--platform`, `--archive`, `--report`). Not root, it stops before changing anything and prints the exact line to run with
 `sudo`.
 
 On QNAP, the installer switches on "Run user defined processes" if it is off, so that

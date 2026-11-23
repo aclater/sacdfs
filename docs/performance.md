@@ -620,10 +620,10 @@ faster.
 
 ## Converter throughput
 
-Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (0.5.3); the figures of
+Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (0.5.3 in these figures); the figures of
 sacdfs's own converter, which it replaced, are kept for comparison.
 
-**How it was measured** (`examples/pcm_compare.rs speed` of #85):
+**How it was measured** (`examples/pcm_compare.rs speed` of #85, since removed):
 - 60 s of a real stereo area, decoded and held in memory;
 - converted through `sacdfs::pcm::Converter`, which reads the frames in place and writes 24-bit bytes;
 - in runs of 4 frames with both neighbours, as the WAV path converts plain DSD;
@@ -692,7 +692,7 @@ stereo images, generic build:
 - Locally every read stays under the 50 ms target of #6.
 - On NFS the slow reads are reads of parts of an image the NAS must read from its hard disks;
   the tagger's reads run beside them (8 to 10 ms) but for one file in one round.
-- Memory stays bounded by `--cache-mb` (default 256 MiB) plus a fixed amount: decoding runs
+- Memory stays bounded by `--cache-mb` (256 MiB, the default then; 32 MiB since #150) plus a fixed amount: decoding runs
   on sacdfs's own pool, and no library cursor holds a read-ahead window of its own.
 
 **Parallel readers at full speed (#28, 2026-11-02):** 1, 4 and 8 readers each reading 240 MiB
@@ -1807,7 +1807,7 @@ against its own "before", on the code of its day).
 
 ## The CI benchmark
 
-A pull request that touches `src/`, `Cargo.toml` or `Cargo.lock` runs the `benchmark` job (#162).
+A pull request that touches `src/`, `Cargo.toml`, `Cargo.lock` or the benchmark scripts runs the `benchmark` job (#162).
 It is a coarse alarm, not a gate: shared runners are noisy, and the release timing table above,
 taken under the benchmark lock against the previous release, stays the real check. The job is not
 a required check, so it may be path-filtered, and it never fails over a slowdown.
@@ -1839,7 +1839,8 @@ fixtures runs the `stall-gate` workflow (#506). Unlike the benchmark it fails: w
 player starting a track wait or stall clearly longer than base did, on a CPU about as slow as a
 4-thread Atom NAS.
 
-- **What it does:** one job builds base (the pull request's target branch) and head. Two more each
+- **What it does:** one job builds base (the pull request's target branch) and head. Five more
+  (`zidoo`, `zidoo-idle`, `zidoo-probe`, `zidoo-list`, `players`), each with its own scenarios, each
   make a synthetic disc (`scripts/play-disc.py`: a 6-channel DST area of 12 tracks, built from the
   35 DST frames of the corpus's `dst-features-2ch-6ch` image, so decoding costs about what a real
   6-channel DST disc does) and run `scripts/stall-gate.py`. sacdfs runs on two CPUs under a CPU
