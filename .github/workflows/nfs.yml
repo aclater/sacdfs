@@ -8,6 +8,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "37 3 * * *"  # nightly: the checks pull requests skip by path still run here
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
@@ -23,14 +25,14 @@ env:
   FEDORA: registry.fedoraproject.org/fedora@sha256:b414c09be79dd1f32529b55b096b6bb30435d82ee16fbdbbabf8985eb5f86db0
 
 jobs:
-  # Docs-only pull requests skip the jobs (changes.yml); skipped, they report success.
+  # Docs-only pull requests skip the jobs (changes.yml), and so do pull requests that touch nothing Rust or CI uses; skipped, they report success.
   changes:
     uses: $/.github/workflows/changes.yml
 
   nfs:
     name: nfs export
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -69,7 +71,7 @@ jobs:
   handles-arm64:
     name: file handles (arm64)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:

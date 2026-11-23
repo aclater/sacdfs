@@ -7,6 +7,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "7 3 * * *"  # nightly: the checks pull requests skip by path still run here
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
@@ -16,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  # Docs-only pull requests skip the steps (changes.yml). At the steps, not the job: a skipped
+  # Docs-only pull requests, and those that touch nothing the image or its tests use, skip the steps (changes.yml). At the steps, not the job: a skipped
   # matrix job reports under its unexpanded name, and the required checks would stay pending.
   changes:
     uses: $/.github/workflows/changes.yml
@@ -37,26 +39,26 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        if: needs.changes.outputs.code != 'false'
+        if: needs.changes.outputs.container != 'false'
         with:
           persist-credentials: false
 
       - name: Build the image
-        if: needs.changes.outputs.code != 'false'
+        if: needs.changes.outputs.container != 'false'
         run: docker build -f Containerfile -t sacdfs:ci .
 
       # deploy/nas-compose.yaml, the file the NAS guides point to (#283): valid, healthy with this
       # image, and a stop 2 s after the start exits normally in under 8 s. About 1 min.
       - name: Bring up deploy/nas-compose.yaml and stop it (deploy/ci-compose-test.sh)
-        if: needs.changes.outputs.code != 'false'
+        if: needs.changes.outputs.container != 'false'
         run: deploy/ci-compose-test.sh sacdfs:ci
 
       # The share test is a script so that the release (release.yml) runs the same test on
       # the image it publishes.
       - name: Serve the corpus and read it over SMB and NFS (deploy/ci-share-test.sh)
-        if: needs.changes.outputs.code != 'false'
+        if: needs.changes.outputs.container != 'false'
         run: deploy/ci-share-test.sh sacdfs:ci
 
       - name: Server log
-        if: always() && needs.changes.outputs.code != 'false'
+        if: always() && needs.changes.outputs.container != 'false'
         run: docker logs sacdfs 2>&1 | grep -v ' INFO  sacdfs::' | tail -n 200 || true

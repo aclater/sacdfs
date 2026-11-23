@@ -5,6 +5,14 @@
 # or the steps of a matrix job (whose name a skipped job would not expand), when `code` is
 # 'false'. Callers test `!= 'false'`, so a failed or missing answer runs everything.
 #
+# Besides `code`, three more answers let the workflows with heavy jobs skip them on a pull request
+# that cannot affect them (same rule: a job skipped by its `if` reports success):
+#   rust       'false' unless the pull request touches Rust source, tests, manifests, scripts, the
+#              Windows front end, the fuzz targets or anything under .github (coverage, nfs export)
+#   container  'rust', or the Containerfile, deploy/ or packaging/ (the container image checks)
+#   workflows  'false' unless the pull request touches .github (CodeQL's `actions` analysis)
+# All are 'true' for every event but a pull request, and when the answer is missing.
+#
 # Documentation is every *.md file except docs/options.md, which the `readme options` check
 # compares with `sacdfs --help`. Pushes to main and every other event count as code.
 name: changes
@@ -15,6 +23,15 @@ on:
       code:
         description: "'false' when the pull request changes only Markdown documentation, else 'true'"
         value: ${{ jobs.changes.outputs.code }}
+      rust:
+        description: "'false' when the pull request touches nothing the Rust build, tests or CI scripts use"
+        value: ${{ jobs.changes.outputs.rust }}
+      container:
+        description: "'false' when the pull request touches nothing the container image checks use"
+        value: ${{ jobs.changes.outputs.container }}
+      workflows:
+        description: "'false' when the pull request touches nothing under .github"
+        value: ${{ jobs.changes.outputs.workflows }}
 
 permissions:
   contents: read
@@ -26,6 +43,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      rust: ${{ steps.classify.outputs.rust }}
+      container: ${{ steps.classify.outputs.container }}
+      workflows: ${{ steps.classify.outputs.workflows }}
     steps:
       # Commits and trees only: the names of the changed files need no file contents.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -39,16 +59,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          code=true
+          code=true rust=true container=true workflows=true
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             files=$(git diff --no-renames --name-only HEAD^1 HEAD)
             if [ -n "$files" ]; then
-              code=false
+              code=false rust=false container=false workflows=false
               while IFS= read -r f; do
                 case "$f" in
                   docs/options.md) code=true ;;
                   *.md) ;;
                   *) code=true ;;
+                esac
+                case "$f" in
+                  src/*|tests/*|benches/*|examples/*|scripts/*|winfsp/*|fuzz/*|.github/*) rust=true container=true ;;
+                  Cargo.toml|Cargo.lock|build.rs|clippy.toml|rustfmt.toml|deny.toml|ruff.toml) rust=true container=true ;;
+                  Containerfile|deploy/*|packaging/*) container=true ;;
+                esac
+                case "$f" in
+                  .github/*) workflows=true ;;
                 esac
               done <<< "$files"
             fi
@@ -56,4 +84,10 @@ jobs:
             printf '%s\n' "$files"
           fi
           echo "code=$code"
-          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust container=$container workflows=$workflows"
+          {
+            echo "code=$code"
+            echo "rust=$rust"
+            echo "container=$container"
+            echo "workflows=$workflows"
+          } >> "$GITHUB_OUTPUT"

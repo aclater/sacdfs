@@ -9,14 +9,38 @@ name: windows
 
 on:
   pull_request:
-    paths-ignore: ["**.md"]  # not a required check: a docs-only pull request skips it
+    # Not a required check, so a path filter is fine: a pull request runs it only when code that differs
+    # between platforms (or the front end itself) changes. Pushes to main, the nightly schedule and a release's own run are unfiltered.
+    paths:
+      - "src/platform/**"
+      - "src/nfs/**"
+      - "src/bin/**"
+      - "src/lib.rs"
+      - "src/main.rs"
+      - "src/engine.rs"
+      - "src/printable.rs"
+      - "src/track.rs"
+      - "src/tree.rs"
+      - "src/verify/**"
+      - "src/vfs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "tests/common/**"
+      - "tests/vfs.rs"
+      - "tests/corpus.rs"
+      - "tests/corpus/**"
+      - "winfsp/**"
+      - ".github/scripts/**"
+      - ".github/workflows/windows.yml"
   push:
     branches: [main]
+  schedule:
+    - cron: "27 3 * * *"  # nightly: what a pull request skipped by path still runs here
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
