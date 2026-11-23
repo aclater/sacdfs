@@ -2592,7 +2592,12 @@ open would. A disc that is dropped closes its handle.
   until a remount, and so would a source whose filesystem does not keep inode numbers.
   *Cost:* none on a read or an open of an unchanged file (a comparison of the `fstat` already
   made); a changed file costs one more read of the TOC (6 to 8 calls), not counted as audio
-  reads.
+  reads. Each mount pays for the SHA-256 of the TOC bytes as they are read: 110,600 bytes on a
+  corpus image, 0.05 ms on a Zen 2 core, 4 % of the corpus plain-DSD row of the by-mount
+  benchmark and nothing a real track shows (#589). *Why it stays:* the bytes must be hashed as
+  they are read, because the file at the path may be replaced before anything reads them
+  again; keeping them instead would hold 110 KB for every mounted disc, and a hash that is
+  not cryptographic would let a crafted image pass as the disc it replaces.
 - *Noticing an in-place rewrite (#588):* a rewrite of the image's own bytes changes neither
   its folder's modification time nor, with `--inplace` or `dd`, its inode, so nothing in the
   folder watch shows it. Three checks do, all looking at the image file as the TOC check above
