@@ -20,6 +20,10 @@ All notable changes to sacdfs are recorded here. The format follows
   than on 0.5.9, on P-cores and E-cores alike
   ([figures](docs/performance.md#by-scarletbook-release-070-596)).
 
+- **The installer on TrueNAS points to the catalog app.** It names Apps, Discover Apps,
+  search sacdfs, Install, as the [TrueNAS guide](docs/install/truenas-scale.md) does, instead
+  of the custom app in YAML, which the guide keeps for settings the catalog form doesn't have.
+
 ### Fixed
 
 - **First start on a slow NAS right after opening the album.** On a machine that decodes slower

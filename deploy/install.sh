@@ -1489,10 +1489,11 @@ computer over the network: https://github.com/$REPO/blob/main/docs/deployment.md
     # TrueNAS and Unraid: their own app screens own the containers. Nothing to install here.
     case $PLATFORM in
         truenas)
-            say "TrueNAS runs sacdfs as a custom app from its own Apps screen; this script doesn't"
-            say "install behind it. Apps, Discover Apps, Custom App, Install via YAML, then follow:"
+            say "TrueNAS installs sacdfs from its own Apps screen (the community train of its app"
+            say "catalog); this script doesn't install behind it. Apps, Discover Apps, search"
+            say "sacdfs, Install, then follow:"
             say "  $DOCS/truenas-scale.md"
-            say "(The YAML to paste is in that guide, step 3.)"
+            say "(For settings the catalog form doesn't have, that guide also has a custom app in YAML.)"
             exit 0
             ;;
         unraid)

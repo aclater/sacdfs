@@ -52,7 +52,14 @@ if [ "$expect" = pointer ]; then
     rc=$?
     cat /tmp/pointer.log
     state >/tmp/state2
-    if [ "$rc" = 0 ] && grep -q "doesn't" /tmp/pointer.log && same /tmp/state0 /tmp/state2; then
+    # On TrueNAS it must name the catalog route the guide gives first, not the custom app.
+    if grep -q TrueNAS /tmp/pointer.log; then
+        grep -q "Discover Apps, search" /tmp/pointer.log && ! grep -q "Install via YAML" /tmp/pointer.log
+        screen=$?
+    else
+        screen=0
+    fi
+    if [ "$rc" = 0 ] && [ "$screen" = 0 ] && grep -q "doesn't" /tmp/pointer.log && same /tmp/state0 /tmp/state2; then
         res install "pass (pointed to the app screen, nothing changed)"
     else
         res install FAIL
