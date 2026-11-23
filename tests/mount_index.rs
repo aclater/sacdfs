@@ -97,7 +97,7 @@ fn remount_seeks_with_the_saved_index() {
     // Without the cache, a remount seeks cold again, and nothing is written.
     let unused = dir.path().join("unused");
     std::fs::create_dir(&unused).unwrap();
-    let (again, calls, bytes) = mount_and_seek(&image, &["--no-index-cache"], &unused, 0.6, 64 << 10);
+    let (again, calls, bytes) = mount_and_seek(&image, &["--index-cache", "off"], &unused, 0.6, 64 << 10);
     assert_eq!(again, cold);
     assert_eq!((calls, bytes), (cold_calls, cold_bytes));
     let written: Vec<_> = std::fs::read_dir(&unused).unwrap().map(|e| e.unwrap().file_name()).collect();

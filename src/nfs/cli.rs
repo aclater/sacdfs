@@ -28,7 +28,7 @@ use crate::vfs::Volume;
 /// MOUNTPOINT it only serves; on macOS, mount it with
 /// `mount_nfs -o vers=3,tcp,port=PORT,mountport=PORT,nfc,locallocks,hard,intr,deadtimeout=60,rsize=1048576,rdirplus,rdonly,nosuid,nodev,noexec localhost:/ MOUNTPOINT`.
 #[derive(Debug, Parser)]
-#[command(name = "sacdfs-nfs", version, about)]
+#[command(name = "sacdfs-nfs", version, about, after_help = crate::serve::TUNING_HELP)]
 pub struct Args {
     /// An SACD image file, or a folder of them.
     pub source: PathBuf,
@@ -49,10 +49,11 @@ pub struct Args {
     /// calls made as this user (or root) are answered: a guard against mistakes, not a
     /// security boundary (any program on this computer can claim to be this user). Needed
     /// for clients on other computers, whose user IDs differ.
-    #[arg(long)]
-    pub allow_other: bool,
-    /// Only calls made as this user (or root) are answered, also when run as root.
-    #[arg(long, conflicts_with = "allow_other")]
+    #[arg(long, value_name = "yes|no", num_args = 0..=1, require_equals = true,
+          default_missing_value = "yes", value_parser = shared::parse_yes_no)]
+    pub allow_other: Option<bool>,
+    /// Same as `--allow-other=no`.
+    #[arg(long, hide = true, conflicts_with = "allow_other")]
     pub no_allow_other: bool,
     /// More options for the mount, comma-separated (macOS: nobrowse hides it from the Finder).
     #[arg(short = 'o', long = "mount-options", value_name = "LIST", value_delimiter = ',')]
@@ -163,8 +164,12 @@ pub fn run(args: Args) -> io::Result<()> {
     )?;
     let volume = Volume::new(tree.clone(), engine.clone(), shared::request_threads(threads), uid, gid)?
         .with_request_timeout(args.limits.request_timeout())?;
-    let callers = if args.allow_other || (uid == 0 && !args.no_allow_other) {
-        log::info!("every caller is answered (--no-allow-other answers only this user)");
+    if args.no_allow_other {
+        log::warn!("--no-allow-other is deprecated: use --allow-other=no");
+    }
+    let refused = args.no_allow_other || args.allow_other == Some(false);
+    let callers = if args.allow_other == Some(true) || (uid == 0 && !refused) {
+        log::info!("every caller is answered (--allow-other=no answers only this user)");
         Callers::Anyone
     } else {
         Callers::User(uid)

@@ -7,7 +7,9 @@
 
 The table is the one whose header is `| Option | Meaning |`. Its rows must name exactly the
 options of `--help`, in the same order: the short and long flags and the value name, written
-as code spans (`-f`, `--foreground`; `--threads N`). An option whose help shows
+as code spans (`-f`, `--foreground`; `--format LIST`; `--allow-other[=yes|no]`). Options
+that `--help` leaves out (the tuning options) are in a second table, headed
+`| Tuning option | Meaning |`, which this script does not read. An option whose help shows
 `[default: X]` must have "default" and X in its row's meaning. Exits with status 1, listing
 every difference, if they don't match.
 """
@@ -16,7 +18,10 @@ import re
 import sys
 
 # `  -f, --foreground`, `      --threads <N>`, `  -v, --verbose...`
-HELP_OPTION = re.compile(r"^\s+(?:(-[A-Za-z]), )?(--[a-z0-9][a-z0-9-]*)(?: <([A-Z_]+)>)?(?:\.\.\.)?\s*$")
+# and, for a value that may be left out, `      --allow-other[=<yes|no>]`
+HELP_OPTION = re.compile(
+    r"^\s+(?:(-[A-Za-z]), )?(--[a-z0-9][a-z0-9-]*)(?:(\[=)<([^>]+)>\]| <([^>]+)>)?(?:\.\.\.)?\s*$"
+)
 HELP_DEFAULT = re.compile(r"\[default: ([^\]]+)\]")
 
 
@@ -32,7 +37,8 @@ def help_options(text: str) -> list[tuple[tuple[str, str, str], str | None]]:
             continue
         m = HELP_OPTION.match(line)
         if m:
-            options.append(((m.group(1) or "", m.group(2), m.group(3) or ""), None))
+            value = f"[={m.group(4)}]" if m.group(3) else m.group(5) or ""
+            options.append(((m.group(1) or "", m.group(2), value), None))
             continue
         d = HELP_DEFAULT.search(line)
         if d and options:
@@ -51,16 +57,17 @@ def readme_options(text: str) -> list[tuple[tuple[str, str, str], str]]:
     for line in lines[start + 2 :]:
         if not line.startswith("|"):
             break
-        cells = [c.strip() for c in line.strip().strip("|").split("|", 1)]
+        # A `|` inside a cell is written `\|`, as Markdown wants it.
+        cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", line.strip().strip("|"), maxsplit=1)]
         if len(cells) != 2:
             sys.exit(f"options table row without two cells: {line}")
         short = long = value = ""
         for span in re.findall(r"`([^`]+)`", cells[0]):
-            m = re.fullmatch(r"(--?[A-Za-z0-9][A-Za-z0-9-]*)(?: ([A-Z_]+))?", span)
+            m = re.fullmatch(r"(--?[A-Za-z0-9][A-Za-z0-9-]*)(?:(\[=[^\]]+\])| ([^ ]+))?", span)
             if not m:
                 sys.exit(f"not an option in the first column: `{span}`")
             if m.group(1).startswith("--"):
-                long, value = m.group(1), m.group(2) or ""
+                long, value = m.group(1), m.group(2) or m.group(3) or ""
             else:
                 short = m.group(1)
         rows.append(((short, long, value), cells[1]))
@@ -69,7 +76,7 @@ def readme_options(text: str) -> list[tuple[tuple[str, str, str], str]]:
 
 def show(opt: tuple[str, str, str]) -> str:
     short, long, value = opt
-    return ", ".join(x for x in (short, long + (f" {value}" if value else "")) if x)
+    return ", ".join(x for x in (short, long + (value if value.startswith("[") else f" {value}" if value else "")) if x)
 
 
 def main(argv: list[str]) -> int:
