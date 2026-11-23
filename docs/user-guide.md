@@ -819,7 +819,6 @@ mounted: the files sacdfs would serve are read in-process, through the same code
 | `--threads N` | Files checked at once, and DST decoder threads; `0` (the default) means one per CPU. |
 | `--cache-mb N` | Size of the cache of decoded frames, in MiB (default `64`). |
 | `-q`, `--quiet` | No progress line on standard error. |
-| `--log-file FILE` | Append the log to `FILE` (mode 0600), at info level unless `-v` says more. Each start writes a `---- sacdfs VERSION started TIME, pid N ----` line first. |
 | `-v`, `--verbose` | Log more; `RUST_LOG` overrides it. |
 
 **How a file is matched.** An extract belongs to the images in its folder, or in the nearest

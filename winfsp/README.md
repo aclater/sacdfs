@@ -23,14 +23,15 @@ package are unchanged.
 
 | File | What it does |
 |---|---|
-| `src/options.rs` | The command line: the core's shared options (`sacdfs::serve`) plus `--no-kernel-cache`, `--log-file` and `-v`. |
+| `src/options.rs` | The command line: the core's shared options (`sacdfs::serve`) plus `--no-kernel-cache`, `--allow-other`, `--no-allow-other`, `--log-file` and `-v`. |
 | `src/names.rs` | Windows names for the core's names: the SFM private-use mapping, bare reserved names, the 255 UTF-16 unit limit, case folding. |
 | `src/paths.rs` | Paths to inodes: each folder's listing kept with its Windows names, lookups in any case, re-listing of folders the core re-reads and the changes found. |
+| `src/ahead.rs` | Read-ahead for small sequential reads, per open file: Windows passes a program's 4 KiB reads through as they are. |
 | `src/winfs.rs` | The WinFsp file system: open, read, listings, security, change notification. |
 | `src/run.rs` | Start and stop: the core in `sacdfs::serve`'s steps, the WinFsp volume, and WinFsp's service framework (console, Windows service or WinFsp.Launcher). |
 | `ci/checks.ps1` | The mount checks the `windows` workflow runs; see its header. |
 
-The modules that need no Windows API (`options`, `names`, `paths`, `notice`) build and test on
+The modules that need no Windows API (`options`, `names`, `paths`, `notice`, `ahead`) build and test on
 Linux too.
 
 ## Build

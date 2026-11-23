@@ -135,7 +135,7 @@ ls /share/CACHEDEV1_DATA/sacd
 
 ## If something goes wrong
 
-- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses 0.6.4).
+- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses 0.7.2).
 - **You see:** `sha256sum: ... no properly formatted SHA256 checksum lines found`, or `gzip: stdin: not in gzip format`. **Do this:** the download saved an error page. Delete the two downloaded files and run step 4 again later.
 - **You see:** `Permission denied` when a share or an app opens the folder. **Do this:** you started sacdfs without being root. Run `id -u` (it must print `0`), stop sacdfs (see above) and start it again.
 
