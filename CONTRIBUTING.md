@@ -45,7 +45,10 @@ open a draft advisory and follow
    which are generated: `cargo run --features man,nfs -- --generate-man-pages man`, and CI
    checks them with `.github/scripts/check-man.py`), docs/design.md when the design changes, with
    the reason for each decision, docs/performance.md with new measurements, and CHANGELOG.md
-   under "Unreleased".
+   under "Unreleased". `python3 scripts/check-docs.py` checks relative links, anchors and the
+   old repository name offline, and `python3 scripts/check-version-drift.py` checks that the
+   install guides, deploy files, scarletbook pin quotes and CHANGELOG dates match Cargo.toml
+   and the releases; CI runs both (docs-check.yml).
 
 ## Code acceptance rules
 
