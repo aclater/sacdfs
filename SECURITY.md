@@ -59,7 +59,7 @@ report, whichever comes first; if a fix needs longer, we'll agree a date with yo
 problem is already public or is being exploited, say so in the report: the fix and the advisory
 then go out as soon as they can.
 
-Once it's fixed, the issue is published as a GitHub security advisory (with a CVE when it
+Once it's fixed, your report is published as a GitHub security advisory (with a CVE when it
 warrants one), saying which versions are affected and which release fixes it, and crediting
 you unless you'd rather not be named.
 
@@ -95,30 +95,39 @@ installer checks the checksum of what it downloads. To check a file yourself, se
 
 ## How a report is handled
 
-This is what the maintainer, and any contributor or agent working on sacdfs, does with a
-vulnerability, whether it came from a report or was found while working on the code.
+**A report from outside** (GitHub's private vulnerability reporting, above) is handled in its
+draft advisory:
 
-1. **Keep it private from the first moment.** Whoever finds it opens a draft advisory (the
-   link above; a maintainer can use **Security**, **Advisories**, **New draft security
-   advisory**). Nothing about it goes into an issue, a pull request, a discussion, a commit
-   message, a branch name, the project board or the log of a public CI run. The issue scheme
-   in [CONTRIBUTING.md](CONTRIBUTING.md) (milestones, labels, claiming) doesn't apply; the
-   draft advisory is the record.
+1. **Keep it private.** Nothing about it goes into an issue, a pull request, a discussion, a
+   commit message, a branch name, the project board or the log of a public CI run. The issue
+   scheme in [CONTRIBUTING.md](CONTRIBUTING.md) (milestones, labels, claiming) doesn't apply;
+   the draft advisory is the record.
 2. **Assess it.** Reproduce it, work out which versions are affected and how severe it is
    (the advisory's CVSS score), and tell the reporter. A problem that turns out to have no
    security impact is closed as an advisory and becomes a normal issue. The maintainer makes
-   that call, not the finder.
+   that call.
 3. **Fix it in private.** Work in the advisory's temporary private fork. GitHub Actions don't
-   run there, so run the checks from CONTRIBUTING.md on your machine and note the results in
-   the advisory. The fix comes with a test that fails without it; an input that triggers the
+   run there, so run the checks from CONTRIBUTING.md locally and note the results in the
+   advisory. The fix comes with a test that fails without it; an input that triggers the
    problem joins the corpus or the fuzz regressions in the same change.
 4. **If the cause is in scarletbook,** say so in the advisory and stop there: don't open
    anything against scarletbook-rs yourself. The maintainer takes it to that project as a
-   private statement of the behaviour and the input, with no sacdfs code (the clean-room
-   rule). sacdfs's pin moves once scarletbook's fixed release is out.
+   statement of the behaviour and the input, with no sacdfs code (the clean-room rule).
+   sacdfs's pin moves once scarletbook's fixed release is out.
 5. **Release.** Merge the private fork, tag and release as usual. The changelog has a
-   "Security" entry that names the advisory and says what to upgrade to, without a recipe
-   for the attack.
+   "Security" entry that names the advisory and says what to upgrade to, without a recipe for
+   the attack.
 6. **Publish the advisory** once the release is out, with the affected and fixed versions, a
    CVE if it warrants one (requested through the advisory) and credit to the reporter.
-   Follow-up hardening can then be discussed in public issues.
+
+**A problem found while working on the code,** by the maintainer, a contributor or an agent,
+is handled internally as ordinary work: no draft advisory and no CVE.
+
+- Fix it in an ordinary pull request. Its title, description, commit messages, comments and
+  tests describe the change (a bound added, an input rejected) without vulnerability detail:
+  no attack recipe, no severity, no word that it was exploitable.
+- The usual rules apply: a test that fails without the fix, and a triggering input in the
+  corpus or the fuzz regressions.
+- If the cause is in scarletbook, the maintainer takes it to that project, as in step 4.
+- If a released version was exploitable, the release notes of the version with the fix get
+  one line: "This release contains security fixes; upgrading is recommended."
