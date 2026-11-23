@@ -1,7 +1,11 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Linux without a container: install sacdfs
+
 # Linux without a container: install sacdfs
 
 This puts sacdfs on a Linux computer and shows your SACD images as a folder of DSF and WAV files
-you can open with any player. About 10 minutes. On a NAS you reach over SSH, use
+you can open with any player. About 10 minutes.
+
+On a NAS you reach over SSH, use
 [the NAS steps](nas-binary.md) instead. To share the discs with other computers, use
 [Docker or Podman](docker-podman.md).
 
@@ -28,20 +32,19 @@ See [Details](#details).
    sudo apt install fuse3
    ```
 
-2. **Download sacdfs and its checksum.** `uname -m` prints your CPU: `x86_64` or `aarch64`.
-   Set `a` to that.
+2. **Download sacdfs and its checksum.** `uname -m` prints your CPU. The commands are for
+   `x86_64`; on `aarch64`, write `aarch64` for `x86_64` in every file name of steps 2 to 4.
 
    ```sh
-   v=0.7.2 a=x86_64
    cd ~
-   curl -fLO "https://github.com/aclater/sacdfs/releases/download/v$v/sacdfs-$v-$a-linux.tar.gz"
-   curl -fLO "https://github.com/aclater/sacdfs/releases/download/v$v/sacdfs-$v-$a-linux.tar.gz.sha256"
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
+   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
    ```
 
 3. **Check the download.**
 
    ```sh
-   sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
+   sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* `sacdfs-0.7.2-x86_64-linux.tar.gz: OK`.
@@ -49,9 +52,9 @@ See [Details](#details).
 4. **Unpack it and put the program in your own `bin` folder.**
 
    ```sh
-   tar -xzf "sacdfs-$v-$a-linux.tar.gz"
+   tar -xzf sacdfs-0.7.2-x86_64-linux.tar.gz
    mkdir -p ~/.local/bin
-   install -m 0755 "sacdfs-$v-$a-linux/sacdfs" ~/.local/bin/
+   install -m 0755 sacdfs-0.7.2-x86_64-linux/sacdfs ~/.local/bin/
    ~/.local/bin/sacdfs --version
    ```
 
@@ -92,7 +95,7 @@ with files such as `01 - Title.dsf` and `01 - Title.wav`. Open one in your playe
   **Do this:** step 1.
 - **You see** `the folder to mount on ... does not exist`. **Do this:** `mkdir -p ~/sacd` (step 5).
 - **You see** `Illegal instruction`. **Do this:** you have the `x86_64-v3` build on an older CPU. Use
-  `a=x86_64` in step 2.
+  the `x86_64` file names of step 2.
 
 More: [the user guide](../user-guide.md) (running it, fstab, systemd, troubleshooting).
 
@@ -134,13 +137,13 @@ Ubuntu 20.04 and Fedora 29 with their own kernels (4.18 to 5.4) and `fusermount3
 mounting in the foreground and background, with and without `--allow-other`, identical reads, and a
 clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributions-58)).
 
-**With `gh` instead of `curl`,** and checking where it was built:
+**With `gh` instead of `curl`,** and checking where it was built (for the other builds, write
+`x86_64-v3` or `aarch64` for `x86_64`):
 
 ```sh
-v=0.7.2 a=x86_64          # or a=x86_64-v3, or a=aarch64
-gh release download "v$v" -R aclater/sacdfs -p "sacdfs-$v-$a-linux.tar.gz*"
-sha256sum -c "sacdfs-$v-$a-linux.tar.gz.sha256"
-gh attestation verify "sacdfs-$v-$a-linux.tar.gz" -R aclater/sacdfs
+gh release download v0.7.2 -R aclater/sacdfs -p 'sacdfs-0.7.2-x86_64-linux.tar.gz*'
+sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+gh attestation verify sacdfs-0.7.2-x86_64-linux.tar.gz -R aclater/sacdfs
 ```
 
 The checksum shows the download is intact; the attestation (GitHub's build provenance, signed with
@@ -199,3 +202,12 @@ reference. 0.7.2 release archive (x86_64), steps 2 to 6 on Fedora 45 as a normal
 `--version` printed `sacdfs 0.7.2`, the test corpus (455 DSF and 455 WAV files) listed, one disc's files
 identical to those served by the 0.7.2 container. Not checked on 0.6.0: aarch64, the `x86_64-v3` build, `cargo install`, and other
 distributions. Options: [options.md](../options.md).
+
+## See also
+
+- [Linux packages](packages.md)
+- [NAS over SSH](nas-binary.md)
+- [User guide](../user-guide.md)
+- [Options](../options.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Navidrome: install sacdfs
+
 # Navidrome: install sacdfs
 
 Navidrome is a small music server for your own library. This guide lets it play your SACD images through sacdfs. About 10 minutes.
@@ -65,3 +67,11 @@ Open **Albums**. Each disc is an album; a multichannel area is its own album, "A
 ### More problems
 
 - With a direct sacdfs mount (no Docker or Podman for sacdfs), run Navidrome in rootless Podman as the user who made the mount: see [user-guide.md](../user-guide.md).
+
+## See also
+
+- [Install guide: which player](README.md#3-which-player-or-music-server)
+- [Clients](../clients.md)
+- [Deployment reference](../deployment.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

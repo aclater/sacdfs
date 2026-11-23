@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Performance
+
 # Performance
 
 How fast sacdfs is, against the targets of [#6](https://github.com/aclater/sacdfs/issues/6),
@@ -1886,3 +1888,11 @@ RUSTFLAGS="-C target-cpu=x86-64" cargo bench --bench pcm
 
 Seeks are one `pread` of 128 KiB on a fresh mount (with `--no-index-cache` for cold seeks);
 the concurrency scenario is four real-time readers and a tagger as described above.
+
+## See also
+
+- [Design](design.md)
+- [PCM quality](pcm-quality.md)
+- [Deployment: small NAS sizing](deployment.md#small-nas-sizing)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

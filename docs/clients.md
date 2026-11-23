@@ -1,7 +1,10 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Clients: what sacdfs has been tested with
+
 # Clients: what sacdfs has been tested with
 
 This page lists the music servers, players and file tools that sacdfs has been tried with, the
 version of each, how it was connected, what happened, and how to set sacdfs and the client up.
+
 Everything here comes from the client-test reports on
 [#82](https://github.com/aclater/sacdfs/issues/82) and the issues linked below; a result is
 only stated where a test showed it, and a setting is only recommended where a test on the
@@ -807,3 +810,10 @@ Open an issue with the label `documentation`, mention #82, and title it
 Leave out names of albums, artists, paths, hostnames and addresses. Say "untested" or
 "partial" for anything not checked.
 
+## See also
+
+- [Deployment reference](deployment.md)
+- [Release test plan](test-plan.md)
+- [Install guides for players](install/README.md#3-which-player-or-music-server)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

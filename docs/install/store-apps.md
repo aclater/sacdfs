@@ -1,9 +1,13 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Unraid and TrueNAS app-store entries
+
 # Unraid and TrueNAS app-store entries
 
 sacdfs has an Unraid Community Applications template and a TrueNAS catalog app definition in
 the repository. The TrueNAS app is listed in the community train of the TrueNAS apps catalog
 (since 2026-11-18): install it from Apps, Discover Apps, as in the
-[TrueNAS SCALE guide](truenas-scale.md#install-from-the-apps-screen). The Unraid template isn't
+[TrueNAS SCALE guide](truenas-scale.md#install-from-the-apps-screen).
+
+The Unraid template isn't
 listed yet. This page says what is in the repository, how to use the Unraid template today,
 and what was checked where.
 
@@ -173,3 +177,11 @@ a pull request to the TrueNAS apps repository (and an issue there first, as thei
 catalog's tooling sets `date_added`, and the reviewers upload the icon and fill the CDN and
 `apps.truenas.com` addresses that `app.yaml` already names (they don't answer yet). The
 generated notes list the app's user as "unknown", because it runs as root.
+
+## See also
+
+- [TrueNAS SCALE](truenas-scale.md)
+- [Unraid](unraid.md)
+- [Deployment reference](../deployment.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

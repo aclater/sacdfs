@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Release test plan
+
 # Release test plan
 
 CI proves that sacdfs does what its tests say. Real clients have repeatedly shown things CI could
@@ -591,7 +593,7 @@ Not run on Windows: large-icon view in a real Explorer window, CJK names, foobar
 
 **macOS:** not run on 0.6.2-rc.1. The Apple hardware that hosts the macOS VM was not available.
 
-## Results: Installer on 0.6.2
+## Results: installer on 0.6.2
 
 The installer of the 0.6.2 release (Part of #340), taken from GitHub's `latest` address, which
 serves 0.6.2's `install.sh` (`DEFAULT_VERSION=0.6.2`; its attestation passes), in two forms: the
@@ -785,7 +787,7 @@ On the v0.6.3-rc.1 release binary and image, with 0.6.2 (and 0.6.1 for the playe
 
 Not run: Roon and Plex at scale (the project's own Roon and Plex test deployments run the candidate since the soak passed; the players weren't driven), Tier 2 tools, the NFS player-beside-copies cells, and a physical Windows or macOS client here (Windows above).
 
-## Results: Installer restarts and the container route on NAS VMs (main, 0.6.3 release files)
+## Results: installer restarts and the container route on NAS VMs (main, 0.6.3 release files)
 
 The installer from `main` (Part of #340), run as `sh install.sh --iso-dir ... --version 0.6.3`,
 so that it downloaded the 0.6.3 release archive or image from GitHub and checked it. Each run
@@ -1164,3 +1166,11 @@ What was run on `main` before the release (aa049f53; the release-workflow dry ru
 The corpus rows are slower on main in every round: each reads one area through 20 fresh mounts, so this is 0.1 to 0.5 ms more per mount ([#589](https://github.com/aclater/sacdfs/issues/589)). Explained: on an i9-13900H (P-cores, 7 to 21 rounds), main with #580 reverted is back at 0.97 to 1.02 times 0.7.1, so the kept heads cause all of it. The cost is per mount and per file head, not per byte: each read copies its frames into a head slab (an extra slab mapping per frame size, page faults and the copy; the corpus files are smaller than the 2 MiB head, so every byte is copied), and the folder warmer's thread start adds 0.05 to 0.08 ms. Real-disc reads, where it is amortised, are unchanged.
 
 **Not run:** Finder, Spotlight and players on macOS; the file-handle tests as root; Roon and Plex at scale; the NAS OS VMs; the installer VM scenarios (smoke test only); a physical Windows PC, Mac or NAS; aarch64 on hardware; a soak of the published binaries or on real discs; NFSv4 through sacdfs-nfs (it serves NFSv3); a cold first listing; the #456 player on its own hardware (asked on #456); and the release's own artifacts (checked after the tag).
+
+## See also
+
+- [Releasing](release.md)
+- [Clients](clients.md)
+- [Development](development.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

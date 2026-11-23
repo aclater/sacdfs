@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › sacdfs options
+
 # sacdfs options
 
 Every option of `sacdfs`, in the order `sacdfs --help` gives them (CI checks that this table
@@ -50,3 +52,11 @@ still open, the mount is detached instead, and sacdfs stops when the last one is
 after `--stop-grace` seconds if some stay open. What
 each option does in detail, and the seek index cache, are in the
 [user guide](user-guide.md#options).
+
+## See also
+
+- [User guide: options](user-guide.md#options)
+- [What the mount shows](layout.md)
+- [Deployment reference](deployment.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

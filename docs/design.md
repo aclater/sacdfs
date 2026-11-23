@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › sacdfs design
+
 # sacdfs design
 
 sacdfs is a read-only FUSE filesystem that shows the audio of Super Audio CD disc images
@@ -2831,7 +2833,7 @@ of a root-only mount's files is no longer limited to root. The container already
 
 `.github/workflows/release.yml` builds, tests and publishes a release on a `v*` tag, and does
 everything but publish when run by hand or on a pull request that changes it (a dry run).
-The checklist is in CONTRIBUTING.md, "Releasing". The decisions, each with its reason:
+The checklist is in [release.md](release.md). The decisions, each with its reason:
 
 - **glibc 2.17 through zig (#244), not static musl, not container-only.** *Why:* the release
   binary built on UBI 8 needed glibc 2.28, and QNAP's QuTScloud 5.2.9 has glibc 2.21: the binary
@@ -3665,3 +3667,12 @@ Not to FUSE: Performance of User-Space File Systems", FAST 2017. GPL/LGPL FUSE a
 filesystems (fuse-zip, archivemount, mount-zip, rar2fs). sacdfs is GPL-3.0-or-later, so
 code from compatibly licensed projects may be adapted, with attribution (see
 CONTRIBUTING.md); SACD parsing and DST decoding still come only from scarletbook.
+
+## See also
+
+- [Performance](performance.md)
+- [PCM quality](pcm-quality.md)
+- [Development](development.md)
+- [Decision log of the DSD Toolbox](https://github.com/aclater/dsd-toolbox/blob/main/DECISIONS.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

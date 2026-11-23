@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Plex: install sacdfs
+
 # Plex: install sacdfs
 
 Plex Media Server is a media server with its own library. This guide lets it read your SACD images through sacdfs. About 20 minutes.
@@ -66,3 +68,11 @@ Each multichannel disc is listed twice, as "Album" and "Album (Multichannel)", a
 - Plex does not use sacdfs's folder art; it fetches art online ([#95](https://github.com/aclater/sacdfs/issues/95)).
 - Plex's nightly deep analysis read every file once in one test (55 GiB in 874 s, 701 MiB RSS).
 - Three albums (26 tracks) showed a blank album title in Plex on 0.4.1-rc.1 although sacdfs serves one; the cause was not found.
+
+## See also
+
+- [Install guide: which player](README.md#3-which-player-or-music-server)
+- [Clients](../clients.md)
+- [Deployment reference](../deployment.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

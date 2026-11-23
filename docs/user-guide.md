@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › sacdfs user guide
+
 # sacdfs user guide
 
 How to use sacdfs: its options, the files it shows, how taggers and players are served, and
@@ -1162,3 +1164,12 @@ CPU and anonymised). The CI stall gate replays them
 scripts/trace-replay.py tests/fixtures/traces/player-mpv-wav.trace.gz --play 0 --profile --wav-audio-start 264000
 scripts/trace-replay.py --player tests/fixtures/players/zidoo-wav.json /mnt/sacd
 ```
+
+## See also
+
+- [Options](options.md)
+- [What the mount shows](layout.md)
+- [Clients](clients.md)
+- [Install guide](install/README.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Windows: install sacdfs
+
 # Windows: install sacdfs
 
 This shows your SACD images as a drive letter of DSF and WAV files on a Windows PC, which any
@@ -323,3 +325,12 @@ time.
   `sacdfs-win --version` shows the same notice.
 - **Licence:** sacdfs is GPL-3.0-or-later; the Windows program links the winfsp crate, which is
   GPL-3.0-only, so the Windows binary is under GPL-3.0.
+
+## See also
+
+- [Options](../options.md)
+- [macOS](macos.md)
+- [Platforms](../../README.md#platforms)
+- [Clients](../clients.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
