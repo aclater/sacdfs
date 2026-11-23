@@ -2614,9 +2614,10 @@ so reads of one disc by several players, a tagger and read-ahead run at once.
 
 ## PCM conversion
 
-The DSD-to-PCM conversion behind the WAV files is scarletbook-rs's `scarletbook-pcm` (since
-#84), through `sacdfs::pcm`, which maps sacdfs's options to it and feeds it the engine's
-frames. Its measured quality is in [pcm-quality.md](pcm-quality.md), the speed in
+The DSD-to-PCM conversion behind the WAV files is the `dsd2pcm` crate, through `sacdfs::pcm`,
+which maps sacdfs's options to it and feeds it the engine's frames. From #84 to 0.7.2 it was
+scarletbook-rs's `scarletbook-pcm`, whose output dsd2pcm reproduces byte for byte
+([why the switch](#why-dsd2pcm)). Its measured quality is in [pcm-quality.md](pcm-quality.md), the speed in
 [performance.md](performance.md#converter-throughput). Each decision below says why, the
 alternatives and the trade-off.
 
@@ -2635,7 +2636,11 @@ alternatives and the trade-off.
 - *Alternative:* keep sacdfs's converter (ported from pysacd's), which has a flatter pass band (±0.00003 against ±0.004 dB) and a 4 dB lower noise floor. Neither difference is audible, and the code would be maintained twice, which the owner wants to avoid.
 - *Trade-off:* the WAV files' samples changed (by less than -72 dB against the signal in the audio band), so their output version moved to 3 ([identity](#file-identity-and-nfs-export)): new mtimes and generations, so copies and library scanners pick up the new bytes.
 
-**Stateless per frame (why: random reads).** Frame `f`'s PCM is computed from DSD frames `f - 1`, `f` and `f + 1` only, and equals, bit for bit, a conversion of the whole area in one pass. `pcm::convert_area` and scarletbook-pcm's own tests check this for every frame, 1 to 6 channels, every rate and cutoff, and by proptest on random windows and runs. Each output sample depends on at most 195 bytes per channel of each neighbour, far less than a frame.
+<a id="why-dsd2pcm"></a>**Why dsd2pcm (after 0.7.2).** dsd2pcm ports scarletbook-pcm 0.7.0's filters and frame-run interface (MIT OR Apache-2.0) and gives the same bytes on every SIMD level; it is faster on the CPUs measured ([performance](performance.md#by-converter-dsd2pcm-against-scarletbook-pcm)). The swap in `sacdfs::pcm` is mechanical: the same `Run`, `PcmOut::S24le` and per-frame clip counts, so the WAV bytes, `WAV_VERSION` and the pinned hashes in `tests/pcm.rs` are unchanged, checked on the corpus in five output configurations and on eight real discs.
+- *Alternative:* stay on scarletbook-pcm. It is maintained with scarletbook, but its speed is not sacdfs's to tune, and sacdfs's WAV path is where a slow NAS spends its CPU.
+- *Trade-off:* one more dependency to track; scarletbook stays for parsing and DST.
+
+**Stateless per frame (why: random reads).** Frame `f`'s PCM is computed from DSD frames `f - 1`, `f` and `f + 1` only, and equals, bit for bit, a conversion of the whole area in one pass. `pcm::convert_area` and dsd2pcm's own tests check this for every frame, 1 to 6 channels, every rate and cutoff, and by proptest on random windows and runs. Each output sample depends on at most 195 bytes per channel of each neighbour, far less than a frame.
 - *Alternative:* a converter that carries filter state from frame to frame would need every earlier frame converted first, so a seek would cost a conversion from the start of the area.
 
 **Aligned (why: DSF and WAV of a track line up).** PCM sample `n` is centred on DSD sample `d × n` of the same frame. The measured offset is below 0.0001 samples.
@@ -2643,21 +2648,21 @@ alternatives and the trade-off.
 **Silence (why 0x69).** Before the first and after the last frame of an area, the converter reads DSD silence, the byte 0x69: a neighbour of `None` is the silence pattern. 0x69 converts to exact zero, so a track that starts at the area start fades in from true digital zero, and a silent channel is all zeros.
 - *Alternatives:* zero bytes are -100 % modulation, a full-scale negative step; repeating the area's first or last frame would invent audio.
 
-**Frames in place (why: the frame cache).** The engine keeps each decoded DSD frame in its own buffer and converts short runs of them: four at a time from plain DSD areas, one at a time from DST batches ([WAV reads](#reading-a-range-of-a-wav-file)). `Converter::convert_run` hands scarletbook-pcm the run as separate frames (`Frames::Separate`), and gets back:
+**Frames in place (why: the frame cache).** The engine keeps each decoded DSD frame in its own buffer and converts short runs of them: four at a time from plain DSD areas, one at a time from DST batches ([WAV reads](#reading-a-range-of-a-wav-file)). `Converter::convert_run` hands dsd2pcm the run as separate frames (`Frames::Separate`), and gets back:
 - 24-bit little-endian bytes, written directly into the frame-cache entries (`PcmOut::S24le`);
 - each frame's clip count, which is cached with the frame, so a later read reports the clips of exactly the frames it returns.
 
 *Alternative:* copying the frames together and packing `i32` samples afterwards, which was 0.5.2's only API. That cost a copy and an extra pass per run (scarletbook-rs#172).
 
-**Gain and clipping.** `--pcm-gain` (-60 to +24 dB) maps to scarletbook-pcm's `Gain` (-120 to +24 dB, the same factor on every platform). Samples beyond the 24-bit range are clamped and counted. 100 % positive modulation is exactly one step above the largest code, so a full-scale positive DC counts as clipping. Real discs stay far below this (SACD's reference level is 50 % modulation): no clips on the local discs.
+**Gain and clipping.** `--pcm-gain` (-60 to +24 dB) maps to dsd2pcm's `Gain` (-120 to +24 dB, the same factor on every platform). Samples beyond the 24-bit range are clamped and counted. 100 % positive modulation is exactly one step above the largest code, so a full-scale positive DC counts as clipping. Real discs stay far below this (SACD's reference level is 50 % modulation): no clips on the local discs.
 
-**Deterministic everywhere.** scarletbook-pcm uses integer arithmetic and chooses its code at run time (AVX2 and FMA where the CPU has them), with the same bytes on every path and CPU. sacdfs pins the output's hash per configuration (`tests/pcm.rs`), so a change to the filters shows up there and needs a `WAV_VERSION` bump.
+**Deterministic everywhere.** dsd2pcm uses integer arithmetic and chooses its code at run time (AVX2 and FMA where the CPU has them, SSE2 on 32-bit x86), with the same bytes on every path and CPU. sacdfs pins the output's hash per configuration (`tests/pcm.rs`), so a change to the filters shows up there and needs a `WAV_VERSION` bump.
 
 **API.** `pcm::Converter::new(channels, &PcmConfig)` is made once per worker thread and allocates nothing per frame after the first.
 - `convert(prev, cur, next, out)` writes frame `cur`'s interleaved 24-bit little-endian PCM (`frame_bytes()` long) and returns the clip count. `None` neighbours are silence.
 - `convert_run(prev, frames, next, out, clips)` converts consecutive frames: the same bytes as `convert` on each, plus each frame's clip count.
 - `convert_f32` gives the same samples as floats, for tools and tests.
-- `try_convert` and `try_convert_run` are the same, but return `ConvertError` if scarletbook-pcm refuses the conversion. On failure, all four leave `out` all zeros, never what it held before. *Why (#388):* the engine converts into reused slots of its frame cache, which may hold another frame's audio. It uses the `try_` forms and fails the read with `EIO`, so nothing from a failed run is served or cached. The lengths sacdfs passes make a failure impossible today. The check is there in case scarletbook-pcm adds one.
+- `try_convert` and `try_convert_run` are the same, but return `ConvertError` if dsd2pcm refuses the conversion. On failure, all four leave `out` all zeros, never what it held before. *Why (#388):* the engine converts into reused slots of its frame cache, which may hold another frame's audio. It uses the `try_` forms and fails the read with `EIO`, so nothing from a failed run is served or cached. The lengths sacdfs passes make a failure impossible today. The check is there in case the converter adds one.
 - `new` never fails. A configuration that `PcmConfig::validate` refuses (the wide filter at 88.2 kHz) is converted with `PcmConfig::effective` instead, 40 kHz, which `config()` reports. *Why:* a panic in a FUSE worker is an I/O error at best; options are checked once, with `validate`, when the mount starts.
 - A short frame (which the decoder never makes) is padded with silence.
 
@@ -2689,7 +2694,7 @@ judged by the cold-seek target.
 ## Performance basis
 
 scarletbook decodes a stereo DST frame in about 0.17 ms on one core (about 78x real time per
-core), and plain DSD areas need no decoding. The converter (scarletbook-pcm) runs at about
+core), and plain DSD areas need no decoding. The converter (dsd2pcm; scarletbook-pcm before it) runs at about
 300x real time per core for the default 176.4 kHz stereo output, so on a DST area conversion adds about a
 quarter of the decoding cost, and on a plain DSD area it is the only CPU cost. A straight
 read through the mount is therefore limited by decoding on DST areas and by copying through

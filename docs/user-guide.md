@@ -164,8 +164,8 @@ its own mount, never one started on the same path since.
 - A dead mount of another file system, or any FUSE mount of another user, is left alone:
   sacdfs fails at once and says what is there.
 
-**CPU code paths.** The WAV converter (scarletbook-pcm) picks its code when it starts: AVX2 and
-FMA where the CPU has them, SSE2 otherwise, with the same output bit for bit.
+**CPU code paths.** The WAV converter (dsd2pcm) picks its code when it starts: AVX2 and
+FMA where the CPU has them, SSE2 on 32-bit x86, portable code otherwise, with the same output bit for bit.
 
 ### Slow CPUs and players starting a track
 

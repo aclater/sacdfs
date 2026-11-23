@@ -1,8 +1,10 @@
 # PCM quality
 
 How good the DSD-to-PCM conversion behind sacdfs's WAV files is, and how that was measured.
-Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (0.5.3); `sacdfs::pcm` maps
-sacdfs's options to it and feeds it the engine's frames. The output decisions (rates,
+From #84 to 0.7.2 the converter was scarletbook-rs's `scarletbook-pcm` (0.5.3 to 0.7.0); since
+then it is the `dsd2pcm` crate, whose output is scarletbook-pcm 0.7.0's byte for byte, so every
+figure here holds for both. `sacdfs::pcm` maps sacdfs's options to it and feeds it the engine's
+frames. The output decisions (rates,
 cutoffs, gain) are the owner's, with their reasons, in #11 and #5; the decision to use
 scarletbook-pcm, and the measurements it rests on, are in #84. Throughput is in
 [performance.md](performance.md#converter-throughput), the design in
@@ -97,11 +99,11 @@ Both converters were run on the same DSD: synthetic signals, and 60 s from the m
 
 ## The filters
 
-scarletbook-pcm's own documentation describes its designs. They are Parks-McClellan equiripple, linear phase, odd length, and exact integer arithmetic. It also publishes its measured response, and records its sources in scarletbook-rs's CLEANROOM.md. sacdfs treats it as a black box: these pages describe what was measured from outside.
+scarletbook-pcm's own documentation describes its designs, which dsd2pcm ported. They are Parks-McClellan equiripple, linear phase, odd length, and exact integer arithmetic. It also publishes its measured response, and records its sources in scarletbook-rs's CLEANROOM.md. sacdfs treats it as a black box: these pages describe what was measured from outside.
 
-| sacdfs option | scarletbook-pcm | Pass band | Stopband from |
+| sacdfs option | dsd2pcm (as scarletbook-pcm) | Pass band | Stopband from |
 |---|---|---|---|
-| `--pcm-cutoff 40` (default) | `Cutoff::Default` | 40 kHz | 48 kHz |
+| `--pcm-cutoff 40` (default) | `Cutoff::Standard` | 40 kHz | 48 kHz |
 | `--pcm-cutoff 30` | `Cutoff::Low` | 30 kHz | 36 kHz |
 | `--pcm-cutoff wide` (176.4 and 352.8 kHz only) | `Cutoff::Wide` | 80 kHz | 88.2 kHz at 176.4 kHz (its Nyquist frequency), 96 kHz at 352.8 kHz |
 

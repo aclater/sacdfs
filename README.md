@@ -85,7 +85,10 @@ sacdfs is free software under the [GNU General Public License](COPYING), version
 option) any later version.
 
 - [scarletbook](https://github.com/aclater/scarletbook-rs) (MIT OR Apache-2.0) does the SACD
-  parsing, DST decoding and DSD-to-PCM conversion, through its public APIs.
+  parsing and DST decoding, through its public APIs.
+- [dsd2pcm](https://crates.io/crates/dsd2pcm) (MIT OR Apache-2.0) does the DSD-to-PCM
+  conversion behind the WAV files. It reproduces, byte for byte, scarletbook-rs's
+  scarletbook-pcm 0.7.0, which sacdfs used before.
 - [pysacd](https://github.com/aclater/pysacd) (GPL-2.0-or-later) made the reference hashes the
   DSF files are checked against; sacdfs 0.1's converter was ported from it, with a first stage
   after Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
