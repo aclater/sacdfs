@@ -12,9 +12,11 @@ All notable changes to sacdfs are recorded here. The format follows
   0.6.0 deprecated, none of which sacdfs used
   ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.7.0)). It carries
   0.6.2's decoder change, which brings a 6-channel DST frame decoded on its own back near 0.5.x
-  speed ([scarletbook-rs#378](https://github.com/aclater/scarletbook-rs/issues/378)).
-  The corpus files and eight real discs are byte-identical to 0.6.1's, so `DSF_VERSION` and
-  `WAV_VERSION` stay.
+  speed ([scarletbook-rs#378](https://github.com/aclater/scarletbook-rs/issues/378)). A read
+  of only a DSF file's tag no longer decodes the file's last frame
+  ([scarletbook-rs#307](https://github.com/aclater/scarletbook-rs/issues/307)). The corpus
+  files and eight real discs are byte-identical to 0.6.1's, so `DSF_VERSION` and `WAV_VERSION`
+  stay.
 
 ### Fixed
 

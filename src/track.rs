@@ -3038,8 +3038,11 @@ mod tests {
         let tree = corpus();
         let f = longest(&tree, Format::Dsf);
         let engine = Engine::new(2, 32 << 20).unwrap();
-        let (t0, t1) = f.frames_for(f.size - 412, f.size);
-        assert!(t0 < t1 && t1 == f.layout.frames, "the last bytes hold the last frame: {t0}..{t1}");
+        // The audio's last row, then the tag: a read of the tag alone needs no frame (scarletbook
+        // 0.7.0, scarletbook-rs#307) and never reaches the plan.
+        assert_eq!(f.frames_for(f.data_end(), f.size), (0, 0), "the tag alone");
+        let (t0, t1) = f.frames_for(f.data_end() - (64 << 10), f.size);
+        assert!(t0 < t1 && t1 == f.layout.frames, "the last row holds the last frame: {t0}..{t1}");
         // The corpus's files are shorter than a jump: the tag read is placed further on.
         let tag = 64 << 20;
         let peek = |r: &Reader| r.plan_read_ahead(&engine, tag, tag + 412, t0, t1);
