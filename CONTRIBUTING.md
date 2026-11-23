@@ -75,7 +75,8 @@ Every open issue says which release it is for, how important it is, where it sta
 what kind of agent should work on it. The issue list then shows what's up without opening
 each issue.
 
-- **Milestone:** the release it is planned for (`0.2.0`, `0.3.0`, ...) or `Later`. Umbrella
+- **Milestone:** the release it is planned for (`0.2.0`, `0.3.0`, ...), `Docs` for
+  documentation-only work (it merges to `main` without a release), or `Later`. Umbrella
   issues have no milestone.
 - **Priority:**
   - `P1`: must be in its milestone's release;
@@ -111,8 +112,8 @@ never moved.
 2. **Test:** run the [release test plan](docs/test-plan.md) on a release candidate; its exit criteria
    decide whether the final version is tagged.
 3. **Dry run:** Actions, "release", "Run workflow" on `main` (or
-   `gh workflow run release.yml -R aclater/sacdfs --ref main`). It builds and tests both
-   binaries and the image, runs the container share test, and publishes nothing; its summary
+   `gh workflow run release.yml -R aclater/sacdfs --ref main`). It builds and tests every
+   archive, package and the image, runs the container share test, and publishes nothing; its summary
    lists the assets and checksums a tag would publish. Pull requests that change the release
    files run it too.
 4. **Release pull request:** bump `version` in `Cargo.toml` (and `Cargo.lock`, with
@@ -127,8 +128,8 @@ never moved.
    nor a `release/*` branch (`.github/scripts/check-tag-reachable.sh`). A patch release cut
    from an earlier tag instead of `main` is pushed as a branch `release/X.Y.Z` first and tagged
    there.
-6. **After:** the release has both archives with `.sha256`, `.intoto.jsonl` and
-   `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
+6. **After:** the release has its archives, packages and `install.sh`, each with `.sha256` and
+   `.intoto.jsonl`, and `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
    `gh attestation verify`; the workflow's last image step has verified the image index, each
    architecture's image by its digest and each `-<arch>` tag (#379). A version with a hyphen
    (`0.2.0-rc.1`) is marked as a pre-release and doesn't move `:latest`.
@@ -138,8 +139,8 @@ never moved.
    (`deploy/truenas/sacdfs/ix_values.yaml`, `images.image.tag`, and `app_version` in
    `app.yaml`; then the catalog's `generate_metadata.py` raises `version` by one patch step,
    as [store-apps.md](docs/install/store-apps.md#checked-with-the-stores-own-tooling) describes).
-8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/sacd/blob/main/RELEASES.md)
-   in aclater/sacd (the minor version's summary and release list).
+8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/dsd-toolbox/blob/main/RELEASES.md)
+   in aclater/dsd-toolbox (the minor version's summary and release list).
 
 **macOS archives of an earlier release.** Every release run builds and tests both macOS
 archives; the release gets them only when the repository variable `SACDFS_MACOS_RELEASE` is

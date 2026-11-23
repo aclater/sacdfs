@@ -176,6 +176,11 @@ mount again after a restart: [SMB and restarts](../deployment.md#smb-and-restart
 
 ### What was checked
 
+- **0.7.2, rootless Podman** on Fedora 45 (SELinux), as a normal user: step 2's Podman block
+  without `sudo`, with `-p 10445:445` and the [rootless options](#options), against the test corpus:
+  healthy after about 40 s, `135 image files` and `mounted` in the log; one disc's 6 DSF and WAV
+  files read over SMB with `smbclient` were identical to the 0.7.2 release binary's own mount;
+  `podman stop` took 0.3 s. Not run on 0.7.2: rootful Podman, Docker, NFS.
 - **0.6.1, rootless Podman 6.1.3** on Fedora 45 (SELinux), as a normal user: step 1 for the
   [other ports](#other-ports), step 2's Podman block without `sudo`, with `-p 10445:445` and the
   [rootless options](#options) (`-e NFS=0`, no NFS port), step 3, and the log check: healthy after

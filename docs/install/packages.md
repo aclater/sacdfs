@@ -156,4 +156,7 @@ sacdfs restarts on the new program.
   and `gh attestation verify` on all five. The COPR steps were run (as root, x86_64) in
   containers: `dnf copr enable` on Fedora 44 and 45; the `.repo` file and the
   `rhel-N-x86_64` form on UBI 9 and UBI 10, standing in for RHEL; and a downloaded `.rpm`
-  replaced by the COPR build on `dnf upgrade` (UBI 10). Not run on aarch64.
+  replaced by the COPR build on `dnf upgrade` (UBI 10). Not run on aarch64. **0.7.2:** the download, check
+  and install steps against the published x86_64 files on UBI 10 and Debian 13 (containers):
+  `OK`, `sacdfs 0.7.2`, and the settings file and unit in place; the COPR repository has 0.7.2-1
+  for every chroot listed above.

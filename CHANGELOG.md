@@ -29,7 +29,7 @@ All notable changes to sacdfs are recorded here. The format follows
   the first seconds when playback starts soon after the folder was opened. Any read stops it,
   and listing another folder moves it there.
 
-## [0.7.2] - 2026-11-23
+## [0.7.2] - 2026-11-22
 
 This release contains security fixes; upgrading is recommended.
 
@@ -654,7 +654,7 @@ docs/test-plan.md ("Results: 0.6.5 gate").
   that shares the mount with copies. Checked on macOS 27.2 in a VM on Apple hardware; macOS 15
   and a physical Mac not run.
 
-## [0.6.4] - 2026-11-14
+## [0.6.4] - 2026-11-15
 
 A security release: 0.6.3 plus fixes for three advisories, and the hardening of the installer,
 the container and the systemd unit. Audio bytes are unchanged from 0.6.3. The pacing changes on

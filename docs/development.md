@@ -251,15 +251,15 @@ with its reason. `ONLY=REGEX` runs only the test binaries whose path matches, fo
 `ONLY='/(mount|stall)-' scripts/leak-check.sh memcheck`.
 
 The suppressions match demangled names (`fun:*fuser*mnt*Mount*new`), not `_ZN...` symbols, so
-they hold under both symbol manglings: the container's Rust 1.92 uses the legacy scheme, the
-1.99 toolchain of the weekly CI run uses v0. A suppression written against the mangled name
+they hold under both symbol manglings: the container's Rust used the legacy scheme up to 1.92;
+RHEL 10.3's 1.97 and the 1.99 toolchain of the weekly CI run use v0. A suppression written against the mangled name
 stops matching after a toolchain change and fails the run on a block that was never a leak.
 There are two: the mount that `serve` keeps on purpose (55 bytes in three blocks, once per
 process), and a read of uninitialised memory inside the `nix` crate's `recvmsg` when fuser
 reads fusermount's reply (once per mount, the value is discarded).
 
-*Why memcheck rather than LeakSanitizer:* sacdfs and scarletbook are pure Rust, with no C
-code in the dependency graph. Rust's LeakSanitizer needs a nightly compiler
+*Why memcheck rather than LeakSanitizer:* sacdfs and scarletbook are pure Rust; the only C
+code in the dependency graph is `ring`'s cryptography, under rustls for `sacdfs tags fetch`. Rust's LeakSanitizer needs a nightly compiler
 (`-Zsanitizer=leak`). clang's runtime trick for C (`-shared-libasan` with `LD_PRELOAD`) does
 not instrument Rust code. memcheck needs neither and also follows the child `sacdfs`
 processes.
@@ -297,7 +297,7 @@ sacdfs's debug log and each thread's state, kernel wait channel and system call 
 a FUSE request, which ptrace would wait for too. `tests/stop_signals.rs` has no libtest harness
 (`harness = false`): its trials must not have a libtest thread that could take their signal.
 
-The `tests`, `tests (arm64)`, `coverage`, `nfs export` and `file handles (arm64)` jobs save cargo's output and then run
+The `tests`, `tests (arm64)`, `tests (i686)`, `coverage`, `nfs export` and `file handles (arm64)` jobs save cargo's output and then run
 `scripts/check_skips.py`, as a step of the same job. It writes the job summary: how many tests ran
 (libtest's `passed` less the guards' tests), how many were skipped by a guard, how many were
 ignored, and each one with its reason. The step fails on a skip that isn't listed for that job in
@@ -340,6 +340,9 @@ as ignored. They check that
   `find | sort | xargs sha256sum` does, in 128 KiB and then in 4 KiB reads, reads at most 1.15
   times the images' size from them (#456: keeping files' heads in the cache once made it about
   1.8). The corpus discs are too small to show it.
+
+A fifth ignored test, `nfs::real_discs_pipelined_reads` (feature `nfs`), only prints read rates
+over NFS for comparing changes; it checks nothing and the script below does not run it.
 
 Run them with:
 

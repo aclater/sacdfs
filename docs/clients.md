@@ -22,10 +22,10 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 | [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4, 0.4.1-rc.1 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 0.4.1-rc.1: healthy, upgrade and rollback from 0.4.0 fine, 279 untitled tracks named, 3 albums (26 tracks) still blank in Plex (cause unknown); 0.1.1: 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used on 0.2.0-rc.4 ([#95](https://github.com/aclater/sacdfs/issues/95)), used on main in November 2026 ([media servers on main](#media-servers-on-main-2026-11-15)) |
 | [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.4.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
 | [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
-| [Lyrion / Logitech Media Server](#lyrion-logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
+| [Lyrion / Logitech Media Server](#lyrion--logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
 | [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.19 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
 | [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
-| [Windows Explorer, PowerShell, Robocopy](#windows-explorer-and-robocopy) | Windows 11 build 26200 (25H2 26200.9974 on 0.7.2) | 0.2.0-rc.1, 0.4.1-rc.1, 0.6.0-rc.1, 0.7.2 | SMB 3, SMB 3.1.1, same host | Works | 0.4.1-rc.1: 186 of 186 audio copies byte-identical, a second Robocopy pass skips all 196 files; RF64 reads and seeks past 4 GiB; another SMB port works (`/TCPPORT`) |
+| [Windows Explorer, PowerShell, Robocopy](#windows-explorer-powershell-and-robocopy) | Windows 11 build 26200 (25H2 26200.9974 on 0.7.2) | 0.2.0-rc.1, 0.4.1-rc.1, 0.6.0-rc.1, 0.7.2 | SMB 3, SMB 3.1.1, same host | Works | 0.4.1-rc.1: 186 of 186 audio copies byte-identical, a second Robocopy pass skips all 196 files; RF64 reads and seeks past 4 GiB; another SMB port works (`/TCPPORT`) |
 | [foobar2000](#foobar2000) | 2.26.2 (portable), 2.26.3; foo_input_sacd 2.0.27 | 0.2.0-rc.1, 0.4.1-rc.1, main (November 2026), 0.6.5 | SMB 3, SMB 3.1.1; WinFsp | Works (0.4.1-rc.1; main: 93 of 93 with tags and art over WinFsp) | 186 files found with tags and length; stereo, 5ch, 6ch start in under 0.4 s; 0.6.5: audio at the sound device bit-identical to a local copy, full tracks of stereo DSF, 5-channel DST DSF and WAV; seek, pause, track change and playback during a library scan correct ([0.6.5 Windows checks](#065-windows-checks)) |
 | [JRiver Media Center](#jriver-media-center) | 36.0.38, 36.0.51 (trial) | 0.4.1-rc.1, 0.6.5 | SMB 3.1.1; WinFsp | Works | 0.4.1-rc.1: 186 files, 7 albums, tags, art for 3 of 5 artists; 0.6.5: installer finishes when clicked through, 934 files and 54 albums imported in 28 s, plays ([0.6.5 Windows checks](#065-windows-checks)) |
 | MPC-HC | 2.8.5 (portable) | 0.6.5 | WinFsp | Works | DSF plays; audio at the sound device bit-identical to a local copy ([0.6.5 Windows checks](#065-windows-checks)) |
@@ -616,7 +616,9 @@ evidence). This is neither a pass nor a fail.
 **Partly tested.** *0.4.1-rc.1:* JRiver Media Center 36.0.38 trial (installs and runs without an account), Windows 11 build 26200, SMB 3.1.1, sacdfs 0.4.1-rc.1. Importing the share with default options found 186 audio files (7 albums, 5 artists) in 14 s (1,958 requests: 384 opens, 91 reads) with artist, album, title and track tags; artist art shows for 3 of 5 artists. A DSF starts playing (converted to PCM; the emulated sound card needed the output rate lowered from 352.8 kHz to 176.4 kHz). Not checked: seek, playing to the end, multichannel, and a quiet rescan.
 
 *0.2.0-rc.1:* untested. The trial download failed in the test script (a bad URL) and no interactive trial
-was done. It needs a manual run (JRiver Media Center 36 was the planned version).
+was done. It was run by hand later: on 0.4.1-rc.1 (above) and on 0.6.5
+([0.6.5 Windows checks](#065-windows-checks)).
+
 ## FFmpeg, sox, mediainfo, ExifTool, mpv and VLC
 
 **Tested on 0.4.1-rc.1** (the release binary; Debian 13 packages in a container with the mount's
@@ -707,8 +709,8 @@ files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network
 
 Cold-seek and read-latency figures for NFS and SMB, server-side and client-side, are in
 [performance](performance.md#client-side). The mount commands are in the
-[deployment guide](deployment.md#linux). macOS mounts are documented but have no test report
-on #82.
+[deployment guide](deployment.md#linux). macOS SMB mounts were checked in a macOS VM
+([0.6.0-rc.1 checks](#060-rc1-checks), [SMB and restarts](deployment.md#smb-and-restarts)).
 
 ## General recommendations
 

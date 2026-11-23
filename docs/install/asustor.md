@@ -158,4 +158,4 @@ In the VM, App Central's Docker package wouldn't install (`apkg --install` exite
 - **You see:** `... a sacdfs mount of this user's is still mounted there ...`. **Do this:** sacdfs already runs on that folder; `sacdfs-ctl stop` first.
 - **You see:** `Illegal instruction`. **Do this:** you used the `x86_64-v3` build on a CPU without AVX2; use the `x86_64` archive ([binary.md](binary.md#binaries)).
 
-Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
+Reports from real hardware are welcome through the [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml).
