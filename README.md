@@ -11,6 +11,8 @@
 
 sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
 player or music server. Nothing is extracted: keep the ISOs, delete the extracted copies.
+It is fast enough to play stereo and multichannel DST discs in real time on a 2011 dual-core 32-bit
+Atom D2700 NAS.
 
 ## Platforms
 
