@@ -237,7 +237,9 @@ with a line in the log.
 
 ## Windows's warning
 
-The program isn't signed yet. Windows warns only about a program that carries a browser
+The program isn't code-signed yet; it will be signed (Authenticode, through SSL.com eSigner,
+with a timestamp) once the certificate is in place, and the release notes say so for each
+release. `Get-AuthenticodeSignature sacdfs-win.exe` shows `Valid` for a signed one. Windows warns only about a program that carries a browser
 download's mark, which the steps above don't leave on it (see step 4):
 
 - Opened from Explorer, SmartScreen shows "Windows protected your PC". Run `Unblock-File` on the

@@ -8,6 +8,15 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Changed
 
+- **macOS programs signed and notarised.** From this release, `sacdfs-nfs` and `sacdfs` in the
+  macOS archives are signed with a Developer ID (hardened runtime, secure timestamp) and
+  notarised by Apple, so macOS starts them after a browser download too; the first start
+  checks with Apple online, since a bare program can't carry the ticket. The release stops
+  rather than publish them unsigned. Dry runs build and test them unsigned, named
+  `-unsigned`. The Windows program is signed once the certificate is in place: the release
+  workflow can sign it through SSL.com eSigner, switched by the repository variable
+  `WINDOWS_SIGNING` (`off` for now).
+
 - **scarletbook and scarletbook-pcm 0.7.0 (`=0.7.0`).** The release that removes the items
   0.6.0 deprecated, none of which sacdfs used
   ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.7.0)). It carries

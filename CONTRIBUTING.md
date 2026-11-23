@@ -127,6 +127,17 @@ never moved.
    nor a `release/*` branch (`.github/scripts/check-tag-reachable.sh`). A patch release cut
    from an earlier tag instead of `main` is pushed as a branch `release/X.Y.Z` first and tagged
    there.
+   **Signing:** the signing jobs read their secrets from the environment `release` (only `v*`
+   tags may use it, and its reviewer approves each run): `macos-sign` signs and notarises both
+   macOS archives (`MACOS_CERT_P12_BASE64`, `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY`,
+   `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER`, `MACOS_NOTARY_KEY_P8_BASE64`), and, when the
+   repository variable `WINDOWS_SIGNING` is `required`, `windows-sign` signs `sacdfs-win.exe`
+   through SSL.com eSigner (`ES_USERNAME`, `ES_PASSWORD`, `ES_CREDENTIAL_ID`,
+   `ES_TOTP_SECRET`). The run waits for that approval; nothing else does. A missing secret
+   stops the release before anything is published. `WINDOWS_SIGNING` is `off` (the zip is
+   published unsigned) until the certificate is in place; any value other than `off` or
+   `required` stops the run in preflight. Dry runs never sign: their macOS archives are named
+   `-unsigned`.
 6. **After:** the release has both archives with `.sha256`, `.intoto.jsonl` and
    `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
    `gh attestation verify`; the workflow's last image step has verified the image index, each
