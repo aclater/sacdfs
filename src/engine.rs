@@ -1604,8 +1604,10 @@ const BUFFERS_AT_ONCE: usize = 16;
 /// [`group_size`].
 ///
 /// *Why 6, not 8 (#493):* 6-channel DSF reads come in batches of about 150 frames, 7 per
-/// thread on 20 threads, which 8 left ungrouped; scarletbook 0.6.0 decodes a lone 6-channel
-/// frame about 11 % slower than 0.5.x. On 32 threads (4 to 5 per thread) grouping is slower:
+/// thread on 20 threads, which 8 left ungrouped; scarletbook 0.7.0 (as 0.6.2) decodes a lone
+/// 6-channel frame of a real disc about 7 % slower than 0.5.9 on an i9-13900H P-core and 1 %
+/// faster on its E-core (0.6.0 and 0.6.1: about 11 % slower on both; the P-core gap is
+/// scarletbook-rs #383). On 32 threads (4 to 5 per thread) grouping is slower:
 /// docs/design.md, "Why frames are decoded in groups".
 const GROUPS_FROM: usize = 6;
 

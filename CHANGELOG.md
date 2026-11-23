@@ -6,6 +6,20 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **scarletbook and scarletbook-pcm 0.7.0 (`=0.7.0`).** The release that removes the items
+  0.6.0 deprecated, none of which sacdfs used
+  ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.7.0)). It carries
+  0.6.2's decoder change, which brings a 6-channel DST frame decoded on its own back near 0.5.x
+  speed ([scarletbook-rs#378](https://github.com/aclater/scarletbook-rs/issues/378)). A read
+  of only a DSF file's tag no longer decodes the file's last frame
+  ([scarletbook-rs#307](https://github.com/aclater/scarletbook-rs/issues/307)). The corpus
+  files and eight real discs are byte-identical to 0.6.1's, so `DSF_VERSION` and `WAV_VERSION`
+  stay. Whole-area reads on an i9-13900H take the same time as on 0.6.2 and 2 to 12 % less
+  than on 0.5.9, on P-cores and E-cores alike
+  ([figures](docs/performance.md#by-scarletbook-release-070-596)).
+
 ### Fixed
 
 - **First start on a slow NAS right after opening the album.** On a machine that decodes slower
