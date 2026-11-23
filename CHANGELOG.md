@@ -25,7 +25,7 @@ All notable changes to sacdfs are recorded here. The format follows
 - **Short reads on a fresh mount got slower in 0.7.2 (#589).** A kept head (#456) was copied
   into a slab of heads at the read, a cost per mount and per file that long tracks hide. The
   copy now waits until the frame pool maps more than half the cache, or an idle release keeps
-  the heads. Real-disc reads are unchanged.
+  the heads. Sequential real-disc reads are unchanged.
 - **First start on a slow NAS right after opening the album.** On a machine that decodes slower
   than players' start-up bursts, listing a folder of track files now decodes the first 1.5 MiB of
   each file's audio while the mount is idle, as a probe of one file already did. A player that
