@@ -1,5 +1,5 @@
-# Fuzzing sacdfs's own parsers and paths (#161; fuzz/README.md): about 60 s per target on every
-# pull request and push to main, 20 minutes per target every week, from the corpus the last
+# Fuzzing sacdfs's own parsers and paths (#161; fuzz/README.md): about 60 s per target on pull requests that touch code the targets
+# exercise, on every push to main, 20 minutes per target every week, from the corpus the last
 # weekly run left. Not a required check: a fuzzer can find an old bug in any run, and that
 # shouldn't block an unrelated pull request. "fuzz (i686)" runs the same targets as 32-bit
 # x86 programs (#498), so that overflows of a 32-bit usize are searched for too: built for
@@ -9,7 +9,16 @@ name: fuzz
 
 on:
   pull_request:
-    paths-ignore: ["**.md"]  # not a required check: a docs-only pull request skips it
+    # Not a required check, so a path filter is fine: a pull request runs it only when something it
+    # exercises changes. Pushes to main, the nightly schedule and a release's own run are unfiltered.
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "fuzz/**"
+      - ".github/scripts/**"
+      - ".github/workflows/fuzz.yml"
   push:
     branches: [main]
   schedule:
