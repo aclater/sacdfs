@@ -27,6 +27,8 @@ jobs:
         with:
           persist-credentials: false
 
+      # The README's icon uses an absolute raw URL so it renders on package
+      # indexes; it points at this repo's own docs/assets/ and is excluded.
       # Excluded: badge images (generated on request; the Scorecard badge doesn't
       # exist before its first run), and tests/corpus/, a verbatim copy of sacd-spec's
       # corpus whose README links to files of that repository.
@@ -36,6 +38,7 @@ jobs:
             --no-progress --max-concurrency 4 --max-retries 3
             --exclude '^https://api\.scorecard\.dev/'
             --exclude '^https://img\.shields\.io/'
+            --exclude '^https://raw\.githubusercontent\.com/aclater/sacdfs/main/docs/assets/'
             --exclude-path 'tests/corpus/'
             '**/*.md'
           fail: true
