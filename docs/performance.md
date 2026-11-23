@@ -566,6 +566,30 @@ Where the time goes, for those who want to take it further:
   round, medians of 5). The kernel asks for 128 KiB at a time ([why](design.md#read-ahead)), so
   that is 25 465 round trips, each of which also copies the data into the page cache and out again.
 
+### By scarletbook release (0.7.0, #596)
+
+`cat` of a whole area out of a fresh local mount (`--no-index-cache`) to `/dev/null`, one
+reader with 1 MiB reads, sacdfs built from main with scarletbook 0.5.9, 0.6.2 and 0.7.0 (same
+compiler), the three rotated each round, 7 rounds under the benchmark lock on an Intel i9-13900H.
+P-cores: sacdfs on 12 logical CPUs (6 P-cores), the reader on another core. E-cores: sacdfs on
+2 E-cores. Medians in seconds, then the median of the per-round ratios [range]. Output
+byte-identical across the three.
+
+| Cores | Area, format | 0.5.9 | 0.6.2 | 0.7.0 | 0.7.0 / 0.5.9 | 0.7.0 / 0.6.2 |
+|---|---|---|---|---|---|---|
+| P | DST stereo, DSF | 16.50 | 14.45 | 14.49 | 0.878 [0.876-0.879] | 1.002 [0.998-1.007] |
+| P | DST stereo, WAV | 20.10 | 17.93 | 17.93 | 0.891 [0.890-0.894] | 0.999 [0.995-1.002] |
+| P | DST 6 ch., DSF | 12.43 | 11.74 | 11.76 | 0.948 [0.942-0.948] | 1.001 [0.995-1.004] |
+| P | DST 6 ch., WAV | 16.20 | 15.52 | 15.53 | 0.958 [0.956-0.961] | 1.001 [0.998-1.004] |
+| E | DST stereo, DSF | 92.64 | 87.80 | 87.83 | 0.947 [0.940-0.955] | 1.001 [0.994-1.012] |
+| E | DST stereo, WAV | 114.69 | 109.30 | 109.56 | 0.956 [0.952-0.957] | 1.002 [1.000-1.005] |
+| E | DST 6 ch., DSF | 78.42 | 77.00 | 76.72 | 0.978 [0.956-0.988] | 0.994 [0.991-1.006] |
+| E | DST 6 ch., WAV | 98.78 | 97.49 | 97.41 | 0.984 [0.951-0.989] | 0.997 [0.993-1.001] |
+
+0.7.0 reads as fast as 0.6.2 (within 0.6 %) and 2 to 12 % faster than 0.5.9. 0.6.1, in an
+earlier run of 1 to 3 rounds on the same machine, was within 0.6 % of 0.6.2 too: the lone
+6-channel frame that 0.6.2 sped up (scarletbook-rs #378) is too rare in a whole-area read to show.
+
 ## Converter throughput
 
 Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (0.5.3); the figures of

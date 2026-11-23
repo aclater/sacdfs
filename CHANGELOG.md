@@ -16,7 +16,9 @@ All notable changes to sacdfs are recorded here. The format follows
   of only a DSF file's tag no longer decodes the file's last frame
   ([scarletbook-rs#307](https://github.com/aclater/scarletbook-rs/issues/307)). The corpus
   files and eight real discs are byte-identical to 0.6.1's, so `DSF_VERSION` and `WAV_VERSION`
-  stay.
+  stay. Whole-area reads on an i9-13900H take the same time as on 0.6.2 and 2 to 12 % less
+  than on 0.5.9, on P-cores and E-cores alike
+  ([figures](docs/performance.md#by-scarletbook-release-070-596)).
 
 ### Fixed
 
