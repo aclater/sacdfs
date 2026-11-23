@@ -130,6 +130,14 @@ overflow-checks = true
 [profile.release.package.scarletbook]
 codegen-units = 1
 
+# TEMPORARY, until the pin moves to dsd2pcm 0.1.3 (#599): dsd2pcm 0.1.1's kernels run about 25 %
+# slower in this profile (16 codegen units, no LTO, overflow checks) than in their own, and plain
+# DSD WAV reads were up to 11 % slower than on scarletbook-pcm. 0.1.3 makes the kernels
+# independent of the profile; then this goes. sacdfs's own overflow-check policy is unchanged.
+[profile.release.package.dsd2pcm]
+codegen-units = 1
+overflow-checks = false
+
 # DST decoding in unoptimised test builds is slow.
 [profile.test]
 opt-level = 2
