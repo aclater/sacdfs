@@ -164,7 +164,9 @@ fn listed_frames_stay_within_the_area() {
             }
             let area = &f.disc.toc().areas[f.area];
             let sectors = sacdfs::area_data::data_sectors(&f.disc, area);
-            let bound = sacdfs::track_ranges::capacity(area, sectors).min(u64::from(area.playtime_frames()));
+            let bound = scarletbook::audio::area_capacity(area, sectors)
+                .capacity
+                .min(u64::from(area.playtime_frames()));
             let e = totals.entry((f.disc.path.clone(), f.area)).or_insert((0, bound));
             e.0 += u64::from(f.layout.frames);
         }
@@ -239,4 +241,62 @@ fn a_large_hole_is_looked_for() {
     // As padded to 8 MiB with a hole: the hole is at least 8 MiB less the copy's size.
     let padded = (8 << 20) / stored;
     assert!(!sacdfs::area_data::holes_cannot_matter(stereo, padded, stored, (8 << 20) - size));
+}
+
+/// The library's area capacity (#595) is what sacdfs's own check was: the sectors an area
+/// has in the image, at 7 frames a sector. The old formula is kept here as the reference,
+/// and compared on every area of every corpus image at its own sector count, at the
+/// counts a truncated, hole-trimmed or padded image gives around the area's edges, and
+/// through `scarletbook::Disc::area_capacity` on the opened image.
+#[test]
+fn library_area_capacity_matches_the_old_check() {
+    use scarletbook::audio::{FRAMES_PER_SECTOR, area_capacity, audio_sector_range};
+    let old = |area: &scarletbook::Area, n: u64| {
+        let (start, end) = audio_sector_range(area, n);
+        end.saturating_sub(start).saturating_mul(FRAMES_PER_SECTOR)
+    };
+    let mut areas = 0;
+    for entry in fs::read_dir(corpus().join("images")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "iso") {
+            continue;
+        }
+        let Ok(disc) = sacdfs::disc::Disc::open_with(&path, 1, Tuning::default(), None) else { continue };
+        let toc = disc.toc();
+        let lib = scarletbook::Disc::open(fs::File::open(&path).unwrap()).unwrap();
+        for area in &toc.areas {
+            let (start, end) = audio_sector_range(area, toc.sectors);
+            let counts = [
+                0,
+                1,
+                start.saturating_sub(1),
+                start,
+                start + 1,
+                (start + end) / 2,
+                end.saturating_sub(1),
+                end,
+                end + 1,
+                toc.sectors,
+                toc.sectors + 1,
+                u64::from(u32::MAX),
+                u64::MAX / 2,
+            ];
+            for n in counts {
+                assert_eq!(
+                    area_capacity(area, n).capacity,
+                    old(area, n),
+                    "{path:?} {} at {n} sectors",
+                    area.slot
+                );
+            }
+            assert_eq!(
+                lib.area_capacity(area.slot).unwrap().capacity,
+                old(area, toc.sectors),
+                "{path:?} {}",
+                area.slot
+            );
+            areas += 1;
+        }
+    }
+    assert!(areas > 100, "{areas} areas");
 }

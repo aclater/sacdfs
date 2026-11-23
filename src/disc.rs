@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use scarletbook::audio::{FRAMES_PER_SECTOR, audio_sector_range};
+use scarletbook::audio::audio_sector_range;
 use scarletbook::{
     AreaIndex, FrameContent, Image, IndexOptions, ReadAt, ReadAtReader, SeekPolicy, Slot, Speculation,
     SpeculativeOptions, Toc, TrackCursor,
@@ -406,7 +406,8 @@ impl Disc {
             .iter()
             .map(|a| {
                 let (start_lsn, end_lsn) = audio_sector_range(a, sectors);
-                let capacity = end_lsn.saturating_sub(start_lsn).saturating_mul(FRAMES_PER_SECTOR);
+                // What the area's audio sectors in the image can hold (#595): the library's rule.
+                let capacity = lib.area_capacity(a.slot).map_or(0, |c| c.capacity);
                 let per_frame = FRAME_BYTES_PER_CHANNEL * u64::from(a.channel_count.max(1));
                 AreaState {
                     slot: a.slot,
