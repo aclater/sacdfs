@@ -2,7 +2,8 @@
 # docs-check.yml's offline job). Weekly, where a failure fails the run and opens an issue
 # (links rot without a change here), and on pull requests that touch Markdown, where it only
 # reports: github.com answers checks from Actions with 429 or 503 often enough to fail
-# unrelated pull requests even with retries and the token.
+# unrelated pull requests even with retries and the token. 429 and 503 are accepted once the
+# retries are used up: they say the server is throttling or down, not that the link is broken.
 
 name: docs-links
 
@@ -41,6 +42,7 @@ jobs:
         with:
           args: >-
             --no-progress --max-concurrency 4 --max-retries 6 --retry-wait-time 10
+            --accept '100..=103,200..=299,429,503'
             --exclude '^https://api\.scorecard\.dev/'
             --exclude '^https://img\.shields\.io/'
             --exclude '^https://raw\.githubusercontent\.com/aclater/sacdfs/main/docs/assets/'
