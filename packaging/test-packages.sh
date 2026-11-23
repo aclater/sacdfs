@@ -34,8 +34,8 @@ else
     pkg_remove() { apt-get remove -y -q sacdfs >/dev/null; }
     pkg_purge() { apt-get purge -y -q sacdfs >/dev/null; }
     pkg_verify() { dpkg --verify sacdfs; }
-    # Minimal images (Ubuntu's) leave /usr/share/doc out; a real system installs it.
-    sed -i '\#^path-exclude=*/usr/share/doc/#d' /etc/dpkg/dpkg.cfg.d/* 2>/dev/null || :
+    # Minimal images (Ubuntu's) leave /usr/share/doc and the man pages out; a real system installs them.
+    sed -i -e '\#^path-exclude=*/usr/share/doc/#d' -e '\#^path-exclude=*/usr/share/man/#d' /etc/dpkg/dpkg.cfg.d/* 2>/dev/null || :
     step "tools and fuse3 (before the snapshot)"
     apt-get update -q >/dev/null
     apt-get install -y -q --no-install-recommends fuse3 systemd findutils diffutils procps >/dev/null
