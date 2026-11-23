@@ -34,6 +34,9 @@ All notable changes to sacdfs are recorded here. The format follows
   only the version moves. The corpus and eight real discs are byte-identical to 0.7.0's, so `DSF_VERSION` and `WAV_VERSION` stay, and whole-area reads on an i9-13900H take the same time ([figures](docs/performance.md#by-scarletbook-release-101)). `scarletbook-pcm` is outside the freeze and keeps 0.7.0; it does not
   depend on `scarletbook`, so the build holds one copy of each.
 
+- **scarletbook 1.0.2 (`=1.0.2`).** A documentation and comments release of scarletbook: no code,
+  API or ABI change, so only the version moves. The corpus is byte-identical to 1.0.1's.
+
 - **Fewer command-line options (#560).** `sacdfs --help` lists 12 options instead of 27. The
   tuning options (`--threads`, `--cache-mb`, `--listing-mb`, `--start-burst`,
   `--start-burst-secs`, `--max-open-images`, `--request-timeout`, `--stop-grace`,

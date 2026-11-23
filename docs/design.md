@@ -49,7 +49,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 1.0.1, from crates.io (`=1.0.1`)**, on main for 0.8.0; the 0.7.x releases ship 0.6.1 (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 1.0.2, from crates.io (`=1.0.2`)**, on main for 0.8.0; the 0.7.x releases ship 0.6.1 (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -81,6 +81,8 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   1.0.1: 0.7.0's code under the 1.0 version (1.0.0), released again so that `scarletbook-ffi`
   reaches crates.io; no API change, so only the version moves; *why:* same rule, and from 1.0
   the API follows Semantic Versioning, so later pins are less likely to need a port; bytes
+  unchanged, gated as above.
+  1.0.2: documentation and comments only, no code, API or ABI change; *why:* same rule; bytes
   unchanged, gated as above. `scarletbook-pcm` stays at `=0.7.0`: it is outside the 1.0 freeze,
   is being deprecated, and does not depend on `scarletbook`, so there is one copy of each.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)

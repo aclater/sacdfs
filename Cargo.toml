@@ -23,7 +23,7 @@ include = [
 [dependencies]
 # The engine: SACD parsing, demultiplexing and DST decoding, from crates.io, pinned exactly
 # (published from the release tag).
-scarletbook = "=1.0.1"
+scarletbook = "=1.0.2"
 # The DSD-to-PCM converter behind the WAV files (#84); outside the 1.0 freeze, so it keeps 0.7.0.
 scarletbook-pcm = "=0.7.0"
 clap = { version = "4.5", features = ["derive"] }
