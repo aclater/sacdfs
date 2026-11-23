@@ -7,7 +7,7 @@ every disc is there, with tags, without extracting anything first.
 
 This page describes the design as it is, and why each part is the way it is. The project's
 decisions across its repositories, one line each with where they are recorded, are in the
-[decision log](https://github.com/aclater/sacd/blob/main/DECISIONS.md). Measurements are in
+[decision log](https://github.com/aclater/dsd-toolbox/blob/main/DECISIONS.md). Measurements are in
 [performance.md](performance.md), the converter's quality in [pcm-quality.md](pcm-quality.md).
 
 ## Goals
@@ -34,7 +34,7 @@ decisions across its repositories, one line each with where they are recorded, a
 Not goals: writing, DSDIFF (DFF) output, FLAC output (deferred, #10), DoP, the 48 kHz PCM
 family, PS3 network sources. macOS and Windows were not goals at first and read the files over SMB
 or NFS from the [container](deployment.md); #22 then added native front ends: Windows (WinFsp)
-in releases since 0.6.5, macOS (local NFS) from source until #420
+and macOS (local NFS, `sacdfs-nfs`, #420), both in releases since 0.6.5
 ([the core and its front ends](#the-core-and-its-front-ends-22-piece-a)). The plan for PCM output, and every decision
 behind it, is in #11.
 
@@ -42,13 +42,12 @@ behind it, is in #11.
 
 All SACD parsing and DST decoding comes from
 [scarletbook](https://github.com/aclater/scarletbook-rs), the clean-room Rust library
-(MIT OR Apache-2.0), used through its public API as a pinned git dependency until it is
-published on crates.io. sacdfs adds no SACD format knowledge of its own beyond what that
+(MIT OR Apache-2.0), used through its public API, from crates.io, pinned exactly (below). sacdfs adds no SACD format knowledge of its own beyond what that
 API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), seeking and frame
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.7.0, from crates.io (`=0.7.0`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.7.0, from crates.io (`=0.7.0`)**, on main for 0.8.0; the 0.7.x releases ship 0.6.1 (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -3376,8 +3375,8 @@ the owner's NAS already used.
   last block and every channel count 1 to 6), name sanitising; proptest of the offset
   mapping. Fuzzing the image layer's parsers is scarletbook's job.
 - **Fuzzing (#161).** `fuzz/` has cargo-fuzz targets for what sacdfs adds on top of the
-  library: tags files, sidecar paths, names, the tag and header writers, the tree, and the
-  `verify` readers, and the audio read path (`read_path`, #390); fuzz/README.md lists them.
+  library: tags files, sidecar paths, names, disc text, the tag and header writers, the tree, the
+  `verify` readers and reports, MusicBrainz responses, the NFS server's decoding (`nfs_rpc`), and the audio read path (`read_path`, #390); fuzz/README.md lists them.
   They check more than "no panic": a name the kernel accepts, a tag with its true size,
   nothing read from outside SOURCE. `read_path` damages a corpus image (plain DSD or DST, each
   sector size), reads its DSF and WAV files at offsets and lengths from the input, on readers
@@ -3596,8 +3595,9 @@ each tool is in [development.md](development.md).
   than a fixed ceiling:* the frame cache and malloc's arenas fill during the warm-up. After
   it, what counts is the level staying within the cache cap plus noise, and the trend of the
   second half staying near zero.
-- **Why memcheck, not LeakSanitizer.** There is no C code in the graph (sacdfs and
-  scarletbook are pure Rust), so there is no C boundary to instrument. Rust's LeakSanitizer
+- **Why memcheck, not LeakSanitizer.** sacdfs and scarletbook are pure Rust (the only C
+  in the graph is `ring`'s cryptography, under rustls for `sacdfs tags fetch`), so there is no C
+  boundary of ours to instrument. Rust's LeakSanitizer
   needs a nightly compiler, and clang's `-shared-libasan` route does not instrument Rust.
   memcheck works with the stable toolchain and follows child processes.
 - **Found: every WAV file's header was kept whole in memory**, 256 KiB per listed WAV file,
@@ -3617,15 +3617,15 @@ each tool is in [development.md](development.md).
 
 ### Oldest distributions (#58)
 
-*Why:* the install docs ([binary.md](install/binary.md#binaries)) promise RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29, but CI tests only
+*Why:* the install docs ([binary.md](install/binary.md#binaries)) promised RHEL 8, Debian 10, Ubuntu 20.04 and Fedora 29 for the 0.4.1 builds (glibc 2.28), but CI tests only
 a current runner (`fusermount3` 3.18, a current kernel), and the reviewed changelogs of other
 FUSE projects show `fusermount3` behaviour changing across libfuse versions (3.0 renamed
 the helpers and dropped `nonempty`; 3.15 stopped silently accepting unsupported options),
 and kernels before 4.20 have neither `FOPEN_CACHE_DIR` nor `max_pages`. A glibc check alone
 shows that the binary loads, not that it mounts.
 
-*How:* the generic x86-64 release build (built on UBI 8 like `release.yml`, `-C
-target-cpu=x86-64`), in a fresh VM of each distribution's last point release, from its
+*How:* the generic x86-64 release build (built on UBI 8, as `release.yml` built it before
+the glibc 2.17 builds of #244, `-C target-cpu=x86-64`), in a fresh VM of each distribution's last point release, from its
 cloud image, as an ordinary user with the distribution's own `fuse3` package and its stock
 kernel. The source is a real hybrid disc image, attached read-only. Per distribution:
 

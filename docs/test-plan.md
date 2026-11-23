@@ -59,8 +59,8 @@ clients that keep retrying, which could use every read thread of the mount up to
 (`retrying_clients_of_a_stalled_image_leave_threads_to_the_others`); a soak pass says nothing
 about it.
 
-**Status of this rule.** It is new in this revision and has not been applied to a release yet:
-its first use is the decision on the 0.4.1 final, where it is untested as a process.
+**Status of this rule.** It was new for the decision on the 0.4.1 final, and the gates since record
+the diff and the decision (for example [0.7.0](#results-070-gate)).
 
 **Goals, not results.** The tables and lists on this page that say what is tested, on what, and how
 (libraries, tiers, behaviours, protocols, install channels) are goals. Only the cells headed "Result"
@@ -107,8 +107,8 @@ otherwise stated as untested.
 | FFmpeg, sox, mediainfo, ExifTool, mpv, VLC | 2 | Mount and shares | Script: tags, duration, format, seek | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
 | foobar2000 | 2 | SMB 3 | Windows VM | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
-| Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | **Never** | Never run | Not run on 0.5.0 |
-| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; no macOS results are in clients.md; Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/aclater/sacdfs/issues/204) and [#205](https://github.com/aclater/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks | Not run on 0.5.0 |
+| Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | Kodi 21.3 on main (November 2026), Windows WinFsp and SMB; Gerbera and Strawberry **never** | Never run | Not run on 0.5.0 |
+| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; macOS 27.2 VM results in clients.md since: SMB on 0.6.0-rc.1, media servers on main (November 2026); Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/aclater/sacdfs/issues/204) and [#205](https://github.com/aclater/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks | Not run on 0.5.0 |
 | Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Never run | Not run on 0.5.0 |
 | Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Never run | Not run on 0.5.0 |
 

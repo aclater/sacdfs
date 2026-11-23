@@ -130,5 +130,5 @@ ls /volume1/sacd
 - **You see:** `Illegal instruction`. **Do this:** you used the `x86_64-v3` build on a CPU without AVX2; use the `x86_64` archive ([binary.md](binary.md#binaries)).
 - **The unit, step by step, and what it does when sacdfs crashes:** [nas-binary.md](nas-binary.md#start-at-boot-and-stop-safely).
 
-Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
+Reports from real hardware are welcome through the [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml).
 

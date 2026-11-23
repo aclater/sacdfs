@@ -5,7 +5,8 @@ you can open with any player. About 10 minutes. On a NAS you reach over SSH, use
 [the NAS steps](nas-binary.md) instead. To share the discs with other computers, use
 [Docker or Podman](docker-podman.md).
 
-Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3). See [Details](#details).
+Checked on sacdfs 0.6.0 on Fedora 45 (a normal user, FUSE 3), and steps 2 to 6 again on 0.7.2.
+See [Details](#details).
 
 ## What you need
 
@@ -194,5 +195,7 @@ packages, installs a working `sacdfs`. Running the tests: [CONTRIBUTING.md](../.
 
 0.6.0 release archive, steps 1 to 6 as written, as a normal user on Fedora 45 (FUSE 3.18):
 checksum `OK`, `--version` printed `sacdfs 0.6.0`, 22 of 22 files of two test images identical to a
-reference. Not checked on 0.6.0: aarch64, the `x86_64-v3` build, `cargo install`, and other
+reference. 0.7.2 release archive (x86_64), steps 2 to 6 on Fedora 45 as a normal user: checksum `OK`,
+`--version` printed `sacdfs 0.7.2`, the test corpus (455 DSF and 455 WAV files) listed, one disc's files
+identical to those served by the 0.7.2 container. Not checked on 0.6.0: aarch64, the `x86_64-v3` build, `cargo install`, and other
 distributions. Options: [options.md](../options.md).

@@ -82,8 +82,8 @@ after the share test (SMB and NFS) passed on that very image, on a native runner
 architecture:
 
 ```sh
-docker pull ghcr.io/aclater/sacdfs:0.3.0       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.3.0 -R aclater/sacdfs
+docker pull ghcr.io/aclater/sacdfs:0.7.2       # a release; :latest is the newest
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 -R aclater/sacdfs
 ```
 
 The attestation shows which commit and workflow built it. In the commands below, use
@@ -1025,7 +1025,7 @@ The names of screens and fields may differ between releases.
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.3.0
+       image: ghcr.io/aclater/sacdfs:0.7.2
        restart: unless-stopped
        devices:
          - /dev/fuse
@@ -1247,7 +1247,7 @@ player wait for sacdfs's health check:
 ```yaml
 services:
   sacdfs:
-    image: ghcr.io/aclater/sacdfs:0.5.0
+    image: ghcr.io/aclater/sacdfs:0.7.2
     # needed with 0.4.1 and earlier images only (0.5.0 makes /srv/sacd itself); or make sacd in the host directory first
     entrypoint: ["bash", "-c", "mkdir -p /srv/sacd 2>/dev/null; exec /usr/local/bin/entrypoint.sh"]
     restart: unless-stopped
@@ -1400,8 +1400,8 @@ copies as one album: merged, with each track up to four times, or as two albums 
 name. So sacdfs adds ` (Multichannel)` to the album tag of the multichannel files by default
 (DSF and WAV; stereo files are unchanged), and the servers list two albums. Set
 `SACDFS_MC_ALBUM_SUFFIX: "0"` to keep the disc's album name; then rescan, since the files'
-modification times do not move when you switch. Changing this release's tags moved the files'
-mtimes and NFS generations once (output versions DSF 3, WAV 4), so servers rescan them.
+modification times do not move when you switch. When 0.2.0 introduced the suffix, the files'
+mtimes and NFS generations moved once, so servers rescanned them.
 
 **Plex: turn on "Prefer local metadata".** Plex keeps the two copies as two albums, since they
 are in different folders, but its default music agent (Plex Music) replaces each album's title
@@ -1499,7 +1499,7 @@ see [Players on the same host](#players-on-the-same-host-no-smb-hop).
   accents while the macOS client has that folder's listing cached, and works otherwise. The
   server is not asked, so no sacdfs or Samba setting changes it. In `~/Library/Preferences/nsmb.conf`,
   `[default]` with `dir_cache_off=yes` turned the client's folder cache off, and every name
-  then opened by both spellings (357 of 357, on macOS 27.2 in a VM, not on Apple hardware or
+  then opened by both spellings (357 of 357, on macOS 27.2 in a VM on Apple hardware, not on a physical Mac or
   other macOS versions). Walking 13,547 entries took the same time (17 s); a second walk is no
   longer served from the cache (5 s with it). Not run: Finder, NFS, other macOS releases
   (#308).
