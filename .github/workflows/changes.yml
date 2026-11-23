@@ -7,9 +7,11 @@
 #
 # Besides `code`, three more answers let the workflows with heavy jobs skip them on a pull request
 # that cannot affect them (same rule: a job skipped by its `if` reports success):
-#   rust       'false' unless the pull request touches Rust source, tests, manifests, scripts, the
-#              Windows front end, the fuzz targets or anything under .github (coverage, nfs export)
-#   container  'rust', or the Containerfile, deploy/ or packaging/ (the container image checks)
+#   rust       'false' only when every changed file is documentation, a licence, an issue template,
+#              dependabot.yml, the Containerfile, deploy/ or packaging/ (coverage, nfs export);
+#              any other path counts as Rust input
+#   container  'false' only when every changed file is documentation, a licence, an issue template
+#              or dependabot.yml
 #   workflows  'false' unless the pull request touches .github (CodeQL's `actions` analysis)
 # All are 'true' for every event but a pull request, and when the answer is missing.
 #
@@ -70,10 +72,12 @@ jobs:
                   *.md) ;;
                   *) code=true ;;
                 esac
+                # An ignore list, so a path nobody listed (a new crate directory, .cargo/config.toml,
+                # rust-toolchain.toml) counts as Rust and container input.
                 case "$f" in
-                  src/*|tests/*|benches/*|examples/*|scripts/*|winfsp/*|fuzz/*|.github/*) rust=true container=true ;;
-                  Cargo.toml|Cargo.lock|build.rs|clippy.toml|rustfmt.toml|deny.toml|ruff.toml) rust=true container=true ;;
+                  *.md|docs/*|COPYING|.github/ISSUE_TEMPLATE/*|.github/dependabot.yml) ;;
                   Containerfile|deploy/*|packaging/*) container=true ;;
+                  *) rust=true container=true ;;
                 esac
                 case "$f" in
                   .github/*) workflows=true ;;
