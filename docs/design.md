@@ -478,7 +478,7 @@ a damaged disc change nothing.
   most about 4.6 times the image's size for stereo (a 9408-byte frame per 2048-byte
   sector), 13.8 times for 6 channels, and WAV files at 176.4 kHz about 1.5 times that. A
   hole of any size is found where the file system reports it.
-- *Cost (harrison, `performance` profile, warm cache, 30 runs):* the whole corpus lists in
+- *Cost (Ryzen AI Max+ 395, `performance` profile, warm cache, 30 runs):* the whole corpus lists in
   5.7 ms before and after. A 4 GiB image on btrfs with zstd compression (128 KiB extents)
   takes 0.8 ms to list against 0.1 ms, nearly all of it the one `SEEK_HOLE` call walking
   the extents; a 400 MB image with written zeros, which is sampled, 0.2 ms against 0.1 ms.

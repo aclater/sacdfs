@@ -217,12 +217,15 @@ Run on the release they describe, following the docs as written, in a clean envi
   image. arm64 runs natively under CI only: there is no arm64 NAS to test on, and the docs say so;
   on an x86-64 host with `qemu-user` binfmt, `podman run --platform linux/arm64` can start the
   arm64 image for a smoke test of SMB.
-- **crates.io:** `cargo install --locked sacdfs` in a clean container. 0.4.1 is the first release
-  published by the workflow rather than by hand, so also confirm the published version and its
-  source.
+- **crates.io:** `cargo install --locked sacdfs` in a clean container; confirm the published
+  version and its source. The release workflow publishes every final version (0.4.0 was
+  published by hand, 0.4.1 to 0.7.2 by the workflow).
 - **NAS guides:** TrueNAS SCALE (the catalog app from Apps, Discover Apps, once the catalog
-  carries the release, and the YAML) and OpenMediaVault are re-run. Synology, QNAP, Unraid and UGOS stay
-  marked "not yet validated" until someone runs them on that system.
+  carries the release, and the YAML) and OpenMediaVault are re-run. Each other guide says at
+  its top what it was checked on, and stays that way until it is re-run: Synology (DSM 7.4.1)
+  and QNAP (QuTScloud 5.2.9) on 0.6.0 in VMs, not on vendor hardware; UGOS Pro on 0.6.0 only on
+  a Linux system with UGREEN's kernel in a VM; Unraid not tested. Steps not run are marked
+  *(untested)*.
 - **fstab and systemd** recipes in a VM.
 
 ## Upgrade and rollback
