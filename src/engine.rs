@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 use std::io;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -74,7 +74,7 @@ pub struct FrameBuf {
 }
 
 enum Home {
-    Slab { pool: Arc<Pool>, slab: u32, slot: u32 },
+    Slab { pool: Arc<Pool>, slab: u32, slot: u32, head: bool },
     Heap(#[allow(dead_code)] Box<[u8]>),
 }
 
@@ -128,7 +128,7 @@ impl FrameBuf {
 
 impl Drop for FrameBuf {
     fn drop(&mut self) {
-        if let Home::Slab { pool, slab, slot } = &self.home {
+        if let Home::Slab { pool, slab, slot, .. } = &self.home {
             pool.release(*slab, *slot);
         }
     }
@@ -338,7 +338,11 @@ impl Pool {
                 v.retain(|&x| x != id);
             }
         }
-        Some(FrameBuf { ptr, len, home: Home::Slab { pool: Arc::clone(self), slab: id, slot } })
+        Some(FrameBuf {
+            ptr,
+            len,
+            home: Home::Slab { pool: Arc::clone(self), slab: id, slot, head: head.is_some() },
+        })
     }
 
     fn release(&self, slab: u32, slot: u32) {
@@ -451,6 +455,10 @@ fn heads_cap(cap: usize) -> usize {
     cap / 2
 }
 
+/// While the pool maps at most a `STAGE_BELOW`th of the cap, kept heads stay where they were
+/// decoded ([`FrameCache::keep`]).
+const STAGE_BELOW: usize = 2;
+
 /// How long after a read for throughput ([`FrameCache::note_bulk`]) no heads are kept.
 const BULK_HOLD: Duration = Duration::from_secs(10);
 
@@ -476,6 +484,9 @@ pub struct FrameCache {
     released: AtomicU64,
     /// When a reader last read for throughput, in ms since `epoch` plus one (0: never).
     bulk: AtomicU64,
+    /// Bytes of kept heads still in slabs shared with other frames ([`FrameCache::keep`] copies
+    /// them to slabs of heads later, [`FrameCache::move_staged`]).
+    staged: AtomicUsize,
     epoch: Instant,
 }
 
@@ -500,6 +511,7 @@ impl FrameCache {
             used: AtomicU64::new(0),
             released: AtomicU64::new(u64::MAX),
             bulk: AtomicU64::new(0),
+            staged: AtomicUsize::new(0),
             epoch: Instant::now(),
         }
     }
@@ -514,6 +526,10 @@ impl FrameCache {
     /// every new frame, so on Windows no read-ahead survived to be read.
     fn buffers(&self, len: usize, n: usize) -> Vec<FrameBuf> {
         let mut out = Vec::with_capacity(n);
+        // Heads kept in shared slabs go to slabs of their own before the pool fills.
+        if self.staged.load(Ordering::Relaxed) > 0 && self.pool.mapped() > self.cap / STAGE_BELOW {
+            self.move_staged();
+        }
         while cfg!(unix) && self.cap > 0 && out.len() < n {
             self.pool.alloc_into(len, n, &mut out);
             if out.len() >= n {
@@ -588,6 +604,9 @@ impl FrameCache {
             return false;
         }
         let budget = heads_cap(self.cap).min(IDLE_HEADS);
+        if self.staged.load(Ordering::Relaxed) > 0 {
+            self.move_staged();
+        }
         let frames: Vec<Arc<Frame>> = {
             let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
             // The most recently read first, within the budget.
@@ -645,7 +664,14 @@ impl FrameCache {
                 // A frame in a slab is copied into a slab of heads (`Pool::alloc_head`), or
                 // without one stays among the other frames; one on the heap (past the pool, or
                 // without mappings: Windows) pins no slab, and moves.
-                let f = if matches!(f.data.home, Home::Slab { .. }) {
+                let shared = matches!(f.data.home, Home::Slab { head: false, .. });
+                let f = if shared && self.pool.mapped() <= self.cap / STAGE_BELOW {
+                    // Not yet: while the pool is mostly empty a head does not hold a slab others
+                    // need, and a mount that reads a few files never needs the copy
+                    // ([`FrameCache::move_staged`], #589).
+                    self.staged.fetch_add(f.data.len(), Ordering::Relaxed);
+                    f.clone()
+                } else if shared {
                     let Some(mut b) = self.pool.alloc_head(f.data.len(), room) else {
                         continue;
                     };
@@ -673,6 +699,47 @@ impl FrameCache {
         Self::shrink_heads(&mut g, room);
         drop(g);
         drop(copied);
+    }
+
+    /// Copies the heads that [`FrameCache::keep`] left in slabs shared with other frames into
+    /// slabs of heads, a few at a time so that readers wait little for the cache; a head that
+    /// finds no room goes back among the other frames.
+    fn move_staged(&self) {
+        self.staged.swap(0, Ordering::Relaxed);
+        let keys: Vec<Key> = {
+            let g = self.lock();
+            g.heads
+                .iter()
+                .filter(|(_, f)| matches!(f.data.home, Home::Slab { head: false, .. }))
+                .map(|(k, _)| *k)
+                .collect()
+        };
+        for chunk in keys.chunks(16) {
+            let room = self.heads_room();
+            let mut g = self.lock();
+            let mut old = Vec::new();
+            for k in chunk {
+                let Some(f) =
+                    g.heads.peek(k).filter(|f| matches!(f.data.home, Home::Slab { head: false, .. }))
+                else {
+                    continue;
+                };
+                let f = f.clone();
+                if let Some(mut b) = self.pool.alloc_head(f.data.len(), room) {
+                    b.copy_from_slice(&f.data);
+                    let moved = Arc::new(Frame { data: b, fill: f.fill, clips: f.clips });
+                    if let Some(slot) = g.heads.peek_mut(k) {
+                        old.push(std::mem::replace(slot, moved));
+                    }
+                } else if let Some(f) = g.heads.pop(k) {
+                    g.head_bytes -= f.data.len();
+                    g.lru.put(*k, f);
+                    g.lru.demote(k);
+                }
+            }
+            drop(g);
+            drop(old);
+        }
     }
 
     /// Puts the least recently read heads back among the other frames, as the first to be
@@ -2012,6 +2079,31 @@ mod tests {
         assert!(c.mapped() <= 8 << 20);
         // Heads make room among heads only, within half the cache.
         assert!(c.pool.lock().head_mapped <= heads_cap(8 << 20));
+    }
+
+    /// A few kept heads in a mostly empty pool are not copied (#589); they move to slabs of
+    /// heads when the pool fills, and stay cached.
+    #[cfg(unix)]
+    #[test]
+    fn heads_kept_in_an_empty_pool_move_when_it_fills() {
+        let (two, six) = (9408, 28224);
+        let c = FrameCache::new(8 << 20);
+        let frame_of =
+            |c: &FrameCache, len: usize| Arc::new(Frame { data: c.buffer(len), fill: Fill::Audio, clips: 0 });
+        for i in 0..20 {
+            c.insert(key(i), frame_of(&c, two));
+        }
+        c.keep((0..20).map(key));
+        assert_eq!(c.pool.lock().head_mapped, 0, "copied at once");
+        assert_eq!(c.lock().head_bytes, 20 * two);
+        // Fill the pool past half with other frames: the heads move.
+        for i in 1000..1400 {
+            c.insert(key(i), frame_of(&c, six));
+        }
+        assert!(c.pool.lock().head_mapped > 0, "never moved");
+        assert!(c.lock().heads.iter().all(|(_, f)| matches!(f.data.home, Home::Slab { head: true, .. })));
+        assert!((0..20).all(|i| c.get(&key(i)).is_some()), "kept heads evicted");
+        assert!(c.mapped() <= 8 << 20);
     }
 
     /// Within a while of a read for throughput, no heads are kept.

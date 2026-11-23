@@ -1626,7 +1626,10 @@ decoding them twice.
   heads, evicted last, held a slot in most slabs; a frame of another length (stereo against
   6-channel, DSD against PCM) then found no slab to map and evicted the read-ahead of the file
   being read, so `sha256sum` of every file of two real discs read 1.76 times the image data and
-  took twice as long (4.76 GB in 39.7 s against 2.71 GB in 19.5 s). And a reader that began at
+  took twice as long (4.76 GB in 39.7 s against 2.71 GB in 19.5 s). The copy waits until the
+  pool maps more than half the cache (or an idle release keeps the heads): before that no slab
+  is short, and a mount that reads a few small files, such as a scanner's, never pays the copy
+  (#589). It moves 16 frames at a time under the cache's lock. And a reader that began at
   the file's start and read on past its head (a copy, a checksum) puts that file's head back
   among the other frames, as the first to be evicted, and keeps no tail. *Why:* every file such a
   reader read kept its head, so half the cache held heads no one would re-read, and three such
