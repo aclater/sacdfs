@@ -273,5 +273,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           bash scripts/check-private-names.sh
+      - name: The check fails closed (scripts/test-check-private-names.sh)
+        run: bash scripts/test-check-private-names.sh
       - name: Equal copies and container hardening (.github/scripts/check-copies.sh)
         run: sh .github/scripts/check-copies.sh

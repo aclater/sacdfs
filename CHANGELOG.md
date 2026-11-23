@@ -76,6 +76,13 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ### Fixed
 
+- **The private-names CI check fails closed.** `scripts/check-private-names.sh` could pass when it
+  had found a private name, or could not search at all (more than one `xargs` batch, a
+  directory symlink or submodule, an invalid `PRIVATE_NAMES` regex, a `git log` error). It now
+  uses `git grep` and treats exit 0 as a hit, 1 as clean and anything else as a failed check;
+  an empty alternative in `PRIVATE_NAMES` is refused. `scripts/test-check-private-names.sh`
+  covers these cases in CI.
+
 - **Short reads on a fresh mount got slower in 0.7.2 (#589).** A kept head (#456) was copied
   into a slab of heads at the read, a cost per mount and per file that long tracks hide. The
   copy now waits until the frame pool maps more than half the cache, or an idle release keeps
