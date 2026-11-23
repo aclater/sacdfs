@@ -70,7 +70,9 @@ All notable changes to sacdfs are recorded here. The format follows
 - **Short reads on a fresh mount got slower in 0.7.2 (#589).** A kept head (#456) was copied
   into a slab of heads at the read, a cost per mount and per file that long tracks hide. The
   copy now waits until the frame pool maps more than half the cache, or an idle release keeps
-  the heads. Sequential real-disc reads are unchanged.
+  the heads. Sequential real-disc reads are unchanged. The rest of the slowdown, 0.05 ms per
+  mount, is the SHA-256 of the disc's TOC that detects a replaced image file (#573); it stays,
+  and is written up in docs/design.md.
 - **An image rewritten in place with another disc while mounted
   ([#588](https://github.com/aclater/sacdfs/issues/588)).** `rsync --inplace` or `dd
   conv=notrunc` over a mounted image left the old disc listed and its cached frames served until
