@@ -43,6 +43,11 @@ All notable changes to sacdfs are recorded here. The format follows
   (each within 30 s of the last), the folder must stay the last listed for 2 s, 4 s, 8 s and so
   on up to 32 s more than before it is warmed, and the count starts over after 30 s. A folder
   that stays put is warmed as before.
+- **The area capacity check is scarletbook's.** sacdfs's own copy of the rule (an area's audio
+  sectors in the image, at 7 frames a sector) is replaced by `Disc::area_capacity` and
+  `audio::area_capacity` ([#595](https://github.com/aclater/sacdfs/issues/595)). Listings are
+  unchanged: a test compares the library's figure with the old formula on every corpus area
+  at the image's own sector count and at counts around the area's edges.
 
 - **scarletbook and scarletbook-pcm 0.7.0 (`=0.7.0`).** The release that removes the items
   0.6.0 deprecated, none of which sacdfs used
