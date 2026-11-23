@@ -1754,6 +1754,14 @@ decoding them twice.
   since the mount), every file of the first listed file's area and format has its first 1.5 MiB
   of audio decoded, in order, within the same budget. A listing of another folder of track files stops it and moves it there;
   a listing of the same folder again warms it again, which costs nothing for heads still kept.
+  *Cool-down (#593):* a client that keeps switching folders would otherwise keep the CPU on heads
+  while the mount is idle. Each listing that arms the warming again (another folder, or the same
+  one after it was warmed) within 30 s of the last such listing counts as a repeat. From the
+  third arming in a run the folder must stay the last listed for the 1 s settle plus 2 s,
+  doubling at each further repeat up to 32 s; a listing more than 30 s after the last arming
+  starts the count over. So browsing a few albums costs nothing extra, while a client that
+  cycles through folders gets at most one warming per 33 s. *Why no setting:* the figures only
+  bound background work on an idle mount, and no client has needed another.
   Any read stops it as above. On a machine whose decode speed is not measured yet (no decode
   since the mount) the first batch is four frames, enough to measure it, and warming stops there
   on a machine at or above the start burst. *Why:* in the reporter's `-vv` log of a start right
