@@ -1,6 +1,10 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Any other NAS or Linux box with SSH: install sacdfs
+
 # Any other NAS or Linux box with SSH: install sacdfs
 
-sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that any player can read. This page installs the release file by hand on a NAS that has no guide of its own, or on a Linux box you reach over SSH. If your NAS has a guide ([Synology](synology.md), [QNAP](qnap.md), [ASUSTOR](asustor.md), [TerraMaster](terramaster.md), [UGREEN](ugreen-ugos.md), [ReadyNAS](readynas.md)), use that: it also starts sacdfs at boot. With a container app instead, see [docker-podman.md](docker-podman.md). About 10 minutes.
+sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that any player can read. This page installs the release file by hand on a NAS that has no guide of its own, or on a Linux box you reach over SSH. About 10 minutes.
+
+If your NAS has a guide ([Synology](synology.md), [QNAP](qnap.md), [ASUSTOR](asustor.md), [TerraMaster](terramaster.md), [UGREEN](ugreen-ugos.md), [ReadyNAS](readynas.md)), use that: it also starts sacdfs at boot. With a container app instead, see [docker-podman.md](docker-podman.md).
 
 Checked on 0.6.0 on a Linux system with UGREEN's kernel (in a VM, not on a vendor's hardware): steps 1 to 7 and 9, and the systemd lines of [Start at boot and stop safely](#start-at-boot-and-stop-safely). Step 8 (start at boot) is checked per system in the guides listed above, not here. Steps marked *(untested)* were not run.
 
@@ -173,3 +177,12 @@ The messages are as they appeared in the checks. From 0.6.0 sacdfs checks these 
 | `flag provided but not defined: -m` (TerraMaster) | On TOS, `install` is TerraMaster's own tool | Use `cp`, as in step 5 |
 | `` weak version `GLIBC_2.28' not found `` (QNAP) | sacdfs 0.4.1 or earlier | Use 0.5.0 or later |
 | `Illegal instruction` | The `x86_64-v3` build on a CPU without AVX2 | Use the `x86_64` build ([binary.md](binary.md#binaries)) |
+
+## See also
+
+- [Install guide](README.md)
+- [The installer in detail](README.md#the-installer-in-detail)
+- [Deployment reference](../deployment.md)
+- [Beta testing](../beta-testing.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

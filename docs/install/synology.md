@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Synology DSM: install sacdfs
+
 # Synology DSM: install sacdfs
 
 sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that any player can read. This page installs it from the release file and starts it by itself whenever the NAS starts. About 15 minutes.
@@ -144,3 +146,12 @@ Checked on DSM 7.4.1 (kernel 4.4) in a VM, not on Synology hardware. Storage set
 - **You see:** `Illegal instruction`. **Do this:** you used the `x86_64-v3` build on a CPU without AVX2; use the `x86_64` archive ([binary.md](binary.md#binaries)).
 
 Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
+
+## See also
+
+- [Install guide](README.md)
+- [The installer in detail](README.md#the-installer-in-detail)
+- [Deployment reference](../deployment.md)
+- [Beta testing](../beta-testing.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

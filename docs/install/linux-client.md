@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Linux: mount the sacdfs shares
+
 # Linux: mount the sacdfs shares
 
 This connects a Linux computer to a sacdfs server, so your player sees the discs as a normal
@@ -115,3 +117,11 @@ opens it. `_netdev` waits for the network.
 - Not checked: `x-systemd.automount` with NFS (SMB only), and distributions other than Fedora as clients.
 
 More about clients and other systems: [deployment guide](../deployment.md#mounting-the-shares-on-clients).
+
+## See also
+
+- [Docker or Podman](docker-podman.md)
+- [Deployment: mounting the shares](../deployment.md#mounting-the-shares-on-clients)
+- [Clients](../clients.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

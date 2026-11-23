@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Limits
+
 # Limits
 
 What sacdfs does not do, and how it behaves at the edges.
@@ -15,3 +17,11 @@ What sacdfs does not do, and how it behaves at the edges.
   converts every WAV file, so use `--format dsf` for those.
 - A damaged image shows up as missing directories or files, filled audio (with a warning in
   the log) or an I/O error on one file. It never stops the mount.
+
+## See also
+
+- [What the mount shows](layout.md)
+- [Options](options.md)
+- [Platforms](../README.md#platforms)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

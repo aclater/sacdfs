@@ -69,6 +69,8 @@ sacdfs again. No `curl`, or checking the download first: see the
 
 ## Documentation
 
+All documents: [docs/README.md](docs/README.md).
+
 - [User guide](docs/user-guide.md): tags, [MusicBrainz lookup](docs/user-guide.md#your-own-tags---tags),
   sidecar files, mounting at boot, troubleshooting
 - [Before you delete extracts](docs/user-guide.md#before-you-delete-extracts): `sacdfs verify`
@@ -77,7 +79,7 @@ sacdfs again. No `curl`, or checking the download first: see the
 - [Deployment reference](docs/deployment.md) · [small NAS sizing](docs/deployment.md#small-nas-sizing)
 - [Design](docs/design.md) · [performance](docs/performance.md) · [PCM quality](docs/pcm-quality.md)
 - [Changelog](CHANGELOG.md) · [releases](https://github.com/aclater/sacdfs/releases) ·
-  [contributing](CONTRIBUTING.md)
+  [contributing](CONTRIBUTING.md) · [releasing](docs/release.md)
 
 ## Licence and credits
 
@@ -91,3 +93,5 @@ option) any later version.
   after Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
 - The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec), is
   public domain under CC0 1.0 ([licence](tests/corpus/LICENSE)).
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

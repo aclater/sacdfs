@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Jellyfin: install sacdfs
+
 # Jellyfin: install sacdfs
 
 Jellyfin is a free media server. This guide lets it play your SACD images through sacdfs. About 15 minutes.
@@ -66,3 +68,11 @@ Open **Music** on the home page. Each disc is an album; a disc with a multichann
 ### More problems
 
 - A first scan right after Jellyfin's first start may show 0 albums if the library is added while Jellyfin's own startup scan runs. Wait until Dashboard shows no running tasks, then scan again.
+
+## See also
+
+- [Install guide: which player](README.md#3-which-player-or-music-server)
+- [Clients](../clients.md)
+- [Deployment reference](../deployment.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Lyrion Music Server (Logitech Media Server): install sacdfs
+
 # Lyrion Music Server (Logitech Media Server): install sacdfs
 
 Lyrion Music Server (LMS) streams your music to Squeezebox-type players. This guide lets it play your SACD images through sacdfs. About 15 minutes.
@@ -66,3 +68,11 @@ Open **My Music**, **Albums**. Each disc is an album; a multichannel area is its
 ### More problems
 
 - `podman stop lyrion` waited the full timeout and then killed it (Podman's warning "resorting to SIGKILL"). That is Lyrion's container, not sacdfs; add `-t 30` to `podman stop` or accept it.
+
+## See also
+
+- [Install guide: which player](README.md#3-which-player-or-music-server)
+- [Clients](../clients.md)
+- [Deployment reference](../deployment.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

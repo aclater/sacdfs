@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › MPD (and moOde, Volumio): install sacdfs
+
 # MPD (and moOde, Volumio): install sacdfs
 
 MPD is a music player that runs in the background; moOde and Volumio are built on it. This guide lets it play your SACD images through sacdfs. About 10 minutes.
@@ -82,3 +84,11 @@ Each multichannel area is its own album, "Album (Multichannel)". While a DSF tra
 ### More problems
 
 - After `mpc update` with nothing changed, MPD opened no files and took 0.07 s in the earlier tests.
+
+## See also
+
+- [Install guide: which player](README.md#3-which-player-or-music-server)
+- [Clients](../clients.md)
+- [Deployment reference](../deployment.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

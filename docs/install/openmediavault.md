@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › OpenMediaVault: install sacdfs
+
 # OpenMediaVault: install sacdfs
 
 sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that clients read over SMB or NFS. On OpenMediaVault (OMV) it runs as a container, started from OMV's Compose plugin. About 20 minutes.
@@ -46,3 +48,12 @@ Validated on OpenMediaVault 8.6 (Debian 13) in a VM, with the omv-extras Compose
 - **Why ports 10445 and 12049:** to keep clear of OMV's own SMB and NFS services; clients name them when they mount.
 - **For Roon or MPD,** set `SACDFS_FORMATS: dsf` in the file (see your server's guide).
 - **Reference:** [deployment guide](../deployment.md); the general container route is [docker-podman.md](docker-podman.md).
+
+## See also
+
+- [Install guide](README.md)
+- [The installer in detail](README.md#the-installer-in-detail)
+- [Deployment reference](../deployment.md)
+- [Beta testing](../beta-testing.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

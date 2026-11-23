@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › Install
+
 # Install sacdfs
 
 sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that players read.
@@ -190,7 +192,7 @@ again only if the installer switched it on and `autorun.sh` runs nothing else; o
 it on and says why (0.6.2's `--uninstall` always leaves it on). *(Checked on QuTScloud in a VM,
 not on the vendor's hardware.)*
 
-#### Where the files go
+### Where the files go
 
 Root runs sacdfs's files at every start, so since 0.6.4 the installer puts them where only root
 can change them, and checks that before it writes anything
@@ -287,7 +289,7 @@ stops with `wget`'s error before anything runs. BusyBox's own `wget`, on systems
 other, failed against GitHub with a TLS error in our BusyBox 1.37 test image (and it doesn't
 check the server's certificate): there this form stops with status 1. Then download
 `install.sh`, the release archive for your CPU and its `.sha256` on another computer, copy all
-three to the NAS, and run `sh install.sh --iso-dir ... --archive sacdfs-<version>-x86_64-linux.tar.gz`
+three to the NAS, and run `sh install.sh --iso-dir /volume1/music --archive sacdfs-0.7.2-x86_64-linux.tar.gz`
 (checked on 0.6.2-rc.1 in that BusyBox image).
 *(Checked on 0.6.2 as a dry run with the NAS's own `wget`, GNU Wget, on QNAP QuTScloud, Synology
 DSM, TerraMaster TOS, ReadyNAS OS, Debian 12 with UGREEN's kernel and OpenMediaVault 8, in VMs,
@@ -364,3 +366,12 @@ route with Docker on ASUSTOR ADM, in VMs: each time sacdfs came back by itself w
 Not checked: Unraid, the container route on other NAS systems (QNAP Container Station and
 Synology Container Manager don't install in the VMs), a QNAP restart, aarch64 hardware, real NAS
 hardware, and QTS or UGOS Pro themselves.
+
+## See also
+
+- [User guide](../user-guide.md)
+- [Clients](../clients.md)
+- [Deployment reference](../deployment.md)
+- [Beta testing](../beta-testing.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

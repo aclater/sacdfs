@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Docker or Podman: install sacdfs
+
 # Docker or Podman: install sacdfs
 
 This starts sacdfs in a container on a Linux computer. It shares your SACD discs over SMB and
@@ -211,3 +213,11 @@ mount again after a restart: [SMB and restarts](../deployment.md#smb-and-restart
 - **Podman warns `StopSignal SIGTERM failed to stop container ... resorting to SIGKILL`** (0.5.0 and
   earlier, when stopped within seconds of the start): fixed in 0.6.0. See the
   [stop and restart notes](../deployment.md#smb-and-restarts).
+
+## See also
+
+- [Deployment reference](../deployment.md)
+- [Linux clients](linux-client.md)
+- [Install guide](README.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

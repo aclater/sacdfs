@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › Deploying sacdfs on a NAS
+
 # Deploying sacdfs on a NAS
 
 > **Installing?** Start with the short [install guides](install/README.md): one per NAS system
@@ -1081,7 +1083,7 @@ The same YAML, without the TrueNAS paths, works on other NAS systems that run Do
 (Unraid, Synology Container Manager, OpenMediaVault), as far as they allow `/dev/fuse` and
 the capabilities.
 
-#### Roon on the same NAS
+### Roon on the same NAS
 
 Tested with Roon Server's official image (`ghcr.io/roonlabs/roonserver`) as a TrueNAS app with
 host networking, on the same NAS as sacdfs.
@@ -1457,7 +1459,7 @@ for tags, and the share setting only made its copies a little slower, so the con
 
 File managers open `smb://nas/sacd` directly.
 
-#### On other ports
+### On other ports
 
 If the container publishes other ports (TrueNAS, step 2), give them to the client:
 
@@ -2058,3 +2060,12 @@ is killed and the restart policy starts it again, without the reader being resta
 `deploy/ci-compose-test.sh` brings up `deploy/nas-compose.yaml` (the file the NAS guides use) with
 the image under test: it must be valid, healthy and open on ports 10445 and 12049, and eight stops
 2 s after a start must each exit normally in under 8 s (#283).
+
+## See also
+
+- [Install guide](install/README.md)
+- [Options](options.md)
+- [Clients](clients.md)
+- [User guide](user-guide.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

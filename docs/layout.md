@@ -1,3 +1,5 @@
+[sacdfs](../README.md) › [Documentation](README.md) › What the mount shows
+
 # What the mount shows
 
 The folders and files sacdfs shows, and what is in them. The [user guide](user-guide.md)
@@ -63,3 +65,11 @@ PCM at 176.4 kHz (or 88.2 or 352.8 kHz), band-limited to 40 kHz by default (30 k
 DSD silence comes out as digital silence ([docs/pcm-quality.md](pcm-quality.md)). Sizes are exact; listing, `stat`
 and reading a WAV file's header or tags never decode anything. Details, and how taggers and
 scanners are served: [user guide](user-guide.md#formats).
+
+## See also
+
+- [User guide](user-guide.md)
+- [Options](options.md)
+- [Limits](limits.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

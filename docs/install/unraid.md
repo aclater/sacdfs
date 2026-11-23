@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Unraid: install sacdfs
+
 # Unraid: install sacdfs
 
 sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that clients read over SMB or NFS. On Unraid it runs as a Docker container, added from a template file. About 10 minutes.
@@ -48,3 +50,12 @@ In the container's logs, *you should see* the number of image files, `mounted`, 
 - **Why not privileged:** the template passes only the device and the capabilities, not `--privileged`. Every setting is in the [deployment guide](../deployment.md).
 
 Reports are welcome through the [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml), with the system's version, how the container was started, and what worked.
+
+## See also
+
+- [Install guide](README.md)
+- [The installer in detail](README.md#the-installer-in-detail)
+- [Deployment reference](../deployment.md)
+- [Beta testing](../beta-testing.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

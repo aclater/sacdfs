@@ -1,6 +1,10 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › TrueNAS SCALE: install sacdfs
+
 # TrueNAS SCALE: install sacdfs
 
-sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that clients read over SMB or NFS. On TrueNAS SCALE, install it from the Apps screen: it is in the community train of the TrueNAS apps catalog. A custom app pasted in as YAML is the alternative, for settings the catalog form doesn't have. About 10 minutes.
+sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files that clients read over SMB or NFS. On TrueNAS SCALE, install it from the Apps screen: it is in the community train of the TrueNAS apps catalog. About 10 minutes.
+
+A custom app pasted in as YAML is the alternative, for settings the catalog form doesn't have.
 
 The catalog app was checked on 0.7.0 on TrueNAS SCALE 25.10.8, in a VM, through the API calls behind the Apps screen rather than the web screens; the YAML on 0.6.3. See [Details](#what-was-checked).
 
@@ -161,3 +165,12 @@ Open the app's Logs. *You should see* the number of image files, `mounted`, the 
 
 - **Harmless log lines:** a few NFS-Ganesha `CRIT` lines about D-Bus and `Cannot register NFS V4 on UDP`, and Samba's `parse_dfs_path_strict: Hostname <address> is not ours.` (logged when a client connects by IP address instead of by name).
 - **Another app on the same NAS can mount sacdfs through TrueNAS's "SMB share" (`cifs`) storage type on port 445 only:** that type has no port field, so it can't reach 10445. Use [TrueNAS's own SMB share](#share-through-truenass-own-smb-port-445) of sacdfs's dataset.
+
+## See also
+
+- [Install guide](README.md)
+- [The installer in detail](README.md#the-installer-in-detail)
+- [Deployment reference](../deployment.md)
+- [Beta testing](../beta-testing.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).

@@ -1,3 +1,5 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › [Install](README.md) › Roon: install sacdfs
+
 # Roon: install sacdfs
 
 Roon is a music player with its own library. This guide lets Roon Server read your SACD images from sacdfs over SMB (a Windows-style network share). About 20 minutes.
@@ -66,3 +68,11 @@ Roon's log shows `[roon/cifs] Connected`, and the albums appear as Roon imports 
 ### More problems
 
 - After upgrading sacdfs from 0.1 to 0.2, an existing Roon library saw every share track as modified once; Roon decides what to rescan from folder times ([restarts and rescans](../clients.md#restarts-and-rescans)). Moving from 0.4.0 to 0.4.1 renamed 241 tracks and added 359 `cover` images; Roon found them all.
+
+## See also
+
+- [Install guide: which player](README.md#3-which-player-or-music-server)
+- [Clients](../clients.md)
+- [Deployment reference](../deployment.md)
+
+Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
