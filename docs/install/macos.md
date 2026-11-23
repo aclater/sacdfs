@@ -11,9 +11,11 @@ Checked with the 0.7.0-rc.1 release archive for Apple Silicon on macOS 27.2 in a
 hardware, from the command line. The Intel archive was checked only by the release's own test on
 GitHub's macOS 15 (Intel) runner. See [Details](#details).
 
-The programs are not signed by a developer or notarised by Apple. Downloaded with `curl` as
-below, macOS starts them; downloaded with a browser, macOS refuses them until you take one step
-([Downloaded with a browser](#downloaded-with-a-browser)).
+From 0.8.0 the programs are signed with the project's Developer ID and notarised by Apple, so
+macOS starts them however they were downloaded; the first start checks with Apple online
+([Signing](#signing)). 0.7.2, which this guide shows, and earlier releases are not signed or
+notarised: downloaded with `curl` as below, macOS starts them; downloaded with a browser, macOS
+refuses them until you take one step ([Downloaded with a browser](#downloaded-with-a-browser)).
 
 ## What you need
 
@@ -81,8 +83,8 @@ below, macOS starts them; downloaded with a browser, macOS refuses them until yo
 
 ## Downloaded with a browser
 
-A browser marks what it downloads as quarantined, and macOS refuses to start an unsigned program
-from such a file. With both files in Downloads, check the archive and remove the mark **before
+For 0.7.2 and earlier, which are not signed. A browser marks what it downloads as quarantined,
+and macOS refuses to start an unsigned program from such a file. With both files in Downloads, check the archive and remove the mark **before
 you unpack it**:
 
 ```sh
@@ -231,9 +233,20 @@ the mount is `noexec`).
   Swinsian and others), sleep and wake (the VM without a screen doesn't sleep), a real login,
   speed against Linux on real discs, and macOS older than 15. They need a Mac with a screen and
   real discs: a VM with graphics, or a Mac set aside for tests.
-- **Signing:** the release programs are ad hoc signed by the linker only: not signed by a
-  developer and not notarised by Apple (see [design](../design.md#the-nfs-front-end-420)).
-  Built on your own Mac, the programs need no signature.
+- <a id="signing"></a>**Signing:** from 0.8.0, `sacdfs-nfs` and `sacdfs` in the release
+  archives are signed with a Developer ID Application certificate (hardened runtime, secure
+  timestamp) and notarised by Apple before they are packed; the release workflow stops rather
+  than publish them unsigned. A bare program can't carry Apple's notarisation ticket (only an
+  app, a disk image or an installer package can), so macOS checks it with Apple online the
+  first time it starts; without a network connection then, a program from a browser download
+  is refused as before. `codesign -dv --verbose=2 sacdfs-nfs` shows the signer
+  (`Authority=Developer ID Application: ...`), and
+  `codesign --verify --check-notarization -R="notarized" --verbose=2 sacdfs-nfs` checks the
+  notarisation with Apple, as the release workflow does before packing. Not yet checked on a
+  Mac with a 0.8.0 archive. 0.7.2 and earlier are ad hoc signed by the linker
+  only: not signed by a developer and not notarised (see
+  [design](../design.md#the-nfs-front-end-420)). Built on your own Mac, the programs need no
+  signature.
 
 ## See also
 

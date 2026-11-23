@@ -14,10 +14,11 @@
 #     sacdfs-<version>-x86_64-macos.tar.gz (Intel), each with sacdfs-nfs (the mount, over the
 #     Mac's own NFS client), sacdfs (verify and tags), COPYING, README.md, CHANGELOG.md and
 #     NFSSERVE-LICENSE (the vendored NFS layer's BSD-3-Clause notice), with a .sha256 checksum
-#     and an attestation. Not signed or notarised (docs/install/macos.md). Built and tested on
-#     every run, but published only when the repository variable SACDFS_MACOS_RELEASE is
-#     "true": it stays off until the NFS layer moves from the vendored copy to a maintained
-#     crate (#420). The archives of an earlier tag's run can be added to its release by hand
+#     and an attestation. From 0.8.0 both programs are signed with a Developer ID (hardened
+#     runtime, secure timestamp) and notarised by Apple (job "macos-sign", on a tag only, in the
+#     environment "release"; before 0.8.0 they were not). Built and tested unsigned on every
+#     run (named -unsigned, never published), and published only when the repository variable
+#     SACDFS_MACOS_RELEASE is "true" (#420). The archives of an earlier tag's run can be added to its release by hand
 #     (job "macos-publish", below);
 #   - the installer, install.sh (#340), with this version as its default and the SHA-256 of
 #     this release's archives built in (it checks downloads against those), also as an asset
@@ -30,7 +31,11 @@
 #   - the Windows front end (#419), sacdfs-<version>-x86_64-windows.zip: sacdfs-win.exe (static C
 #     runtime; needs WinFsp installed), COPYING, CHANGELOG.md and the Windows install guide as
 #     README.md, with a .sha256 checksum and an attestation, after the packed program served the
-#     corpus with the Linux binary's bytes (job "windows");
+#     corpus with the Linux binary's bytes (job "windows"). The repository variable
+#     WINDOWS_SIGNING says whether sacdfs-win.exe is code-signed: "off" (until the certificate
+#     is in place) publishes it unsigned, "required" signs it through SSL.com eSigner (job
+#     "windows-sign", on a tag only, in the environment "release") and fails closed without
+#     the secrets; any other value stops a tag's run in preflight;
 #   - Linux packages (#460), packed with nfpm from the x86_64 and aarch64 archives' files (the
 #     same binaries, not rebuilt; packaging/): sacdfs-<version>-1.<x86_64|aarch64>.rpm and
 #     sacdfs_<version>-1_<amd64|arm64>.deb, each with a .sha256 and an attestation, after each
@@ -160,6 +165,17 @@ jobs:
         env:
           TAG_SHA: ${{ github.sha }}
         run: sh .github/scripts/check-tag-reachable.sh "$TAG_SHA"
+      # Windows code signing is either deliberately off or required; nothing in between.
+      - name: WINDOWS_SIGNING is off or required
+        if: github.ref_type == 'tag'
+        env:
+          WINDOWS_SIGNING: ${{ vars.WINDOWS_SIGNING }}
+        run: |
+          case "$WINDOWS_SIGNING" in
+            required) echo "Windows: sacdfs-win.exe is signed (job windows-sign)" ;;
+            off) echo "::warning::WINDOWS_SIGNING is off: the Windows zip is published unsigned" ;;
+            *) echo "::error::the repository variable WINDOWS_SIGNING must be off or required, not '$WINDOWS_SIGNING'"; exit 1 ;;
+          esac
       - name: Release notes from CHANGELOG.md
         env:
           REF_TYPE: ${{ github.ref_type }}
@@ -478,9 +494,10 @@ jobs:
         run: |
           cargo build --release --locked --features nfs --bins
           cargo test --release --locked --features nfs
-      - name: Package
+      # Unsigned, and named so: only job "macos-sign" makes the archives a release publishes.
+      - name: Package (unsigned)
         run: |
-          pkg="sacdfs-$VERSION-$NAME-macos"
+          pkg="sacdfs-$VERSION-$NAME-macos-unsigned"
           mkdir -p "dist/$pkg"
           install -m 0755 target/release/sacdfs-nfs target/release/sacdfs "dist/$pkg/"
           install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
@@ -490,18 +507,156 @@ jobs:
           install -m 0644 src/nfs/proto/LICENSE "dist/$pkg/NFSSERVE-LICENSE"
           lipo -archs "dist/$pkg/sacdfs-nfs"
           otool -L "dist/$pkg/sacdfs-nfs"
-          # Fixed order, owner and times (the commit's), no gzip timestamp.
-          stamp=$(date -r "$(git log -1 --format=%ct)" +%Y%m%d%H%M.%S)
-          find "dist/$pkg" -exec touch -h -t "$stamp" {} +
-          (cd dist && find "$pkg" | LC_ALL=C sort > files.txt \
-            && tar --uid 0 --gid 0 --no-recursion -cf - -T files.txt | gzip -n -9 > "$pkg.tar.gz" \
-            && rm files.txt)
-          (cd dist && shasum -a 256 "$pkg.tar.gz" > "$pkg.tar.gz.sha256" && cat "$pkg.tar.gz.sha256")
+          .github/scripts/pack-macos.sh dist "$pkg"
           echo "PKG=$pkg" >> "$GITHUB_ENV"
       - name: The packaged sacdfs-nfs mounts the corpus as this user
         run: |
           mkdir -p "$RUNNER_TEMP/check"
           tar -C "$RUNNER_TEMP/check" -xzf "dist/$PKG.tar.gz"
+          "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" --version
+          "$RUNNER_TEMP/check/$PKG/sacdfs" verify --help > /dev/null
+          tests/macos-nfs.sh "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" macos.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: unsigned-mac-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # Developer ID signing and notarisation of the macOS programs (from 0.8.0), on a tag only:
+  # the environment "release" holds the six MACOS_* secrets (the Developer ID Application
+  # certificate and its identity, and an App Store Connect API key for notarytool), allows only
+  # v* tags and waits for its reviewer, so it is the one job of a release run that pauses. It
+  # fails closed: without every secret it stops, and the release (which needs it) publishes
+  # nothing. It takes job "macos"'s unsigned archive (already tested), signs each Mach-O in it
+  # with the hardened runtime and a secure timestamp, has Apple notarise them (the verdict must
+  # be Accepted, and each program must then verify as notarised), packs the archive the
+  # release publishes as mac-<arch>, and runs the same mount test on it. A bare program can't
+  # carry the notarisation ticket (no stapling), so Gatekeeper checks it online on first run.
+  macos-sign:
+    name: sign and notarise (${{ matrix.name }}-macos)
+    if: github.ref_type == 'tag'
+    needs: [preflight, macos]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: aarch64, runner: macos-latest}
+          - {name: x86_64, runner: macos-15-intel}
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      NAME: ${{ matrix.name }}
+      HAS_SIGNING: >-
+        ${{ secrets.MACOS_CERT_P12_BASE64 != '' && secrets.MACOS_CERT_PASSWORD != ''
+        && secrets.MACOS_SIGN_IDENTITY != '' && secrets.MACOS_NOTARY_KEY_ID != ''
+        && secrets.MACOS_NOTARY_ISSUER != '' && secrets.MACOS_NOTARY_KEY_P8_BASE64 != '' }}
+    steps:
+      - name: Fail closed without the signing secrets
+        run: |
+          [[ "$HAS_SIGNING" == true ]] \
+            || { echo "::error::a MACOS_* signing or notary secret is missing in the environment release; nothing is signed or published"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: unsigned-mac-${{ matrix.name }}
+          path: unsigned
+      - name: Unpack the tested unsigned archive
+        run: |
+          (cd unsigned && shasum -a 256 -c ./*.sha256)
+          pkg="sacdfs-$VERSION-$NAME-macos"
+          mkdir -p dist
+          tar -C dist -xzf "unsigned/$pkg-unsigned.tar.gz"
+          mv "dist/$pkg-unsigned" "dist/$pkg"
+          # Every Mach-O in the archive is signed; there must be the two programs.
+          : > "$RUNNER_TEMP/macho.txt"
+          find "dist/$pkg" -type f | LC_ALL=C sort | while read -r f; do
+            if file -b "$f" | grep -q '^Mach-O'; then echo "$f" >> "$RUNNER_TEMP/macho.txt"; fi
+          done
+          cat "$RUNNER_TEMP/macho.txt"
+          [[ "$(xargs -n1 basename < "$RUNNER_TEMP/macho.txt" | LC_ALL=C sort | tr '\n' ' ')" == "sacdfs sacdfs-nfs " ]] \
+            || { echo "::error::unexpected Mach-O files"; exit 1; }
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+      - name: Temporary keychain with the Developer ID certificate
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/sign.keychain-db"
+          kcpw=$(uuidgen)
+          echo "::add-mask::$kcpw"
+          echo "KEYCHAIN=$kc" >> "$GITHUB_ENV"
+          (umask 077 && base64 --decode <<< "$MACOS_CERT_P12_BASE64" > "$RUNNER_TEMP/cert.p12")
+          security create-keychain -p "$kcpw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kcpw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcpw" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" "$HOME/Library/Keychains/login.keychain-db"
+          [[ $(security find-identity -v -p codesigning "$kc" | grep -c 'Developer ID Application') -ge 1 ]] \
+            || { echo "::error::no Developer ID Application identity in the certificate"; exit 1; }
+      - name: Sign (hardened runtime, secure timestamp)
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          while read -r f; do
+            codesign --force --options runtime --timestamp --keychain "$KEYCHAIN" \
+              --sign "$MACOS_SIGN_IDENTITY" "$f"
+            codesign --verify --strict --verbose=2 "$f"
+            info=$(codesign -d --verbose=2 "$f" 2>&1)
+            grep -E '^(Identifier|Format|CodeDirectory|Authority|TeamIdentifier|Timestamp|Runtime Version)' <<< "$info"
+            grep -q 'flags=0x10000(runtime)' <<< "$info" \
+              || { echo "::error::$f is not signed with the hardened runtime"; exit 1; }
+            grep -q '^Timestamp=' <<< "$info" \
+              || { echo "::error::$f has no secure timestamp"; exit 1; }
+          done < "$RUNNER_TEMP/macho.txt"
+      - name: Notarise
+        env:
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+          MACOS_NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+        run: |
+          key="$RUNNER_TEMP/notary-key.p8"
+          (umask 077 && base64 --decode <<< "$MACOS_NOTARY_KEY_P8_BASE64" > "$key")
+          trap 'rm -f "$key"' EXIT
+          auth=(--key "$key" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER")
+          ditto -c -k --keepParent "dist/$PKG" "$RUNNER_TEMP/notarise.zip"
+          rc=0
+          out=$(xcrun notarytool submit "$RUNNER_TEMP/notarise.zip" "${auth[@]}" \
+            --wait --timeout 40m --output-format json) || rc=$?
+          echo "$out"
+          [[ -n "$out" ]] || { echo "::error::notarytool submit failed ($rc)"; exit 1; }
+          id=$(plutil -extract id raw -o - - <<< "$out")
+          status=$(plutil -extract status raw -o - - <<< "$out")
+          xcrun notarytool log "$id" "${auth[@]}" || true
+          [[ "$status" == Accepted ]] || { echo "::error::notarisation $id: $status, not Accepted"; exit 1; }
+      # Don't trust --wait alone: the programs users download must verify as notarised, which
+      # asks Apple for the ticket online (a few tries: it may lag the verdict).
+      - name: Each program verifies as notarised
+        run: |
+          while read -r f; do
+            for try in 1 2 3 4 5 6; do
+              codesign --verify --strict --check-notarization -R='notarized' --verbose=2 "$f" && break
+              [[ $try == 6 ]] && { echo "::error::$f doesn't verify as notarised"; exit 1; }
+              sleep 20
+            done
+          done < "$RUNNER_TEMP/macho.txt"
+      - name: Package (signed)
+        run: .github/scripts/pack-macos.sh dist "$PKG"
+      - name: The signed sacdfs-nfs mounts the corpus as this user
+        run: |
+          mkdir -p "$RUNNER_TEMP/check"
+          tar -C "$RUNNER_TEMP/check" -xzf "dist/$PKG.tar.gz"
+          for f in sacdfs-nfs sacdfs; do
+            codesign --verify --strict --verbose=2 "$RUNNER_TEMP/check/$PKG/$f"
+          done
           "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" --version
           "$RUNNER_TEMP/check/$PKG/sacdfs" verify --help > /dev/null
           tests/macos-nfs.sh "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" macos.sha256
@@ -513,6 +668,14 @@ jobs:
             dist/*.sha256
           if-no-files-found: error
           retention-days: 7
+      - name: Remove the temporary keychain
+        if: always()
+        run: |
+          if [[ -n "${KEYCHAIN:-}" && -e "$KEYCHAIN" ]]; then
+            security delete-keychain "$KEYCHAIN"
+          fi
+          security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db"
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/notarise.zip"
 
   # The Windows front end (winfsp/, #419): built on the Windows runner with the C runtime linked
   # in (no Visual C++ redistributable needed), packed as a zip with COPYING, CHANGELOG.md and
@@ -577,9 +740,126 @@ jobs:
           Expand-Archive "dist\$env:PKG.zip" "$env:RUNNER_TEMP\check"
           winfsp\ci\checks.ps1 -Exe "$env:RUNNER_TEMP\check\sacdfs-win.exe" -Source tests\corpus\images `
             -Mount X: -Reference (Join-Path $env:RUNNER_TEMP "host.sha256") -Work $env:RUNNER_TEMP
+      # Unsigned: the release takes this one only while WINDOWS_SIGNING is off.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: bin-windows
+          name: win-unsigned
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # Authenticode signing of sacdfs-win.exe through SSL.com eSigner (cloud signing; the key never
+  # leaves SSL.com), on a tag only and only when the repository variable WINDOWS_SIGNING is
+  # "required". The environment "release" holds ES_USERNAME, ES_PASSWORD, ES_CREDENTIAL_ID and
+  # ES_TOTP_SECRET, allows only v* tags and waits for its reviewer. It fails closed: without
+  # every secret, or if the signature doesn't verify with a timestamp, it stops and the release
+  # publishes nothing. CodeSignTool is SSL.com's release from GitHub, checked against its
+  # SHA-256. It takes job "windows"'s tested zip, signs the program, packs the zip again the
+  # same way and runs the same corpus check on the signed program.
+  windows-sign:
+    name: sign (x86_64-windows)
+    if: github.ref_type == 'tag' && vars.WINDOWS_SIGNING == 'required'
+    needs: [preflight, binaries, windows]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment: release
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      HAS_SIGNING: >-
+        ${{ secrets.ES_USERNAME != '' && secrets.ES_PASSWORD != ''
+        && secrets.ES_CREDENTIAL_ID != '' && secrets.ES_TOTP_SECRET != '' }}
+      # SSL.com CodeSignTool 1.3.2 for Windows (with its own Java runtime).
+      CST_ZIP: https://github.com/SSLcom/CodeSignTool/releases/download/v1.3.2/CodeSignTool-v1.3.2-windows.zip
+      CST_SHA256: 4afc32e8b7f79bbe1de7e4e7049aaad4e0f754357613b9bbec0e3052f06fd36b
+      # WinFsp 2.1 (2.1.25156), for the check only (as in job "windows").
+      WINFSP_MSI: https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi
+      WINFSP_SHA256: 073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Fail closed without the signing secrets
+        run: |
+          if ($env:HAS_SIGNING -ne 'true') {
+            Write-Output "::error::an ES_* eSigner secret is missing in the environment release; nothing is signed or published"
+            exit 1
+          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: win-unsigned
+          path: unsigned
+      - name: Unpack the tested unsigned zip
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pkg = "sacdfs-$env:VERSION-x86_64-windows"
+          $want = (Get-Content "unsigned\$pkg.zip.sha256").Split(" ")[0]
+          if ((Get-FileHash "unsigned\$pkg.zip" -Algorithm SHA256).Hash -ne $want) { throw "unsigned zip: SHA-256 differs" }
+          Expand-Archive "unsigned\$pkg.zip" "$env:RUNNER_TEMP\unsigned"
+          "PKG=$pkg" >> $env:GITHUB_ENV
+      - name: CodeSignTool (checked against its SHA-256)
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Join-Path $env:RUNNER_TEMP "codesigntool.zip"
+          Invoke-WebRequest $env:CST_ZIP -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $env:CST_SHA256) { throw "CodeSignTool: SHA-256 differs" }
+          Expand-Archive $zip (Join-Path $env:RUNNER_TEMP "codesigntool")
+      - name: Sign sacdfs-win.exe (eSigner)
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          $ErrorActionPreference = "Stop"; $PSNativeCommandUseErrorActionPreference = $true
+          $out = Join-Path $env:RUNNER_TEMP "signed"
+          New-Item -ItemType Directory $out | Out-Null
+          Set-Location (Join-Path $env:RUNNER_TEMP "codesigntool")
+          & .\jdk-11.0.2\bin\java.exe -jar .\jar\code_sign_tool-1.3.2.jar sign `
+            "-username=$env:ES_USERNAME" "-password=$env:ES_PASSWORD" `
+            "-credential_id=$env:ES_CREDENTIAL_ID" "-totp_secret=$env:ES_TOTP_SECRET" `
+            "-input_file_path=$env:RUNNER_TEMP\unsigned\sacdfs-win.exe" "-output_dir_path=$out"
+      # CodeSignTool may exit 0 on an error: the signature itself is what counts.
+      - name: The signature verifies, with a timestamp
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Join-Path $env:RUNNER_TEMP "signed\sacdfs-win.exe"
+          $sig = Get-AuthenticodeSignature $exe
+          $sig | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
+          if ($sig.Status -ne 'Valid') { throw "signature: $($sig.Status) $($sig.StatusMessage)" }
+          if ($null -eq $sig.TimeStamperCertificate) { throw "signature has no timestamp" }
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          & $signtool.FullName verify /pa /tw /v $exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool verify: $LASTEXITCODE" }
+          $v = (& $exe --version) -join " "
+          if (-not $v.Contains("sacdfs-win $env:VERSION")) { throw "--version: $v" }
+      - name: Package (signed)
+        run: |
+          python -I .github/scripts/pack-windows.py $env:PKG "$env:RUNNER_TEMP\signed\sacdfs-win.exe" COPYING CHANGELOG.md docs/install/windows.md=README.md
+      - name: WinFsp (MSI, checked against its SHA-256)
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP "winfsp.msi"
+          Invoke-WebRequest $env:WINFSP_MSI -OutFile $msi
+          if ((Get-FileHash $msi -Algorithm SHA256).Hash -ne $env:WINFSP_SHA256) { throw "WinFsp MSI: SHA-256 differs" }
+          $p = Start-Process msiexec.exe -ArgumentList "/i", $msi, "/qn", "/norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec: $($p.ExitCode)" }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: corpus-sha256
+          path: ${{ runner.temp }}
+      - name: The signed program serves the corpus as on Linux (winfsp/ci/checks.ps1)
+        shell: powershell
+        run: |
+          Expand-Archive "dist\$env:PKG.zip" "$env:RUNNER_TEMP\check"
+          winfsp\ci\checks.ps1 -Exe "$env:RUNNER_TEMP\check\sacdfs-win.exe" -Source tests\corpus\images `
+            -Mount X: -Reference (Join-Path $env:RUNNER_TEMP "host.sha256") -Work $env:RUNNER_TEMP
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: win-signed
           path: |
             dist/*.zip
             dist/*.sha256
@@ -993,9 +1273,15 @@ jobs:
         with:
           name: srpm
           path: dist
+      # A dry run has only the unsigned macOS archives and Windows zip: signing runs on a tag
+      # only (macos-sign, windows-sign).
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          pattern: mac-*
+          name: win-unsigned
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: unsigned-mac-*
           path: dist
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
@@ -1016,14 +1302,26 @@ jobs:
             (cd dist && ls -l && cat ./*.sha256)
             echo '```'
             echo
+            echo "A tag publishes the macOS archives signed and notarised, without \`-unsigned\` (job macos-sign), and the Windows zip signed when WINDOWS_SIGNING is required (job windows-sign)."
+            echo
             echo "Image that a tag would push: \`$IMAGE:$VERSION\` and \`$IMAGE:latest\` (share test passed)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Publishing, on a tag only.
+  # It needs every build and test job; windows-sign only when WINDOWS_SIGNING is "required"
+  # (skipped when it is "off", which preflight has checked), hence the explicit condition.
   release:
     name: GitHub release
-    if: github.ref_type == 'tag'
-    needs: [preflight, binaries, binary-i686, macos, windows, image, installer, packages-test, srpm-test]
+    if: >-
+      !cancelled() && github.ref_type == 'tag'
+      && needs.preflight.result == 'success' && needs.binaries.result == 'success'
+      && needs.binary-i686.result == 'success' && needs.macos.result == 'success'
+      && needs.macos-sign.result == 'success' && needs.windows.result == 'success'
+      && needs.image.result == 'success' && needs.installer.result == 'success'
+      && needs.packages-test.result == 'success' && needs.srpm-test.result == 'success'
+      && (needs.windows-sign.result == 'success'
+        || (needs.windows-sign.result == 'skipped' && vars.WINDOWS_SIGNING == 'off'))
+    needs: [preflight, binaries, binary-i686, macos, macos-sign, windows, windows-sign, image, installer, packages-test, srpm-test]
     runs-on: ubuntu-latest
     permissions:
       # Creating the release and uploading its assets.
@@ -1037,13 +1335,26 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       MACOS_RELEASE: ${{ vars.SACDFS_MACOS_RELEASE }}
+      WINDOWS_SIGNING: ${{ vars.WINDOWS_SIGNING }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: bin-*
           path: dist
           merge-multiple: true
-      # macOS archives only once SACDFS_MACOS_RELEASE is "true" (see the top of this file).
+      # The Windows zip: signed (windows-sign) when WINDOWS_SIGNING is "required", else unsigned.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        if: vars.WINDOWS_SIGNING == 'required'
+        with:
+          name: win-signed
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        if: vars.WINDOWS_SIGNING == 'off'
+        with:
+          name: win-unsigned
+          path: dist
+      # macOS archives only once SACDFS_MACOS_RELEASE is "true" (see the top of this file):
+      # the signed and notarised ones of job macos-sign (mac-*), never the unsigned-mac-* ones.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         if: vars.SACDFS_MACOS_RELEASE == 'true'
         with:
@@ -1115,10 +1426,10 @@ jobs:
             echo "- \`sacdfs_$v-1_amd64.deb\`, \`sacdfs_$v-1_arm64.deb\`: Debian 12 and 13, Ubuntu 22.04 and 24.04."
             echo "- \`sacdfs-$v-1.src.rpm\`: the source RPM, which rebuilds offline with the distribution's own Rust."
             echo
-            echo "Windows (x86_64, Windows 10 or 11): \`sacdfs-$VERSION-x86_64-windows.zip\`, \`sacdfs-win.exe\`, which needs [WinFsp](https://winfsp.dev) 2.1 or later ([Windows guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/windows.md)). It uses WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos, https://github.com/winfsp/winfsp. Not code-signed."
+            echo "Windows (x86_64, Windows 10 or 11): \`sacdfs-$VERSION-x86_64-windows.zip\`, \`sacdfs-win.exe\`, which needs [WinFsp](https://winfsp.dev) 2.1 or later ([Windows guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/windows.md)). It uses WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos, https://github.com/winfsp/winfsp. $( [[ "$WINDOWS_SIGNING" == required ]] && echo "Code-signed (Authenticode, timestamped)." || echo "Not code-signed." )"
             echo
             if [[ "$MACOS_RELEASE" == true ]]; then
-            echo "macOS 11 or later, mounted by the Mac's own NFS client with nothing else installed (\`sacdfs-nfs\`; [macOS guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/macos.md)). Not signed or notarised: download with \`curl\`, as the guide shows."
+            echo "macOS 11 or later, mounted by the Mac's own NFS client with nothing else installed (\`sacdfs-nfs\`; [macOS guide](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/install/macos.md)). Signed with a Developer ID and notarised by Apple."
             echo
             echo "- \`sacdfs-$VERSION-aarch64-macos.tar.gz\`: Apple Silicon."
             echo "- \`sacdfs-$VERSION-x86_64-macos.tar.gz\`: Intel."
@@ -1304,6 +1615,10 @@ jobs:
           [[ "$event" == push && "$branch" == "$TAG" ]] || fail "run $RUN is not the push of $TAG"
           [[ "$sha" == "$tag_sha" ]] || fail "run $RUN built $sha, not $TAG ($tag_sha)"
           [[ "$conclusion" == success ]] || fail "run $RUN did not succeed"
+          # Only signed and notarised archives (job macos-sign, both architectures).
+          signed=$(gh api "repos/$GH_REPO/actions/runs/$RUN/jobs?per_page=100" --paginate \
+            --jq '.jobs[] | select(.name | startswith("sign and notarise")) | .conclusion' | grep -c '^success$' || true)
+          [[ "$signed" == 2 ]] || fail "run $RUN has no signed and notarised macOS archives (macos-sign)"
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           ! grep -q -- '-macos\.' <<< "$assets" || fail "the release already has macOS assets"
           grep -qx SHA256SUMS <<< "$assets" || fail "the release has no SHA256SUMS"
@@ -1358,7 +1673,7 @@ jobs:
           gh release upload "$TAG" --clobber dist/SHA256SUMS
           gh release view "$TAG" --json body --jq .body > notes.md
           {
-            echo "macOS 11 or later, mounted by the Mac's own NFS client with nothing else installed (\`sacdfs-nfs\`; [macOS guide](https://github.com/$GH_REPO/blob/main/docs/install/macos.md)). Not signed or notarised: download with \`curl\`, as the guide shows."
+            echo "macOS 11 or later, mounted by the Mac's own NFS client with nothing else installed (\`sacdfs-nfs\`; [macOS guide](https://github.com/$GH_REPO/blob/main/docs/install/macos.md)). Signed with a Developer ID and notarised by Apple."
             echo
             echo "- \`sacdfs-$VERSION-aarch64-macos.tar.gz\`: Apple Silicon."
             echo "- \`sacdfs-$VERSION-x86_64-macos.tar.gz\`: Intel."
@@ -1393,7 +1708,10 @@ jobs:
 
   image-publish:
     name: publish image
-    if: github.ref_type == 'tag'
+    # Not skipped when release ran after a skipped windows-sign (WINDOWS_SIGNING off).
+    if: >-
+      !cancelled() && github.ref_type == 'tag' && needs.preflight.result == 'success'
+      && needs.image.result == 'success' && needs.release.result == 'success'
     needs: [preflight, image, release]
     runs-on: ubuntu-latest
     permissions:
@@ -1514,7 +1832,10 @@ jobs:
   # logs it.
   crates-publish:
     name: publish to crates.io
-    if: github.ref_type == 'tag' && !contains(needs.preflight.outputs.version, '-')
+    # Not skipped when release ran after a skipped windows-sign (WINDOWS_SIGNING off).
+    if: >-
+      !cancelled() && github.ref_type == 'tag' && !contains(needs.preflight.outputs.version, '-')
+      && needs.preflight.result == 'success' && needs.release.result == 'success'
     needs: [preflight, release]
     runs-on: ubuntu-latest
     timeout-minutes: 30

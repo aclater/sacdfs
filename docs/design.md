@@ -2350,16 +2350,23 @@ approval.
   unmounts the folder itself, which also ends a mount left behind; `soft` failed every read
   after 6 to 8 s on macOS 27.2, whatever `timeo` and `retrans` said), `rsize=1048576` and
   `rdirplus`. On Linux: `soft,timeo=10,retrans=30`.
-- **Signing and notarisation: the owner's decision, nothing bought.** The release archives hold
-  binaries signed ad hoc by the linker (which Apple Silicon needs to run them) and nothing more.
-  The options:
-  - *As now:* free. Files fetched with `curl` aren't marked by macOS and run; a browser
+- **Signing and notarisation: Developer ID from 0.8.0.** The owner chose Developer ID signing
+  and notarisation, so a browser download starts like any other signed program and the guide's
+  quarantine step is only for older releases. The release job `macos-sign` (tag runs only, in
+  the environment `release`, which allows only `v*` tags and waits for its reviewer) imports
+  the certificate into a temporary keychain, signs both programs with the hardened runtime and
+  a secure timestamp, sends them to `notarytool` with an App Store Connect API key, requires
+  the verdict Accepted and `codesign --check-notarization` on each, then packs the archive and
+  runs the mount test on it. Without the secrets it fails and nothing is published. Through
+  0.7.2 the archives held binaries signed ad hoc by the linker (which Apple Silicon needs to
+  run them) and nothing more. The options that were weighed:
+  - *Unsigned (through 0.7.2):* free. Files fetched with `curl` aren't marked by macOS and run; a browser
     download needs `xattr -d com.apple.quarantine` first (the guide says so).
   - *Developer ID signing and notarisation:* an Apple Developer Program membership (99 USD a
     year; the account's name is what macOS shows users). The release job would import the
     certificate into a temporary keychain, sign with the hardened runtime and a timestamp, and
     send each archive to `notarytool` with an App Store Connect API key, all three kept as
-    repository secrets. A bare binary can't carry the notarisation ticket (only an app, a
+    secrets. A bare binary can't carry the notarisation ticket (only an app, a
     disk image or an installer package can), so Gatekeeper checks it online on first run;
     a `.pkg` installer would carry it.
   - *Homebrew:* a formula in a tap of this project's, building from source or fetching the
