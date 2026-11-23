@@ -27,7 +27,7 @@ scarletbook = "=1.0.1"
 # The DSD-to-PCM converter behind the WAV files (#84); outside the 1.0 freeze, so it keeps 0.7.0.
 scarletbook-pcm = "=0.7.0"
 clap = { version = "4.5", features = ["derive"] }
-clap_mangen = { version = "0.2", optional = true }
+clap_mangen = { version = "0.3", optional = true }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 libc = "0.2"
 log = "0.4"
