@@ -48,7 +48,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 0.6.2, from crates.io (`=0.6.2`)** (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 0.7.0, from crates.io (`=0.7.0`)** (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -74,8 +74,9 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   0.6.1: a 32-bit arithmetic decoder for DST on 32-bit targets (scarletbook-rs#369), no API
   change; *why:* same rule, and it nearly halves i686 DST decoding time; bytes unchanged, gated
   as above, with 64-bit decoding measured unchanged.
-  0.6.2: single DST frames of 5 and 6 channels back near 0.5.x speed (scarletbook-rs#378), no
-  API change; *why:* same rule; bytes unchanged, gated as above.
+  0.7.0 (with 0.6.2's change: single DST frames of 5 and 6 channels back near 0.5.x speed,
+  scarletbook-rs#378): removes the items 0.6.0 deprecated, none of which sacdfs used; *why:*
+  same rule; bytes unchanged, gated as above.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
   *Why:* it measured within the owner's 15 % leeway and no less exact
@@ -1231,7 +1232,8 @@ changes after 0.7.0 they reach the threshold on 20 threads and are grouped: re-m
 i9-13900H (#493), two real discs' multichannel areas read about 3 % faster than 0.6.5 as WAV and
 1 to 2 % faster as DSF, and forcing single frames makes WAV 8 % slower. So no run-time choice is
 needed for the regression. What stays slower is a lone 6-channel frame on a P-core (scarletbook
-0.6.1: 12 % behind 0.5.9 on one thread; tracked in scarletbook-rs #378), which sacdfs now only
+0.6.1: 12 % behind 0.5.9 on one thread, scarletbook-rs #378; 0.6.2 and 0.7.0: 7 % behind on the
+i9-13900H P-core and 1 % ahead on its E-core, scarletbook-rs #383), which sacdfs now only
 decodes in short batches.
 
 *Why demultiplexing overlaps decoding (#210):* the thread reading the batch demultiplexes and
