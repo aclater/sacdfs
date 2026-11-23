@@ -63,7 +63,7 @@ class Mount:
         self.log = open(self.dir + ".log", "w")
         env = dict(os.environ, RUST_LOG="info,sacdfs::trace=debug") if self.a.log_dir else None
         wrap = self.a.wrap.format(quota=self.quota, cpus=self.a.cpus, uid=os.getuid(), gid=os.getgid()).split()
-        cmd = wrap + [self.binary, "-f", "--no-index-cache", "--threads", "4", "--cache-mb", "64",
+        cmd = wrap + [self.binary, "-f", "--index-cache", "off", "--threads", "4", "--cache-mb", "64",
                       *self.a.sacdfs_arg, self.a.source, self.dir]
         self.proc = subprocess.Popen(cmd, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
         deadline = time.monotonic() + 30

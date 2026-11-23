@@ -114,7 +114,7 @@ jobs:
         shell: bash
         run: |
           mnt=$(mktemp -d)
-          target/release/sacdfs tests/corpus/images "$mnt" --no-index-cache
+          target/release/sacdfs tests/corpus/images "$mnt" --index-cache off
           (cd "$mnt" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > linux.sha256
           fusermount3 -u "$mnt"
           wc -l linux.sha256

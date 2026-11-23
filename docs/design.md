@@ -1341,7 +1341,7 @@ the locator, (b) scarletbook, both on scarletbook 0.5.2:
 ### Persistent seek index
 
 Each image's seek indexes are kept across mounts in a cache directory
-(`$XDG_CACHE_HOME/sacdfs`, `--index-cache DIR`, off with `--no-index-cache`), without their
+(`$XDG_CACHE_HOME/sacdfs`, `--index-cache DIR`, off with `--index-cache off`), without their
 exact checkpoints (`AreaIndex::without_checkpoints`: the seek hints, saved confirmations and the
 TOC fingerprint, a few kilobytes per area), so that a seek after a remount or a reboot near a
 range read before starts at a hint: one call to the image instead of three or four. *Why:*
@@ -2306,7 +2306,7 @@ approval.
   boundary: **any local user can read the served files**, as with `--allow-other` on Linux.
   `--allow-other` answers every uid, as clients on other computers need; it is the default as
   root, as for `sacdfs` ([Other users](#other-users-on-by-default-as-root)), and
-  `--no-allow-other` turns it off.
+  `--allow-other=no` turns it off.
 - **Listening:** 127.0.0.1 by default; `--listen` takes another address, with a warning. The
   default port is 20000 plus the user ID modulo 10000: one per user of a Mac, below the
   ephemeral port ranges, and the same on every run, so that a restarted server is found by the
@@ -2810,7 +2810,7 @@ by unit tests only, as no AppArmor host was available to run them on.
 ### Other users: on by default as root
 
 **Decision.** When sacdfs runs as root, other users may read the mount (FUSE's `allow_other`)
-unless `--no-allow-other` is given. For other users nothing changes: it stays off unless
+unless `--allow-other=no` is given. For other users nothing changes: it stays off unless
 `--allow-other` is given, which FUSE allows them only with `user_allow_other` in
 `/etc/fuse.conf`.
 
@@ -2830,7 +2830,7 @@ warning on a background start goes nowhere without `--log-file`, and the user wo
 mount for themselves. `allow_root` (root and the owner): fuser enforces it itself, and it would
 not help Samba guests or app users, which are neither.
 
-**Trade-off.** A root mount that should be private now needs `--no-allow-other`, and a reader
+**Trade-off.** A root mount that should be private now needs `--allow-other=no`, and a reader
 of a root-only mount's files is no longer limited to root. The container already ran with
 `--allow-other`; it keeps passing it.
 
@@ -2854,7 +2854,7 @@ The checklist is in [release.md](release.md). The decisions, each with its reaso
   newer glibc symbol than 2.17.
 
   Measured on the benchmark host (real discs, stereo area read straight through a fresh mount,
-  `--no-index-cache`, image warm in the page cache, 6 alternating rounds, medians, ratio to the
+  `--index-cache off`, image warm in the page cache, 6 alternating rounds, medians, ratio to the
   glibc 2.28 build of the same commit; peak = the sacdfs process's VmHWM). The served bytes were
   identical across all builds:
 
@@ -3010,7 +3010,7 @@ MusicBrainz IDs on 26.
   ("latency is important"); putting the tags directory's mtime in every folder's would make a
   scanner rescan the whole library for one edit. *Trade-off:* a stale entry (an image
   replaced under the same path) only moves a few mtimes once, and the image's own change
-  moves them anyway; without a cache directory (`--no-index-cache`), an image not yet opened
+  moves them anyway; without a cache directory (`--index-cache off`), an image not yet opened
   in this mount is found on its first listing only. A single-image SOURCE does not watch:
   there an edit shows after a remount.
 - **Import** runs `verify` with the user's arguments and keeps only IDENTICAL and
@@ -3219,7 +3219,7 @@ through the mount's images and calls the same code as `tags fetch` for each disc
   (nothing missing, no confident match) goes to a file in the seek index cache directory, keyed by a
   hash of the image's path with its size and mtime, so no path is stored. *Why there, not in the
   tags directory:* it is the mount's state, not the user's tags, and a file written there after
-  every disc would move the directory the tag layer watches. *Trade-off:* with `--no-index-cache`,
+  every disc would move the directory the tag layer watches. *Trade-off:* with `--index-cache off`,
   each mount reads every TOC and asks again about the discs without a match. A disc without a match
   is asked about again after 30 days, since MusicBrainz grows; *alternative:* never, which leaves a
   disc unmatched for good once it was refused.

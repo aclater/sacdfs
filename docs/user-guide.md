@@ -29,7 +29,8 @@ sacdfs [OPTIONS] SOURCE MOUNTPOINT
 `SOURCE` is one image file, or a directory that is searched recursively for `*.iso` files
 (any case); symbolic links to files are followed, links to directories are not.
 `MOUNTPOINT` is an existing directory. [options.md](options.md) lists every
-option; this is what they do.
+option; this is what they do. `sacdfs --help` leaves out the
+[tuning options](options.md#tuning), whose defaults size themselves.
 
 **Where it can mount.** sacdfs reads the images through their paths, so none of them may be
 inside its own mount: reading one would send sacdfs a request it waits for itself, and the
@@ -58,7 +59,7 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
 - `--allow-other` lets users other than the one who mounted read the files, which a media
   server running as its own user, or an NFS or SMB server sharing the mount, needs. From 0.6.0
   it is the default when sacdfs runs as root (the mount is read-only; the reasons are in
-  [design.md](design.md#other-users-on-by-default-as-root)), and `--no-allow-other` turns it
+  [design.md](design.md#other-users-on-by-default-as-root)), and `--allow-other=no` turns it
   off. For other users it stays off unless asked for, and FUSE allows it only with
   `user_allow_other` in `/etc/fuse.conf`.
 
@@ -114,7 +115,7 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
 - `--sidecars LIST` chooses which other files of `SOURCE` (folder art, scans, playlists) are
   passed through next to the images ([Sidecar files](#sidecar-files-art-scans-playlists)).
 
-**The seek index cache** (`--index-cache DIR`, `--no-index-cache`). As it reads, sacdfs (through
+**The seek index cache** (`--index-cache DIR`, `--index-cache off`). As it reads, sacdfs (through
 scarletbook) records where frames are in each image, and keeps those seek hints in
 `$XDG_CACHE_HOME/sacdfs` (else `~/.cache/sacdfs`), so that a seek after a remount or a reboot
 near a place read before needs one read of the image instead of three or four. That matters
@@ -126,7 +127,7 @@ most when the images are on a network share, where each read is a round trip.
 - An image whose size or modification time changes misses its entry. A loaded entry is
   checked as it is used, so a stale or damaged cache can only make a seek slower, never wrong.
   Deleting the directory is always safe.
-- `--no-index-cache` starts every mount with an empty index (used for measurements).
+- `--index-cache off` starts every mount with an empty index (used for measurements).
 
 **Unmounting.** `umount MOUNTPOINT` as root; as another user `fusermount3 -u MOUNTPOINT` (`fusermount -u` with FUSE 2); or SIGINT (Ctrl-C), SIGTERM or SIGHUP to sacdfs.
 If files are still open, or an NFS server still exports the mount, the mount is detached
@@ -600,13 +601,13 @@ With `--musicbrainz`, the mount does the same lookup by itself, for the discs th
 
 ```sh
 sacdfs --tags ~/music/sacd-tags --musicbrainz ~/music/sacd-images ~/music/sacd
-sacdfs --tags ~/music/sacd-tags --musicbrainz --lookup-name --lookup-durations ~/music/sacd-images ~/music/sacd
+sacdfs --tags ~/music/sacd-tags --musicbrainz=name,durations ~/music/sacd-images ~/music/sacd
 ```
 
 - **Which discs:** those with a track that has no title, or no album or artist, on the disc or in
   its tags file. A disc with all of that is not asked about, so on most libraries only a few discs
   are. The steps, the limits and what is written are those of `tags fetch` above;
-  `--lookup-name` and `--lookup-durations` add the same steps, and the multichannel album follows
+  `--musicbrainz=name`, `=durations` or `=name,durations` add the same steps, and the multichannel album follows
   the mount's `--no-multichannel-album-suffix`.
 - **When:** 30 s after the mount, one disc after another on a single thread, then once an hour for
   what's left or new to it. At most 1 request per second, with the same waits and retries as
@@ -621,7 +622,7 @@ sacdfs --tags ~/music/sacd-tags --musicbrainz --lookup-name --lookup-durations ~
 - **Once per disc:** a match stays in the tags file. Which discs had nothing missing or found no
   match is kept in the seek index cache directory (`--index-cache`), so a restart doesn't ask again.
   A disc without a match is asked about again after 30 days, since MusicBrainz grows; an image that
-  changes is looked at anew. With `--no-index-cache` this is kept only until the mount stops.
+  changes is looked at anew. With `--index-cache off` this is kept only until the mount stops.
 - **Hand edits win,** as with `tags fetch`: a value in the tags file is never replaced.
 - **The tags directory must be writable,** or the mount refuses to start and says so.
 - **The log** has a line for each disc it asked about, with the match or the reason there is none,
@@ -1022,7 +1023,7 @@ bind-mounts the mount point must bind its parent directory instead
 recipe was run in a Fedora 44 VM: mounted from fstab and from the unit, after a reboot, with
 `log_file` and the journal. Up to 0.5.0, a service running as root mounted without
 `allow_other`, so other users saw "Permission denied" on the mount; from 0.6.0 root's mount
-lets them read it (`--no-allow-other` keeps it to root). A service that runs as a user needs
+lets them read it (`--allow-other=no` keeps it to root). A service that runs as a user needs
 `--allow-other` and `user_allow_other` in `/etc/fuse.conf` when other users read it.
 
 ## Troubleshooting

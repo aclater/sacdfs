@@ -50,14 +50,15 @@ const IGNORED_PREFIXES: &[&str] = &["x-", "fsname=", "subtype=", "uid=", "gid=",
 const FLAGS: &[&str] = &[
     "foreground",
     "flatten",
-    "allow_other",
     "no_allow_other",
     "no_index_cache",
     "no_multichannel_album_suffix",
-    "musicbrainz",
     "lookup_name",
     "lookup_durations",
 ];
+/// sacdfs options whose value is optional (`allow_other`, `allow_other=no`): given as
+/// `--allow-other=no`, since the command line takes their value only after an `=`.
+const OPTIONAL: &[&str] = &["allow_other", "musicbrainz"];
 /// sacdfs options that take a value (`key=value`).
 const VALUES: &[&str] = &[
     "threads",
@@ -119,7 +120,10 @@ fn option_list(list: &OsStr, out: &mut Vec<OsString>) -> Result<(), String> {
         match value {
             None if IGNORED.contains(&key) => {}
             _ if IGNORED_PREFIXES.iter().any(|p| item.starts_with(p)) => {}
-            None if FLAGS.contains(&key) => out.push(long().into()),
+            None if FLAGS.contains(&key) || OPTIONAL.contains(&key) => out.push(long().into()),
+            Some(v) if OPTIONAL.contains(&key) => {
+                out.push(format!("{}={}", long(), v.replace('+', ",")).into())
+            }
             None if key == "verbose" => out.push("-v".into()),
             Some(v) if key == "verbose" && v.parse::<u8>().is_ok() => {
                 out.push(format!("-{}", "v".repeat(usize::from(v.parse::<u8>().unwrap_or(0)))).into());
@@ -187,6 +191,16 @@ mod tests {
     }
 
     #[test]
+    fn optional_values() {
+        assert_eq!(run(&["s", "-o", "allow_other"]).unwrap(), ["s", "--allow-other"]);
+        assert_eq!(run(&["s", "-o", "allow_other=no"]).unwrap(), ["s", "--allow-other=no"]);
+        assert_eq!(
+            run(&["s", "-o", "musicbrainz=name+durations,index_cache=off"]).unwrap(),
+            ["s", "--musicbrainz=name,durations", "--index-cache", "off"]
+        );
+    }
+
+    #[test]
     fn unknown_options_are_refused() {
         assert!(run(&["s", "-o", "cache_mbb=1"]).unwrap_err().contains("cache_mbb=1"));
         assert!(run(&["s", "-o", "bogus"]).is_err());
@@ -201,13 +215,20 @@ mod tests {
         let command = crate::linux_main::command();
         let mut flags = Vec::new();
         let mut values = Vec::new();
+        let mut optional = Vec::new();
         for arg in command.get_arguments() {
             let Some(long) = arg.get_long() else { continue };
             let name = long.replace('-', "_");
             if NOT_MOUNT_OPTIONS.contains(&name.as_str()) {
                 continue;
             }
-            if arg.get_action().takes_values() { values.push(name) } else { flags.push(name) }
+            if !arg.get_action().takes_values() {
+                flags.push(name);
+            } else if arg.get_num_args().is_some_and(|n| n.min_values() == 0) {
+                optional.push(name);
+            } else {
+                values.push(name);
+            }
         }
         let sorted = |names: &[&str]| {
             let mut v: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
@@ -216,8 +237,21 @@ mod tests {
         };
         flags.sort();
         values.sort();
+        optional.sort();
+        assert_eq!(sorted(OPTIONAL), optional, "options with an optional value");
         assert_eq!(sorted(FLAGS), flags, "options without a value");
         assert_eq!(sorted(VALUES), values, "options with a value");
+    }
+
+    /// A bare `--allow-other` does not take the source as its value, and `=no` is read.
+    #[test]
+    fn allow_other_values_parse() {
+        let m = |a: &[&str]| crate::linux_main::command().try_get_matches_from(a.iter().copied());
+        assert!(m(&["sacdfs", "--allow-other", "/s", "/m"]).is_ok());
+        assert!(m(&["sacdfs", "--allow-other=no", "/s", "/m"]).is_ok());
+        assert!(m(&["sacdfs", "--allow-other=maybe", "/s", "/m"]).is_err());
+        assert!(m(&["sacdfs", "--no-allow-other", "/s", "/m"]).is_ok());
+        assert!(m(&["sacdfs", "--musicbrainz", "/s", "/m", "--tags", "/t"]).is_ok());
     }
 
     /// The expanded line is one the command line accepts, with an option that needs another.
@@ -225,7 +259,7 @@ mod tests {
     fn expanded_options_parse() {
         let line = run(&[
             "sacdfs", "/s", "/m", "-o",
-            "ro,tags=/t,musicbrainz,pauses=kept,listing_mb=64,request_timeout=30,stop_grace=5,no_multichannel_album_suffix",
+            "ro,tags=/t,musicbrainz=name+durations,allow_other=no,index_cache=off,pauses=kept,listing_mb=64,request_timeout=30,stop_grace=5,no_multichannel_album_suffix",
         ])
         .unwrap();
         crate::linux_main::command().try_get_matches_from(line).unwrap();

@@ -15,6 +15,18 @@ All notable changes to sacdfs are recorded here. The format follows
   only the version moves. The corpus and eight real discs are byte-identical to 0.7.0's, so `DSF_VERSION` and `WAV_VERSION` stay, and whole-area reads on an i9-13900H take the same time ([figures](docs/performance.md#by-scarletbook-release-101)). `scarletbook-pcm` is outside the freeze and keeps 0.7.0; it does not
   depend on `scarletbook`, so the build holds one copy of each.
 
+- **Fewer command-line options (#560).** `sacdfs --help` lists 12 options instead of 27. The
+  tuning options (`--threads`, `--cache-mb`, `--listing-mb`, `--start-burst`,
+  `--start-burst-secs`, `--max-open-images`, `--request-timeout`, `--stop-grace`,
+  `--pcm-cutoff`, `--pcm-gain`, `--no-multichannel-album-suffix`) are hidden from it and
+  described in docs/options.md under Tuning; they work as before. Related options are
+  folded: `--musicbrainz[=name,durations]` takes `--lookup-name` and `--lookup-durations`,
+  `--allow-other[=yes|no]` takes `--no-allow-other`, and `--index-cache off` takes
+  `--no-index-cache`, also as `-o` options (`musicbrainz=name+durations`, `allow_other=no`,
+  `index_cache=off`). The old spellings still work, on the command line, as `-o` options and
+  in `SACDFS_OPTIONS`, hidden from `--help` and logging one line that names the new form.
+  `sacdfs-nfs` follows; `sacdfs-win` takes the `--musicbrainz` and `--index-cache` forms, and
+  keeps `--no-allow-other`. The container's variables do not change.
 - **scarletbook and scarletbook-pcm 0.7.0 (`=0.7.0`).** The release that removes the items
   0.6.0 deprecated, none of which sacdfs used
   ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.7.0)). It carries

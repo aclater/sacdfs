@@ -30,7 +30,7 @@ $log = Join-Path $Work "sacdfs-launcher-$PID.log"
 $key = "HKLM:\SOFTWARE\WOW6432Node\WinFsp\Services\sacdfs-ci"
 New-Item $key -Force | Out-Null
 Set-ItemProperty $key Executable $exe
-Set-ItemProperty $key CommandLine "%1 %2 --log-file $log --no-index-cache"
+Set-ItemProperty $key CommandLine "%1 %2 --log-file $log --index-cache off"
 Set-ItemProperty $key Security "D:P(A;;RPWPLC;;;BU)(A;;RPWPLC;;;BA)"
 Set-ItemProperty $key RunAs "."
 Set-ItemProperty $key JobControl 1 -Type DWord
