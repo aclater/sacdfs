@@ -275,7 +275,8 @@ jobs:
           # without systemd, the systemd unit and the settings file both read.
           install -m 0755 deploy/sacdfs-ctl "dist/$pkg/"
           # The manual pages (#581), committed and checked current by CI.
-          install -D -m 0644 man/sacdfs.1 man/sacdfs-ctl.8 -t "dist/$pkg/man/"
+          mkdir -p "dist/$pkg/man"
+          install -m 0644 man/sacdfs.1 man/sacdfs-ctl.8 "dist/$pkg/man/"
           install -m 0644 deploy/systemd/sacdfs.service deploy/sacdfs.conf.example "dist/$pkg/"
           # The installer (#340), stamped with this version, and the Compose file it uses.
           sed "s/^DEFAULT_VERSION=[^ ]*/DEFAULT_VERSION=$VERSION/" deploy/install.sh > "dist/$pkg/install.sh"
@@ -406,7 +407,8 @@ jobs:
           install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
           install -m 0755 deploy/sacdfs-ctl "dist/$pkg/"
           # The manual pages (#581), committed and checked current by CI.
-          install -D -m 0644 man/sacdfs.1 man/sacdfs-ctl.8 -t "dist/$pkg/man/"
+          mkdir -p "dist/$pkg/man"
+          install -m 0644 man/sacdfs.1 man/sacdfs-ctl.8 "dist/$pkg/man/"
           install -m 0644 deploy/systemd/sacdfs.service deploy/sacdfs.conf.example "dist/$pkg/"
           # Reproducible: fixed order, owner and times (the commit's), no gzip timestamp.
           mtime=$(git log -1 --format=%ct)
@@ -482,7 +484,8 @@ jobs:
           mkdir -p "dist/$pkg"
           install -m 0755 target/release/sacdfs-nfs target/release/sacdfs "dist/$pkg/"
           install -m 0644 COPYING README.md CHANGELOG.md "dist/$pkg/"
-          install -D -m 0644 man/sacdfs.1 man/sacdfs-nfs.1 -t "dist/$pkg/man/"
+          mkdir -p "dist/$pkg/man"
+          install -m 0644 man/sacdfs.1 man/sacdfs-nfs.1 "dist/$pkg/man/"
           # The vendored NFS layer's licence asks for its notice with binaries.
           install -m 0644 src/nfs/proto/LICENSE "dist/$pkg/NFSSERVE-LICENSE"
           lipo -archs "dist/$pkg/sacdfs-nfs"
