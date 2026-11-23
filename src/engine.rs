@@ -630,9 +630,14 @@ impl FrameCache {
             return false;
         }
         let budget = heads_cap(self.cap).min(IDLE_HEADS);
-        if self.staged.load(Ordering::Relaxed) > 0 {
+        let used = if self.staged.load(Ordering::Relaxed) > 0 {
             self.move_staged();
-        }
+            // Moving the heads takes the cache's lock, which stamps a use: the release
+            // answers the stamp it leaves, or the next call would find the cache used since.
+            self.used.load(Ordering::Relaxed)
+        } else {
+            used
+        };
         let frames: Vec<Arc<Frame>> = {
             let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
             // The most recently read first, within the budget.

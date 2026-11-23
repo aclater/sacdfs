@@ -24,7 +24,7 @@
 //!    track keeps its pause.
 //!
 //! The listed tracks then never share a frame and all end within the area's play time and
-//! capacity ([`capacity`]), so their total stays within one area's worth. A normal disc's tracks do not
+//! capacity (`capacity`), so their total stays within one area's worth. A normal disc's tracks do not
 //! overlap and fit, and are listed exactly as before.
 
 use std::fmt;

@@ -615,7 +615,7 @@ impl Disc {
     }
 
     /// Whether this disc still stands for the file at its path, for a read to go on: at most
-    /// once per [`crate::handles::Handles::revalidate_every`] it looks at the file ([`Disc::current`]); in
+    /// once per [`crate::handles::Handles::revalidate_every`] it looks at the file (`Disc::current`); in
     /// between, one atomic load and the process clock, no system call. `false` once the file
     /// holds another disc: nothing of this disc is served from then on, cached or not, so that
     /// a file open on it never reads old and new bytes mixed.
@@ -641,7 +641,7 @@ impl Disc {
         self.fingerprint(true);
     }
 
-    /// Whether the file at the disc's path was found to hold another disc ([`Disc::current`]).
+    /// Whether the file at the disc's path was found to hold another disc (`Disc::current`).
     pub fn is_replaced(&self) -> bool {
         self.source.inner.replaced.load(Ordering::Relaxed)
     }
