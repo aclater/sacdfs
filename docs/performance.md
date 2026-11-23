@@ -590,6 +590,34 @@ byte-identical across the three.
 earlier run of 1 to 3 rounds on the same machine, was within 0.6 % of 0.6.2 too: the lone
 6-channel frame that 0.6.2 sped up (scarletbook-rs #378) is too rare in a whole-area read to show.
 
+### By scarletbook release (1.0.1)
+
+scarletbook 1.0.0 and 1.0.1 are 0.7.0's code under a new version, so no change is expected.
+`cat` of a whole area of a real disc out of a fresh local mount (`--no-index-cache`) to
+`/dev/null`, sacdfs built from main with scarletbook 0.7.0 and from this change with 1.0.1 (same
+compiler, generic build), alternating each round, under the benchmark lock on an Intel
+i9-13900H. All threads: 7 rounds, sacdfs on all 20 CPUs. One thread: 5 rounds, `--threads 1`
+with sacdfs on the 12 logical CPUs of the P-cores and the reader on another core. Medians in
+seconds, then the median of the per-round ratios [range]. Whole-area reads of the corpus
+(910 files) and eight real discs (248 files) are byte-identical.
+
+| Threads | Area, format | 0.7.0 | 1.0.1 | 1.0.1 / 0.7.0 |
+|---|---|---|---|---|
+| all | plain DSD stereo, DSF | 0.845 | 0.786 | 0.945 [0.843-1.232] |
+| all | plain DSD stereo, WAV | 2.571 | 2.512 | 0.975 [0.923-1.101] |
+| all | DST stereo, DSF | 10.095 | 10.105 | 1.001 [0.997-1.007] |
+| all | DST stereo, WAV | 13.329 | 13.136 | 0.984 [0.979-0.997] |
+| all | DST 6 ch., DSF | 9.579 | 9.528 | 0.995 [0.991-1.005] |
+| all | DST 6 ch., WAV | 12.637 | 12.691 | 1.002 [0.988-1.007] |
+| 1 | plain DSD stereo, DSF | 0.454 | 0.480 | 1.058 [1.033-1.079] |
+| 1 | plain DSD stereo, WAV | 6.341 | 6.305 | 0.993 [0.982-1.004] |
+| 1 | DST stereo, DSF | 93.975 | 93.948 | 0.999 [0.995-1.004] |
+| 1 | DST stereo, WAV | 110.635 | 110.902 | 1.002 [0.999-1.003] |
+
+No area is more than 10 % slower. The one cell above 1.05, a 0.45 s plain-DSD read on one
+thread (26 ms), is within the spread of such short reads: the same read with all threads is 5 %
+faster.
+
 ## Converter throughput
 
 Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (0.5.3); the figures of
