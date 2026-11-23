@@ -24,6 +24,17 @@
 //!   average). After a wait it started cleanly. Listing another folder of track files moves the
 //!   warming there. On a machine whose speed is not measured yet the first frames decoded
 //!   measure it, and a fast one stops there.
+//! - **Cool-down while the listed folder keeps changing (#593):** a client that lists a different
+//!   folder every few seconds would keep the CPU decoding heads on an otherwise idle mount. Each
+//!   listing that arms the warming again (another folder, or the same one after it was warmed)
+//!   within [`CHURN_WINDOW`] of the last such listing counts as a repeat; from the third on, the
+//!   folder must have stayed the last listed for [`SETTLE`] plus a wait that starts at
+//!   [`COOL_STEP`], doubles with each repeat and stops at [`COOL_MAX`]. A listing more than
+//!   [`CHURN_WINDOW`] after the last arming starts the count over, so a folder that stays put
+//!   (or a client that comes back later) is warmed after [`SETTLE`] as before. *Why a growing
+//!   wait and no setting:* browsing a few albums in turn costs nothing extra, and only a
+//!   client that keeps switching is slowed, to one warming per [`COOL_MAX`] at most; no
+//!   client needs a different figure.
 //! - **Only on a CPU slower than players' start-up bursts** (`--start-burst`): a fast one decodes
 //!   the heads in the moment the player asks.
 //! - **Only while the mount is idle:** it starts after [`QUIET`] with no read, and stops at the
@@ -52,6 +63,18 @@ pub const QUIET: Duration = Duration::from_secs(2);
 /// for disc folders in them) within a second, and ends with the one it shows.
 pub const SETTLE: Duration = Duration::from_secs(1);
 
+/// How long after one arming of the warming the next still counts as part of a run of listings
+/// that keep changing the folder (#593). *Why 30 s:* a person browsing albums stays on one for
+/// longer; a client that cycles through folders does not.
+pub const CHURN_WINDOW: Duration = Duration::from_secs(30);
+
+/// The extra wait before warming at the third arming in a run, doubled at each later one (#593).
+pub const COOL_STEP: Duration = Duration::from_secs(2);
+
+/// The longest extra wait: warming goes on at most once per this and [`SETTLE`] while a client
+/// keeps switching folders (#593).
+pub const COOL_MAX: Duration = Duration::from_secs(32);
+
 /// Bytes of audio of each file's head that a listing warms. *Why:* the player of #456 re-reads
 /// 12 reads of 128 KiB of each file, less the DSF header (1572772 bytes of audio), when it starts
 /// a track; 12 such heads of a 6-channel album take about 18 MiB of the heads' budget.
@@ -64,6 +87,7 @@ pub struct Warmer {
     tree: Weak<Tree>,
     quiet: Duration,
     settle: Duration,
+    cool: Cool,
     clock: Clock,
     /// Reads so far: warming stops when this moves.
     reads: AtomicU64,
@@ -73,6 +97,30 @@ pub struct Warmer {
     last: AtomicU64,
     state: Mutex<State>,
     wake: Condvar,
+}
+
+/// The cool-down's times (#593), in ms.
+#[derive(Debug, Clone, Copy)]
+struct Cool {
+    window: u64,
+    step: u64,
+    max: u64,
+}
+
+impl Cool {
+    const DEFAULT: Cool = Cool {
+        window: CHURN_WINDOW.as_millis() as u64,
+        step: COOL_STEP.as_millis() as u64,
+        max: COOL_MAX.as_millis() as u64,
+    };
+
+    /// The extra wait at the `repeats`th arming within the window (0 for the first).
+    fn extra(&self, repeats: u32) -> u64 {
+        match repeats {
+            0..=1 => 0,
+            n => self.step.saturating_mul(1u64 << (n - 2).min(32)).min(self.max),
+        }
+    }
 }
 
 /// A probe of a file: the file, the reader's number and how far into the audio it read. For a
@@ -131,6 +179,10 @@ struct State {
     closed: bool,
     /// The folder of track files listed last.
     listed: Option<Listed>,
+    /// Armings of the listed folder's warming in the run so far, and when the last came (as
+    /// [`Warmer::now_ms`], 0 for none): the cool-down's count (#593).
+    repeats: u32,
+    armed: u64,
 }
 
 #[derive(Debug)]
@@ -141,6 +193,8 @@ struct Listed {
     at: u64,
     /// Taken by the thread already, since it was last listed.
     taken: bool,
+    /// How long more than the settle it has to stay the last listed, in ms (#593).
+    extra: u64,
 }
 
 #[derive(Debug)]
@@ -165,7 +219,7 @@ impl Warmer {
     }
 
     fn with_quiet(engine: &Arc<Engine>, tree: &Arc<Tree>, quiet: Duration) -> Arc<Warmer> {
-        Self::with_clock(engine, tree, quiet, SETTLE, Clock::Real(Instant::now()))
+        Self::with_clock(engine, tree, quiet, SETTLE, Cool::DEFAULT, Clock::Real(Instant::now()))
     }
 
     fn with_clock(
@@ -173,6 +227,7 @@ impl Warmer {
         tree: &Arc<Tree>,
         quiet: Duration,
         settle: Duration,
+        cool: Cool,
         clock: Clock,
     ) -> Arc<Warmer> {
         Arc::new(Warmer {
@@ -180,6 +235,7 @@ impl Warmer {
             tree: Arc::downgrade(tree),
             quiet,
             settle,
+            cool,
             clock,
             reads: AtomicU64::new(0),
             listings: AtomicU64::new(0),
@@ -257,18 +313,33 @@ impl Warmer {
     pub fn listed(self: &Arc<Self>, file: &Arc<TrackFile>) {
         let now = self.now_ms();
         let mut st = self.lock();
+        let st = &mut *st;
+        let same = st.listed.as_ref().is_some_and(|l| l.file.beside(file));
+        // Listed again before it was warmed: not an arming of its own, the wait goes on.
+        if !(same && st.listed.as_ref().is_some_and(|l| !l.taken)) {
+            // An arming: another folder, or the same one again after it was warmed (the heads
+            // warm already cost nothing, but a client may keep doing it, #593).
+            let within = st.armed != 0 && now.saturating_sub(st.armed) < self.cool.window;
+            st.repeats = if within { st.repeats.saturating_add(1) } else { 0 };
+            st.armed = now;
+            if st.repeats > 0 {
+                crate::trace_line!("warm listing again within the window: {} in a run", st.repeats + 1);
+            }
+        }
+        let extra = self.cool.extra(st.repeats);
         match &mut st.listed {
             // Listed again: warmed again (the heads warm already cost nothing), not stopped.
-            Some(l) if l.file.beside(file) => {
+            Some(l) if same => {
                 l.at = now;
                 l.taken = false;
+                l.extra = extra;
             }
             l => {
-                *l = Some(Listed { file: file.clone(), at: now, taken: false });
+                *l = Some(Listed { file: file.clone(), at: now, taken: false, extra });
                 self.listings.fetch_add(1, Ordering::SeqCst);
             }
         }
-        self.run(&mut st);
+        self.run(st);
     }
 
     /// Notes, after `reader` read the file's audio, how far it read as a probe, if it is one.
@@ -352,7 +423,7 @@ impl Warmer {
         let Some(l) = st.listed.as_mut().filter(|l| !l.taken) else {
             return Ready::Nothing;
         };
-        let settle = (self.settle.as_millis() as u64).saturating_sub(now.saturating_sub(l.at));
+        let settle = (self.settle.as_millis() as u64 + l.extra).saturating_sub(now.saturating_sub(l.at));
         let wait = quiet.saturating_sub(since).max(settle);
         if wait > 0 {
             return Ready::NotYet(wait);
@@ -528,6 +599,10 @@ mod tests {
     /// The tests' settle, in ms of the warmer's clock.
     const SETTLE_MS: u64 = 20;
 
+    /// The tests' cool-down: a window of 1 s, an extra wait from 100 ms to 400 ms, in ms of the
+    /// warmer's clock.
+    const COOL: Cool = Cool { window: 1000, step: 100, max: 400 };
+
     /// A warmer on a clock that only the test moves (#563): reads, however long they take on a busy
     /// machine, come at the same instant unless the test moves the clock between them.
     fn manual(engine: &Arc<Engine>, tree: &Arc<Tree>) -> Arc<Warmer> {
@@ -536,6 +611,7 @@ mod tests {
             tree,
             Duration::from_millis(QUIET_MS),
             Duration::from_millis(SETTLE_MS),
+            COOL,
             Clock::Manual(AtomicU64::new(0)),
         )
     }
@@ -724,7 +800,8 @@ mod tests {
         let (_, mark) = w.wait_for_probe(Duration::ZERO).unwrap();
         w.listed(&other);
         assert!(w.interrupted(mark));
-        w.advance(SETTLE_MS);
+        // The third arming in a run (#593): the settle and the first extra wait.
+        w.advance(SETTLE_MS + COOL.step);
         let (p, _) = w.wait_for_probe(Duration::ZERO).unwrap();
         assert!(p.file.beside(&other));
     }
@@ -763,6 +840,78 @@ mod tests {
         let (p, mark) = w.wait_for_probe(Duration::ZERO).unwrap();
         assert_eq!(w.warm(&off, &tree, &p, mark), (0, false));
         assert!(!cached(&off, &files[0], 1));
+    }
+
+    #[test]
+    fn extra_wait_doubles_to_the_cap() {
+        let extras: Vec<u64> = (0..8).map(|n| COOL.extra(n)).collect();
+        assert_eq!(extras, [0, 0, 100, 200, 400, 400, 400, 400]);
+        assert_eq!(Cool::DEFAULT.extra(40), COOL_MAX.as_millis() as u64);
+    }
+
+    /// A client that lists another folder every 30 ms keeps the warming off for as long as it
+    /// goes on, however long that is (#593); the folder it ends on is warmed after the wait its
+    /// run has built up, and a folder listed after a pause is warmed after the settle alone.
+    #[test]
+    fn a_folder_that_keeps_changing_cools_the_warming_down() {
+        let tree = corpus();
+        let engine = slow_engine(64 << 20);
+        let files = folder(&tree, 3);
+        let other = elsewhere(&tree, &files);
+        let w = driven(&engine, &tree);
+        w.advance(QUIET_MS);
+        // The first two listings wait the settle only.
+        w.listed(&files[0]);
+        w.advance(SETTLE_MS);
+        assert!(w.take(), "first listing: warmed after the settle");
+        w.listed(&other);
+        w.advance(SETTLE_MS);
+        assert!(w.take(), "second listing: warmed after the settle");
+        // From the third on, the settle is not enough.
+        let mut warmed = 0;
+        for i in 0..20 {
+            w.listed(if i % 2 == 0 { &files[0] } else { &other });
+            w.advance(SETTLE_MS + 10);
+            warmed += usize::from(w.take());
+        }
+        assert_eq!(warmed, 0, "no warming while the folder keeps changing");
+        // It ends on one folder: the wait is the settle plus the cap, then it warms.
+        w.advance(389);
+        assert!(!w.take(), "not before the wait is out");
+        w.advance(1);
+        assert!(w.take(), "after the settle and the cap");
+        assert!(!w.take(), "once");
+        // A pause longer than the window ends the run: the settle alone again.
+        w.advance(1000);
+        w.listed(&files[0]);
+        w.advance(SETTLE_MS);
+        assert!(w.take(), "the count started over");
+    }
+
+    /// The same folder listed again after it was warmed counts too, and a listing again
+    /// before it was warmed does not.
+    #[test]
+    fn listing_the_same_folder_again_cools_down_only_after_it_was_warmed() {
+        let tree = corpus();
+        let engine = slow_engine(64 << 20);
+        let files = folder(&tree, 3);
+        let w = driven(&engine, &tree);
+        w.advance(QUIET_MS);
+        w.listed(&files[0]);
+        w.listed(&files[1]);
+        w.listed(&files[2]);
+        w.advance(SETTLE_MS);
+        assert!(w.take(), "listings before the warming are one");
+        // The second arming: the settle alone.
+        w.listed(&files[0]);
+        w.advance(SETTLE_MS);
+        assert!(w.take());
+        // The third: the wait is 100 ms more.
+        w.listed(&files[0]);
+        w.advance(SETTLE_MS);
+        assert!(!w.take());
+        w.advance(100);
+        assert!(w.take());
     }
 
     /// The deadlines here only keep a broken thread from hanging the test; nothing waits on them.

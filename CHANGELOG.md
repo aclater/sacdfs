@@ -37,6 +37,13 @@ All notable changes to sacdfs are recorded here. The format follows
   in `SACDFS_OPTIONS`, hidden from `--help` and logging one line that names the new form.
   `sacdfs-nfs` follows; `sacdfs-win` takes the `--musicbrainz` and `--index-cache` forms, and
   keeps `--no-allow-other`. The container's variables do not change.
+- **The folder warmer cools down while the listed folder keeps changing.** A client that lists
+  a different folder every few seconds no longer keeps the CPU decoding heads on an idle mount
+  ([#593](https://github.com/aclater/sacdfs/issues/593)): from the third listing in a run
+  (each within 30 s of the last), the folder must stay the last listed for 2 s, 4 s, 8 s and so
+  on up to 32 s more than before it is warmed, and the count starts over after 30 s. A folder
+  that stays put is warmed as before.
+
 - **scarletbook and scarletbook-pcm 0.7.0 (`=0.7.0`).** The release that removes the items
   0.6.0 deprecated, none of which sacdfs used
   ([release notes](https://github.com/aclater/scarletbook-rs/releases/tag/v0.7.0)). It carries
