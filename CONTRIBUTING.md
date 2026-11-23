@@ -41,7 +41,9 @@ open a draft advisory and follow
    [docs/development.md](docs/development.md).
 4. Update the documentation with the code: README.md, docs/options.md and docs/user-guide.md for anything a
    user sees (the options table in docs/options.md must match `sacdfs --help`; CI checks it with
-   `.github/scripts/check-readme-options.py`), docs/design.md when the design changes, with
+   `.github/scripts/check-readme-options.py`; a changed option also changes the manual pages,
+   which are generated: `cargo run --features man,nfs -- --generate-man-pages man`, and CI
+   checks them with `.github/scripts/check-man.py`), docs/design.md when the design changes, with
    the reason for each decision, docs/performance.md with new measurements, and CHANGELOG.md
    under "Unreleased".
 
@@ -53,6 +55,7 @@ A pull request is merged only when it keeps these rules. Each is checked in CI.
 |---|---|
 | Every `unsafe` block and `unsafe impl` has a `// SAFETY:` comment. | `undocumented_unsafe_blocks = "deny"` in Cargo.toml and winfsp/Cargo.toml (clippy jobs) |
 | Every long option of the mount command is an `-o` option or listed in `NOT_MOUNT_OPTIONS`. | unit test `the_lists_match_the_command_line` (ci, tests) |
+| The manual pages in man/ are current, and `sacdfs(1)` lists the options of docs/options.md. | `.github/scripts/check-man.py` (ci, readme options) |
 | Every shell script passes ShellCheck in the dialect it declares; a disable says why. | `shellcheck` over `git ls-files '*.sh' deploy/sacdfs-ctl` (ci, fmt + clippy) |
 | Python passes `ruff check` at its default rules (ruff.toml). | ruff 0.17.3, pinned by hash in .github/requirements/ruff.txt (ci, fmt + clippy) |
 | Every Cargo.lock is built `--locked` and checked by cargo-deny. | deny.yml (core, fuzz), windows.yml (winfsp); fuzz/run.sh stops when fuzz/Cargo.lock is stale |

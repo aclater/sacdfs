@@ -227,7 +227,7 @@ jobs:
     steps:
       - name: Packages
         shell: bash
-        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc python3 && dnf clean all
+        run: dnf -y -q --setopt=install_weak_deps=False install git-core gcc python3 groff-base && dnf clean all
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
@@ -244,6 +244,10 @@ jobs:
       - run: cargo build --locked --quiet
       - name: The options table (docs/options.md) matches sacdfs --help
         run: target/debug/sacdfs --help | python3 -I .github/scripts/check-readme-options.py docs/options.md
+      - name: The manual pages (man/) are current and list the options of docs/options.md
+        run: |
+          cargo build --locked --quiet --features man,nfs
+          python3 -I .github/scripts/check-man.py target/debug/sacdfs man docs/options.md
 
   private-names:
     # Commit identities and tracked files must carry no private details (home.arpa names,

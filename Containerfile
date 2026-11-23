@@ -50,6 +50,7 @@ RUN dnf -y --refresh --setopt=install_weak_deps=False upgrade \
 COPY --from=build /out/sacdfs /usr/local/bin/sacdfs
 COPY deploy/entrypoint.sh deploy/healthcheck.sh /usr/local/bin/
 COPY COPYING /usr/share/licenses/sacdfs/COPYING
+COPY man/sacdfs.1 /usr/share/man/man1/sacdfs.1
 
 # All settings are environment variables; see docs/deployment.md.
 ENV SACDFS_SOURCE=/images \

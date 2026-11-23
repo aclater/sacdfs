@@ -1,0 +1,129 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.TH SACDFS\-CTL 8 "" "sacdfs" "System Administration"
+.SH NAME
+sacdfs\-ctl \- start and stop sacdfs safely on a NAS without systemd
+.SH SYNOPSIS
+.B sacdfs\-ctl
+.RB { start | stop | status | restart }
+.SH DESCRIPTION
+.B sacdfs\-ctl
+starts
+.BR sacdfs (1)
+in the foreground under
+.BR setsid ,
+records its process ID, and stops it with SIGTERM and a wait, never with SIGKILL, which would
+leave a dead mount. It needs only a POSIX shell (BusyBox ash is enough), and is meant for the
+start\-up hook of a NAS.
+.PP
+It reads its settings as NAME=value lines and never runs them as shell code. A value may be in
+single quotes (\(aqR&B\(aq, with \(aq written as \(aq\e\(aq\(aq), in double quotes without $ or a
+backquote, or bare. Run as root, it refuses a settings file, a program or its own file that a
+user other than root could change or replace, because root runs them.
+.SH COMMANDS
+.TP
+.B start
+Mounts the images on the mount point. Clears a leftover dead sacdfs mount first, and refuses a
+mount point that holds another filesystem.
+.TP
+.B stop
+Sends SIGTERM and waits (see
+.BR SACDFS_STOP_WAIT ).
+.TP
+.B restart
+.B stop
+and then
+.BR start .
+.TP
+.B status
+Says whether sacdfs is running.
+.SH SETTINGS
+Read from
+.I /etc/default/sacdfs
+(the RPM package:
+.IR /etc/sysconfig/sacdfs ),
+or from the file named by the environment variable
+.BR SACDFS_CONF .
+The same file is read by the packaged systemd unit.
+.TP
+.B SACDFS_IMAGES
+The image file, or the folder of images (SOURCE).
+.TP
+.B SACDFS_MOUNT
+The mount point.
+.TP
+.B SACDFS_OPTIONS
+More options for
+.BR sacdfs (1),
+separated by spaces.
+.TP
+.B SACDFS_INDEX_CACHE
+The folder of the seek index, for hosts where a start\-up hook has no HOME. Passed as
+.BR \-\-index\-cache .
+.TP
+.B SACDFS_BIN
+The program (default
+.IR /usr/local/bin/sacdfs ,
+.I /usr/bin/sacdfs
+in packages).
+.TP
+.B SACDFS_PIDFILE
+Default
+.IR /var/run/sacdfs.pid .
+.TP
+.B SACDFS_LOG
+Where the log goes; default
+.IR /var/log/sacdfs.log .
+.TP
+.B SACDFS_STOP_WAIT
+Seconds to wait for sacdfs to exit after SIGTERM; default 30. It waits longer if
+.B SACDFS_OPTIONS
+sets a larger
+.BR \-\-stop\-grace .
+.SH "EXIT STATUS"
+.TP
+.B 0
+Done, or running.
+.TP
+.B 1
+Failed.
+.TP
+.B 2
+Usage error.
+.TP
+.B 3
+Not running (\c
+.BR status ).
+.SH FILES
+.TP
+.I /etc/default/sacdfs
+.TQ
+.I /etc/sysconfig/sacdfs
+The settings.
+.TP
+.I /var/run/sacdfs.pid
+.TQ
+.I /var/log/sacdfs.log
+The default process ID file and log.
+.SH EXAMPLES
+A settings file:
+.PP
+.RS
+.nf
+SACDFS_IMAGES=/volume1/music
+SACDFS_MOUNT=/volume1/sacd
+SACDFS_OPTIONS="\-\-allow\-other"
+.fi
+.RE
+.PP
+Then:
+.PP
+.RS
+.nf
+sacdfs\-ctl start
+sacdfs\-ctl status
+sacdfs\-ctl stop
+.fi
+.RE
+.SH "SEE ALSO"
+.BR sacdfs (1),
+.BR sacdfs\-nfs (1)

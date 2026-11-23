@@ -72,8 +72,24 @@ struct Args {
     verbose: u8,
 }
 
+/// `sacdfs --generate-man-pages DIR`: writes the manual pages (#581).
+#[cfg(feature = "man")]
+pub(crate) fn generate_man_pages(dir: Option<std::ffi::OsString>) -> ExitCode {
+    let Some(dir) = dir else {
+        eprintln!("usage: sacdfs --generate-man-pages DIR");
+        return ExitCode::from(2);
+    };
+    match sacdfs::man::write_all(command(), std::path::Path::new(&dir)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("sacdfs: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// The command line, for the test that keeps the `-o` option lists in step with it.
-#[cfg(test)]
+#[cfg(any(test, feature = "man"))]
 pub(crate) fn command() -> clap::Command {
     <Args as clap::CommandFactory>::command()
 }

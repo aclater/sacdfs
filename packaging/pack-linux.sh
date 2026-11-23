@@ -36,6 +36,11 @@ mkdir -p "$w/scripts"
 install -p -m 0755 "$src/sacdfs" "$w/sacdfs"
 install -p -m 0644 "$src/COPYING" "$src/README.md" "$src/CHANGELOG.md" "$w/"
 install -m 0755 "$here/scripts/"*.sh "$w/scripts/"
+# The manual pages (#581): the archive's, or, for an archive of a release before them, this tree's.
+mandir=$src/man
+[[ -d $mandir ]] || mandir=$here/../man
+mkdir -p "$w/man"
+install -p -m 0644 "$mandir/sacdfs.1" "$mandir/sacdfs-ctl.8" "$w/man/"
 for p in rpm deb; do
     "$here/package-files.sh" "$p" "$src/sacdfs-ctl" "$src/sacdfs.service" "$src/sacdfs.conf.example" "$w/$p"
 done

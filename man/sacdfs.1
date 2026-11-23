@@ -1,0 +1,290 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH sacdfs 1  sacdfs sacdfs
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+sacdfs \- Read\-only FUSE filesystem that shows SACD disc images as DSF files, decoded on demand
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBsacdfs\fR [\fB\-f\fR|\fB\-\-foreground\fR] [\fB\-\-threads\fR] [\fB\-\-cache\-mb\fR] [\fB\-\-listing\-mb\fR] [\fB\-\-start\-burst\fR] [\fB\-\-start\-burst\-secs\fR] [\fB\-\-format\fR] [\fB\-\-pauses\fR] [\fB\-\-pcm\-rate\fR] [\fB\-\-pcm\-cutoff\fR] [\fB\-\-pcm\-gain\fR] [\fB\-\-no\-multichannel\-album\-suffix\fR] [\fB\-\-tags\fR] [\fB\-\-musicbrainz\fR] [\fB\-\-flatten\fR] [\fB\-\-sidecars\fR] [\fB\-\-allow\-other\fR] [\fB\-\-index\-cache\fR] [\fB\-\-max\-open\-images\fR] [\fB\-\-request\-timeout\fR] [\fB\-\-stop\-grace\fR] [\fB\-\-log\-file\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fISOURCE\fR> <\fIMOUNTPOINT\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Show the audio of SACD disc images as DSF and WAV files, decoded on demand.
+.PP
+SOURCE is an image file or a directory searched recursively for *.iso files. Each image appears as MOUNTPOINT/<relative dir>/<image name>/{Stereo,Multichannel}/NN \- title.dsf, with NN \- title.wav (24\-bit PCM, converted on demand) next to it. Unmount with `umount MOUNTPOINT` as root, else `fusermount3 \-u MOUNTPOINT` (`fusermount \-u` with FUSE 2), or stop sacdfs with SIGINT, SIGTERM or SIGHUP (it exits after \-\-stop\-grace seconds even if files are still open).
+.PP
+`sacdfs verify SOURCE [EXTRACTS]...` checks extracted DSF and DFF files against what sacdfs serves, before they are deleted: see `sacdfs verify \-\-help`. `sacdfs tags` keeps user tags for the files (`\-\-tags`): see `sacdfs tags \-\-help`.
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-f\fR, \fB\-\-foreground\fR
+Stay in the foreground and log to standard error
+.TP
+\fB\-\-threads\fR \fI<N>\fR [default: 0]
+DST decoder threads (0: one per CPU; under a memory limit, at most one per 64 MiB of it, and at least 2)
+.TP
+\fB\-\-cache\-mb\fR \fI<N>\fR
+Size of the cache of decoded and converted frames, in MiB (default: 32, or 16 under a memory limit below 256 MiB)
+.TP
+\fB\-\-listing\-mb\fR \fI<N>\fR
+Memory kept for what listed images hold (their TOCs and files), in MiB; past it, those not used lately are read again when next used. 0: no bound (default: no bound, or 3/8 of the memory limit under one)
+.TP
+\fB\-\-start\-burst\fR \fI<X>\fR [default: 3.5]
+How fast players read a track they start, in times real time (#504). Where this machine decodes a format slower than that (measured as it serves), a starting track is decoded ahead without waiting for the player\*(Aqs reads. 0: off
+.TP
+\fB\-\-start\-burst\-secs\fR \fI<SECS>\fR [default: 8]
+Seconds of audio decoded ahead when a track starts playing, within a quarter of the cache
+.TP
+\fB\-\-format\fR \fI<LIST>\fR [default: dsf,wav]
+Which files to show: dsf, wav, or both (dsf,wav)
+.TP
+\fB\-\-pauses\fR \fI<MODE>\fR [default: dropped]
+Pauses: dropped (the default: each file is the track\*(Aqs own range) or kept (each file is the track with its pause, as extractors that keep pauses write it)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+dropped
+.IP \(bu 2
+kept
+.RE
+.TP
+\fB\-\-pcm\-rate\fR \fI<HZ>\fR [default: 176400]
+Sample rate of the WAV files, in Hz: 88200, 176400 or 352800
+.TP
+\fB\-\-pcm\-cutoff\fR \fI<KHZ>\fR [default: 40]
+Low\-pass cutoff of the PCM conversion: 40 or 30 (kHz), or wide (about 80 kHz; needs a \-\-pcm\-rate of 176400 or 352800)
+.TP
+\fB\-\-pcm\-gain\fR \fI<DB>\fR [default: 0]
+Gain of the PCM conversion in dB, \-60 to +24; samples that would clip are clamped
+.TP
+\fB\-\-no\-multichannel\-album\-suffix\fR
+Do not add " (Multichannel)" to the album tag of the files of the multichannel area (by default they get it, so players and servers show them as an album of their own)
+.TP
+\fB\-\-tags\fR \fI<DIR>\fR
+Directory of tags files (#81), one per disc, named by its disc key (`sacdfs tags key IMAGE`): their tags override and add to the TOC\*(Aqs. Without it, or for a disc without a file, the files are as the TOC gives them
+.TP
+\fB\-\-musicbrainz\fR[=\fI<LOOKUPS>\fR]
+Look up, on MusicBrainz, discs without a track title, album or artist, in the background, and write what matches to the \-\-tags directory (which must be writable), as `sacdfs tags fetch` does: by barcode or catalogue number, confirmed by track count, durations and ISRCs. Off by default; nothing else in a mount uses the network. At most 1 request per second, once per disc; no client request waits for it.
+
+Takes `=LOOKUPS`, `name`, `durations` or both (`name,durations`), to try more when that finds nothing: `name` also searches by album and artist, from the disc\*(Aqs text or the image\*(Aqs path (sends those names); `durations` also asks by the tracks\*(Aq start times (a disc of 4 tracks or more; sends the times).
+.TP
+\fB\-\-flatten\fR
+Collapse each chain of folders below the top level that holds a single image into its outermost folder, which then holds the image\*(Aqs Stereo/Multichannel folders
+.TP
+\fB\-\-sidecars\fR \fI<LIST>\fR [default: default]
+Files passed through from SOURCE, byte for byte, next to the images\*(Aq folders: a comma\-separated list of extensions and folder names ending in / (whose whole content passes). `default` is jpg,jpeg,png,webp,m3u,m3u8,Artwork/,Scans/; `\-item` removes an item (default,\-webp), `none` passes nothing
+.TP
+\fB\-\-allow\-other\fR[=\fI<yes|no>\fR]
+Let other users read the mount: the default when run as root (the mount is read\-only). A user other than root needs `user_allow_other` in /etc/fuse.conf for it
+.TP
+\fB\-\-index\-cache\fR \fI<DIR|off>\fR
+Directory of the persistent seek index, which lets seeks after a remount skip most of their search (default: $XDG_CACHE_HOME/sacdfs, else ~/.cache/sacdfs). `off`: keep none, so that every mount starts with an empty one
+.TP
+\fB\-\-max\-open\-images\fR \fI<N>\fR [default: 64]
+Most image files kept open at once (1 to 1024); the least recently used is closed first, and any closes after 5 minutes unused
+.TP
+\fB\-\-request\-timeout\fR \fI<SECS>\fR [default: 30]
+Seconds a request (a read, a lookup, a listing) may wait for the source before it fails with an I/O error and a log line, so that a stalled share never hangs a client; 0 waits for good
+.TP
+\fB\-\-stop\-grace\fR \fI<SECS>\fR [default: 10]
+Seconds after SIGINT, SIGTERM or SIGHUP that sacdfs keeps serving files clients still hold open before it exits anyway (the mount is detached at once, so nothing new opens); those clients then get I/O errors. 0 waits for the last file to close, however long
+.TP
+\fB\-\-log\-file\fR \fI<FILE>\fR
+Append the log to FILE instead of standard error, at info level unless \-v says more. Without it a background mount logs nowhere, except to the journal under systemd
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Log more (repeat for more still); RUST_LOG overrides it
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+<\fISOURCE\fR>
+An SACD image file, or a directory of them
+.TP
+<\fIMOUNTPOINT\fR>
+A directory to mount on, normally empty (its files are hidden while mounted); not SOURCE or a directory above it
+.SH "MOUNT OPTIONS"
+.B mount \-t fuse.sacdfs
+runs
+.B sacdfs SOURCE MOUNTPOINT \-o OPTIONS .
+Each long option above is an
+.B \-o
+option with the dashes written as underscores:
+.BR allow_other ,
+.BR cache_mb=64 ,
+.BR pcm_rate=88200 ,
+.BR flatten ,
+.BR tags=/etc/sacdfs/tags ,
+.BR index_cache=off ,
+.BR verbose=2 .
+A comma separates
+.B \-o
+options, so a list value uses
+.B +
+instead:
+.BR format=dsf+wav ,
+.BR sidecars=default+cue ,
+.BR musicbrainz=name+durations .
+The options of
+.BR mount (8)
+and fstab (\c
+.BR ro ,
+.BR noauto ,
+.BR nofail ,
+.BR _netdev ,
+.BR nosuid ,
+.BR nodev ,
+.B x\-systemd.*
+and similar) are accepted and ignored: sacdfs is always read\-only. Any other option is an error.
+.SH "EXIT STATUS"
+.TP
+.B 0
+The mount ended normally (a background mount returns once the filesystem is mounted).
+.TP
+.B 1
+The mount failed, or an option or a folder was refused; the one line on standard error says why
+and what to type.
+.TP
+.B 2
+Usage error (an unknown option or a missing argument).
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Overrides the level set by
+.BR \-v ,
+for example
+.BR RUST_LOG=sacdfs=debug ,
+or
+.B RUST_LOG=info,sacdfs::trace=debug
+for the read trace without the rest of the debug log.
+.TP
+.B XDG_CACHE_HOME
+Where the seek index lives by default:
+.IR $XDG_CACHE_HOME/sacdfs ,
+else
+.IR ~/.cache/sacdfs .
+.TP
+.B FUSERMOUNT_PATH
+The FUSE mount helper to use, instead of
+.B fusermount3
+or
+.BR fusermount .
+.SH FILES
+.TP
+.I $XDG_CACHE_HOME/sacdfs
+The persistent seek index (see
+.BR \-\-index\-cache ).
+Deleting it is always safe.
+.TP
+.I /etc/fuse.conf
+Needs the line
+.B user_allow_other
+for
+.B \-\-allow\-other
+by a user other than root.
+.TP
+.I /etc/sysconfig/sacdfs
+.TQ
+.I /etc/default/sacdfs
+The settings of the packaged systemd unit and of
+.BR sacdfs\-ctl (8):
+the first in the RPM, the second in the deb package and the release archive.
+.SH EXAMPLES
+A one\-off mount in the foreground, with a log:
+.PP
+.RS
+.nf
+sacdfs \-f \-v /srv/sacd /mnt/sacd
+.fi
+.RE
+.PP
+Unmount it with
+.B umount /mnt/sacd
+as root, else
+.BR "fusermount3 \-u /mnt/sacd" .
+.PP
+An fstab line:
+.PP
+.RS
+.nf
+/srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,format=dsf,_netdev,nofail  0 0
+.fi
+.RE
+.PP
+A systemd unit (the packages ship a hardened one, which reads
+.IR /etc/sysconfig/sacdfs ):
+.PP
+.RS
+.nf
+[Service]
+Type=notify
+CacheDirectory=sacdfs
+ExecStart=/usr/bin/sacdfs \-f \-\-index\-cache %C/sacdfs /srv/sacd /mnt/sacd
+Restart=on\-failure
+.fi
+.RE
+.PP
+The container image on a NAS, which mounts and shares over SMB and NFS (tuning is set through
+its environment variables, such as
+.BR SACDFS_CACHE_MB ):
+.PP
+.RS
+.nf
+docker run \-d \-\-name sacdfs \-\-restart unless\-stopped \e
+  \-\-device /dev/fuse \-\-cap\-drop ALL \e
+  \-\-cap\-add SYS_ADMIN \-\-cap\-add DAC_OVERRIDE \-\-cap\-add DAC_READ_SEARCH \e
+  \-\-cap\-add SETUID \-\-cap\-add SETGID \-\-cap\-add NET_BIND_SERVICE \-\-cap\-add SETPCAP \e
+  \-\-security\-opt no\-new\-privileges:true \-\-security\-opt apparmor=unconfined \e
+  \-p 445:445 \-p 2049:2049 \-v /path/to/images:/images:ro \-v sacdfs\-cache:/cache sacdfs
+.fi
+.RE
+.PP
+Look discs up on MusicBrainz in the background, writing tags files to a folder:
+.PP
+.RS
+.nf
+sacdfs \-\-tags ~/sacd\-tags \-\-musicbrainz=name,durations ~/sacd\-images ~/sacd
+.fi
+.RE
+.SH "DEPRECATED OPTIONS"
+These still work, on the command line, as
+.B \-o
+options and in
+.BR SACDFS_OPTIONS ,
+and log one line naming the new form. They are kept through 1.0 at least.
+.TP
+.B \-\-lookup\-name
+Use
+.BR \-\-musicbrainz=name .
+.TP
+.B \-\-lookup\-durations
+Use
+.BR \-\-musicbrainz=durations .
+.TP
+.B \-\-no\-allow\-other
+Use
+.BR \-\-allow\-other=no .
+.TP
+.B \-\-no\-index\-cache
+Use
+.BR "\-\-index\-cache off" .
+.SH "SEE ALSO"
+.BR sacdfs\-nfs (1),
+.BR sacdfs\-ctl (8),
+.BR fusermount3 (1),
+.BR mount.fuse3 (8).
+.PP
+The user guide and
+.I docs/options.md
+in the source, and
+.I https://github.com/aclater/sacdfs
