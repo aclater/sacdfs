@@ -109,6 +109,8 @@ The mark is an original drawing of a disc rising out of a folder, with a wavefor
 - [deploy/icon.svg](../../deploy/icon.svg): the master drawing.
 - [deploy/icon.png](../../deploy/icon.png): 512 x 512 PNG, 8-bit with transparency, exported from the SVG.
   Unraid's template and `ca_profile.xml` point to its raw URL on `main`.
+- [docs/assets/](../assets/README.md): the same drawing at every size from 16 to 1024 px, the
+  Windows `icon.ico` and the GitHub social preview.
 - TrueNAS hosts catalog icons on its own CDN. The app's `icon:` and `icon_url:` already carry the
   CDN path the catalog uses (`.../apps/sacdfs/icons/icon.svg`), which serves the SVG since the
   listing.

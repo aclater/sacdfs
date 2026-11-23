@@ -1,4 +1,4 @@
-<img src="deploy/icon.svg" alt="" width="96">
+<img src="https://raw.githubusercontent.com/aclater/sacdfs/main/docs/assets/icon-256.png" alt="" width="96">
 
 # sacdfs
 
