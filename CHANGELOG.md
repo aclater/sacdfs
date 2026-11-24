@@ -48,7 +48,8 @@ All notable changes to sacdfs are recorded here. The format follows
   7,519-file DSF-only library with a fresh index cache reads 20,522 calls and 1,528,744,192 bytes
   of the images where 0.7.2 read 19,815 calls and 1,416,357,584 bytes (+3.6 % calls, +7.9 %
   bytes). With the index loaded from an earlier pass the call count is the same on both (9,973) and
-  the bytes are about 10 % higher (about 1,060 MB against 962 MB). With `--index-cache off` the
+  the bytes are 9.5 to 10.9 % higher (1,053 to 1,067 MB against 962 MB, scarletbook 0.7.0
+  against 0.6.2 under the same sacdfs code, three runs each). With `--index-cache off` the
   reads are identical to 0.7.2's. The files sacdfs serves are byte-identical. The growth comes with
   the scarletbook version, not with a change in sacdfs: this release's tree built on scarletbook
   0.6.2 reads 19,822 calls and 1,415,730,896 bytes, and the step from 0.6.2 to 0.7.0 alone gives

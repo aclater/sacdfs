@@ -607,14 +607,22 @@ The growth, +3.6 % calls and +7.9 % bytes, is the scarletbook version: building 
 between 0.7.2 and 0.8.0 puts it at the step from scarletbook 0.6.2 to 0.7.0, whose commit changes
 no code of sacdfs, and it stays through 1.0.1 and 1.0.2. It is not the folder warmer (the same
 numbers with the warmer never armed), the in-place rewrite check (#588) or the kept heads (#589).
-Head reads only (the first 64 KiB of every file) are identical on both: 14,828 calls and
-831,479,312 bytes. Tail reads only, with an empty seek index: 0.6.2 11,127 calls and 527,315,712
-bytes, 0.7.0 11,834 calls and 500,588,416 bytes. With the seek index loaded from the earlier
-pass, head then tail: 9,973 calls on both, 962,452,176 bytes on 0.6.2 and 1,070,446,432 on 0.7.0
-(+11 %); with `--index-cache off` both read 9,973 calls and 962,061,008 bytes, so the growth needs
-the seek index, built or loaded, and the default mount uses one. The files read are identical byte
-for byte. Repeated alone and in turn, three times each, the fresh-index runs differ by +2.8 to
-+4.6 % calls and +6.9 to +7.9 % bytes, the warm-index runs by +9.5 to +10.9 % bytes. Tracked in
+The builds compared here are scarletbook 0.6.2 and 0.7.0 under the same sacdfs code (commits
+666ed45d and 4dd715fc), run alone and in turn, three times each; the 0.8.0 tree on 1.0.2 gave
+the same counts as 0.7.0 within the run-to-run spread (20,545 against 20,542 calls in the table
+above). Head reads only (the first 64 KiB of every file) are identical on both: 14,828 calls and
+831,479,312 bytes. Tail reads only, with an empty seek index: 0.7.0 makes 6.4 % more calls and
+reads 5.1 % fewer bytes than 0.6.2 (11,834 calls and 500,588,416 bytes against 11,127 and
+527,315,712). Head then tail with a fresh index: 0.6.2 19,857 to 20,219 calls and 1,410.1 to
+1,415.9 MB, 0.7.0 20,644 to 21,040 calls and 1,512.1 to 1,526.5 MB: +2.8 to +4.6 % calls and +6.9
+to +7.9 % bytes. With the seek index loaded from an earlier pass, both make 9,973 calls, 0.6.2
+reads 961.6 to 962.4 MB and 0.7.0 1,053.3 to 1,067.4 MB: +9.5 to +10.9 % bytes. With
+`--index-cache off` both read 9,973 calls and 962,061,008 bytes, so the growth needs the seek
+index, built or loaded, and the default mount uses one. A per-read log with the index loaded
+(24 files of two real discs, the same 48 reads on both) shows where: 0.7.0 begins the first read
+of a track at the seek checkpoint before it (67,584 bytes earlier on the multichannel disc, where
+0.6.2 begins at the track's start), and its last read of a file is about 10 KB shorter. The files
+read are identical byte for byte. Tracked in
 [scarletbook-rs#431](https://github.com/aclater/scarletbook-rs/issues/431).
 
 ### By scarletbook release (1.0.1)
