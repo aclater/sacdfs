@@ -7,7 +7,7 @@ grows, nodes kept after a re-read, or the buffers of abandoned requests all coun
 
 In Rust,
 leaks are usually of this kind, not a missing `free`. There are four tools for finding them
-(#151). Only the first runs on every pull request; the owner asked to keep CI fast.
+(#151). Only the first runs on every pull request; the maintainer asked to keep CI fast.
 
 | Tool | What it finds | Where it runs | Time |
 |---|---|---|---|

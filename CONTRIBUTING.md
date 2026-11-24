@@ -100,7 +100,7 @@ each issue.
   - `status: in review`: a PR is open;
   - `status: fixed on main`: merged. The issue stays open until the release ships and has
     been verified, then it is closed.
-  - `status: needs decision`: waiting on the owner.
+  - `status: needs decision`: waiting on the maintainer.
 - **Type:** `bug`, `enhancement`, `performance`, `documentation`, `plan`, or `tracking`
   (umbrella and design issues that track other work).
 - **Model:**
@@ -108,7 +108,7 @@ each issue.
   - `model: sonnet` for routine work: well-specified features, tests, docs, CI.
 
 **Claiming.** Before starting on an issue, check that nobody has claimed it. Then:
-1. Comment `Claimed by <agent> (<model>)`, and add `status: in progress`.
+1. Comment `Claimed by <your name>`, and add `status: in progress`.
 2. If you stop without a PR, comment that you're releasing it, and remove the label.
 3. When you open a PR, switch the label to `status: in review`. The PR says
    `Closes #N` only if it fully resolves the issue, else `Part of #N`.

@@ -8,7 +8,7 @@ process shared by the DSD Toolbox projects is in its
 
 ## Steps
 
-The owner tags releases; everything after the tag is automatic (`.github/workflows/release.yml`).
+The maintainer tags releases; everything after the tag is automatic (`.github/workflows/release.yml`).
 Version tags (`v*`) are immutable, so a tag that went wrong is followed by a new version,
 never moved.
 
@@ -117,7 +117,7 @@ holds only what `cargo install` and `cargo build` need (`include` in Cargo.toml)
 with `cargo package --list` when adding files that the build reads. Pre-releases are not
 published to crates.io.
 
-## The first publish, once, by the owner
+## The first publish, once, by the maintainer
 
 Trusted publishing can only be set up on a
 crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:

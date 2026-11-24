@@ -71,7 +71,7 @@ row with no result is untested.
 
 ## Test libraries
 
-All libraries use genuine discs. Synthetic discs are for CI's parsers only: the owner decided
+All libraries use genuine discs. Synthetic discs are for CI's parsers only: the maintainer decided
 that coverage gaps are filled by real discs as the library grows, because what breaks clients comes
 from real pressings.
 
@@ -111,7 +111,7 @@ otherwise stated as untested.
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
 | Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | Kodi 21.3 on main (November 2026), Windows WinFsp and SMB; Gerbera and Strawberry **never** | Never run | Not run on 0.5.0 |
 | macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; macOS 27.2 VM results in clients.md since: SMB on 0.6.0-rc.1, media servers on main (November 2026); Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/dsd-toolbox/sacdfs/issues/204) and [#205](https://github.com/dsd-toolbox/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks | Not run on 0.5.0 |
-| Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Never run | Not run on 0.5.0 |
+| Sonos, using the music-library share | 3 | SMB | Needs the maintainer; record its format and protocol limits | **Never** | Never run | Not run on 0.5.0 |
 | Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Never run | Not run on 0.5.0 |
 
 Client versions are recorded each run. Tier 1 images are refreshed to current at each candidate;
@@ -186,7 +186,7 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 Real images can't go into CI, so four `#[ignore]`d tests (`dsf_header::real_discs_head_reads`,
 `library_index::real_discs`, `wav::real_discs`, `sequential_reads::real_discs_sequential_reads`)
 run by hand. Before each release candidate the
-coordinator runs, on a build of the candidate commit:
+maintainer runs, on a build of the candidate commit:
 
 <!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
@@ -264,6 +264,28 @@ comparable. Every timed run is under the benchmark lock. Other jobs on the same 
   green on the rc.1 tag commit. The `leaks` workflow's first run was on this release and it failed
   because its own checks were broken (a fix is [#226](https://github.com/dsd-toolbox/sacdfs/pull/226));
   so no weekly leak check has passed on a 0.4.1 candidate.
+
+## Read counts by phase
+
+A request count that jumps is a failure until explained (the Roon request storm was found that
+way). The image reads of a whole-library scan are counted per phase with
+`scripts/read_phases.py run --sacdfs BIN --library DIR --out RESULT.json`: the DSF-only library
+mounted with a fresh index cache for each phase, and the "image reads for audio" line the mount
+logs at unmount, for (1) listing the tree, (2) listing then 90 s idle, (3) listing then the first
+and the last 64 KiB of every file. Run it for the candidate and for the previous release, then
+`read_phases.py check --base PREVIOUS.json --head CANDIDATE.json`: it fails a phase that reads
+more than 1 % over the base in calls or bytes, and more than 50 calls and 1 MiB (the folder
+warmer's own timing). Not a timing run: no benchmark lock, low priority, any host that mounts the
+library. A failure is bisected by building the commits between the two releases and running the
+failing phase on each.
+
+Base for 0.8.0, on the maintainer's library of 7,519 DSF files (`scripts/read-phases-0.8.0.json`):
+listing 0 calls and 0 bytes; listing and 90 s idle 3 calls and 335,872 bytes; head and tail
+20,522 calls and 1,528,744,192 bytes (the default index cache, fresh). 0.8.0 itself failed this
+check against 0.7.2 (+7.9 % bytes; with `--index-cache off` the reads were identical in five of six runs, one first run after a pause read more, see performance.md): explained by
+scarletbook 0.7.0 and later ([performance](performance.md#image-reads-by-phase-scarletbook-062-against-070-and-later-080),
+[scarletbook-rs#431](https://github.com/aclater/scarletbook-rs/issues/431)) and recorded in the
+CHANGELOG. A different library needs its own base run on the previous release.
 
 ## Scenarios for this release
 
@@ -889,6 +911,7 @@ A final tag needs all of:
 - audio identical, or the change declared;
 - the [real-disc tests](#real-disc-tests) pass on the last candidate (exit 0), or are reported as not run;
 - no unexplained performance regression over 10 %;
+- the [read counts by phase](#read-counts-by-phase) pass against the previous release, or the growth is explained and in the CHANGELOG;
 - the soak passes on the last candidate, or the [soak rule](#when-a-soak-is-needed) shows none is
   needed (the final carries only the version change on top of a candidate that passed);
 - [clients.md](clients.md) states the versions and results of this release, and anything not run is

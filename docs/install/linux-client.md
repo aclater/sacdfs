@@ -90,7 +90,18 @@ If the server has an `SMB_USER`, keep the password in a file only root can read:
 
 <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
-printf 'username=music\npassword=YOUR-PASSWORD\n' | sudo tee /root/.sacd-smb >/dev/null
+sudoedit /root/.sacd-smb
+```
+
+In the editor, type these two lines, and change only the part after `password=` to the server's `SMB_PASSWORD`, then save and close:
+
+```text
+username=music
+password=PASSWORD-OF-THE-SERVER
+```
+
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
+```sh
 sudo chmod 600 /root/.sacd-smb
 sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1
 ```

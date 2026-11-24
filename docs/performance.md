@@ -78,7 +78,7 @@ frame cache and seek index cold). 3 rounds of 3 seeks per disc, at other positio
 | Cold seek over SMB, DSF, server's page cache evicted | < 25 ms | **4.8 ms** plain DSD, **5.7 ms** DST stereo (worst 6.1 ms) | met |
 | Cold seek over SMB, WAV, the same | < 25 ms | **5.4 ms** plain DSD, **6.1 ms** DST stereo (worst 6.6 ms) | met |
 | The same with the server's page cache warm | | DSF 3.2 / 5.1 ms, WAV 4.4 / 5.5 ms | |
-| Cold seek over NFS and SMB, the published container on the owner's NAS (hard disks) | < 25 ms | **15 to 22 ms** with the NAS's cache warm; **31 to 61 ms** (worst 92 ms) when the audio comes from its hard disks ([below](#on-a-nas-server-side-21-part-2)) | met from the NAS's cache; not met from its hard disks |
+| Cold seek over NFS and SMB, the published container on the maintainer's NAS (hard disks) | < 25 ms | **15 to 22 ms** with the NAS's cache warm; **31 to 61 ms** (worst 92 ms) when the audio comes from its hard disks ([below](#on-a-nas-server-side-21-part-2)) | met from the NAS's cache; not met from its hard disks |
 
 On the emulated LAN the open takes 0.6 ms (one round trip) and the read 2.1 to 5.0 ms:
 sacdfs's cold seek on the server's own disk (1.8 to 3.0 ms without netem, "loopback") plus a
@@ -213,7 +213,7 @@ sacdfs 0.2.0 seeks with scarletbook 0.5.2 ([design](design.md#seeking-scarletboo
 builds below are scarletbook 0.5.2, generic x86-64: **(a)** sacdfs's own frame locator (0.1.0's
 code), **(b)** scarletbook's provisional readings and seek hints. Measured on 2026-11-01 under
 the benchmark lock, (a) and (b) interleaved, their order swapped every other round. *Not a quiet
-machine:* other agents' work kept the load average at 5 to 20 between parts, and the cleanroom VM
+machine:* other jobs on the machine kept the load average at 5 to 20 between parts, and the cleanroom VM
 averaged 2.5 threads busy; the NAS was serving a library import over SMB at the same time. Times
 are noisier than in the 0.1.0 round; calls and bytes are not affected.
 
@@ -592,6 +592,44 @@ byte-identical across the three.
 earlier run of 1 to 3 rounds on the same machine, was within 0.6 % of 0.6.2 too: the lone
 6-channel frame that 0.6.2 sped up (scarletbook-rs #378) is too rare in a whole-area read to show.
 
+### Image reads by phase, scarletbook 0.6.2 against 0.7.0 and later (0.8.0)
+
+A DSF-only mount of a 7,519-file library, a fresh index cache for each phase, the image reads
+the mount logs at unmount (`scripts/read_phases.py`): calls and bytes. Not a timing run.
+
+| Phase | 0.7.2 | 0.8.0 on scarletbook 0.6.2 | 0.8.0 (scarletbook 1.0.2) |
+|---|---|---|---|
+| list the tree | 0 / 0 | 0 / 0 | 0 / 0 |
+| list, then 90 s idle | 0 / 0 | not run | 3 / 335,872 (the folder warmer; 0 with it never armed) |
+| first and last 64 KiB of every file | 19,815 / 1,416,357,584 | 19,822 / 1,415,730,896 | 20,522 / 1,528,744,192 |
+
+The growth, +3.6 % calls and +7.9 % bytes, is the scarletbook version: building the commits
+between 0.7.2 and 0.8.0 puts it at the step from scarletbook 0.6.2 to 0.7.0, whose commit changes
+no code of sacdfs, and it stays through 1.0.1 and 1.0.2. It is not the folder warmer (the same
+numbers with the warmer never armed), the in-place rewrite check (#588) or the kept heads (#589).
+These are separate measurement series, all of one library, and only the last is used for ranges.
+The table above is one run of the builds in parallel. An isolation run of four builds in parallel
+gave 19,826 calls and 1,416,279,760 bytes on 0.6.2 (commit 666ed45d), 20,542 and 1,528,434,640 on
+0.7.0 (commit 4dd715fc), 19,822 and 1,415,730,896 for this release's tree with scarletbook set
+back to 0.6.2, and 20,545 and 1,528,103,168 for the tree as released (scarletbook 1.0.2). The
+head-only and tail-only figures below come from an earlier run of two builds in parallel (0.6.2
+against 0.7.0 under the same sacdfs code). The ranges are from the third series: 0.6.2 and 0.7.0
+run alone, one build at a time and in turn, three times each. Head reads only (the first 64 KiB
+of every file) are identical on both: 14,828 calls and 831,479,312 bytes. Tail reads only, with an
+empty seek index: 0.7.0 makes 6.4 % more calls and reads 5.1 % fewer bytes than 0.6.2 (11,834
+calls and 500,588,416 bytes against 11,127 and 527,315,712). Head then tail with a fresh index: 0.6.2 19,857 to 20,219 calls and 1,410.1 to
+1,415.9 MB, 0.7.0 20,644 to 21,040 calls and 1,512.1 to 1,526.5 MB: +2.8 to +4.6 % calls and +6.9
+to +7.9 % bytes. With the seek index loaded from an earlier pass, both make 9,973 calls, 0.6.2
+reads 961.6 to 962.4 MB and 0.7.0 1,053.3 to 1,067.4 MB: +9.5 to +10.9 % bytes. With
+`--index-cache off` both read 9,973 calls and 962,061,008 bytes in five of the six runs (the first
+run of that series, on 0.6.2, made 19,926 calls and 1,413.7 MB), so the growth needs the seek
+index, built or loaded, and the default mount uses one. A per-read log with the index loaded
+(24 files of two real discs, the same 48 reads on both) shows where: 0.7.0 begins the first read
+of a track at the seek checkpoint before it (67,584 bytes earlier on the multichannel disc, where
+0.6.2 begins at the track's start), and its last read of a file is about 10 KB shorter. The files
+read are identical byte for byte. Tracked in
+[scarletbook-rs#431](https://github.com/aclater/scarletbook-rs/issues/431).
+
 ### By scarletbook release (1.0.1)
 
 scarletbook 1.0.0 and 1.0.1 are 0.7.0's code under a new version, so no change is expected.
@@ -663,7 +701,7 @@ Multiples of real time per stereo stream:
 | Cold WAV seek, DST stereo, mean (worst) | 0.95 ms (1.63) | 0.97 ms (1.62) | 0.93 ms (1.95) | 0.96 ms (2.31) |
 | Cold WAV seek, plain DSD stereo, mean (worst) | 0.40 ms (1.16) | 0.41 ms (0.93) | 0.38 ms (0.90) | 0.42 ms (1.11) |
 
-Everything is within the owner's 15 % leeway. The largest gap is the plain DSD WAV read, where conversion is the only CPU work: +10 %.
+Everything is within the maintainer's 15 % leeway. The largest gap is the plain DSD WAV read, where conversion is the only CPU work: +10 %.
 ## Concurrency and memory
 
 The scenario of #6, for 30 s: four players each reading 128 KiB at a time in real time with a
@@ -880,7 +918,7 @@ could matter there. The 0.6.5 gate measured the same listing on another client a
 memory figure below is not the current one; see the [deployment guide](deployment.md#memory) and
 [Small NAS: sizing](deployment.md#small-nas-sizing) for today's.
 
-Measured by #21 part 1 on the owner's NAS, a different machine from the rest of this page, so
+Measured by #21 part 1 on the maintainer's NAS, a different machine from the rest of this page, so
 kept apart: a 12th-gen Intel Core i5-1235U (2 performance and 8 efficiency cores, 12 threads,
 AVX2) with 96 GB of RAM; a generic build of the release code (with #53) in a one-shot app;
 images read-only on local ZFS (hard disks), 3 stereo areas and 1 six-channel area. The ZFS

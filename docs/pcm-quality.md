@@ -7,14 +7,14 @@ How good the DSD-to-PCM conversion behind sacdfs's WAV files is, and how that wa
 Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (from 0.5.3; main pins 0.7.0, the
 0.7.x releases 0.6.1); `sacdfs::pcm` maps
 sacdfs's options to it and feeds it the engine's frames. The output decisions (rates,
-cutoffs, gain) are the owner's, with their reasons, in #11 and #5; the decision to use
+cutoffs, gain) are the maintainer's, with their reasons, in #11 and #5; the decision to use
 scarletbook-pcm, and the measurements it rests on, are in #84. Throughput is in
 [performance.md](performance.md#converter-throughput), the design in
 [design.md](design.md#pcm-conversion).
 
 ## Why scarletbook-pcm (#84)
 
-The owner's decision (2026-11-01, DECISIONS.md): keep scarletbook-rs's clean converter rather
+The maintainer's decision (2026-11-01, DECISIONS.md): keep scarletbook-rs's clean converter rather
 than adopting an existing code base, measure it against sacdfs's own, and switch if it is
 within the 15 % offload leeway and meets sacdfs's targets.
 
@@ -26,7 +26,7 @@ within the 15 % offload leeway and meets sacdfs's targets.
   - its speed is within 5 % (generic build) and 14 % (x86-64-v3 build) with the default filter, and faster with the others;
   - it meets every target below.
 - **So sacdfs's own converter was deleted.** That converter was ported from pysacd, about 1 600 lines.
-- *Trade-off:* scarletbook's passband ripple (±0.004 dB) and noise floor (-134 dBFS) are a little worse than those of sacdfs's old converter (±0.00003 dB, -138 dBFS). Both are inaudible, far inside the targets, and below any recording's own noise. In return the code is maintained once, for sacdfs and pysacd. The WAV files' bytes changed, so their output version moved (`WAV_VERSION` 3: new mtimes and generations, [design](design.md#file-identity-and-nfs-export)).
+- *Trade-off:* scarletbook's passband ripple (±0.004 dB) and noise floor (-134 dBFS) are a little worse than those of sacdfs's old converter (±0.00003 dB, -138 dBFS). Both are far inside the targets (the converter's measured figures are listed under Targets and results); no listening test was run. In return the code is maintained once, for sacdfs and pysacd. The WAV files' bytes changed, so their output version moved (`WAV_VERSION` 3: new mtimes and generations, [design](design.md#file-identity-and-nfs-export)).
 
 ## Targets and results
 
@@ -109,7 +109,7 @@ scarletbook-pcm's own documentation describes its designs. They are Parks-McClel
 | `--pcm-cutoff 30` | `Cutoff::Low` | 30 kHz | 36 kHz |
 | `--pcm-cutoff wide` (176.4 and 352.8 kHz only) | `Cutoff::Wide` | 80 kHz | 88.2 kHz at 176.4 kHz (its Nyquist frequency), 96 kHz at 352.8 kHz |
 
-At 88.2 kHz the band ends at 44.1 kHz, so the wide filter isn't offered there. Owner decision (2026-10-31, #11): the wide option follows the Philips blind tests, which found 80-100 kHz filters undetectable and a 50 kHz one detectable. 40 kHz stays the default.
+At 88.2 kHz the band ends at 44.1 kHz, so the wide filter isn't offered there. Maintainer decision (2026-10-31, #11): the wide option follows the Philips blind tests, which found 80-100 kHz filters undetectable and a 50 kHz one detectable. 40 kHz stays the default.
 
 ## See also
 

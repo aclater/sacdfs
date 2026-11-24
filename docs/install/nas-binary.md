@@ -12,7 +12,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 ## What you need
 
-- **An SSH login with administrator rights.** SSH is a way to type commands on the NAS from another computer. Turn it on in your NAS's settings, then log in from a terminal (Windows: PowerShell; macOS: Terminal) with `ssh youradmin@your-nas-address`. Your NAS maker's help covers the settings page.
+- **An SSH login with administrator rights.** SSH is a way to type commands on the NAS from another computer. Turn it on in your NAS's settings, then log in from a terminal (Windows: PowerShell; macOS: Terminal) with `ssh admin@192.0.2.20` (replace `admin` with your NAS administrator's name and `192.0.2.20` with its address). Your NAS maker's help covers the settings page.
 - **Root.** The commands below run as root, the all-powerful account. `id -u` must print `0`. If it prints another number, type `sudo -i`, enter your password, and check again.
 - **Your data volume's path.** The examples use `/volume1` (Synology, ASUSTOR, UGREEN). TerraMaster uses `/Volume1`, ReadyNAS `/data`, and QNAP a shared folder such as `/share/CACHEDEV1_DATA/Multimedia`. Replace `/volume1` everywhere with yours.
 - **A folder of images.** The examples use `/volume1/music`; sacdfs looks for `.iso` files there and in every folder below it.
