@@ -17,7 +17,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 ## Steps
 
-1. **Log in over SSH as root.** In TOS's Control Panel, Terminal, switch on SSH *(untested)*. On your computer (Windows: PowerShell; macOS: Terminal) type `ssh admin@192.168.1.20` (replace `admin` with your NAS administrator's name and `192.168.1.20` with its address), then `sudo -i` and your password *(untested: the VM login was already root)*. Check:
+1. **Log in over SSH as root.** In TOS's Control Panel, Terminal, switch on SSH *(untested)*. On your computer (Windows: PowerShell; macOS: Terminal) type `ssh admin@192.0.2.20` (replace `admin` with your NAS administrator's name and `192.0.2.20` with its address), then `sudo -i` and your password *(untested: the VM login was already root)*. Check:
 
    <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
