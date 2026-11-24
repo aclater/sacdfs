@@ -66,6 +66,11 @@
 # existing release, appends their lines to SHA256SUMS and adds their lines to the notes. The
 # tag and the other assets are not touched (job "packages-publish").
 #
+# Signing check: run by hand with `sign_check` set to "true" on a branch, it also runs job
+# "macos-sign" on the run's unsigned macOS archives (signs, notarises, verifies), then discards
+# the signed archives: nothing is uploaded, attached to a release or published. It uses the
+# environment "release" and its secrets, so that environment must allow the branch.
+#
 # The release checklist is in CONTRIBUTING.md, "Releasing".
 name: release
 
@@ -84,6 +89,10 @@ on:
         default: ""
       packages_tag:
         description: "Publish only: an existing release's tag (e.g. v0.6.5) to add Linux packages to (empty: dry run)"
+        required: false
+        default: ""
+      sign_check:
+        description: "Dry run only: \"true\" also runs job macos-sign on this run's unsigned macOS archives, to prove the signing and notarisation setup; the signed archives are discarded, never uploaded or published"
         required: false
         default: ""
   pull_request:
@@ -537,7 +546,10 @@ jobs:
   # carry the notarisation ticket (no stapling), so Gatekeeper checks it online on first run.
   macos-sign:
     name: sign and notarise (${{ matrix.name }}-macos)
-    if: github.ref_type == 'tag'
+    if: >-
+      github.ref_type == 'tag'
+      || (github.event_name == 'workflow_dispatch' && inputs.sign_check == 'true'
+      && inputs.macos_run == '' && inputs.packages_tag == '')
     needs: [preflight, macos]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -660,7 +672,9 @@ jobs:
           "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" --version
           "$RUNNER_TEMP/check/$PKG/sacdfs" verify --help > /dev/null
           tests/macos-nfs.sh "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" macos.sha256
+      # A sign check (sign_check) stops here: the signed archives are discarded.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: github.ref_type == 'tag'
         with:
           name: mac-${{ matrix.name }}
           path: |

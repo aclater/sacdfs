@@ -63,6 +63,15 @@ never moved.
 8. **Roll-up:** update [RELEASES.md](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/RELEASES.md)
    in dsd-toolbox/dsd-toolbox (the minor version's summary and release list).
 
+## Checking the macOS signing before a tag
+
+A dry run does not sign. To prove the signing and notarisation setup (the environment `release`
+and its six `MACOS_*` secrets) without a tag: `gh workflow run release.yml -R dsd-toolbox/sacdfs
+--ref BRANCH -f sign_check=true`. Job `macos-sign` then signs, notarises and verifies the run's
+unsigned archives, and discards the signed ones: nothing is uploaded, attached to a release or
+published. The environment must allow the branch for the run to start; it normally allows `v*`
+tags only.
+
 ## macOS archives of an earlier release
 
 Every release run builds and tests both macOS
