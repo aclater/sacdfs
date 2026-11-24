@@ -236,7 +236,7 @@ the 2,000 that earlier versions documented as working there. The rest of the lim
 taken, which a client would see as "no such file". A lookup now asks again, up to 16 times, if the image
 is still there: 3 failures in 400 runs of the racing test without that, none in 400 with it.
 
-**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB (below 256 MiB since #271, below). *Decision:* the coordinator
+**The defaults from the limit** (#231, #230). Cache 16 up to 512 MiB (below 256 MiB since #271, below). *Decision:* the maintainers
 set the rule after #230's fix: with the fix, 8 no longer buys a player's safety, so the default is 16 if
 16 holds the player (real time, under 1 s behind) and a scan alone stays within 5 % of 32, otherwise 32
 everywhere. Measured on P-cores of a mobile Core i9, a fresh container per run, 3 runs each, a 6-channel
@@ -815,7 +815,7 @@ sidecar or image.
   directory whose mtime did not change, and everything below it. Found testing 0.2.0-rc.1 with
   Roon (#123): an upgrade moved every DSF file's mtime and a new playlist sat next to an image,
   yet Roon reported nothing, because the directories above them kept their source's mtime. The
-  owner decided to fix it and ship the fix in 0.2.0 (as rc.2).
+  the maintainers decided to fix it and ship the fix in 0.2.0 (as rc.2).
 - *How, at mount:* the scan `stat`s every image and sidecar it notes (one `stat` each, beside
   the `readdir` it already does; over NFS the attributes usually come with the listing) and keeps
   a `tree::Stamp` per source directory: its own mtime, the newest of the rest, and the newest
@@ -1065,7 +1065,7 @@ from 539 lines to 144, all of it the options below).
   the date's year, a space, then the copyright (a stored "Label 2007" becomes "2007 Label
   2007"); their tag and size grow by 5 bytes. The audio is the same (DSF gate 93/93). The DSF
   output version moved to 2, so those files' NFS generations and mtimes moved as #64 intends.
-  *Decision (owner, #28):* adopt the library's writer, accept the conformant TCOP; preserving
+  *Decision (maintainer, #28):* adopt the library's writer, accept the conformant TCOP; preserving
   Roon play history and avoiding a one-time re-scan are not requirements. *Trade-off:* players and taggers that keyed on the old
   bytes or mtime see the files as changed once.
 - **Serving:** the frame cache holds decoded frames as scarletbook gives them (interleaved);
@@ -1086,13 +1086,13 @@ channel mask below, the PCM subformat), padding, the data chunk, and then the ta
 RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <INFO ...>   id3 <ID3v2.4>
 ```
 
-- **Rate and depth** (owner decisions, #11): `--pcm-rate` 176 400 Hz by default, or 88 200 or
+- **Rate and depth** (maintainer decisions, #11): `--pcm-rate` 176 400 Hz by default, or 88 200 or
   352 800; always 24-bit. *Why 176.4 kHz:* it is DSD64 divided by exactly 16, so the
   conversion needs no fractional resampling (cheapest and cleanest), and it holds the 40 kHz
   band with room for the filter's transition. *Why 24-bit only:* it needs no dither, so the
   output stays deterministic and seekable (a frame's PCM never depends on what was converted
   before it). 44.1 kHz/16-bit would need both.
-- **Filter and level** (owner decisions, #11; the converter is #5): band-limited to 40 kHz by
+- **Filter and level** (maintainer decisions, #11; the converter is #5): band-limited to 40 kHz by
   default, 30 kHz with `--pcm-cutoff 30`, following Daniel Weiss.
   `--pcm-cutoff wide` (about 80 kHz) is offered at 176.4 and 352.8 kHz only. *Why the option:*
   Philips listening tests (Nuijten and Reefman, AES paper 5399, 2001) found wideband filters at
@@ -1755,7 +1755,7 @@ decoding them twice.
   the user starts playback minutes later; that first start then re-read every other head, all
   misses, about 4.5 s of the Atom's CPU before the track's handle opened. *Why only after quiet,
   and stop at once:* decoding heads beside a track starting made the player's stalls 0.7 to 1.3 s
-  worse on Atom-speed cores (lane measurements for #510), so a start within 2 s of the probe is
+  worse on Atom-speed cores (measurements for #510), so a start within 2 s of the probe is
   left as it was. *Why one file and past 256 KiB:* library scanners read every file of a folder in
   turn, and taggers (ffprobe, TagLib, Audio::Scan, MPD's scan) read less than the kernel's first
   read-ahead; Roon's import also reads the middle of the file, past the head. *Why as far as the
@@ -2682,7 +2682,7 @@ frames. Its measured quality is in [pcm-quality.md](pcm-quality.md), the speed i
 [performance.md](performance.md#converter-throughput). Each decision below says why, the
 alternatives and the trade-off.
 
-**Output.** sacdfs offers these outputs (owner decisions, with their reasons, in #11 and #5):
+**Output.** sacdfs offers these outputs (maintainer decisions, with their reasons, in #11 and #5):
 - 24-bit PCM at 176.4 kHz (DSD64 ÷ 16, the default), 88.2 kHz (÷ 32) or 352.8 kHz (÷ 8);
 - a pass band to 40 kHz (the default, fully attenuated by 48 kHz), to 30 kHz (attenuated by 36 kHz), or a wide 80 kHz (176.4 and 352.8 kHz only, attenuated by the Nyquist frequency at 176.4 kHz);
 - a gain, 0 dB by default, where 100 % DSD modulation is full scale.
@@ -2746,7 +2746,7 @@ judged by the cold-seek target.
   reads still take 40 to 57 ms when four start together: the start-ups' round trips and
   decoding. Shortening that would mean fewer dependent reads of the image per cold seek,
   which is scarletbook's seeking (#28).
-- **Owner direction:** performance and latency are key requirements.
+- **Maintainer direction:** performance and latency are key requirements.
 
 ## Performance basis
 
@@ -2883,7 +2883,7 @@ shows is derived from images that root chose to share.
 warning on a background start goes nowhere without `--log-file`, and the user would still meet
 "Permission denied" first. Turning it on for every user: a non-root user without
 `user_allow_other` would then fail to mount at all, a change in behaviour for desktop users who
-mount for themselves. `allow_root` (root and the maintainer): fuser enforces it itself, and it would
+mount for themselves. `allow_root` (root and the mount's owner): fuser enforces it itself, and it would
 not help Samba guests or app users, which are neither.
 
 **Trade-off.** A root mount that should be private now needs `--allow-other=no`, and a reader
@@ -2936,7 +2936,7 @@ The checklist is in [release.md](release.md). The decisions, each with its reaso
   the CPU has it (#23); v3 compiles the rest of sacdfs and scarletbook for AVX2 as well. The
   v3 build is tested on the runner only if its CPU is x86-64-v3, and the release stops
   otherwise.
-- **32-bit x86 (#488): static `i686-unknown-linux-musl`, `-C target-cpu=pentium4`.** *Owner
+- **32-bit x86 (#488): static `i686-unknown-linux-musl`, `-C target-cpu=pentium4`.** *Maintainer
   decision:* official builds for 32-bit Atom NAS units, after a user ran test builds on an ASUSTOR
   AS-302T (#456). *Why this target:* it is the build those test runs used, and a static binary
   runs whatever C library and glibc version 32-bit NAS firmware ships; Pentium 4 means SSE2 at
@@ -2989,7 +2989,7 @@ made (`src/tags.rs`, `dsf::tagged`); `sacdfs tags import` fills it from extracts
 deleting extracts would lose user genres (TCON) on 827 of 1,066 files, embedded art on 33 and
 MusicBrainz IDs on 26.
 
-- **A tags directory, one TOML file per disc, named by the disc's TOC identity.** *Owner
+- **A tags directory, one TOML file per disc, named by the disc's TOC identity.** *Maintainer
   decision (#81, 2026-11-01):* a tags directory with one file per disc, keyed by the disc's TOC
   identity; the images' dataset stays read-only. *Why:* edits survive renames and moves, and
   two copies of a disc share them; the images stay read-only; sacdfs does not depend on beets.
@@ -3030,7 +3030,7 @@ MusicBrainz IDs on 26.
   key or section) is ignored with a warning, so a typo never changes the served files. The
   warning gives the line and column, not the text there. Files over 4 MiB, links and anything
   but a regular file are not read.
-- **Live reload (owner requirement: pruning scanners such as Roon must see tag edits).** On a
+- **Live reload (maintainer requirement: pruning scanners such as Roon must see tag edits).** On a
   directory SOURCE (a watching tree, #101), adding, editing or removing a tags file changes the
   affected files' tags, size, mtime and generation and moves the mtime of the image's folder,
   its area folders and every folder above, exactly as a new sidecar does (#123), within the
@@ -3175,7 +3175,7 @@ schedules it, or turns on `--musicbrainz`.
   503s. *Trade-off:* a wrong release with the same number, the same track count and tracks within
   15 s would pass; none was seen. Real discs still refused: 16 of 60, 8 with no release found, 5 on ISRCs
   that disagree and 3 on durations.
-- **ISRCs that disagree still refuse, also by number.** The coordinator decided this under the maintainer's
+- **ISRCs that disagree still refuse, also by number.** The maintainers decided this under the maintainers'
   delegation, after real discs. *Why:* a wrong tag written to a library costs more than a disc left
   unmatched, and the sample is small. *Measured:* without the rule, 49 of 60 discs matched against 44, and
   the 5 extra were right by hand. *Alternative:* no refusal at the number step, where the number and
@@ -3243,7 +3243,7 @@ schedules it, or turns on `--musicbrainz`.
 through the mount's images and calls the same code as `tags fetch` for each disc that needs it.
 
 - **Why now, before the AcoustID phase.** The plan put the in-process worker after phase 3's soak
-  numbers; the coordinator scheduled its MusicBrainz part for 0.5.0. *Why:* that soak bounds
+  numbers; the maintainers scheduled its MusicBrainz part for 0.5.0. *Why:* that soak bounds
   fingerprinting, which decodes audio for seconds of CPU per track. The MusicBrainz worker decodes
   nothing: it reads TOCs and makes at most 1 request per second. *Alternative:* wait for phase 3.
   *Trade-off:* the in-process AcoustID switch still waits for its soak, and the worker will gain it
@@ -3368,7 +3368,7 @@ the maintainer's NAS already used.
   stops early), no offset is guessed, and a hash decides, so a false hit cannot match. Silence
   is the exact DSD idle pattern (0x69 and its rotations), or no 4096-sample window with an
   imbalance of ones and zeros over 4 (two bits, -60.2 dB; one bit is -66.2 dB). *Why:* the
-  owner's survey of a real library (844 extra regions) found 538 non-silent regions reading
+  a maintainer's survey of a real library (844 extra regions) found 538 non-silent regions reading
   exactly the one- or two-bit values, noise-shaper residue and not content; exact idle patterns
   alone would clear only a third of the files. A short last window is judged by the same
   absolute imbalance. The cases: extract = track plus silent pauses (head, tail or both);
@@ -3671,7 +3671,7 @@ each tool is in [development.md](development.md).
 - **Found, filed and fixed separately: #153.** Nodes, and with them discs, of removed or
   renamed images stayed in the tree for good. With every added album under a new name, the
   soak grew from 135 to 394 MiB in 19 minutes. *Why not fixed here:* it needed a design
-  change in the tree, in another lane; #163 fixed it. The soak's default churn (a new name
+  change in the tree, in another branch; #163 fixed it. The soak's default churn (a new name
   for every added album) covers it from then on. `--churn-slots K` (names reused) checks
   everything else in isolation.
 - **Why massif, not heaptrack.** heaptrack is not in UBI, and the Red Hat-first rule applies.

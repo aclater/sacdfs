@@ -186,7 +186,7 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 Real images can't go into CI, so four `#[ignore]`d tests (`dsf_header::real_discs_head_reads`,
 `library_index::real_discs`, `wav::real_discs`, `sequential_reads::real_discs_sequential_reads`)
 run by hand. Before each release candidate the
-coordinator runs, on a build of the candidate commit:
+maintainer runs, on a build of the candidate commit:
 
 <!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh

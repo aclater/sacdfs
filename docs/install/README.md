@@ -26,7 +26,7 @@ does. About 5 minutes.
 ### Steps
 
 1. **Log in over SSH.** On your computer (Windows: PowerShell; macOS: Terminal) type
-   `ssh youradmin@your-nas-address`.
+   `ssh admin@192.168.1.20` (replace `admin` with your NAS administrator's name and `192.168.1.20` with its address).
 2. **See what it would do.** Type this, with your folder. It changes nothing:
 
    <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->

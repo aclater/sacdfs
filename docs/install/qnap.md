@@ -17,7 +17,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 ## Steps
 
-1. **Log in over SSH as `admin`.** In QNAP's Control Panel, Network & File Services, Telnet / SSH, tick "Allow SSH connection" *(untested)*. On your computer (Windows: PowerShell; macOS: Terminal) type `ssh admin@your-nas-address`. On QNAP `admin` is root. Check:
+1. **Log in over SSH as `admin`.** In QNAP's Control Panel, Network & File Services, Telnet / SSH, tick "Allow SSH connection" *(untested)*. On your computer (Windows: PowerShell; macOS: Terminal) type `ssh admin@192.168.1.20` (replace `192.168.1.20` with your NAS's address). On QNAP `admin` is root. Check:
 
    <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
