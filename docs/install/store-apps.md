@@ -12,7 +12,7 @@ listed yet. This page says what is in the repository, how to use the Unraid temp
 and what was checked where.
 
 Both entries run the same published image as [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml):
-`ghcr.io/aclater/sacdfs:0.7.2`, with the FUSE device, all capabilities dropped but the seven
+`ghcr.io/dsd-toolbox/sacdfs:0.8.0`, with the FUSE device, all capabilities dropped but the seven
 the programs need (`SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`, `SETGID`,
 `NET_BIND_SERVICE`, `SETPCAP`; [why each one](../deployment.md#privileges)), no new privileges,
 AppArmor unconfined, SMB on port 10445 and NFS on 12049 (the NAS's own

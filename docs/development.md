@@ -47,12 +47,12 @@ podman run --rm -it --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:Z -w /src \
 
 ## Image scan
 
-`.github/workflows/image-scan.yml` scans the published image `ghcr.io/aclater/sacdfs:latest` with
+`.github/workflows/image-scan.yml` scans the published image `ghcr.io/dsd-toolbox/sacdfs:latest` with
 grype every Wednesday, for linux/amd64 and linux/arm64, and on demand from the Actions tab with
 any image reference. grype is the release binary, pinned by version and SHA-256. The job fails
 when a High or Critical finding has a fixed package version; the full table of fixable findings
 is in the log and the job summary. To run it by hand:
-`grype registry:ghcr.io/aclater/sacdfs:latest --platform linux/amd64 --only-fixed --fail-on high`.
+`grype registry:ghcr.io/dsd-toolbox/sacdfs:latest --platform linux/amd64 --only-fixed --fail-on high`.
 
 ## The no-growth test
 

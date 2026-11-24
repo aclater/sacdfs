@@ -90,14 +90,16 @@ architecture:
 
 <!-- docs-run: skip="needs a container engine and the GitHub CLI signed in" -->
 ```sh
-# facts:release repo=dsd-toolbox/sacdfs fmt='docker pull ghcr.io/aclater/sacdfs:{version}       # a release; :latest is the newest\ngh attestation verify oci://ghcr.io/aclater/sacdfs:{version} -R dsd-toolbox/sacdfs'
-docker pull ghcr.io/aclater/sacdfs:0.7.2       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 -R dsd-toolbox/sacdfs
+# facts:release repo=dsd-toolbox/sacdfs fmt='docker pull ghcr.io/dsd-toolbox/sacdfs:{version}       # a release; :latest is the newest\ngh attestation verify oci://ghcr.io/dsd-toolbox/sacdfs:{version} -R dsd-toolbox/sacdfs'
+docker pull ghcr.io/dsd-toolbox/sacdfs:0.8.0       # a release; :latest is the newest
+gh attestation verify oci://ghcr.io/dsd-toolbox/sacdfs:0.8.0 -R dsd-toolbox/sacdfs
 # /facts
 ```
 
-The attestation shows which commit and workflow built it. In the commands below, use
-`ghcr.io/aclater/sacdfs:<version>` where they say `sacdfs`, or build the image yourself.
+The attestation shows which commit and workflow built it. Releases up to 0.7.2 were published to
+`ghcr.io/aclater/sacdfs`, which stays as it is for existing users (no new tags; verify those with
+`--owner aclater`). To move a running container, change its image to the one above. In the commands below, use
+`ghcr.io/dsd-toolbox/sacdfs:<version>` where they say `sacdfs`, or build the image yourself.
 
 ## Building the image
 
@@ -1008,7 +1010,7 @@ installed through the API call behind "Install via YAML", with the YAML below an
 (step 2). Both shares served a 154-image library, and the app turned healthy within a minute.
 The names of screens and fields may differ between releases.
 
-1. **The image.** Use the published one, `ghcr.io/aclater/sacdfs:<version>`. TrueNAS
+1. **The image.** Use the published one, `ghcr.io/dsd-toolbox/sacdfs:<version>`. TrueNAS
    cannot build images: for a build of your own, build it elsewhere (above) and push it to
    a registry the NAS can reach, or load it from a file in a shell on the NAS
    (`docker load`).
@@ -1039,8 +1041,8 @@ The names of screens and fields may differ between releases.
    ```yaml
    services:
      sacdfs:
-       # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/aclater/sacdfs:{version}'
-       image: ghcr.io/aclater/sacdfs:0.7.2
+       # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/dsd-toolbox/sacdfs:{version}'
+       image: ghcr.io/dsd-toolbox/sacdfs:0.8.0
        # /facts
        restart: unless-stopped
        devices:
@@ -1267,8 +1269,8 @@ player wait for sacdfs's health check:
 ```yaml
 services:
   sacdfs:
-    # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/aclater/sacdfs:{version}'
-    image: ghcr.io/aclater/sacdfs:0.7.2
+    # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/dsd-toolbox/sacdfs:{version}'
+    image: ghcr.io/dsd-toolbox/sacdfs:0.8.0
     # /facts
     # needed with 0.4.1 and earlier images only (0.5.0 makes /srv/sacd itself); or make sacd in the host directory first
     entrypoint: ["bash", "-c", "mkdir -p /srv/sacd 2>/dev/null; exec /usr/local/bin/entrypoint.sh"]

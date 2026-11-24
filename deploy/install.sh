@@ -32,7 +32,7 @@ RELEASE_SHA256='
 # the repository always downloads.
 MEMBER_SHA256='
 '
-REPO=aclater/sacdfs
+REPO=dsd-toolbox/sacdfs
 # Where releases are downloaded from: GitHub, or a mirror with the same layout
 # (<url>/download/v<version>/<file>), as the CI test uses.
 RELEASES=${SACDFS_RELEASES_URL:-https://github.com/$REPO/releases}
@@ -869,7 +869,7 @@ install_compose() {
         END { if (n != 1 || m != 1) exit 1 }' "$src" >"$TMP/compose.yaml" ||
         die "$src doesn't have the images line and settings this script fills in"
     if [ -n "$v" ]; then
-        sed "s|^\( *image: ghcr.io/aclater/sacdfs:\).*|\1$v|" "$TMP/compose.yaml" >"$TMP/c2" && mv "$TMP/c2" "$TMP/compose.yaml"
+        sed "s|^\( *image: ghcr.io/[^/]*/sacdfs:\).*|\1$v|" "$TMP/compose.yaml" >"$TMP/c2" && mv "$TMP/c2" "$TMP/compose.yaml"
     fi
     if [ "$selinux" = 1 ]; then
         sed 's|^\( *\)# - label=disable.*|\1- label=disable|' "$TMP/compose.yaml" >"$TMP/c2" && mv "$TMP/c2" "$TMP/compose.yaml"

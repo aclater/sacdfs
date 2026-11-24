@@ -26,7 +26,7 @@ REPO = "dsd-toolbox/sacdfs"
 V = r"\d+\.\d+\.\d+(?:-rc\.\d+)?"
 # How a guide tells users which release to take.
 GUIDE_FORMS = [
-    re.compile(rf"ghcr\.io/aclater/sacdfs:({V})"),
+    re.compile(rf"ghcr\.io/dsd-toolbox/sacdfs:({V})"),
     re.compile(rf"releases/download/v({V})/"),
     re.compile(rf"\bsacdfs[-_]({V})[-_.~]"),
     re.compile(rf"--version\s+({V})\b"),
@@ -85,9 +85,9 @@ def check_guides(version, problems):
 
 def check_deploy(version, problems):
     checks = [
-        ("deploy/nas-compose.yaml", rf"image:\s*ghcr\.io/aclater/sacdfs:({V})"),
-        ("deploy/unraid/sacdfs.xml", rf"<Repository>ghcr\.io/aclater/sacdfs:({V})</Repository>"),
-        ("deploy/truenas/sacdfs/ix_values.yaml", rf"repository:\s*ghcr\.io/aclater/sacdfs\s*\n\s*tag:\s*\"?({V})"),
+        ("deploy/nas-compose.yaml", rf"image:\s*ghcr\.io/dsd-toolbox/sacdfs:({V})"),
+        ("deploy/unraid/sacdfs.xml", rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})</Repository>"),
+        ("deploy/truenas/sacdfs/ix_values.yaml", rf"repository:\s*ghcr\.io/dsd-toolbox/sacdfs\s*\n\s*tag:\s*\"?({V})"),
         ("deploy/truenas/sacdfs/app.yaml", rf"^app_version:\s*({V})\s*$"),
     ]
     for path, pattern in checks:

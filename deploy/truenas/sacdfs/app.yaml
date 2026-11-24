@@ -1,6 +1,6 @@
 annotations:
   min_scale_version: 24.10.2.2
-app_version: 0.7.2
+app_version: 0.8.0
 capabilities:
 - description: sacdfs is able to bypass file permission checks
   name: DAC_OVERRIDE
@@ -46,7 +46,7 @@ run_as_context:
 screenshots: []
 sources:
 - https://apps.truenas.com/catalog/sacdfs_community/
-- https://ghcr.io/aclater/sacdfs
+- https://ghcr.io/dsd-toolbox/sacdfs
 - https://github.com/dsd-toolbox/sacdfs
 title: sacdfs
 train: community

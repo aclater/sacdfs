@@ -230,7 +230,7 @@ can change them, and checks that before it writes anything
   files then appear in `/share/CACHEDEV1_DATA/sacd`: share that folder and point players at
   it. `--uninstall` finds both places.
 - **Checksums:** each release's `install.sh` carries the SHA-256 of that release's archives,
-  and is itself attested (`gh attestation verify install.sh --owner aclater`). A download
+  and is itself attested (`gh attestation verify install.sh -R dsd-toolbox/sacdfs`). A download
   that doesn't match stops it. With `--version` for another release, it can only compare with
   the `.sha256` from the same server: it says so, and then needs `curl` (HTTPS only, TLS 1.2
   or later) or GNU Wget, which check the server's certificate; BusyBox's `wget` doesn't, so
@@ -289,7 +289,7 @@ Then run it:
 sudo sh install.sh --iso-dir /volume1/music
 ```
 
-`gh attestation verify install.sh --owner aclater` also shows that this repository's release
+`gh attestation verify install.sh -R dsd-toolbox/sacdfs` also shows that this repository's release
 workflow built it. *(Checked on 0.6.2 from the `latest` address in both forms above, and the
 attestation passes; see [the installer on 0.6.2](../test-plan.md#results-installer-on-062).)*
 
@@ -299,7 +299,7 @@ stops with `wget`'s error before anything runs. BusyBox's own `wget`, on systems
 other, failed against GitHub with a TLS error in our BusyBox 1.37 test image (and it doesn't
 check the server's certificate): there this form stops with status 1. Then download
 `install.sh`, the release archive for your CPU and its `.sha256` on another computer, copy all
-three to the NAS, and run <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sh install.sh --iso-dir /volume1/music --archive sacdfs-{version}-x86_64-linux.tar.gz`' -->`sh install.sh --iso-dir /volume1/music --archive sacdfs-0.7.2-x86_64-linux.tar.gz`<!-- /facts -->
+three to the NAS, and run <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sh install.sh --iso-dir /volume1/music --archive sacdfs-{version}-x86_64-linux.tar.gz`' -->`sh install.sh --iso-dir /volume1/music --archive sacdfs-0.8.0-x86_64-linux.tar.gz`<!-- /facts -->
 (checked on 0.6.2-rc.1 in that BusyBox image).
 *(Checked on 0.6.2 as a dry run with the NAS's own `wget`, GNU Wget, on QNAP QuTScloud, Synology
 DSM, TerraMaster TOS, ReadyNAS OS, Debian 12 with UGREEN's kernel and OpenMediaVault 8, in VMs,
@@ -380,24 +380,24 @@ hardware, and QTS or UGOS Pro themselves.
 
 ### Release files
 
-The latest release is <!-- facts:release repo=dsd-toolbox/sacdfs fmt='{version}, published {date}' -->0.7.2, published 2026-11-22<!-- /facts -->. These are its files. Each archive and package also has a `.sha256` file and an `.intoto.jsonl` attestation bundle beside it.
+The latest release is <!-- facts:release repo=dsd-toolbox/sacdfs fmt='{version}, published {date}' -->0.8.0, published 2026-11-25<!-- /facts -->. These are its files. Each archive and package also has a `.sha256` file and an `.intoto.jsonl` attestation bundle beside it.
 
 | File | Platform | Size (MB) |
 |---|---|---|
 <!-- facts:assets repo=dsd-toolbox/sacdfs match='\.(tar\.gz|zip|rpm|deb)$|^install\.sh$' fmt='| `{name}` | {platform} | {size_mb} |' -->
 | `install.sh` | any | 0.1 |
-| `sacdfs-0.7.2-1.aarch64.rpm` | Linux aarch64 | 2.9 |
-| `sacdfs-0.7.2-1.src.rpm` | Linux | 28.9 |
-| `sacdfs-0.7.2-1.x86_64.rpm` | Linux x86-64 | 3.4 |
-| `sacdfs-0.7.2-aarch64-linux.tar.gz` | Linux aarch64 | 3.5 |
-| `sacdfs-0.7.2-aarch64-macos.tar.gz` | macOS aarch64 | 6.5 |
-| `sacdfs-0.7.2-i686-linux.tar.gz` | Linux i686 | 3.5 |
-| `sacdfs-0.7.2-x86_64-linux.tar.gz` | Linux x86-64 | 3.8 |
-| `sacdfs-0.7.2-x86_64-macos.tar.gz` | macOS x86-64 | 7.3 |
-| `sacdfs-0.7.2-x86_64-v3-linux.tar.gz` | Linux x86-64 | 3.8 |
-| `sacdfs-0.7.2-x86_64-windows.zip` | Windows x86-64 | 3.3 |
-| `sacdfs_0.7.2-1_amd64.deb` | Linux x86-64 | 3.4 |
-| `sacdfs_0.7.2-1_arm64.deb` | Linux aarch64 | 2.9 |
+| `sacdfs-0.8.0-1.aarch64.rpm` | Linux aarch64 | 2.9 |
+| `sacdfs-0.8.0-1.src.rpm` | Linux | 28.9 |
+| `sacdfs-0.8.0-1.x86_64.rpm` | Linux x86-64 | 3.4 |
+| `sacdfs-0.8.0-aarch64-linux.tar.gz` | Linux aarch64 | 3.5 |
+| `sacdfs-0.8.0-aarch64-macos.tar.gz` | macOS aarch64 | 6.5 |
+| `sacdfs-0.8.0-i686-linux.tar.gz` | Linux i686 | 3.5 |
+| `sacdfs-0.8.0-x86_64-linux.tar.gz` | Linux x86-64 | 3.8 |
+| `sacdfs-0.8.0-x86_64-macos.tar.gz` | macOS x86-64 | 7.3 |
+| `sacdfs-0.8.0-x86_64-v3-linux.tar.gz` | Linux x86-64 | 3.8 |
+| `sacdfs-0.8.0-x86_64-windows.zip` | Windows x86-64 | 3.3 |
+| `sacdfs_0.8.0-1_amd64.deb` | Linux x86-64 | 3.4 |
+| `sacdfs_0.8.0-1_arm64.deb` | Linux aarch64 | 2.9 |
 <!-- /facts -->
 
 ## See also

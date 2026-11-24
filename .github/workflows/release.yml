@@ -43,7 +43,7 @@
 #     "packages-test"); and the source RPM for COPR, sacdfs-<version>-1.src.rpm (the tag's
 #     source, its vendored crates and packaging/sacdfs.spec), after it rebuilt offline on UBI 9,
 #     UBI 10 and Fedora (job "srpm-test");
-#   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
+#   - the container image, ghcr.io/dsd-toolbox/sacdfs:<version> and :latest, a multi-arch manifest
 #     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
 #   - the crate on crates.io (#155), for final versions only (no hyphen: not 0.4.0-rc.1),
 #     through crates.io trusted publishing (no token stored here). A version already on
@@ -109,7 +109,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_STABLE: 1.99.1
-  IMAGE: ghcr.io/aclater/sacdfs
+  IMAGE: ghcr.io/dsd-toolbox/sacdfs
 
 defaults:
   run:
@@ -299,8 +299,8 @@ jobs:
           chmod 0755 "dist/$pkg/install.sh"
           # The Compose file names this release's image, or the container route would run whatever
           # version main's copy names (0.6.2-rc.1 shipped one naming 0.6.1).
-          sed "s#ghcr.io/aclater/sacdfs:[^ ]*\$#ghcr.io/aclater/sacdfs:$VERSION#" deploy/nas-compose.yaml > "dist/$pkg/nas-compose.yaml"
-          grep -q "image: ghcr.io/aclater/sacdfs:$VERSION\$" "dist/$pkg/nas-compose.yaml"
+          sed "s#ghcr.io/dsd-toolbox/sacdfs:[^ ]*\$#ghcr.io/dsd-toolbox/sacdfs:$VERSION#" deploy/nas-compose.yaml > "dist/$pkg/nas-compose.yaml"
+          grep -q "image: ghcr.io/dsd-toolbox/sacdfs:$VERSION\$" "dist/$pkg/nas-compose.yaml"
           chmod 0644 "dist/$pkg/nas-compose.yaml"
           # install.sh verifies release files beside it against built-in checksums: this
           # archive's, from the exact files packed. Last before packing, so nothing changes them.
@@ -914,10 +914,10 @@ jobs:
             sudo chmod go-w "$d"
           done
           t=$RUNNER_TEMP
-          mkdir -p "$t/srv/aclater/sacdfs/releases/download/v$VERSION" "$t/u"
-          cp dist/*.tar.gz "$t/srv/aclater/sacdfs/releases/download/v$VERSION/"
+          mkdir -p "$t/srv/dsd-toolbox/sacdfs/releases/download/v$VERSION" "$t/u"
+          cp dist/*.tar.gz "$t/srv/dsd-toolbox/sacdfs/releases/download/v$VERSION/"
           python3 -I -m http.server --bind 127.0.0.1 --directory "$t/srv" 18766 >"$t/http.log" 2>&1 &
-          url=http://127.0.0.1:18766/aclater/sacdfs/releases
+          url=http://127.0.0.1:18766/dsd-toolbox/sacdfs/releases
           for _ in $(seq 50); do curl -fsS -o /dev/null "$url/download/v$VERSION/" && break; sleep 0.2; done
           pkg=sacdfs-$VERSION-x86_64-linux
           tar -C "$t/u" -xzf "dist/$pkg.tar.gz"
@@ -939,7 +939,7 @@ jobs:
           run
           grep -q "sacdfs-ctl doesn't match the checksum built into install.sh" "$t/out.log"
           grep -q 'checksum OK (built in)' "$t/out.log"
-          grep -q "\"GET /aclater/sacdfs/releases/download/v$VERSION/$pkg.tar.gz " "$t/http.log"
+          grep -q "\"GET /dsd-toolbox/sacdfs/releases/download/v$VERSION/$pkg.tar.gz " "$t/http.log"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: installer

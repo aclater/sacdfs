@@ -51,7 +51,7 @@ never moved.
    `required` stops the run in preflight. Dry runs never sign: their macOS archives are named
    `-unsigned`.
 6. **After:** the release has its archives, packages and `install.sh`, each with `.sha256` and
-   `.intoto.jsonl`, and `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
+   `.intoto.jsonl`, and `SHA256SUMS`; `ghcr.io/dsd-toolbox/sacdfs:X.Y.Z` and `:latest` exist (`ghcr.io/aclater/sacdfs` is frozen at 0.7.2 for existing users); check one asset with
    `gh attestation verify`; the workflow's last image step has verified the image index, each
    architecture's image by its digest and each `-<arch>` tag (#379). A version with a hyphen
    (`0.2.0-rc.1`) is marked as a pre-release and doesn't move `:latest`.

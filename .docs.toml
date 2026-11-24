@@ -14,57 +14,42 @@ proper_nouns = ["Lyrion", "Logitech", "Media", "Server", "Windows", "Explorer", 
 [[lint.ignore]]
 path = "CHANGELOG.md"
 rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
-
-[[lint.ignore]]
-path = "docs/beta-testing.md"
-rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
 
 [[lint.ignore]]
 path = "docs/deployment.md"
 rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
-
-[[lint.ignore]]
-path = "docs/development.md"
-rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
 
 [[lint.ignore]]
 path = "docs/install/docker-podman.md"
 rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
 
 [[lint.ignore]]
 path = "docs/install/packages.md"
 rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
 
 [[lint.ignore]]
 path = "docs/install/store-apps.md"
 rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
-
-[[lint.ignore]]
-path = "docs/install/truenas-scale.md"
-rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
 
 [[lint.ignore]]
 path = "docs/performance.md"
 rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
 
 [[lint.ignore]]
 path = "docs/release.md"
 rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
 
 [[lint.ignore]]
 path = "docs/test-plan.md"
 rule = "old-owner"
-reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
 
 [links]
 # tests/corpus/ is a verbatim copy of the sacd-spec conformance corpus (tests/corpus/SOURCE.md); its

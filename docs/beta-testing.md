@@ -145,7 +145,7 @@ podman volume rm sacdfs-cache     # sacdfs's own cache; only if you used a volum
 ```
 
 If you used Compose, run `docker compose down` in the folder of your compose file instead of the first
-two lines. If you also want the image gone: `podman rmi ghcr.io/aclater/sacdfs:TAG`, with the tag you
+two lines. If you also want the image gone: `podman rmi ghcr.io/dsd-toolbox/sacdfs:TAG`, with the tag you
 pulled (untested). Remove any share or mount you added on your other computers, or they will point at
 nothing. In a NAS web interface, stop and delete the container or app there instead (untested); its
 volume or data folder is deleted separately.
