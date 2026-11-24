@@ -136,6 +136,7 @@ Clients then name the ports when they mount: see [linux-client.md](linux-client.
   needs one: it refuses guest shares. Without these two, the shares are open to the whole network, read-only.
 - **Music servers that scan with FFmpeg** (Jellyfin, MPD) and **Roon:** add `-e SACDFS_FORMATS=dsf`.
   See [your player's guide](README.md#3-which-player-or-music-server).
+<!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
 - **Who may mount over NFS:** `-e NFS_CLIENTS=192.168.1.0/24` (default: everyone).
 - **The `--health-*` lines:** the published image is in OCI format, which has no field for a health
   check, so Podman needs them. Docker reads the check from the image.

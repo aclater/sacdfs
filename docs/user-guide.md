@@ -22,7 +22,7 @@ nothing but one image, and `--format dsf` if a library scanner should see only t
 
 ## Options
 
-```
+```text
 sacdfs [OPTIONS] SOURCE MOUNTPOINT
 ```
 
@@ -210,7 +210,7 @@ heads read` when re-reads hold it back. What it measured:
 
 Standard DSF files: DSD64 (2.8224 MHz), 1 bit, 4096-byte blocks per channel, with an
 ID3v2.4 tag at the end.
-- The audio is the track's frames as the disc's table of contents gives them, bit-identical
+- The audio is the track's frames as the disc's table of contents gives them, byte-identical
   to what the reference extractors (pysacd's `pysacd-extract`, scarletbook's `bench decode`)
   write. The pauses between tracks are not included.
 - The channel type follows the disc's speaker layout: stereo, 5 channels (3/2) or 5.1.
@@ -358,7 +358,7 @@ file through FFmpeg, so every WAV file is converted for that probe: in a test of
 first scan took about 9 s with `dsf,wav` and 0.6 s with `dsf` (about 15 times as long), and
 a library of 1,000 discs would cost about an hour of CPU. The same happens after any MPD
 database rebuild. Incremental `mpc update` reads nothing. If a player needs WAV files, mount
-twice as above. Jellyfin's LUFS normalization and Plex's nightly deep analysis read every
+twice as above. Jellyfin's LUFS normalisation and Plex's nightly deep analysis read every
 file in full; turn them off, or use `--cache-mb 16`.
 
 ## Your own tags (`--tags`)
@@ -733,7 +733,7 @@ included, after sacdfs restarts. `/etc/exports` needs an `fsid` (a FUSE mount ha
 number of its own), and sacdfs `--allow-other`, even when sacdfs runs as root (from 0.6.0,
 the default as root):
 
-```
+```text
 /srv/sacd  192.0.2.0/24(ro,fsid=4242,no_subtree_check)
 ```
 
@@ -803,7 +803,7 @@ another tool), sacdfs can replace them: it serves every track from the image on 
 `sacdfs verify` tells you, file by file, whether that is safe. It reads the extracts and the
 images and writes a report; **it never deletes, moves or changes a file.**
 
-```
+```text
 sacdfs verify [OPTIONS] SOURCE [EXTRACTS]...
 ```
 
@@ -925,7 +925,7 @@ Examples:
 sacdfs verify -o report.tsv ~/music/sacd-images
 awk -F'\t' '$1 == "IDENTICAL" && $11 == "" {print $2}' report.tsv
 
-# Extracts in ~/music/dsf/<artist>/<album>/, images in ~/music/sacd-images/<artist>/<album>/.
+# Extracts in a folder per artist and album under ~/music/dsf/, images likewise under ~/music/sacd-images/.
 sacdfs verify -o report.tsv --map ~/music/dsf ~/music/sacd-images ~/music/sacd-images ~/music/dsf
 ```
 
@@ -970,7 +970,7 @@ looks for a helper named `mount.fuse.sacdfs` or `mount.fuse`; Fedora's `fuse3` p
 parameter 'cache_mb'". (`fuse3.sacdfs` as the type does not work: `mount.fuse3` takes it for a
 command name.)
 
-```
+```text
 # /etc/fstab
 /srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,cache_mb=64,format=dsf,_netdev,nofail  0 0
 ```

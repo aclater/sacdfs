@@ -29,7 +29,7 @@ from a network share (client-side). The design behind these figures is in
   DST 5 channels (a hybrid disc); and two DST stereo images in 2064-byte raw sectors. Seven
   areas, 93 tracks. "Plain DSD" is a disc stored without DST compression, which sacdfs only
   demultiplexes; DST areas are decoded too. Both builds passed the DSF gate (all 93 tracks
-  bit-identical to the reference extractor) before the round.
+  byte-identical to the reference extractor) before the round.
 - **Time per seek** is `open`, one 128 KiB `pread` and `close`, timed inside one process.
 
 The figures of earlier pull requests, each against its own "before", are in the

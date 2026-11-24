@@ -1,0 +1,67 @@
+# Settings for the shared docs tools (dsd-toolbox docs/docs-tooling.md).
+name = "sacdfs"
+kind = "app"
+default_branch = "main"
+
+[lint]
+# The release steps live in docs/release.md (the test plan is its gate and links to it).
+release_files = ["docs/release.md"]
+# "catalog" is the TrueNAS app catalog (a product term); "center" is part of "Media Center".
+allow_words = ["catalog", "center"]
+# Product names in headings: Lyrion / Logitech Media Server, Windows Explorer, PowerShell, Robocopy, JRiver Media Center.
+proper_nouns = ["Lyrion", "Logitech", "Media", "Server", "Windows", "Explorer", "PowerShell", "Robocopy", "JRiver", "Center"]
+
+[[lint.ignore]]
+path = "CHANGELOG.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/beta-testing.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/deployment.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/development.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/install/docker-podman.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/install/packages.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/install/store-apps.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/install/truenas-scale.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/performance.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/release.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[[lint.ignore]]
+path = "docs/test-plan.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"

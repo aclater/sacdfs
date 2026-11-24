@@ -314,7 +314,7 @@ time.
   service (Windows 11), a NAS share as SOURCE (path and mapped drive), hibernating with the drive
   mounted, the removal steps (Windows 10), Explorer as a normal user (listing, thumbnails of
   covers, the details pane, large icons), and audio played to the VM's sound device, recorded and
-  compared with the same file played from a local copy (bit-identical in foobar2000). Not run:
+  compared with the same file played from a local copy (byte-identical in foobar2000). Not run:
   sleep (S3), because the VMs don't wake from it, with or without sacdfs. Plus the checks the
   `windows` workflow runs on every change: every file of the test corpus byte-identical to the
   Linux mount, end of file, names in any case, refused writes, the WinFsp notice, and a clean stop

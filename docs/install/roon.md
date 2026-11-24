@@ -16,6 +16,7 @@ Not tested on 0.6.0. Roon was last checked on 0.4.1-rc.1 (Roon 2.74) as an app o
 
 1. **Put sacdfs on port 445.** Roon's "Add network share" has no port field: it needs SMB on port 445, and a NAS's own SMB service (TrueNAS) already holds 445. On TrueNAS, let TrueNAS share sacdfs's files on 445: [truenas-scale.md](truenas-scale.md#share-through-truenass-own-smb-port-445); the share is then `\\nas\sacd\sacd` with that TrueNAS user (checked with a Linux SMB client, not yet with Roon). Or give sacdfs its own address: in the sacdfs app's YAML add this, with a subnet nothing else on the NAS uses:
 
+   <!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
    ```yaml
    services:
      sacdfs:
@@ -34,6 +35,7 @@ Not tested on 0.6.0. Roon was last checked on 0.4.1-rc.1 (Roon 2.74) as an app o
 
 2. **Let Roon mount shares.** In the **Roon** app's YAML add `cap_add: [SYS_ADMIN, DAC_READ_SEARCH]` and `security_opt: [apparmor=unconfined]`: Roon mounts network shares itself, inside its container. Restart Roon.
 
+<!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
 3. **Add the share in Roon.** Settings, Storage, **Add Folder**, **Add network share**. Type `\\172.29.42.10\sacd` and the `SMB_USER` name and password (with TrueNAS's own share: `\\` and the NAS's address, then `\sacd\sacd`, and the TrueNAS user).
    *You should see:* the share listed as watched.
 

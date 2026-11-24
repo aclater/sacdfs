@@ -2,6 +2,8 @@
 
 # Deploying sacdfs on a NAS
 
+The reference for running sacdfs in a container on a NAS: what each part does, every setting, and why.
+
 > **Installing?** Start with the short [install guides](install/README.md): one per NAS system
 > and music server, with numbered steps and a check that it works. This page is the
 > reference behind them: every setting, and why.
@@ -38,11 +40,14 @@ shares. The clients tested so far, with the settings that worked for each, are i
 
 ## What the container does
 
-```
- host                          container
- /path/to/images  ──(ro)──►  /images ──► sacdfs (FUSE) ──► /srv/sacd ──┬─► smbd         :445  SMB share "sacd"
-                                                                      └─► NFS-Ganesha  :2049 NFSv4 export "/sacd"
- volume           ────────►  /cache   (sacdfs's persistent seek index)
+```mermaid
+flowchart LR
+    images["host: /path/to/images"] -- read-only --> c_images["/images in the container"]
+    c_images --> sacdfs["sacdfs (FUSE)"]
+    sacdfs --> mount["/srv/sacd"]
+    mount --> smb["smbd, port 445: SMB share sacd"]
+    mount --> nfs["NFS-Ganesha, port 2049: NFSv4 export /sacd"]
+    volume["host: volume"] --> cache["/cache: sacdfs's persistent seek index"]
 ```
 
 - The images come in **read-only** from the host. sacdfs mounts them at `/srv/sacd` inside
@@ -1093,6 +1098,7 @@ host networking, on the same NAS as sacdfs.
   address on a Docker network of its own instead. Roon, on the host network, reaches it there
   on 445:
 
+  <!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
   ```yaml
   services:
     sacdfs:
@@ -1113,6 +1119,7 @@ host networking, on the same NAS as sacdfs.
   ```
 
   Pick a subnet that nothing else on the NAS uses. In Roon, add the network share
+  <!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
   `\\172.29.42.10\sacd` with `SMB_USER` and its password.
 - **Roon's container needs the right to mount SMB.** Roon on Linux mounts a network share with
   the kernel's CIFS client inside its own container. Without the right to mount, it fails with
@@ -1155,7 +1162,7 @@ containers, or as TrueNAS apps) can read sacdfs's mount directly, with no SMB or
 ([#186](https://github.com/dsd-toolbox/sacdfs/issues/186)). The mount is shared through a directory on
 the host:
 
-```
+```text
  host directory /mnt/pool/apps/sacdfs-mnt
    sacdfs container:  bound over /srv, rshared   -> sacdfs mounts /srv/sacd, which appears on the host
    player container:  bound at /music, ro,rslave -> the player reads /music/sacd
@@ -1440,7 +1447,7 @@ sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,guest,vers=3.1.1
 # with SMB_USER: keep the password in a file readable only by root
 #   /root/.sacd-smb:  username=music
 #                     password=...
-sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,uid=$(id -u)
+sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,uid=1000
 ```
 
 **Add `rsize=262144` to an SMB mount that a player scans or that copies files** (#266). The
@@ -1555,7 +1562,7 @@ a second container (or mount) with `dsf,wav` for it.
 Jellyfin behaves the same way: in its first scan on 0.3.0-rc.1 sacdfs served 17.9 MiB for 93
 DSF files and 648.5 MiB with `dsf,wav`, because its ffprobe reads about 7 MB of each WAV file
 (sacdfs used 1 CPU-second against 24 to 26). Use `dsf` unless it needs WAV files. Jellyfin's
-LUFS normalization reads every file about twice (39.8 GiB for 22.0 GiB of DSF files in the
+LUFS normalisation reads every file about twice (39.8 GiB for 22.0 GiB of DSF files in the
 same test), and Plex's nightly deep analysis reads every file once (on 0.1.1): turn them off,
 or use a 16 MiB `--cache-mb` as on a NAS ([clients](clients.md#jellyfin)).
 

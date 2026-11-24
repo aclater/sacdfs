@@ -71,7 +71,7 @@ COPR, and dnf checks the signature.
 Fedora 44 and 45:
 
 ```sh
-sudo dnf copr enable aclater/sacdfs
+sudo dnf copr enable dsd-toolbox/sacdfs
 sudo dnf install sacdfs
 ```
 
@@ -83,8 +83,8 @@ sudo dnf install sacdfs
 ```
 
 *You should see* `Complete!`; `sacdfs --version` then prints `sacdfs 0.7.2`. On RHEL,
-`sudo dnf copr enable aclater/sacdfs` alone looks for an EPEL build, which this project
-doesn't have; with `dnf-plugins-core` installed, `sudo dnf copr enable aclater/sacdfs
+`sudo dnf copr enable dsd-toolbox/sacdfs` alone looks for an EPEL build, which this project
+doesn't have; with `dnf-plugins-core` installed, `sudo dnf copr enable dsd-toolbox/sacdfs
 rhel-9-x86_64` works too. Then go on with step 3 above (settings, then start).
 
 A COPR build sorts newer than the release's `.rpm` of the same version (`0.7.2-1.el9` after

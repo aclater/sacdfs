@@ -35,6 +35,7 @@ Checked on 0.6.0 with Jellyfin 12.4.0 (official image) in rootless Podman on Fed
 
 3. **Open Jellyfin** at `http://localhost:8096` and finish its first-run wizard (language, an admin user and password).
 
+<!-- docs-lint: ignore spelling -- the exact label in the Jellyfin interface -->
 4. **Add the library.** Dashboard, Libraries, **Add Media Library**. Content type **Music**, then **Folders**, **+**, and type `/media/sacd`. Under the library's settings leave **LUFS audio normalization** off. Click **OK**.
    *You should see:* a scan starts and the albums appear.
 
@@ -61,7 +62,7 @@ Open **Music** on the home page. Each disc is an album; a disc with a multichann
 - **`SACDFS_FORMATS=dsf`.** Jellyfin's ffprobe reads about 7 MB of each WAV file, which sacdfs must convert: 648.5 MiB served for the first scan against 17.9 MiB with `dsf`.
 - **`SACDFS_FLATTEN=1`.** Each disc's `Stereo` and `Multichannel` folders then sit under the album.
 - **Cache.** Leave `SACDFS_CACHE_MB` at its default (32 MiB, or 16 under a memory limit below 256 MiB).
-- **LUFS normalization off.** With it on, Jellyfin read the library about twice over (40.0 GiB from a 22.0 GiB library), and sacdfs had to decode all of it.
+- **LUFS normalisation off.** With it on, Jellyfin read the library about twice over (40.0 GiB from a 22.0 GiB library), and sacdfs had to decode all of it.
 - **Share the folder that holds the mount, with `ro,rslave`.** Sharing the mount point itself leaves the container on a dead mount after sacdfs restarts. `label=disable` is for SELinux hosts.
 - Run Jellyfin as the same user that made the mount if you mount sacdfs directly (without Docker or Podman for sacdfs): see [user-guide.md](../user-guide.md).
 

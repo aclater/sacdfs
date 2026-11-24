@@ -92,6 +92,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    (The same switch is in the QNAP settings, Control Panel, System, Hardware, General, "Run user defined processes during startup" *(untested)*.)
 10. **Make it start with the NAS.** QNAP runs `autorun.sh` early at start-up, before the data volume is ready, so this script waits for the volume in the background and then starts sacdfs. The file lives on a small flash partition, which these commands open and close.
 
+    <!-- docs-lint: ignore placeholder -- the shell variables belong to the autorun script, and the boot partition differs per QNAP model -->
     ```sh
     mount $(/sbin/hal_app --get_boot_pd port_id=0)6 -t ext2 /tmp/config
     cat > /tmp/config/autorun.sh <<'EOF'

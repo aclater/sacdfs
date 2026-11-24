@@ -24,7 +24,7 @@ Checked on 0.6.0 with MPD 0.24.18 and mpc 0.35 (Fedora 44 packages, in a contain
 
 2. **Point MPD at it.** Open `/etc/mpd.conf` with `sudo nano /etc/mpd.conf` and set this line (it is already there; replace its value):
 
-   ```
+   ```text
    music_directory "/srv/media/sacd"
    ```
 

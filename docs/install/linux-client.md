@@ -51,7 +51,7 @@ on 0.4.0. See [Details](#details).
 4. **To mount at every start,** add **one** of these lines to the end of `/etc/fstab` (open it with
    `sudo nano /etc/fstab`), then type `sudo systemctl daemon-reload && sudo mount -a`:
 
-   ```
+   ```text
    nas:/sacd   /mnt/sacd  nfs4  ro,vers=4.2,_netdev,nofail  0 0
    //nas/sacd  /mnt/sacd  cifs  ro,guest,vers=3.1.1,_netdev,nofail,x-systemd.automount  0 0
    ```

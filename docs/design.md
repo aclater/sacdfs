@@ -14,7 +14,7 @@ decisions across its repositories, one line each with where they are recorded, a
 
 ## Goals
 
-1. **Correct audio.** A track read through the mount is bit-identical to the same track
+1. **Correct audio.** A track read through the mount is byte-identical to the same track
    extracted with a reference extractor (pysacd's `pysacd-extract`, or scarletbook's
    `bench decode --sink raw`), checked by per-channel SHA-256 of the DSD stream. A WAV
    file's audio is exactly what the converter makes of the track's frames, each with its
@@ -336,7 +336,7 @@ under 64 MiB at the smallest, on the import replay, with straight reads and seek
 
 ## Layout
 
-```
+```text
 MOUNT/
   <relative dir of the image>/<image file stem>/
     Stereo/
@@ -492,7 +492,7 @@ several folders below its artist. With `--flatten` (off by default, so existing 
 their paths), a chain of source directories whose only content is one image is shown as
 its outermost directory, which then holds the image's `Stereo` and `Multichannel` folders:
 
-```
+```text
 Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
   -> Artist/Year - Album/Stereo/01 - Title.dsf      (without it: .../Album/disc/Stereo/...)
 ```
@@ -691,12 +691,14 @@ export of one FUSE mount doesn't have; and old clients go stale once on the upgr
 
 **Inode numbers** (`src/ident.rs`) are 64 bits:
 
-```
- 63                                16 15 14 13 12         5  4  3      0
-+------------------------------------+-----+--+------------+--+--------+
-| key: 48 bits of SHA-256 of a path  |kind |sl| track no.  |wv| flavour|
-+------------------------------------+-----+--+------------+--+--------+
-```
+| Bits | Width | Field |
+|---|---|---|
+| 63 to 16 | 48 | key: bits of the SHA-256 of a path |
+| 15 to 14 | 2 | kind |
+| 13 | 1 | `sl`: the slot |
+| 12 to 5 | 8 | track number |
+| 4 | 1 | `wv`: WAV |
+| 3 to 0 | 4 | PCM flavour |
 
 - A source directory's key comes from its path relative to SOURCE; an image's from the
   image's relative path (with a domain byte, so a directory and an image never share an

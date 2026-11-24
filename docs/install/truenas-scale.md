@@ -12,6 +12,7 @@ The catalog app was checked on 0.7.0 on TrueNAS SCALE 25.10.8, in a VM, through 
 
 - TrueNAS SCALE 24.10 or later, and a login to its web page.
 - The path of the dataset (TrueNAS's name for a storage folder) that holds your SACD images, for example `/mnt/pool/music`.
+<!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
 - Your network, written as `192.168.1.0/24` (your NAS's address with the last number replaced by `0/24`), if you want to limit who may use NFS.
 
 ## Install from the Apps screen

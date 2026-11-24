@@ -39,7 +39,7 @@ cause not found.
 To run a job's tests the same way locally:
 
 ```sh
-podman run --rm -it --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD:/src:Z" -w /src \
+podman run --rm -it --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:Z -w /src \
     registry.access.redhat.com/ubi10/ubi:10.3 bash
 # then: dnf -y install git-core gcc fuse3 python3, install Rust, and run cargo test as a normal user
 ```
@@ -219,7 +219,7 @@ benchmarks alone, for example `taskset -c 12-19 python3 scripts/soak.py ...` on 
 
 ```sh
 podman build -t sacdfs-leak -f scripts/leak-check.Containerfile scripts
-podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD":/src:z -v DIR:/images:ro,z \
+podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:z -v DIR:/images:ro,z \
     -w /src sacdfs-leak scripts/leak-check.sh massif /images 40
 ```
 
@@ -240,7 +240,7 @@ is not in UBI, and massif gives the same two answers.
 ## The test suite under memcheck
 
 ```sh
-podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD":/src:z -w /src \
+podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:z -w /src \
     sacdfs-leak scripts/leak-check.sh memcheck
 ```
 
@@ -272,7 +272,7 @@ processes.
 
 A Rust test can't skip itself at run time. A guard that returns early reports as `ok`, and no
 count shows it. In pysacd, that hid a comparison job that had stopped comparing for six releases
-(aclater/pysacd#131). So a guard here goes through `common::skip!` (`tests/common/mod.rs`), and
+(dsd-toolbox/pysacd#131). So a guard here goes through `common::skip!` (`tests/common/mod.rs`), and
 never a bare `return`:
 
 ```rust

@@ -5,7 +5,7 @@
 Every option of `sacdfs`. The first table lists those `sacdfs --help` shows, in its order (CI checks that
 it matches `--help`); the [tuning options](#tuning) are left out of `--help`. What each one does in detail is in the [user guide](user-guide.md#options).
 
-```
+```text
 sacdfs [OPTIONS] SOURCE MOUNTPOINT
 ```
 
