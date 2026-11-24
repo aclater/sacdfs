@@ -1,13 +1,13 @@
-<img src="https://raw.githubusercontent.com/aclater/sacdfs/main/docs/assets/icon-256.png" alt="" width="96">
+<img src="https://raw.githubusercontent.com/dsd-toolbox/sacdfs/main/docs/assets/icon-256.png" alt="" width="96">
 
 # sacdfs
 
-[![CI](https://github.com/aclater/sacdfs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aclater/sacdfs/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/aclater/sacdfs/branch/main/graph/badge.svg)](https://codecov.io/gh/aclater/sacdfs)
-[![CodeQL](https://github.com/aclater/sacdfs/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/aclater/sacdfs/actions/workflows/codeql.yml)
+[![CI](https://github.com/dsd-toolbox/sacdfs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dsd-toolbox/sacdfs/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/dsd-toolbox/sacdfs/branch/main/graph/badge.svg)](https://codecov.io/gh/dsd-toolbox/sacdfs)
+[![CodeQL](https://github.com/dsd-toolbox/sacdfs/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/dsd-toolbox/sacdfs/actions/workflows/codeql.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](COPYING)
 [![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-orange)](Cargo.toml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aclater/sacdfs/badge)](https://scorecard.dev/viewer/?uri=github.com/aclater/sacdfs)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dsd-toolbox/sacdfs/badge)](https://scorecard.dev/viewer/?uri=github.com/dsd-toolbox/sacdfs)
 
 sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
 player or music server. Nothing is extracted: keep the ISOs, delete the extracted copies.
@@ -37,7 +37,7 @@ Synology NAS; type your own folder instead.
 1. Install sacdfs and start it:
 
    ```sh
-   curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
+   curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh \
      | sudo sh -s -- --iso-dir /volume1/music
    ```
 
@@ -78,7 +78,7 @@ All documents: [docs/README.md](docs/README.md).
 - [Options](docs/options.md) (and `man sacdfs`) · [what the mount shows](docs/layout.md) · [limits](docs/limits.md)
 - [Deployment reference](docs/deployment.md) · [small NAS sizing](docs/deployment.md#small-nas-sizing)
 - [Design](docs/design.md) · [performance](docs/performance.md) · [PCM quality](docs/pcm-quality.md)
-- [Changelog](CHANGELOG.md) · [releases](https://github.com/aclater/sacdfs/releases) ·
+- [Changelog](CHANGELOG.md) · [releases](https://github.com/dsd-toolbox/sacdfs/releases) ·
   [contributing](CONTRIBUTING.md) · [releasing](docs/release.md)
 
 ## Licence and credits
