@@ -40,8 +40,8 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
    # /facts
    ```
 
@@ -51,23 +51,23 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
-   sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
    # /facts
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.7.2-x86_64-linux.tar.gz: OK`<!-- /facts -->.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.8.0-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 5. **Unpack it and copy out the program and its start script.** (Use `cp`: on TerraMaster `install` is a different tool.)
 
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz\ncp sacdfs-{version}-x86_64-linux/sacdfs sacdfs-{version}-x86_64-linux/sacdfs-ctl /volume1/sacdfs/'
-   tar -xzf sacdfs-0.7.2-x86_64-linux.tar.gz
-   cp sacdfs-0.7.2-x86_64-linux/sacdfs sacdfs-0.7.2-x86_64-linux/sacdfs-ctl /volume1/sacdfs/
+   tar -xzf sacdfs-0.8.0-x86_64-linux.tar.gz
+   cp sacdfs-0.8.0-x86_64-linux/sacdfs sacdfs-0.8.0-x86_64-linux/sacdfs-ctl /volume1/sacdfs/
    # /facts
    /volume1/sacdfs/sacdfs --version
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.7.2`<!-- /facts -->.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.8.0`<!-- /facts -->.
 6. **Write the settings file.** Change the first line to your images folder.
 
    <!-- docs-run: -->
@@ -149,9 +149,9 @@ Both routes read one settings file (`SACDFS_IMAGES`, `SACDFS_MOUNT`, `SACDFS_OPT
 ```sh
 mkdir -p /usr/local/bin
 # facts:release repo=dsd-toolbox/sacdfs fmt='cp sacdfs-{version}-x86_64-linux/sacdfs /usr/local/bin/sacdfs\ncp sacdfs-{version}-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service\ncp sacdfs-{version}-x86_64-linux/sacdfs.conf.example /etc/default/sacdfs   # then edit the two paths'
-cp sacdfs-0.7.2-x86_64-linux/sacdfs /usr/local/bin/sacdfs
-cp sacdfs-0.7.2-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
-cp sacdfs-0.7.2-x86_64-linux/sacdfs.conf.example /etc/default/sacdfs   # then edit the two paths
+cp sacdfs-0.8.0-x86_64-linux/sacdfs /usr/local/bin/sacdfs
+cp sacdfs-0.8.0-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
+cp sacdfs-0.8.0-x86_64-linux/sacdfs.conf.example /etc/default/sacdfs   # then edit the two paths
 # /facts
 systemctl daemon-reload
 systemctl enable --now sacdfs

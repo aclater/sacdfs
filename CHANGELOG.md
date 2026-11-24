@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-25
+
 ### Added
 
 - **Manual pages (#581).** `sacdfs(1)`, `sacdfs-nfs(1)` and `sacdfs-ctl(8)`, with every option
@@ -17,6 +19,20 @@ All notable changes to sacdfs are recorded here. The format follows
   macOS release archives carry them in `man/`, and the container image has `sacdfs(1)`.
 
 ### Changed
+
+- **The project, its releases and its container image are now under `dsd-toolbox`.** From this
+  release the image is `ghcr.io/dsd-toolbox/sacdfs` (`:0.8.0` and `:latest`), attested as before, and
+  `install.sh`, the Compose file, the Unraid template and the TrueNAS app name it. Earlier
+  releases keep their images and attestations under `ghcr.io/aclater/sacdfs` (frozen: no new
+  tags, so `:latest` there stays at 0.7.2); verify releases up to 0.7.2 with
+  `gh attestation verify --owner aclater` and later ones with `-R dsd-toolbox/sacdfs`.
+  To move an existing container, change its image to `ghcr.io/dsd-toolbox/sacdfs:0.8.0`.
+  `install.sh` downloads from `dsd-toolbox/sacdfs`; `--version` still takes an earlier release.
+- **Documentation checks.** The shared DSD Toolbox documentation tools run on every pull
+  request: page shape, links, spelling and terminology, a facts check for versions, release
+  files and install lines, and a run of the documented commands in a fresh container against the
+  published release. The licence files, `CITATION.cff` and the docs layout follow the toolbox
+  standard.
 
 - **macOS programs signed and notarised.** From this release, `sacdfs-nfs` and `sacdfs` in the
   macOS archives are signed with a Developer ID (hardened runtime, secure timestamp) and
@@ -2242,7 +2258,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.5...v0.7.0

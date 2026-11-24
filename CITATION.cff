@@ -8,8 +8,8 @@ authors:
 license: GPL-3.0-or-later
 repository-code: "https://github.com/dsd-toolbox/sacdfs"
 url: "https://github.com/dsd-toolbox/sacdfs"
-version: "0.7.2"
-date-released: "2026-11-22"
+version: "0.8.0"
+date-released: "2026-11-25"
 keywords:
   - SACD
   - DSD
