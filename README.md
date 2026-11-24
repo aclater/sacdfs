@@ -11,7 +11,7 @@
 [![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-blue)](COPYING)
 
 sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
-player or music server, with nothing extracted: keep the ISOs, delete the extracted copies. On a 2011 dual-core 32-bit Atom D2700 NAS it plays stereo and multichannel DST discs as DSF in real time ([#456](https://github.com/dsd-toolbox/sacdfs/issues/456)); multichannel WAV in real time on that Atom is not measured.
+player or music server, with nothing extracted: keep the ISOs, delete the extracted copies. On a 2011 dual-core 32-bit Atom D2700 NAS, stereo discs play; multichannel DST was too slow there until the decoder got about 1.7 times faster, and has not been measured on that NAS since ([#456](https://github.com/dsd-toolbox/sacdfs/issues/456)).
 
 ## Platforms
 
