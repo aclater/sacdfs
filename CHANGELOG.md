@@ -51,13 +51,13 @@ All notable changes to sacdfs are recorded here. The format follows
   keeps `--no-allow-other`. The container's variables do not change.
 - **The folder warmer cools down while the listed folder keeps changing.** A client that lists
   a different folder every few seconds no longer keeps the CPU decoding heads on an idle mount
-  ([#593](https://github.com/aclater/sacdfs/issues/593)): from the third listing in a run
+  ([#593](https://github.com/dsd-toolbox/sacdfs/issues/593)): from the third listing in a run
   (each within 30 s of the last), the folder must stay the last listed for 2 s, 4 s, 8 s and so
   on up to 32 s more than before it is warmed, and the count starts over after 30 s. A folder
   that stays put is warmed as before.
 - **The area capacity check is scarletbook's.** sacdfs's own copy of the rule (an area's audio
   sectors in the image, at 7 frames a sector) is replaced by `Disc::area_capacity` and
-  `audio::area_capacity` ([#595](https://github.com/aclater/sacdfs/issues/595)). Listings are
+  `audio::area_capacity` ([#595](https://github.com/dsd-toolbox/sacdfs/issues/595)). Listings are
   unchanged: a test compares the library's figure with the old formula on every corpus area
   at the image's own sector count and at counts around the area's edges.
 
@@ -93,7 +93,7 @@ All notable changes to sacdfs are recorded here. The format follows
   mount, is the SHA-256 of the disc's TOC that detects a replaced image file (#573); it stays,
   and is written up in docs/design.md.
 - **An image rewritten in place with another disc while mounted
-  ([#588](https://github.com/aclater/sacdfs/issues/588)).** `rsync --inplace` or `dd
+  ([#588](https://github.com/dsd-toolbox/sacdfs/issues/588)).** `rsync --inplace` or `dd
   conv=notrunc` over a mounted image left the old disc listed and its cached frames served until
   the folder changed. The change is now noticed within a second of a read (by the file's size,
   modification time and change time) and at the folder's next listing, and on NFS, SMB and
@@ -338,7 +338,7 @@ everything is in the two rc sections below. The install guides' download command
 release. DSF bytes are those of 0.6.5; WAV files show a new mtime once (`WAV_VERSION` 5), and
 those with non-ASCII tags change only in their `INFO` chunk. Known: DST multichannel decoding is
 3 to 6 % slower than 0.6.5 on a hybrid Intel CPU with scarletbook 0.6.0, within the gate's 10 %
-limit ([#493](https://github.com/aclater/sacdfs/issues/493)).
+limit ([#493](https://github.com/dsd-toolbox/sacdfs/issues/493)).
 
 ## [0.7.0-rc.2] - 2026-11-19
 
@@ -742,14 +742,14 @@ docs/test-plan.md ("Results: 0.6.4 gate").
 
 ### Security
 - **Open files: a client of the mount could make images disappear from their folders
-  ([GHSA-phfg-58h9-f2pp](https://github.com/aclater/sacdfs/security/advisories/GHSA-phfg-58h9-f2pp), High).**
+  ([GHSA-phfg-58h9-f2pp](https://github.com/dsd-toolbox/sacdfs/security/advisories/GHSA-phfg-58h9-f2pp), High).**
   Upgrade to 0.6.4.
 - **Installer and `sacdfs-ctl`: files that other users could change were run as root
-  ([GHSA-wfjg-pqhm-4mm2](https://github.com/aclater/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2), High).**
+  ([GHSA-wfjg-pqhm-4mm2](https://github.com/dsd-toolbox/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2), High).**
   Upgrade to 0.6.4, and on QNAP, or wherever sacdfs's folder is inside a shared folder, run the
   installer again (see "Upgrading" below).
 - **Tags, cache and report files were written and read unsafely
-  ([GHSA-825f-7xrc-fqf7](https://github.com/aclater/sacdfs/security/advisories/GHSA-825f-7xrc-fqf7), Medium).**
+  ([GHSA-825f-7xrc-fqf7](https://github.com/dsd-toolbox/sacdfs/security/advisories/GHSA-825f-7xrc-fqf7), Medium).**
   Upgrade to 0.6.4.
 
 ### Upgrading
@@ -991,7 +991,7 @@ longer than on 0.6.1 (#357); it stalls on 0.6.1 too.
   the Compose file where Docker or Podman with Compose answers; otherwise the release binary with the
   systemd unit, or with `sacdfs-ctl` and the NAS's own boot hook (Task Scheduler, `autorun.sh`,
   `init.d`). On TrueNAS and Unraid it only points to their app screens.
-  `curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /path`.
+  `curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh | sudo sh -s -- --iso-dir /path`.
   It checks every download against the release's checksum, tries the binary before installing, never
   writes under `--iso-dir`, changes nothing on a second run, and has `--dry-run` and `--uninstall`. Not
   root, it stops before any change and prints the line to run with `sudo`. The whole script is in
@@ -1464,7 +1464,7 @@ What to do, or what you may see, after the move from 0.4.1 to 0.5.0.
 - **`sacdfs tags fetch` on a busy service.** It obeys `Retry-After` in full, up to an hour, waits
   longer between discs that get no answer, tries those again at the end of the run, and ends at once
   on a 403 or a request to wait longer than an hour.
-- **The soak's memory verdict no longer fails a run for one step ([#247](https://github.com/aclater/sacdfs/issues/247)).**
+- **The soak's memory verdict no longer fails a run for one step ([#247](https://github.com/dsd-toolbox/sacdfs/issues/247)).**
   Memory in healthy runs moves in single steps of 3 to 6.5 MiB, up or down, and the line through the
   second half of a 2-hour run read one as a climb of 8 to 9 MiB/h (limit 4.4). The trend is now the rate
   left after the largest single step between six window medians is set aside, so a step followed by a
@@ -1762,7 +1762,7 @@ tracks. These are what was seen, not a prediction for yours.
 - **Install guides for ASUSTOR and TerraMaster, and results for Synology, QNAP and UGREEN's kernel.**
   Checked on ADM 5.1.4, TOS 7.0.1422, DSM 7.4.1 and QuTScloud 5.2.9 in VMs, not on the vendors'
   hardware. The release binary mounts and serves correctly on all of them but QuTScloud, which has
-  glibc 2.21 ([#244](https://github.com/aclater/sacdfs/issues/244)). The container ran on ADM with
+  glibc 2.21 ([#244](https://github.com/dsd-toolbox/sacdfs/issues/244)). The container ran on ADM with
   Docker CE. The user guide's NFS section now says `--allow-other` is needed even when sacdfs runs
   as root.
 - **Small NAS known limit re-measured on rc.3** (#230). With a fresh cache, the starvation of a
@@ -2241,25 +2241,25 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/aclater/sacdfs/compare/v0.7.2...HEAD
-[0.7.2]: https://github.com/aclater/sacdfs/compare/v0.7.1...v0.7.2
-[0.7.1]: https://github.com/aclater/sacdfs/compare/v0.7.0...v0.7.1
-[0.7.0]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0
-[0.7.0-rc.2]: https://github.com/aclater/sacdfs/compare/v0.7.0-rc.1...v0.7.0-rc.2
-[0.7.0-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.5...v0.7.0-rc.1
-[0.6.5]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5
-[0.6.5-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.4...v0.6.5-rc.1
-[0.6.4]: https://github.com/aclater/sacdfs/compare/v0.6.3...v0.6.4
-[0.6.3]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3
-[0.6.3-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.2...v0.6.3-rc.1
-[0.6.2]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2
-[0.6.2-rc.1]: https://github.com/aclater/sacdfs/compare/v0.6.1...v0.6.2-rc.1
-[0.6.1]: https://github.com/aclater/sacdfs/compare/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/aclater/sacdfs/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/aclater/sacdfs/compare/v0.4.1...v0.5.0
-[0.4.1]: https://github.com/aclater/sacdfs/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/aclater/sacdfs/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/aclater/sacdfs/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/aclater/sacdfs/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/aclater/sacdfs/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/aclater/sacdfs/releases/tag/v0.1.0
+[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.1...v0.7.2
+[0.7.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.5...v0.7.0
+[0.7.0-rc.2]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.0-rc.1...v0.7.0-rc.2
+[0.7.0-rc.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.5...v0.7.0-rc.1
+[0.6.5]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.4...v0.6.5
+[0.6.5-rc.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.4...v0.6.5-rc.1
+[0.6.4]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.3...v0.6.4
+[0.6.3]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.2...v0.6.3
+[0.6.3-rc.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.2...v0.6.3-rc.1
+[0.6.2]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.1...v0.6.2
+[0.6.2-rc.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.1...v0.6.2-rc.1
+[0.6.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/dsd-toolbox/sacdfs/releases/tag/v0.1.0

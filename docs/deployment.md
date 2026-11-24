@@ -6,7 +6,7 @@
 > and music server, with numbered steps and a check that it works. This page is the
 > reference behind them: every setting, and why.
 
-sacdfs can run in two places ([#17](https://github.com/aclater/sacdfs/issues/17)):
+sacdfs can run in two places ([#17](https://github.com/dsd-toolbox/sacdfs/issues/17)):
 
 - **On the NAS (server-side, the main deployment).** sacdfs runs next to the images, in a
   container, and shares its mount over SMB and NFS. Every client (Linux, macOS, Windows,
@@ -85,7 +85,7 @@ architecture:
 
 ```sh
 docker pull ghcr.io/aclater/sacdfs:0.7.2       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 -R aclater/sacdfs
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 --owner aclater
 ```
 
 The attestation shows which commit and workflow built it. In the commands below, use
@@ -94,7 +94,7 @@ The attestation shows which commit and workflow built it. In the commands below,
 ## Building the image
 
 ```sh
-git clone https://github.com/aclater/sacdfs && cd sacdfs
+git clone https://github.com/dsd-toolbox/sacdfs && cd sacdfs
 podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
 ```
 
@@ -175,7 +175,7 @@ Samba is the only choice for SMB. For NFS there are two servers:
 **NFS-Ganesha is used**, because it asks nothing of the host, needs one capability instead
 of a privileged container, and stops with the container. Both servers reopen files by NFS
 file handle through `open_by_handle_at(2)` on the FUSE mount, so both rely on sacdfs's
-persistent file identity ([#18](https://github.com/aclater/sacdfs/issues/18), see
+persistent file identity ([#18](https://github.com/dsd-toolbox/sacdfs/issues/18), see
 [below](#nfs-and-restarts)).
 
 ## Privileges
@@ -567,7 +567,7 @@ WAV), so the difference is the CPU, not the release.
 a client that reads whole files, such as a library import that copies or fingerprints them; a scan
 that reads only the start, middle and end of each file does not (the player stayed within 0.2 s).
 It happens on 2 cores and on 4 cores, with the default cache of 32 MiB
-([#230](https://github.com/aclater/sacdfs/issues/230)). Speed relative to real time is the figure to
+([#230](https://github.com/dsd-toolbox/sacdfs/issues/230)). Speed relative to real time is the figure to
 read; "seconds behind" is capped by the 30 s test length. rc.3, a fresh container per condition, the
 scanners never reading the player's track, one 30 s read of a position not read before, medians
 and ranges of 3 rounds:
@@ -644,7 +644,7 @@ than 0.5 s late at 16, and 47 at 32; none more than 1 s.
 Stereo DSF with four scanners held real time on every version and cache here. At 32 MiB, a reader
 counts as a player only after 0.5 s: with four scanners on 2 cores the player fell up to 0.72 s behind
 and up to 15 of about 700 reads were more than 0.5 s late, so a player with a buffer under 1 s may
-still hear a gap; at 8 and 16 MiB almost none were (above). Memory at the floors is [#231](https://github.com/aclater/sacdfs/issues/231).
+still hear a gap; at 8 and 16 MiB almost none were (above). Memory at the floors is [#231](https://github.com/dsd-toolbox/sacdfs/issues/231).
 
 **On a NAS's own CPU, client on another host (0.5.0).** The published 0.5.0 and 0.4.1 images as an app on a
 NAS with a Core i5-1235U, pinned to 2 or 4 of its E-cores at 256 or 512 MiB and the default cache,
@@ -683,12 +683,12 @@ limit (39 MiB idle at 10 minutes on a 395-image library).
 **Mount time.** On an emulated single disk (one request at a time, 15 ms per seek, 120 MB/s)
 with nothing cached, mounting a library of 122,676 files took 194 s. That is a model, not a real
 disk, but it is longer than the 60 s the container used to wait. The container now waits for
-`SACDFS_MOUNT_TIMEOUT` seconds (default 300; [#232](https://github.com/aclater/sacdfs/issues/232)).
+`SACDFS_MOUNT_TIMEOUT` seconds (default 300; [#232](https://github.com/dsd-toolbox/sacdfs/issues/232)).
 
 ### Starting playback on a slow CPU
 
 On a CPU that decodes multichannel DST only about twice as fast as it plays (a 32-bit Atom NAS,
-[#456](https://github.com/aclater/sacdfs/issues/456)), playback holds once it runs, but starting
+[#456](https://github.com/dsd-toolbox/sacdfs/issues/456)), playback holds once it runs, but starting
 a track from stopped used to glitch for a few seconds: the player asks for its first seconds as
 fast as it can, to fill its buffer, and sacdfs decoded them a read at a time and then in one 2 s
 batch that held the player's next read for about a second. Pausing and resuming did not glitch,
@@ -1152,7 +1152,7 @@ host networking, on the same NAS as sacdfs.
 
 A player that runs on the same host as sacdfs's container (Jellyfin, Navidrome, Lyrion, MPD as
 containers, or as TrueNAS apps) can read sacdfs's mount directly, with no SMB or NFS in between
-([#186](https://github.com/aclater/sacdfs/issues/186)). The mount is shared through a directory on
+([#186](https://github.com/dsd-toolbox/sacdfs/issues/186)). The mount is shared through a directory on
 the host:
 
 ```
@@ -1871,7 +1871,7 @@ What clients did when the container restarted (about 8 s):
 | macOS, `mount_smbfs`, in VMs on Apple hardware | **the mount drops and doesn't come back**, with no hang. Mounting it again works | 15.7 on 0.4.0 and 0.4.1-rc.1; 27.2 on 0.4.1-rc.1; restart of about 8 s |
 
 **After an upgrade (a new image, or a restart), a macOS client has to mount the share again.** That is
-the documented answer to [#204](https://github.com/aclater/sacdfs/issues/204), not a bug that a setting
+the documented answer to [#204](https://github.com/dsd-toolbox/sacdfs/issues/204), not a bug that a setting
 is known to fix: the cause is in the macOS client's own reconnect, and no server setting tried here
 changes it (macOS itself was not re-tested for this; there is no lab Mac, and the VM results above are
 the only ones). Linux and Windows clients carry on by themselves, so nothing else is needed. What's
@@ -2032,7 +2032,7 @@ The CI job that installs with the unit (`installer`, `host-systemd`) and `system
   `<image>: 4 reads still blocked after the 30 s request timeout: failing its new reads with
   EIO at once until they finish`, and new reads of that image fail at once, without a thread,
   so that the other images keep their threads
-  ([#241](https://github.com/aclater/sacdfs/issues/241)). `<image>: its blocked reads finish:
+  ([#241](https://github.com/dsd-toolbox/sacdfs/issues/241)). `<image>: its blocked reads finish:
   reading it again` follows when the source answers. A hang of many images at once (a whole
   share) can still use every read thread, and then reads of every image fail until it answers.
 - **`sacdfs did not mount within 300 s`**: sacdfs lists every image before it mounts, and a
@@ -2068,4 +2068,4 @@ the image under test: it must be valid, healthy and open on ports 10445 and 1204
 - [Clients](clients.md)
 - [User guide](user-guide.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

@@ -4,7 +4,7 @@ Thanks for helping. Bug reports, test images and pull requests are welcome.
 
 ## Reporting a bug
 
-Open an [issue](https://github.com/aclater/sacdfs/issues) with the command line, what you
+Open an [issue](https://github.com/dsd-toolbox/sacdfs/issues) with the command line, what you
 expected, what happened, and a log: run in the foreground with `sacdfs -f -vv ...`. Don't
 attach copyrighted disc images. **Security problems** go through a private report instead:
 see [SECURITY.md](SECURITY.md).

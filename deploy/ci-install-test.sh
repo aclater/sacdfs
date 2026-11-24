@@ -100,7 +100,7 @@ fi
 # The release, served in GitHub's layout.
 rel=$work/srv/aclater/sacdfs/releases
 mkdir -p "$rel/download/v$version" "$rel/latest/download" "$work/pub" "$work/pkg/$pkg"
-gh_url=https://github.com/aclater/sacdfs/releases/download/v$version/$pkg.tar.gz
+gh_url=https://github.com/dsd-toolbox/sacdfs/releases/download/v$version/$pkg.tar.gz
 curl -fsSL -o "$work/pub/$pkg.tar.gz" "$gh_url"
 curl -fsSL -o "$work/pub/$pkg.tar.gz.sha256" "$gh_url.sha256"
 (cd "$work/pub" && sha256sum -c "$pkg.tar.gz.sha256")
@@ -215,7 +215,7 @@ case $mode in
     security)
         # An earlier release's installer, sacdfs-ctl and binary, for the upgrade tests.
         opkg=sacdfs-$old_version-$arch-linux
-        ogh=https://github.com/aclater/sacdfs/releases/download/v$old_version/$opkg.tar.gz
+        ogh=https://github.com/dsd-toolbox/sacdfs/releases/download/v$old_version/$opkg.tar.gz
         curl -fsSL -o "$work/$opkg.tar.gz" "$ogh"
         curl -fsSL -o "$work/$opkg.tar.gz.sha256" "$ogh.sha256"
         (cd "$work" && sha256sum -c "$opkg.tar.gz.sha256")

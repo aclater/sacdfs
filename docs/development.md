@@ -143,7 +143,7 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   runs of samples, each reduced to its median, and the largest change between neighbouring
   medians (up or down) is dropped with the time it spans. What is left, as a rate, is the
   trend. *Why:* the memory of a healthy run moves in steps of 3 to 6.5 MiB, both ways and
-  unexplained ([#247](https://github.com/aclater/sacdfs/issues/247)), and a line through the
+  unexplained ([#247](https://github.com/dsd-toolbox/sacdfs/issues/247)), and a line through the
   second half of a 2-hour run counted such a step as a climb of 8 to 9 MiB/h. A step shows in
   one change between medians, a leak in all of them; a step down is dropped too, or it would
   hide a leak beside it. *Limit:* in a 2-hour run (about 0.6 h is left after the step) this
@@ -192,7 +192,7 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
 
 The exit status is 0 on PASS and 1 on FAIL. `--help` lists the knobs.
 
-**What the steps are ([#247](https://github.com/aclater/sacdfs/issues/247)).** In four
+**What the steps are ([#247](https://github.com/dsd-toolbox/sacdfs/issues/247)).** In four
 2.5-hour soaks run side by side on one busy host (three of the same build and one 0.4.1-rc.2),
 the resident size fell in two steps of about 4.5 and 9 MiB at the same two samples in all four,
 and then crept back up. The malloc heap's size and its free bytes (glibc `malloc_info`) did not
@@ -401,4 +401,4 @@ pull request for #151.
 - [Performance](performance.md)
 - [Release test plan](test-plan.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

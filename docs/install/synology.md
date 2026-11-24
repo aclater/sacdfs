@@ -41,8 +41,8 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 4. **Download sacdfs and its checksum file.**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
@@ -145,7 +145,7 @@ Checked on DSM 7.4.1 (kernel 4.4) in a VM, not on Synology hardware. Storage set
 - **You see:** `... a sacdfs mount of this user's is still mounted there ...`. **Do this:** sacdfs already runs on that folder; `sacdfs-ctl stop` first.
 - **You see:** `Illegal instruction`. **Do this:** you used the `x86_64-v3` build on a CPU without AVX2; use the `x86_64` archive ([binary.md](binary.md#binaries)).
 
-Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82).
+Reports from real hardware are welcome on [#82](https://github.com/dsd-toolbox/sacdfs/issues/82).
 
 ## See also
 
@@ -154,4 +154,4 @@ Reports from real hardware are welcome on [#82](https://github.com/aclater/sacdf
 - [Deployment reference](../deployment.md)
 - [Beta testing](../beta-testing.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

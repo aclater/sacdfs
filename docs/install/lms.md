@@ -75,4 +75,4 @@ Open **My Music**, **Albums**. Each disc is an album; a multichannel area is its
 - [Clients](../clients.md)
 - [Deployment reference](../deployment.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

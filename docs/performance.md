@@ -2,7 +2,7 @@
 
 # Performance
 
-How fast sacdfs is, against the targets of [#6](https://github.com/aclater/sacdfs/issues/6),
+How fast sacdfs is, against the targets of [#6](https://github.com/dsd-toolbox/sacdfs/issues/6),
 in each of the three ways it is deployed: images on a local disk, sacdfs in a container on
 the NAS that holds the images (server-side), and sacdfs on a Linux client reading images
 from a network share (client-side). The design behind these figures is in
@@ -974,7 +974,7 @@ container's own SMB and NFS servers.
   - *The servers:* smbd took 28 to 75 MiB and NFS-Ganesha 37 to 52 MiB.
 - **The app:** a restart (stop and start through the TrueNAS API) took 4 to 6 s, and the shares
   answered 6 to 7 s after it began. sacdfs found the 154 images and mounted within about a second.
-- **A stall** ([#72](https://github.com/aclater/sacdfs/issues/72)): once, an SMB straight read
+- **A stall** ([#72](https://github.com/dsd-toolbox/sacdfs/issues/72)): once, an SMB straight read
   of a 6-channel DST file waited about 6 hours while sacdfs used no CPU. It was not reproduced
   in 6 more reads of the same area or in the player rounds.
 
@@ -982,7 +982,7 @@ container's own SMB and NFS servers.
 
 The report behind #205 was about 16 FUSE requests per entry for one SMB listing, from the macOS 15
 client; macOS 27 sent about 9 times fewer
-([issue](https://github.com/aclater/sacdfs/issues/205)). Re-counted on 0.6.3 and main (2026-11-15) with
+([issue](https://github.com/dsd-toolbox/sacdfs/issues/205)). Re-counted on 0.6.3 and main (2026-11-15) with
 sacdfs's request log (`RUST_LOG=fuser::request=debug`): the published 0.6.3 image and an image built from
 main, in a rootless Podman container, 40 images with their art (1,784 entries: 144 folders and 1,640 files,
 1,488 of them DSF and WAV), a fresh container per version. Linux:
@@ -1064,13 +1064,13 @@ busy; 0.4.0's mount times vary because the host was shared):
 The mount is faster on rc.1 and listing and scanning are equal. **Memory is over 10 % higher on
 rc.1:** about 22 MiB more for 414 images. **Cause (found by bisecting main, then confirmed with
 `MALLOC_ARENA_MAX=1`, which gives 73 to 77 MiB):** the start-up walk added in 0.4.1 (hiding
-folders with no SACD, [#175](https://github.com/aclater/sacdfs/issues/175)) reads the top-level
+folders with no SACD, [#175](https://github.com/dsd-toolbox/sacdfs/issues/175)) reads the top-level
 folders on 16 threads before sacdfs set its one-malloc-arena limit, so each thread made a glibc
 arena (31 of them) and kept what it freed; `malloc_trim` after the walk gave nothing back, and
 two arenas still held 79 to 85 MiB. Setting the limit before the walk brings memory back to
 0.4.0's (73.8 to 77.1 MiB on the quiet desktop, 73.9 to 76.8 MiB here) and the mount to 0.56 to
 1.9 s here (0.4.0: 2.8 to 9.3 s, rc.1: 0.5 s); see
-[PR #224](https://github.com/aclater/sacdfs/pull/224). It does not contradict the table of
+[PR #224](https://github.com/dsd-toolbox/sacdfs/pull/224). It does not contradict the table of
 [synthetic bench discs](deployment.md#memory) (the same builds differ by 2 MiB there): that
 library is much smaller and has few folders to walk.
 
@@ -1923,4 +1923,4 @@ the concurrency scenario is four real-time readers and a tagger as described abo
 - [PCM quality](pcm-quality.md)
 - [Deployment: small NAS sizing](deployment.md#small-nas-sizing)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

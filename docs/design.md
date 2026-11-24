@@ -9,7 +9,7 @@ every disc is there, with tags, without extracting anything first.
 
 This page describes the design as it is, and why each part is the way it is. The project's
 decisions across its repositories, one line each with where they are recorded, are in the
-[decision log](https://github.com/aclater/dsd-toolbox/blob/main/DECISIONS.md). Measurements are in
+[decision log](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/DECISIONS.md). Measurements are in
 [performance.md](performance.md), the converter's quality in [pcm-quality.md](pcm-quality.md).
 
 ## Goals
@@ -20,7 +20,7 @@ decisions across its repositories, one line each with where they are recorded, a
    file's audio is exactly what the converter makes of the track's frames, each with its
    neighbours in the area, whichever reads asked for it.
 2. **Fast, and low latency** (the targets of
-   [#6](https://github.com/aclater/sacdfs/issues/6)). A straight read runs within 1.5x of
+   [#6](https://github.com/dsd-toolbox/sacdfs/issues/6)). A straight read runs within 1.5x of
    `bench decode` at the same thread count, and a WAV file within 1.5x of its DSF file. A
    cold seek returns its first bytes in under 20 ms from a local disk, under 25 ms with
    sacdfs on the NAS, under 50 ms (NFS) or 80 ms (SMB) with the images on a share. Four
@@ -2113,7 +2113,7 @@ plain `cp` on the Linux client keeps the missing write bit; and Windows and macO
 sacdfs is split in two: a **core** that knows nothing of FUSE, and a **front end** per platform that
 takes requests from the operating system and hands them to the core. When the split was made the only
 front end was Linux FUSE (fuser). The split is the first step of native macOS and Windows support
-([#22](https://github.com/aclater/sacdfs/issues/22)): a WinFsp front end (Windows, piece B) and a
+([#22](https://github.com/dsd-toolbox/sacdfs/issues/22)): a WinFsp front end (Windows, piece B) and a
 local NFS front end (macOS, piece C, #420) call the same core, and the core's tests cover all of
 them. *Why split first:* the tree, attributes, reads, caching, PCM, tags and the lookup worker were
 never Linux-specific, but the code that answers requests mixed them with fuser's types, so a second
@@ -2462,7 +2462,7 @@ everything:
   a sweep already running (held up by a stalled source, say): it answers with the times
   known, and the running sweep moves them when it is done.
 - **Every failed request is logged, rate-limited
-  ([#339](https://github.com/aclater/sacdfs/issues/339)).** Each path that answers a request
+  ([#339](https://github.com/dsd-toolbox/sacdfs/issues/339)).** Each path that answers a request
   with `EIO`, or with the errno of a failed source read, logs a `warn` line through
   `src/errlog.rs` (`errlog::failed`). The line gives the image, track, inode and offset of a
   read, or the sidecar file, and the cause. This covers a failed decode or source read, a
@@ -2483,7 +2483,7 @@ everything:
   count. So an `EIO` that a client saw is in the log, or counted in a later line, unless the
   kernel or fuser made it (fuser logs its own at `warn`).
 - **Names in log lines are escaped
-  ([#391](https://github.com/aclater/sacdfs/issues/391)).** Every line the daemon logs goes
+  ([#391](https://github.com/dsd-toolbox/sacdfs/issues/391)).** Every line the daemon logs goes
   through `printable::EscapingLogger`, installed in front of env_logger, which writes control
   characters (C0, DEL, C1), Unicode format characters (category Cf: bidi controls, zero-width
   characters, the BOM) and U+2028/U+2029 escaped, as `\n`, `\r`, `\t` or `\u{…}`. *Why:* the
@@ -2495,7 +2495,7 @@ everything:
   errors, which the calls don't build, and lines added later are covered too. The line format
   is unchanged otherwise. Non-ASCII letters and the backslash are written as they are.
 - **The same everywhere disc text can be shown
-  ([#448](https://github.com/aclater/sacdfs/issues/448)).** `sacdfs-nfs`, `sacdfs tags` and
+  ([#448](https://github.com/dsd-toolbox/sacdfs/issues/448)).** `sacdfs-nfs`, `sacdfs tags` and
   `sacdfs verify` install the same logger, so no binary logs raw controls, even where no disc
   string reaches a log line today. Their other terminal output (`safe_file::printable`,
   `one_line`, `shown`) and the rows of a `verify` report escape the same characters, the
@@ -2511,7 +2511,7 @@ everything:
   addition. Of SACD's character sets only ISO 8859-1 holds one (the soft hyphen), so this is
   rare outside crafted discs.
 - **A hung image's reads are capped once they have failed
-  ([#241](https://github.com/aclater/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
+  ([#241](https://github.com/dsd-toolbox/sacdfs/issues/241)).** The watchdog replies `EIO` but can't
   free the thread, which stays blocked until the source answers, so each retry by a client took
   one more, and they needn't be simultaneous. At 64 threads, a read of any image waited for a
   thread and the watchdog failed it. Up to 0.4.1, on 2 decoder threads with clients looping
@@ -3732,6 +3732,6 @@ CONTRIBUTING.md); SACD parsing and DST decoding still come only from scarletbook
 - [Performance](performance.md)
 - [PCM quality](pcm-quality.md)
 - [Development](development.md)
-- [Decision log of the DSD Toolbox](https://github.com/aclater/dsd-toolbox/blob/main/DECISIONS.md)
+- [Decision log of the DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/DECISIONS.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

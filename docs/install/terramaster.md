@@ -40,8 +40,8 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 4. **Download sacdfs and its checksum file.**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
@@ -137,7 +137,7 @@ TerraMaster's Container Manager and Docker Engine come from the App Center and n
 - **You see:** `Illegal instruction`. **Do this:** you used the `x86_64-v3` build on a CPU without AVX2; use the `x86_64` archive ([binary.md](binary.md#binaries)).
 - **The unit, step by step, and what it does when sacdfs crashes:** [nas-binary.md](nas-binary.md#start-at-boot-and-stop-safely).
 
-Reports from real hardware are welcome through the [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml).
+Reports from real hardware are welcome through the [NAS test report form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=nas-test-report.yml).
 
 ## See also
 
@@ -146,4 +146,4 @@ Reports from real hardware are welcome through the [NAS test report form](https:
 - [Deployment reference](../deployment.md)
 - [Beta testing](../beta-testing.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

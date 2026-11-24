@@ -37,8 +37,8 @@ See [Details](#details).
 
    ```sh
    cd ~
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
    ```
 
 3. **Check the download.**
@@ -103,7 +103,7 @@ More: [the user guide](../user-guide.md) (running it, fstab, systemd, troublesho
 
 ### Binaries
 
-Each [release](https://github.com/aclater/sacdfs/releases) has these builds:
+Each [release](https://github.com/dsd-toolbox/sacdfs/releases) has these builds:
 
 - `sacdfs-<version>-x86_64-linux.tar.gz`: generic x86-64, for any x86_64 CPU. Its WAV converter
   already uses AVX2 where the CPU has it.
@@ -141,15 +141,17 @@ clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributi
 `x86_64-v3` or `aarch64` for `x86_64`):
 
 ```sh
-gh release download v0.7.2 -R aclater/sacdfs -p 'sacdfs-0.7.2-x86_64-linux.tar.gz*'
+gh release download v0.7.2 -R dsd-toolbox/sacdfs -p 'sacdfs-0.7.2-x86_64-linux.tar.gz*'
 sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
-gh attestation verify sacdfs-0.7.2-x86_64-linux.tar.gz -R aclater/sacdfs
+gh attestation verify sacdfs-0.7.2-x86_64-linux.tar.gz --owner aclater
 ```
 
 The checksum shows the download is intact; the attestation (GitHub's build provenance, signed with
 Sigstore) shows this repository's release workflow built it, and from which commit.
 `gh attestation verify` also accepts the `.intoto.jsonl` bundle next to each archive, with `--bundle`,
-to check offline. On TerraMaster TOS, `install` is a different program: use `cp`
+to check offline. Releases up to 0.7.2 were built while the project lived under the `aclater`
+account, so their attestations are found with `--owner aclater`; from 0.8.0 use
+`-R dsd-toolbox/sacdfs`. On TerraMaster TOS, `install` is a different program: use `cp`
 ([the NAS steps](nas-binary.md)).
 
 ### 32-bit x86
@@ -174,7 +176,7 @@ static program can crash the kernel (CVE-2014-4508), and sacdfs is no exception:
 binary serves the test corpus with the x86_64 build's bytes. Before 0.7.1, the same build on an
 i9-13900H served the corpus (910 files) and three real discs (94 DSF and WAV files) with the bytes
 of the x86_64 build. Test builds of the same recipe ran on an ASUSTOR AS-302T (Atom D2700, ADM) in
-[#456](https://github.com/aclater/sacdfs/issues/456), and on CentOS 7 i386 (kernel 3.10) in a VM,
+[#456](https://github.com/dsd-toolbox/sacdfs/issues/456), and on CentOS 7 i386 (kernel 3.10) in a VM,
 where the audit crash above was seen. Not checked: other 32-bit systems, and multichannel WAV
 playing in real time on an Atom.
 
@@ -186,7 +188,7 @@ a user other than root, mounts with `fusermount3` (or FUSE 2's `fusermount`), wi
 ```sh
 cargo install --locked sacdfs     # from crates.io, from 0.4.0
 # before 0.4.0, from the release tag:
-cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.3.0
+cargo install --locked --git https://github.com/dsd-toolbox/sacdfs --tag v0.3.0
 # or, in a clone:
 cargo build --release && target/release/sacdfs --help
 ```
@@ -210,4 +212,4 @@ distributions. Options: [options.md](../options.md).
 - [User guide](../user-guide.md)
 - [Options](../options.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

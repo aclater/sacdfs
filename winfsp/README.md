@@ -56,6 +56,12 @@ cargo xwin build --release --target x86_64-pc-windows-msvc
 
 The tests of the portable modules run anywhere: `cargo test` in `winfsp/`.
 
+## Advisories
+
+`paste` (RUSTSEC-2024-0436, unmaintained, not vulnerable) comes in through winfsp as a build-time
+macro. `deny.toml` ignores it for cargo-deny and `osv-scanner.toml` for OSV-Scanner (which
+OpenSSF Scorecard runs); both entries are to be dropped when a winfsp release no longer uses it.
+
 ## Design notes
 
 - **One copy per read.** A read's reply copies the core's bytes straight into WinFsp's buffer

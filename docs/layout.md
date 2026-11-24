@@ -72,4 +72,4 @@ scanners are served: [user guide](user-guide.md#formats).
 - [Options](options.md)
 - [Limits](limits.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

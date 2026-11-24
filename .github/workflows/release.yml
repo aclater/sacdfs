@@ -1007,7 +1007,7 @@ jobs:
           name: bin-aarch64
           path: in
       # fetch TAG DIR: a release's two archives, checked against SHA256SUMS and their
-      # attestations (made by this workflow, from that tag).
+      # attestations (made by this workflow, from that tag; for 0.7.2 and earlier by the aclater account's).
       - name: The archives (manual run, the release's) and the previous release's
         run: |
           fetch() {
@@ -1017,9 +1017,17 @@ jobs:
               -p "sacdfs-$v-x86_64-linux.tar.gz" -p "sacdfs-$v-aarch64-linux.tar.gz"
             (cd "$dir" && sha256sum -c --ignore-missing SHA256SUMS \
               && [[ $(sha256sum -c --ignore-missing SHA256SUMS | grep -c ': OK$') == 2 ]] && rm SHA256SUMS)
+            # Releases up to 0.7.2 were built and attested while the repository was aclater/sacdfs;
+            # GitHub does not move attestations with a repository, so those are looked up by owner
+            # and must have been signed by that account's workflow. Later releases: this repository.
+            if [[ $(printf '%s\n' "${v%%-*}" 0.7.2 | sort -V | head -n 1) == "${v%%-*}" ]]; then
+              where=(--owner aclater); signer=aclater/sacdfs
+            else
+              where=(--repo "$GH_REPO"); signer=$GH_REPO
+            fi
             for a in x86_64 aarch64; do
-              gh attestation verify "$dir/sacdfs-$v-$a-linux.tar.gz" --repo "$GH_REPO" \
-                --signer-workflow "$GH_REPO/.github/workflows/release.yml" --source-ref "refs/tags/$tag" > /dev/null
+              gh attestation verify "$dir/sacdfs-$v-$a-linux.tar.gz" "${where[@]}" \
+                --signer-workflow "$signer/.github/workflows/release.yml" --source-ref "refs/tags/$tag" > /dev/null
               echo "$tag $a: checksum and attestation verified"
             done
           }

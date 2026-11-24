@@ -8,7 +8,7 @@ body:
       value: |
         Thank you for testing sacdfs on real NAS hardware. **A report that says "it didn't work" is just as useful as one that says "it did".**
         Only the first few fields are required. Fill in what you know and skip the rest.
-        The [beta testing page](https://github.com/aclater/sacdfs/blob/main/docs/beta-testing.md) shows how to collect the details safely.
+        The [beta testing page](https://github.com/dsd-toolbox/sacdfs/blob/main/docs/beta-testing.md) shows how to collect the details safely.
   - type: input
     id: nas-model
     attributes:

@@ -30,7 +30,7 @@ does. About 5 minutes.
 2. **See what it would do.** Type this, with your folder. It changes nothing:
 
    ```sh
-   curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
+   curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh \
      | sudo sh -s -- --iso-dir /volume1/music --dry-run
    ```
 
@@ -40,7 +40,7 @@ does. About 5 minutes.
 3. **Install.** The same line without `--dry-run`:
 
    ```sh
-   curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
+   curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh \
      | sudo sh -s -- --iso-dir /volume1/music
    ```
 
@@ -68,11 +68,11 @@ Then set up your player: [which player](#3-which-player-or-music-server).
   (don't pipe `wget` into `sh`):
 
   ```sh
-  wget -O install.sh https://github.com/aclater/sacdfs/releases/latest/download/install.sh && sudo sh install.sh --iso-dir /volume1/music
+  wget -O install.sh https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh && sudo sh install.sh --iso-dir /volume1/music
   ```
 - **You see:** it stops with a block of system details and a link. **Do this:** sacdfs doesn't
   run on that system yet, and nothing was changed. Paste the block into the
-  [unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml).
+  [unsupported system form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=unsupported-system.yml).
 
 To remove sacdfs again, run the install line with `--uninstall` at the end. Your images stay.
 More about the installer, and where it was checked: [Details](#the-installer-in-detail).
@@ -158,7 +158,7 @@ Upgrading from 0.4.0 with albums catalogued by beets-pysacd: follow
   `cargo install --locked sacdfs` ([from source](binary.md#from-source)).
 - **Unraid and TrueNAS app-store entries:** [store-apps.md](store-apps.md).
 - **Have a NAS we have not run on?** Reports from real hardware are welcome through the
-  [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml); see [beta testing](../beta-testing.md).
+  [NAS test report form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=nas-test-report.yml); see [beta testing](../beta-testing.md).
 
 ### The installer in detail
 
@@ -196,7 +196,7 @@ not on the vendor's hardware.)*
 
 Root runs sacdfs's files at every start, so since 0.6.4 the installer puts them where only root
 can change them, and checks that before it writes anything
-([GHSA-wfjg-pqhm-4mm2](https://github.com/aclater/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2)):
+([GHSA-wfjg-pqhm-4mm2](https://github.com/dsd-toolbox/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2)):
 
 | System | sacdfs's files (`--prefix`) | Folder to mount on (`--mount`) | Why there |
 |---|---|---|---|
@@ -227,7 +227,7 @@ can change them, and checks that before it writes anything
   files then appear in `/share/CACHEDEV1_DATA/sacd`: share that folder and point players at
   it. `--uninstall` finds both places.
 - **Checksums:** each release's `install.sh` carries the SHA-256 of that release's archives,
-  and is itself attested (`gh attestation verify install.sh -R aclater/sacdfs`). A download
+  and is itself attested (`gh attestation verify install.sh --owner aclater`). A download
   that doesn't match stops it. With `--version` for another release, it can only compare with
   the `.sha256` from the same server: it says so, and then needs `curl` (HTTPS only, TLS 1.2
   or later) or GNU Wget, which check the server's certificate; BusyBox's `wget` doesn't, so
@@ -271,15 +271,15 @@ single-quoted values the same way, for the characters the installer allows).)*
 **To read it before you run it,** download it, check it, and run it:
 
 ```sh
-curl -fLO https://github.com/aclater/sacdfs/releases/latest/download/install.sh
-curl -fLO https://github.com/aclater/sacdfs/releases/latest/download/install.sh.sha256
+curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh
+curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh.sha256
 sha256sum -c install.sh.sha256      # install.sh: OK
 less install.sh
 sudo sh install.sh --iso-dir /volume1/music --dry-run
 sudo sh install.sh --iso-dir /volume1/music
 ```
 
-`gh attestation verify install.sh -R aclater/sacdfs` also shows that this repository's release
+`gh attestation verify install.sh --owner aclater` also shows that this repository's release
 workflow built it. *(Checked on 0.6.2 from the `latest` address in both forms above, and the
 attestation passes; see [the installer on 0.6.2](../test-plan.md#results-installer-on-062).)*
 
@@ -308,7 +308,7 @@ that runs 32-bit programs (Raspberry Pi OS 32-bit on a Pi 4 or 5 reports `aarch6
 older than 2.17 or musl instead of glibc (for the binary; the container brings its own), no
 `/dev/fuse` that `modprobe fuse` can load, or `--method compose` with no Docker or Podman that
 answers. It then prints a short block of system details and a link to the
-[unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml):
+[unsupported system form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=unsupported-system.yml):
 paste the block there to ask for that system. After a download, it still tries the binary
 before installing it, and stops the same way if it doesn't start. A Mac or Windows PC gets the
 "Linux only" message, with no block. On 32-bit x86 (an `i686` kernel, or an x86-64 kernel with
@@ -320,7 +320,7 @@ release's `i686` archive, with its download link, to install by hand, and links
 root nor `--iso-dir`:
 
 ```sh
-curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sh -s -- --report
+curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh | sh -s -- --report
 ```
 
 The block holds the installer's version, the check that stopped it, the processor (`uname -m`,
@@ -374,4 +374,4 @@ hardware, and QTS or UGOS Pro themselves.
 - [Deployment reference](../deployment.md)
 - [Beta testing](../beta-testing.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

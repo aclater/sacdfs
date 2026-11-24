@@ -519,7 +519,7 @@ mod tests {
     fn the_user_agent_names_the_project_and_no_person() {
         let ua = user_agent();
         assert!(ua.starts_with("sacdfs/"), "{ua}");
-        assert!(ua.contains("https://github.com/aclater/sacdfs"), "{ua}");
+        assert!(ua.contains("https://github.com/dsd-toolbox/sacdfs"), "{ua}");
         assert!(!ua.contains('@'), "{ua}");
     }
 

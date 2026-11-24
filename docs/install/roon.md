@@ -75,4 +75,4 @@ Roon's log shows `[roon/cifs] Connected`, and the albums appear as Roon imports 
 - [Clients](../clients.md)
 - [Deployment reference](../deployment.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

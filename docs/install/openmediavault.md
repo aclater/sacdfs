@@ -56,4 +56,4 @@ Validated on OpenMediaVault 8.6 (Debian 13) in a VM, with the omv-extras Compose
 - [Deployment reference](../deployment.md)
 - [Beta testing](../beta-testing.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

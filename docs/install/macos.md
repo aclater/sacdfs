@@ -30,8 +30,8 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    ```sh
    mkdir -p ~/sacdfs
    cd ~/sacdfs
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-aarch64-macos.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-aarch64-macos.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-aarch64-macos.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-aarch64-macos.tar.gz.sha256
    ```
 
    On an Intel Mac, the same with `x86_64` (not run in the VM, which is Apple Silicon):
@@ -39,8 +39,8 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    ```sh
    mkdir -p ~/sacdfs
    cd ~/sacdfs
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-macos.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-macos.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-macos.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-macos.tar.gz.sha256
    ```
 
    The rest of this guide shows the Apple Silicon names; on Intel, put `x86_64` for `aarch64`.
@@ -52,7 +52,7 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    ```
 
    *You should see* `sacdfs-0.7.2-aarch64-macos.tar.gz: OK`. On a computer with the GitHub CLI,
-   `gh attestation verify sacdfs-0.7.2-aarch64-macos.tar.gz -R aclater/sacdfs` also checks that
+   `gh attestation verify sacdfs-0.7.2-aarch64-macos.tar.gz --owner aclater` also checks that
    GitHub's release workflow built it.
 
 3. **Unpack it:**
@@ -131,7 +131,7 @@ screen.
 3. **Build and install sacdfs** with the Mac's mount (`--features nfs`):
 
    ```sh
-   cargo install --locked --features nfs --git https://github.com/aclater/sacdfs sacdfs
+   cargo install --locked --features nfs --git https://github.com/dsd-toolbox/sacdfs sacdfs
    ~/.cargo/bin/sacdfs-nfs --version
    ```
 
@@ -255,4 +255,4 @@ the mount is `noexec`).
 - [Platforms](../../README.md#platforms)
 - [Design](../design.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

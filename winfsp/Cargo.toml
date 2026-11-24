@@ -7,7 +7,7 @@ rust-version = "1.88"
 # GPL-3.0-only, so the Windows binary as a whole is under GPL-3.0 (see README.md).
 license = "GPL-3.0-or-later"
 description = "sacdfs's Windows front end on WinFsp: SACD disc images as DSF and WAV files"
-repository = "https://github.com/aclater/sacdfs"
+repository = "https://github.com/dsd-toolbox/sacdfs"
 publish = false
 
 # Not a member of sacdfs's package: its own lock file and build, so that the Linux build and

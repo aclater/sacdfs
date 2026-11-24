@@ -5,9 +5,10 @@
 [![CI](https://github.com/dsd-toolbox/sacdfs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dsd-toolbox/sacdfs/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/dsd-toolbox/sacdfs/branch/main/graph/badge.svg)](https://codecov.io/gh/dsd-toolbox/sacdfs)
 [![CodeQL](https://github.com/dsd-toolbox/sacdfs/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/dsd-toolbox/sacdfs/actions/workflows/codeql.yml)
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](COPYING)
+[![Licence: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](COPYING)
 [![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-orange)](Cargo.toml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dsd-toolbox/sacdfs/badge)](https://scorecard.dev/viewer/?uri=github.com/dsd-toolbox/sacdfs)
+[![crates.io](https://img.shields.io/crates/v/sacdfs)](https://crates.io/crates/sacdfs)
 
 sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
 player or music server. Nothing is extracted: keep the ISOs, delete the extracted copies.
@@ -88,10 +89,10 @@ option) any later version.
 
 - [scarletbook](https://github.com/aclater/scarletbook-rs) (MIT OR Apache-2.0) does the SACD
   parsing, DST decoding and DSD-to-PCM conversion, through its public APIs.
-- [pysacd](https://github.com/aclater/pysacd) (GPL-2.0-or-later) made the reference hashes the
+- [pysacd](https://github.com/dsd-toolbox/pysacd) (GPL-2.0-or-later) made the reference hashes the
   DSF files are checked against; sacdfs 0.1's converter was ported from it, with a first stage
   after Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
 - The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec), is
   public domain under CC0 1.0 ([licence](tests/corpus/LICENSE)).
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

@@ -91,4 +91,4 @@ Each multichannel area is its own album, "Album (Multichannel)". While a DSF tra
 - [Clients](../clients.md)
 - [Deployment reference](../deployment.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

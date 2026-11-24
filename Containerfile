@@ -62,7 +62,7 @@ ENV SACDFS_SOURCE=/images \
 
 LABEL org.opencontainers.image.title="sacdfs" \
       org.opencontainers.image.description="SACD images as DSF and WAV files, shared over SMB and NFS" \
-      org.opencontainers.image.source="https://github.com/aclater/sacdfs" \
+      org.opencontainers.image.source="https://github.com/dsd-toolbox/sacdfs" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
 EXPOSE 445/tcp 2049/tcp
