@@ -1,0 +1,8 @@
+# OSV-Scanner config for winfsp/Cargo.lock. OpenSSF Scorecard's Vulnerabilities check runs
+# osv-scanner over the repo recursively; osv-scanner reads this file only for lock files in
+# this directory. Keep in step with the RUSTSEC-2024-0436 ignore in deny.toml.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+effectiveUntil = 2027-05-24
+reason = "paste is unmaintained (archived), not vulnerable: a build-time macro of winfsp, which has no release without it. Revisit when a winfsp release drops it."
