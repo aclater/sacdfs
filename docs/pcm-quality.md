@@ -117,4 +117,4 @@ At 88.2 kHz the band ends at 44.1 kHz, so the wide filter isn't offered there. O
 - [Design: PCM conversion](design.md#pcm-conversion)
 - [Options](options.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

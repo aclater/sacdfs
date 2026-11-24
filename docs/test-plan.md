@@ -4,9 +4,9 @@
 
 CI proves that sacdfs does what its tests say. Real clients have repeatedly shown things CI could
 not: Roon sending tens of thousands of extended-attribute requests
-([#174](https://github.com/aclater/sacdfs/issues/174)), `ls -l` failing over NFS, Plex merging
-album copies ([#138](https://github.com/aclater/sacdfs/issues/138)), a read stalling for hours on a
-NAS ([#72](https://github.com/aclater/sacdfs/issues/72)). So a release is not ready until the
+([#174](https://github.com/dsd-toolbox/sacdfs/issues/174)), `ls -l` failing over NFS, Plex merging
+album copies ([#138](https://github.com/dsd-toolbox/sacdfs/issues/138)), a read stalling for hours on a
+NAS ([#72](https://github.com/dsd-toolbox/sacdfs/issues/72)). So a release is not ready until the
 clients people actually use have run it.
 
 This page says what is tested, on what, and when a result blocks a release. Results go in
@@ -57,7 +57,7 @@ shorter, stall-heavy soak before it merges; that run does not replace the candid
 
 **What the soak does not cover.** It does not exercise a long hang of one image's source with
 clients that keep retrying, which could use every read thread of the mount up to 0.4.1
-([#241](https://github.com/aclater/sacdfs/issues/241)). `tests/stall.rs` covers that case
+([#241](https://github.com/dsd-toolbox/sacdfs/issues/241)). `tests/stall.rs` covers that case
 (`retrying_clients_of_a_stalled_image_leave_threads_to_the_others`); a soak pass says nothing
 about it.
 
@@ -110,7 +110,7 @@ otherwise stated as untested.
 | foobar2000 | 2 | SMB 3 | Windows VM | 0.4.1-rc.1 | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
 | Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | Kodi 21.3 on main (November 2026), Windows WinFsp and SMB; Gerbera and Strawberry **never** | Never run | Not run on 0.5.0 |
-| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; macOS 27.2 VM results in clients.md since: SMB on 0.6.0-rc.1, media servers on main (November 2026); Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/aclater/sacdfs/issues/204) and [#205](https://github.com/aclater/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks | Not run on 0.5.0 |
+| macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; macOS 27.2 VM results in clients.md since: SMB on 0.6.0-rc.1, media servers on main (November 2026); Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/dsd-toolbox/sacdfs/issues/204) and [#205](https://github.com/dsd-toolbox/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks | Not run on 0.5.0 |
 | Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Never run | Not run on 0.5.0 |
 | Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Never run | Not run on 0.5.0 |
 
@@ -157,7 +157,7 @@ rslave bind into a container.
 - Windows-specific: a second Robocopy pass skips everything; file times survive. A Windows VM that
   times copies uses a virtio-net card (NetKVM driver) or turns receive-side scaling off on an emulated
   e1000e card: with RSS on, e1000e copies run at one of two speeds per connection, 3 to 4.5 times apart
-  ([#225](https://github.com/aclater/sacdfs/issues/225), [client notes](clients.md#windows-explorer-powershell-and-robocopy)).
+  ([#225](https://github.com/dsd-toolbox/sacdfs/issues/225), [client notes](clients.md#windows-explorer-powershell-and-robocopy)).
 - Stable identity: inodes and mtimes hold across a restart, and NFS handles stay valid.
 - **RF64:** a real file over 4 GiB reads, seeks and hashes correctly through every path, and
   FFmpeg, sox and at least one server read it. Clients that can't are named in the docs.
@@ -168,17 +168,17 @@ Each past client-visible bug gets its scenario re-run at every candidate.
 
 | Issue | Check | Result on 0.4.1 |
 |---|---|---|
-| [#62](https://github.com/aclater/sacdfs/issues/62) | `df` and SMB free space report a real size | rc.1: `df` non-zero over NFS and SMB on seven Linux clients. Carried over from rc.1 |
-| [#64](https://github.com/aclater/sacdfs/issues/64), [#123](https://github.com/aclater/sacdfs/issues/123) | mtimes move when bytes change; Roon sees an upgrade and a new sidecar by itself | rc.1: Roon's scan after the move from 0.4.0 matched a tree comparison (changed names, retagged files, 359 added `cover` images). A new sidecar added while Roon ran: untested. Carried over from rc.1 |
-| [#71](https://github.com/aclater/sacdfs/issues/71) | Worst read under four players and a tagger is within the documented target | rc.1: four readers plus a tagger all finished, slowest 0.2 to 1.0 s for 60 MiB over a virtual network, cold. Not compared with the documented target. Untested on rc.2 |
-| [#72](https://github.com/aclater/sacdfs/issues/72) | No long stall reading 6-channel DST over SMB on the NAS; the soak's stall injection recovers | rc.2 60-minute soak: 19 stalls and 11 remounts, no unexpected errors. The 2-hour soak is still to report. The 6-channel DST read over SMB on the NAS: untested on 0.4.1 |
-| [#73](https://github.com/aclater/sacdfs/issues/73), [#150](https://github.com/aclater/sacdfs/issues/150) | Memory after an import replay and an hour of reads is within the documented figure | rc.2, real library of 4,902 DSF files: 27.2 MiB listed, 72.7 after a head-and-tail read of every file, 33.0 after 10 minutes idle (0.4.0: 29.0, 79.5, 35.2; rc.1: 33.2, 95.1, 54.0). Import replay and the soak's memory trend (+1.4 MiB/h over 60 minutes): see [performance](performance.md) |
-| [#95](https://github.com/aclater/sacdfs/issues/95) | Folder art found by LMS, MPD and MinimServer | rc.1: yes on all three. Carried over from rc.1 |
-| [#96](https://github.com/aclater/sacdfs/issues/96) | MPD's first scan cost, `dsf` against `dsf,wav` | rc.1: first scan with `dsf` 0.47 s (0.4.0: 0.46 s). `dsf,wav` against `dsf` was not recorded on 0.4.1 |
-| [#101](https://github.com/aclater/sacdfs/issues/101) | Sidecars added after the mount appear | rc.1: checked on the file system only; no server was shown a new sidecar. Carried over from rc.1 |
-| [#138](https://github.com/aclater/sacdfs/issues/138) | Plex with the documented setting keeps the album copies apart | rc.1: multichannel copies stayed separate. Carried over from rc.1 |
-| [#174](https://github.com/aclater/sacdfs/issues/174) | `ls -l` over NFS works, **and** Roon's Force Rescan sends no extended-attribute storm. These two pulled against each other once, so they are always checked together | rc.1, both halves. NFS half: `ls -lR` exited 0 with no error on seven Linux clients over NFS and SMB; against 0.4.0 in the FUSE request log the counts were the same: 1 `GETXATTR` and 238 `LISTXATTR` for 206 files over NFS, none over SMB. `find` with `getfattr` on a whole tree and `ls -lRZ` were not run; `getfattr -d` on one file returned at once with no attributes. Roon half: a Force Rescan on Roon 2.74 took 3.2 s with 19,324 FUSE requests, none for extended attributes. Carried over from rc.1 |
-| [#175](https://github.com/aclater/sacdfs/issues/175) | Folders with no SACD below them are hidden | rc.1: on a real library 649 entries disappeared (4 top-level folders among them) and no DSF file. Carried over from rc.1 |
+| [#62](https://github.com/dsd-toolbox/sacdfs/issues/62) | `df` and SMB free space report a real size | rc.1: `df` non-zero over NFS and SMB on seven Linux clients. Carried over from rc.1 |
+| [#64](https://github.com/dsd-toolbox/sacdfs/issues/64), [#123](https://github.com/dsd-toolbox/sacdfs/issues/123) | mtimes move when bytes change; Roon sees an upgrade and a new sidecar by itself | rc.1: Roon's scan after the move from 0.4.0 matched a tree comparison (changed names, retagged files, 359 added `cover` images). A new sidecar added while Roon ran: untested. Carried over from rc.1 |
+| [#71](https://github.com/dsd-toolbox/sacdfs/issues/71) | Worst read under four players and a tagger is within the documented target | rc.1: four readers plus a tagger all finished, slowest 0.2 to 1.0 s for 60 MiB over a virtual network, cold. Not compared with the documented target. Untested on rc.2 |
+| [#72](https://github.com/dsd-toolbox/sacdfs/issues/72) | No long stall reading 6-channel DST over SMB on the NAS; the soak's stall injection recovers | rc.2 60-minute soak: 19 stalls and 11 remounts, no unexpected errors. The 2-hour soak is still to report. The 6-channel DST read over SMB on the NAS: untested on 0.4.1 |
+| [#73](https://github.com/dsd-toolbox/sacdfs/issues/73), [#150](https://github.com/dsd-toolbox/sacdfs/issues/150) | Memory after an import replay and an hour of reads is within the documented figure | rc.2, real library of 4,902 DSF files: 27.2 MiB listed, 72.7 after a head-and-tail read of every file, 33.0 after 10 minutes idle (0.4.0: 29.0, 79.5, 35.2; rc.1: 33.2, 95.1, 54.0). Import replay and the soak's memory trend (+1.4 MiB/h over 60 minutes): see [performance](performance.md) |
+| [#95](https://github.com/dsd-toolbox/sacdfs/issues/95) | Folder art found by LMS, MPD and MinimServer | rc.1: yes on all three. Carried over from rc.1 |
+| [#96](https://github.com/dsd-toolbox/sacdfs/issues/96) | MPD's first scan cost, `dsf` against `dsf,wav` | rc.1: first scan with `dsf` 0.47 s (0.4.0: 0.46 s). `dsf,wav` against `dsf` was not recorded on 0.4.1 |
+| [#101](https://github.com/dsd-toolbox/sacdfs/issues/101) | Sidecars added after the mount appear | rc.1: checked on the file system only; no server was shown a new sidecar. Carried over from rc.1 |
+| [#138](https://github.com/dsd-toolbox/sacdfs/issues/138) | Plex with the documented setting keeps the album copies apart | rc.1: multichannel copies stayed separate. Carried over from rc.1 |
+| [#174](https://github.com/dsd-toolbox/sacdfs/issues/174) | `ls -l` over NFS works, **and** Roon's Force Rescan sends no extended-attribute storm. These two pulled against each other once, so they are always checked together | rc.1, both halves. NFS half: `ls -lR` exited 0 with no error on seven Linux clients over NFS and SMB; against 0.4.0 in the FUSE request log the counts were the same: 1 `GETXATTR` and 238 `LISTXATTR` for 206 files over NFS, none over SMB. `find` with `getfattr` on a whole tree and `ls -lRZ` were not run; `getfattr -d` on one file returned at once with no attributes. Roon half: a Force Rescan on Roon 2.74 took 3.2 s with 19,324 FUSE requests, none for extended attributes. Carried over from rc.1 |
+| [#175](https://github.com/dsd-toolbox/sacdfs/issues/175) | Folders with no SACD below them are hidden | rc.1: on a real library 649 entries disappeared (4 top-level folders among them) and no DSF file. Carried over from rc.1 |
 | `verify` | A file it can't check gives an ERROR row and a non-zero exit, and an interrupted run leaves nothing that reads as a finished report. Users delete extracts on its word | Tested against the fix on its pull request branch and in CI; not run on a published 0.4.1 candidate |
 
 ## Real-disc tests
@@ -253,15 +253,15 @@ comparable. Every timed run is under the benchmark lock. Other jobs on the same 
 - **Soak:** two hours with induced stalls (`scripts/soak.py`), passing its memory, thread, file and
   cache checks. Pass criteria ([development.md](development.md#the-soak)): memory within the cache cap
   plus noise, and a trend of at most 4 MiB/h once the largest single step in the second half is set
-  aside ([#247](https://github.com/aclater/sacdfs/issues/247): healthy runs step by 3 to 6.5 MiB, and a
+  aside ([#247](https://github.com/dsd-toolbox/sacdfs/issues/247): healthy runs step by 3 to 6.5 MiB, and a
   steady climb of 10 MiB/h still fails, a 2-hour run catching about 5 MiB/h and up); threads at the
   first half's median + 4 at the median and end, with a spike above median + 16 allowed for under two
   minutes and never above median + 32; open files and cache directory level. Whether a candidate needs one is decided by [When a soak is needed](#when-a-soak-is-needed).
-  It does not cover a long hang with retrying clients ([#241](https://github.com/aclater/sacdfs/issues/241)),
+  It does not cover a long hang with retrying clients ([#241](https://github.com/dsd-toolbox/sacdfs/issues/241)),
   which `tests/stall.rs` covers.
 - Weekly leak checks and fuzzing are green on the release commit. For 0.4.1 the fuzz workflow was
   green on the rc.1 tag commit. The `leaks` workflow's first run was on this release and it failed
-  because its own checks were broken (a fix is [#226](https://github.com/aclater/sacdfs/pull/226));
+  because its own checks were broken (a fix is [#226](https://github.com/dsd-toolbox/sacdfs/pull/226));
   so no weekly leak check has passed on a 0.4.1 candidate.
 
 ## Scenarios for this release
@@ -284,9 +284,9 @@ What was run on rc.2, and what was not. Anything missing here is untested on rc.
 
 **What changed since rc.1, and so what carries over.** The shipped code differs between
 `v0.4.1-rc.1` and `v0.4.1-rc.2` in `src/main.rs` (the malloc arena limit is set before the start-up
-walk, [#224](https://github.com/aclater/sacdfs/pull/224)), `deploy/entrypoint.sh`,
+walk, [#224](https://github.com/dsd-toolbox/sacdfs/pull/224)), `deploy/entrypoint.sh`,
 `deploy/compose.yaml`, `Containerfile` (the container's mount limit `SACDFS_MOUNT_TIMEOUT` and the
-health check's 300 s start period, [#232](https://github.com/aclater/sacdfs/issues/232)), the version
+health check's 300 s start period, [#232](https://github.com/dsd-toolbox/sacdfs/issues/232)), the version
 numbers, and a CI test script (`deploy/ci-share-test.sh`). `git diff v0.4.1-rc.1 v0.4.1-rc.2 -- src
 deploy Containerfile Cargo.lock Cargo.toml` shows nothing else: no change to decoding, naming, the
 file tree or dependencies. So, per the rule above, the client results in [clients.md](clients.md)
@@ -337,7 +337,7 @@ memory or start-up timing was not checked again.
 
 ## Results: 0.4.1-rc.3 gate
 
-rc.3 adds the fix for [#238](https://github.com/aclater/sacdfs/issues/238) (a hung image's WAV reads
+rc.3 adds the fix for [#238](https://github.com/dsd-toolbox/sacdfs/issues/238) (a hung image's WAV reads
 held decoder threads), after the rc.2 2-hour soak failed on it. The shipped code changed since rc.2 only
 where WAV reads are demultiplexed, so a full soak ran and the clients that read WAV were re-run. The
 final 0.4.1 tag carries only the version change on top of rc.3, so under the
@@ -363,7 +363,7 @@ was counted as passed on those long runs. Steps of this size also appear on rc.2
 directions. **Unexplained then, explained later:** the steps are the host's memory reclaim (see
 [Soak memory steps (#247)](#soak-memory-steps-247)); the level gap on rig A is the malloc heap's live
 data (same section). No soak covers a long hang with retrying clients
-([#241](https://github.com/aclater/sacdfs/issues/241)).
+([#241](https://github.com/dsd-toolbox/sacdfs/issues/241)).
 
 **Clients re-run on rc.3,** details in [clients.md](clients.md#041-rc3-checks): seven Linux distributions
 over NFS 4.2 and SMB 3.1.1 (the one failure is the known Ubuntu 24.04 non-ASCII name problem); Navidrome,
@@ -489,7 +489,7 @@ What was run on 0.6.2-rc.1 (tag `v0.6.2-rc.1`), with 0.6.1 as the baseline. Anyt
 
 Not checked on this candidate: Roon and Plex re-reads on upgrade, the whole library tree.
 
-**Installer from the real release** (Part of #340). Each run took the installer from this release on GitHub, in two forms: the one-liner `curl -fsSL https://github.com/aclater/sacdfs/releases/download/v0.6.2-rc.1/install.sh | sh -s -- --iso-dir ...`, and download, `sha256sum -c install.sh.sha256`, run the file. It downloaded the release archive from GitHub and checked it. Each run was the whole cycle: a dry run that changed nothing, the install, 22 DSF and WAV files of three corpus images identical to a reference, a second run that changed nothing, `--uninstall` back to the start (and a second `--uninstall` with nothing to remove), and the images folder unchanged.
+**Installer from the real release** (Part of #340). Each run took the installer from this release on GitHub, in two forms: the one-liner `curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/download/v0.6.2-rc.1/install.sh | sh -s -- --iso-dir ...`, and download, `sha256sum -c install.sh.sha256`, run the file. It downloaded the release archive from GitHub and checked it. Each run was the whole cycle: a dry run that changed nothing, the install, 22 DSF and WAV files of three corpus images identical to a reference, a second run that changed nothing, `--uninstall` back to the start (and a second `--uninstall` with nothing to remove), and the images folder unchanged.
 
 | System | Route | One-liner | Download, check, run |
 |---|---|---|---|
@@ -600,7 +600,7 @@ Not run on Windows: large-icon view in a real Explorer window, CJK names, foobar
 
 The installer of the 0.6.2 release (Part of #340), taken from GitHub's `latest` address, which
 serves 0.6.2's `install.sh` (`DEFAULT_VERSION=0.6.2`; its attestation passes), in two forms: the
-one-liner `curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sh -s -- --iso-dir ...`,
+one-liner `curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh | sh -s -- --iso-dir ...`,
 and download, `sha256sum -c install.sh.sha256`, `sh install.sh`. It downloaded the 0.6.2 archive
 from GitHub and checked it. Each run was the whole cycle of `deploy/ci-install-steps.sh`: a dry run
 that changed nothing, the install, all 28 DSF and WAV files of three corpus images identical to a
@@ -939,7 +939,7 @@ A wider client round, not a release gate. sacdfs from main (commit 243588d for L
 - **macOS 27.2 in a VM on Apple hardware** (local NFS route): Navidrome, Jellyfin, Emby and Asset UPnP behave as on Linux. Plex can't be set up without a plex.tv sign-in on macOS, Kodi doesn't start without OpenGL, and the GUI-only players are untested (list in clients.md). SMB was not run.
 - **Windows 11 in a VM, not on the vendor's hardware** (native WinFsp with the #434 build, and SMB 3.1.1): Jellyfin and Emby as on Linux. foobar2000 with foo_input_sacd found 93 of 93 with tags and art. Kodi found 70 of 93, merging the corpus's repeated discs, the same on a plain copy. Windows Media Player's library takes the WAV files only. Plex can't be set up unclaimed without a sign-in. Universal Media Server, JRiver and Asset UPnP were untested: no port in the VM, or no unattended install.
 - **Not run:** Roon (Linux over SMB is covered by the long-running NAS install; Windows and macOS not run, since a Roon account has one active core), Audirvana (account), audio output of any kind.
-- **One sacdfs bug:** WAV `LIST`/`INFO` tags are UTF-8, and Windows Explorer and Windows Media Player show non-ASCII ones as mojibake ([#444](https://github.com/aclater/sacdfs/issues/444)). Emby shows no album art on Linux and macOS, also on a plain copy, and Plex now uses the folder art (24 of 42 albums), unlike the result recorded under #95.
+- **One sacdfs bug:** WAV `LIST`/`INFO` tags are UTF-8, and Windows Explorer and Windows Media Player show non-ASCII ones as mojibake ([#444](https://github.com/dsd-toolbox/sacdfs/issues/444)). Emby shows no album art on Linux and macOS, also on a plain copy, and Plex now uses the folder art (24 of 42 albums), unlike the result recorded under #95.
 
 ## Results: 0.6.5 gate
 
@@ -964,7 +964,7 @@ What was run on 0.6.5-rc.1 (tag `v0.6.5-rc.1`), with 0.6.4 as the baseline (and 
 | Whole-library mount over NFS (11 rounds) | | 0.102 s | 0.095 s |
 | Whole-library first listing over NFS | | 0.178 s | **0.324 s** |
 
-Reads are within 3 % of 0.6.4 everywhere. The first listing over NFS is 0.15 s slower: #402's hole check makes one `lseek(SEEK_HOLE)` per disc area, and an NFS 4.2 client sends each as a SEEK to the server (471 SEEK calls for this library on rc.1, none on 0.6.4). It is paid once per listing and is negligible on local disks; [#451](https://github.com/aclater/sacdfs/issues/451) is the follow-up.
+Reads are within 3 % of 0.6.4 everywhere. The first listing over NFS is 0.15 s slower: #402's hole check makes one `lseek(SEEK_HOLE)` per disc area, and an NFS 4.2 client sends each as a SEEK to the server (471 SEEK calls for this library on rc.1, none on 0.6.4). It is paid once per listing and is negligible on local disks; [#451](https://github.com/dsd-toolbox/sacdfs/issues/451) is the follow-up.
 
 **Pacing and the cache under a memory limit,** the published images of 0.6.3, 0.6.4 and 0.6.5-rc.1, Linux kernel SMB 3.1.1 and NFS 4.2 clients on loopback, the server in a 2- or 4-CPU container with 256 or 512 MiB, a fresh container per run, builds alternated, timed client runs under the benchmark lock, medians. The host was shared with other work (load 23 to 31 in the 4-copy cells), so the cells are compared within this table only.
 
@@ -998,7 +998,7 @@ The player stalls that 0.6.3 and 0.6.4 show beside copies on 2 slow cores are go
 | Stalls / remounts | 39 / 23 | 39 / 23 | 39 / 23 | 39 / 23 |
 | Unexpected read errors | 0 | 0 | 0 | 0 |
 
-- No remount failed. The soak's FIFO stalls end in the refusal of a non-regular image since 0.6.4, so they don't reach the read watchdog ([#422](https://github.com/aclater/sacdfs/issues/422)); `tests/stall.rs` covers the watchdog. The stalled image logs far fewer lines on rc.1 (33 against 172, 36 against 109): the rate-limited EIO log of #339.
+- No remount failed. The soak's FIFO stalls end in the refusal of a non-regular image since 0.6.4, so they don't reach the read watchdog ([#422](https://github.com/dsd-toolbox/sacdfs/issues/422)); `tests/stall.rs` covers the watchdog. The stalled image logs far fewer lines on rc.1 (33 against 172, 36 against 109): the rate-limited EIO log of #339.
 - **Stop checks** on the published x86_64 binaries of both versions, on both machines, with the same results on each: SIGTERM with a file held open (#276) took the mount out of the table at once and sacdfs exited 0 after the 10 s grace; 200 SIGTERMs 0 to 40 ms after the start (#334) hung none and left no mount, each within 9 ms; 100 outside `fusermount3 -u` while idle (#333, #322) exited 0 within 8 ms.
 
 **Clients,** on the rc's release binary and image (details in [clients.md](clients.md#065-rc1-checks)):
@@ -1018,7 +1018,7 @@ What was run on 0.7.0-rc.1 (tag `v0.7.0-rc.1`), with 0.6.5 as the baseline. Anyt
 
 **What changed since 0.6.5, and so what ran.** `git diff v0.6.5 v0.7.0-rc.1 -- src Cargo.lock` touches the read path (the start-of-track decode-ahead #481, scarletbook 0.6.1), WAV output (`WAV_VERSION` 5, #474) and listing (#476). So the soak ran, and the full client matrix.
 
-- **Release artifacts.** The release workflow succeeded. The pre-release has the three Linux archives, the Windows zip, the two macOS archives, `.rpm` and `.deb` packages for x86_64 and aarch64, the source RPM and `install.sh`, each with a `.sha256` and an `.intoto.jsonl`, and `SHA256SUMS`. Every hash matches, and `gh attestation verify` passes on all eleven assets and on the image by its tag and its `-amd64` and `-arm64` tags. GitHub publishes the packages as `0.7.0.rc.1` where `SHA256SUMS` and their `.sha256` files say `0.7.0~rc.1`, so `sha256sum -c` doesn't find them; release candidates only ([#485](https://github.com/aclater/sacdfs/issues/485)). The Linux archives hold the same nine files as 0.6.5; `--version` prints `sacdfs 0.7.0-rc.1` on all three (aarch64 under emulation); the newest glibc symbol is 2.17. The archive's unit and the packages' units set `XDG_CACHE_HOME=/var/cache` and `CacheDirectory=sacdfs` (#465). The rpm installs on UBI 9 and the deb on Debian 12, on both architectures (aarch64 under emulation), with the archive's binary.
+- **Release artifacts.** The release workflow succeeded. The pre-release has the three Linux archives, the Windows zip, the two macOS archives, `.rpm` and `.deb` packages for x86_64 and aarch64, the source RPM and `install.sh`, each with a `.sha256` and an `.intoto.jsonl`, and `SHA256SUMS`. Every hash matches, and `gh attestation verify` passes on all eleven assets and on the image by its tag and its `-amd64` and `-arm64` tags. GitHub publishes the packages as `0.7.0.rc.1` where `SHA256SUMS` and their `.sha256` files say `0.7.0~rc.1`, so `sha256sum -c` doesn't find them; release candidates only ([#485](https://github.com/dsd-toolbox/sacdfs/issues/485)). The Linux archives hold the same nine files as 0.6.5; `--version` prints `sacdfs 0.7.0-rc.1` on all three (aarch64 under emulation); the newest glibc symbol is 2.17. The archive's unit and the packages' units set `XDG_CACHE_HOME=/var/cache` and `CacheDirectory=sacdfs` (#465). The rpm installs on UBI 9 and the deb on Debian 12, on both architectures (aarch64 under emulation), with the archive's binary.
 - **Checks:** formatting, clippy, docs and cargo-deny pass. The full test suite with FUSE tests passes (493 tests; 507 with the `nfs` feature). The file-handle tests as root and the NFS loopback export were not run.
 - **Audio:** of the corpus's 910 DSF and WAV files, 883 are byte-identical to 0.6.5's and all DSF files are, on the x86_64 and x86_64-v3 builds, in five output configurations (default, 88.2 and 352.8 kHz WAV, flattened, DSF only). The other 27 are WAV files with non-ASCII text: only their `LIST`/`INFO` chunk changes (#474), with the `data` and `id3 ` chunks identical. On eight real discs all 128 DSF files are identical to 0.6.5's; 25 of the 128 WAV files differ in the same way.
 - **Real-disc tests** (`scripts/real-discs.sh`, those eight images): 3 of 3 passed, 0 skipped, exit 0, in two runs: seven images, then the largest (a 4.1 GiB DST multichannel image) alone. On that image the test peaks at about 10 GiB of memory, 0.6.5's too, so run it with a limit of 12 GiB or more.
@@ -1034,7 +1034,7 @@ What was run on 0.7.0-rc.1 (tag `v0.7.0-rc.1`), with 0.6.5 as the baseline. Anyt
 | Local read, corpus, DST stereo / DST multichannel / plain DSD, DSF | 0.152 / 0.510 / 0.031 s | 0.145 / 0.547 / 0.028 s | 0.98 / 1.08 / 0.87 |
 | Whole-library first listing over NFS (0.6.4: 1.45 s) | 1.95 s | 1.53 s | 0.80 |
 
-DST multichannel is slower on rc.1, in every round of a second series (7 corpus and 6 real-disc rounds): real disc DSF 1.025 and WAV 1.060 (rounds 1.057 to 1.065), corpus DSF 1.107 (1.04 to 1.24) and WAV 1.09. The corpus DSF figure is over the 10 % limit and not yet explained ([#490](https://github.com/aclater/sacdfs/issues/490)). DST stereo is about 6 % faster.
+DST multichannel is slower on rc.1, in every round of a second series (7 corpus and 6 real-disc rounds): real disc DSF 1.025 and WAV 1.060 (rounds 1.057 to 1.065), corpus DSF 1.107 (1.04 to 1.24) and WAV 1.09. The corpus DSF figure is over the 10 % limit and not yet explained ([#490](https://github.com/dsd-toolbox/sacdfs/issues/490)). DST stereo is about 6 % faster.
 
 A 6-channel DST track started at real-time pace from a fresh mount gives its first 1 MiB in about 22 ms on both builds, with no read over 4 ms; with the image in the page cache on this CPU neither build falls behind, so this doesn't show #481's gain on slow CPUs. The first NFS listing of a 416-image library sends 1 SEEK (0.6.5: 471; #451).
 
@@ -1067,9 +1067,9 @@ A 6-channel DST track started at real-time pace from a fresh mount gives its fir
 
 ## Results: 0.7.0-rc.2
 
-What was run on 0.7.0-rc.2 (tag `v0.7.0-rc.2`), with 0.7.0-rc.1 as the baseline. Since rc.1, the read path gained a read trace, off by default ([#486](https://github.com/aclater/sacdfs/pull/486)), and the start-of-track decode-ahead now also starts for players that read a track's head in a probe first ([#489](https://github.com/aclater/sacdfs/pull/489)); the replay script got a fix ([#492](https://github.com/aclater/sacdfs/pull/492)). So the items those can change were run again; the rest of rc.1's gate stands. Anything missing here is untested on rc.2.
+What was run on 0.7.0-rc.2 (tag `v0.7.0-rc.2`), with 0.7.0-rc.1 as the baseline. Since rc.1, the read path gained a read trace, off by default ([#486](https://github.com/dsd-toolbox/sacdfs/pull/486)), and the start-of-track decode-ahead now also starts for players that read a track's head in a probe first ([#489](https://github.com/dsd-toolbox/sacdfs/pull/489)); the replay script got a fix ([#492](https://github.com/dsd-toolbox/sacdfs/pull/492)). So the items those can change were run again; the rest of rc.1's gate stands. Anything missing here is untested on rc.2.
 
-- **Release artifacts.** The release workflow succeeded with the same assets as rc.1. Every hash matches (the packages under their `0.7.0~rc.2` names in `SHA256SUMS`, [#485](https://github.com/aclater/sacdfs/issues/485)), and `gh attestation verify` passes on all twelve assets and on the image by its tag and its `-amd64` and `-arm64` tags. `--version` prints `sacdfs 0.7.0-rc.2`; the newest glibc symbol is 2.17.
+- **Release artifacts.** The release workflow succeeded with the same assets as rc.1. Every hash matches (the packages under their `0.7.0~rc.2` names in `SHA256SUMS`, [#485](https://github.com/dsd-toolbox/sacdfs/issues/485)), and `gh attestation verify` passes on all twelve assets and on the image by its tag and its `-amd64` and `-arm64` tags. `--version` prints `sacdfs 0.7.0-rc.2`; the newest glibc symbol is 2.17.
 - **Audio:** all 910 corpus files are byte-identical to rc.1's in the five output configurations (default, 88.2 and 352.8 kHz WAV, flattened, DSF only; 4,095 files), on the x86_64 and x86_64-v3 builds. On the gate's eight real discs all 256 DSF and WAV files are identical to rc.1's.
 - **Real-disc tests** (`scripts/real-discs.sh`, those eight images, seven then the largest alone): 3 of 3 passed, 0 skipped, exit 0, both times.
 - **Library scans don't start the decode-ahead (#489).** Jellyfin 12.4.0, Navidrome 0.64.2, Lyrion 9.1.1, MPD 0.24.18 and MinimServer 2.2, in a VM, on the corpus with `dsf` and `dsf,wav`: first-scan time, sacdfs CPU, opens, reads and bytes served are within run-to-run noise of rc.1 (3 to 5 scans each), with the same tracks, albums, art and stream bytes. With the read trace on, none of the scans made a start-ahead decision. A tag scan (`scripts/tag-scan.py`, twice) of all 256 files of the eight real discs, with the trace on: 768 reads, no start-ahead decision and no read-ahead.
@@ -1086,7 +1086,7 @@ What was run on 0.7.0-rc.2 (tag `v0.7.0-rc.2`), with 0.7.0-rc.1 as the baseline.
 | Local read, real disc, plain DSD, DSF / WAV | 0.81 / 2.60 s | 0.72 / 2.67 s | 0.74 / 2.64 s | 1.01 / 1.08 | 0.98 / 1.00 |
 | Local read, corpus, DST stereo / DST multichannel / plain DSD, DSF | 0.161 / 0.399 / 0.027 s | 0.166 / 0.509 / 0.027 s | 0.165 / 0.450 / 0.028 s | 0.98 / 0.87 / 1.00 | 1.03 / 1.07 / 0.99 |
 
-rc.2 reads as fast as rc.1 on the real discs (every round within 2 % for DST); the corpus and plain-DSD rows are short reads and vary more between rounds (up to ±50 % for the 0.7 s and 2.6 s plain-DSD reads). DST multichannel against 0.6.5 is the effect of scarletbook 0.6.0 on this hybrid CPU that the rc.1 gate found ([#490](https://github.com/aclater/sacdfs/issues/490), within the 10 % limit, tracked in [#493](https://github.com/aclater/sacdfs/issues/493)).
+rc.2 reads as fast as rc.1 on the real discs (every round within 2 % for DST); the corpus and plain-DSD rows are short reads and vary more between rounds (up to ±50 % for the 0.7 s and 2.6 s plain-DSD reads). DST multichannel against 0.6.5 is the effect of scarletbook 0.6.0 on this hybrid CPU that the rc.1 gate found ([#490](https://github.com/dsd-toolbox/sacdfs/issues/490), within the 10 % limit, tracked in [#493](https://github.com/dsd-toolbox/sacdfs/issues/493)).
 
 **Not run on rc.2:** the macOS VM read (rc.1's stands), the Linux NFS and SMB client matrix, the container on Debian 12, the whole-library listing over NFS, the checks suite (CI ran it on the release commit), and everything listed as not run for rc.1.
 
@@ -1166,7 +1166,7 @@ What was run on `main` before the release (aa049f53; the release-workflow dry ru
 | Local read, real disc, plain DSD, DSF / WAV | 0.487 / 1.12 s | 0.486 / 1.12 s | 0.494 / 1.13 s | 1.02 / 1.01 | 1.04 / 1.01 |
 | Local read, corpus, DST stereo / multichannel / plain DSD, DSF | 0.074 / 0.153 / 0.018 s | 0.073 / 0.153 / 0.018 s | 0.077 / 0.164 / 0.020 s | 1.07 / 1.06 / 1.12 | 1.05 / 1.07 / 1.13 |
 
-The corpus rows are slower on main in every round: each reads one area through 20 fresh mounts, so this is 0.1 to 0.5 ms more per mount ([#589](https://github.com/aclater/sacdfs/issues/589)). Partly explained: on an i9-13900H (P-cores, 7 to 21 rounds), main with #580 reverted is back at 0.97 to 1.02 times 0.7.1, but a later run with the kept heads and the folder warmer switched off was still 1.05 to 1.09 times 0.7.1 on the plain and multichannel rows, so the kept heads explain about half of the slowdown. The rest is the SHA-256 that #573 takes of the 110,600 bytes of a disc's TOC at every mount (0.05 ms): bisecting 0.7.1 to 0.7.2 on a Zen 2 core (9 rounds, builds rotated, one CCX) puts it at 1.00 / 1.00 / 1.045 times 0.7.1 for DST multichannel / DST stereo / plain DSD after #573 alone, and a #573 build without the hash is back at 1.00 on the plain-DSD row (11 rounds). It is kept on purpose (docs/design.md, re-reading the disc layout). The cost is per mount and per file head, not per byte: each read copies its frames into a head slab (an extra slab mapping per frame size, page faults and the copy; the corpus files are smaller than the 2 MiB head, so every byte is copied), and the folder warmer's thread start adds 0.05 to 0.08 ms. Real-disc reads, where it is amortised, are unchanged.
+The corpus rows are slower on main in every round: each reads one area through 20 fresh mounts, so this is 0.1 to 0.5 ms more per mount ([#589](https://github.com/dsd-toolbox/sacdfs/issues/589)). Partly explained: on an i9-13900H (P-cores, 7 to 21 rounds), main with #580 reverted is back at 0.97 to 1.02 times 0.7.1, but a later run with the kept heads and the folder warmer switched off was still 1.05 to 1.09 times 0.7.1 on the plain and multichannel rows, so the kept heads explain about half of the slowdown. The rest is the SHA-256 that #573 takes of the 110,600 bytes of a disc's TOC at every mount (0.05 ms): bisecting 0.7.1 to 0.7.2 on a Zen 2 core (9 rounds, builds rotated, one CCX) puts it at 1.00 / 1.00 / 1.045 times 0.7.1 for DST multichannel / DST stereo / plain DSD after #573 alone, and a #573 build without the hash is back at 1.00 on the plain-DSD row (11 rounds). It is kept on purpose (docs/design.md, re-reading the disc layout). The cost is per mount and per file head, not per byte: each read copies its frames into a head slab (an extra slab mapping per frame size, page faults and the copy; the corpus files are smaller than the 2 MiB head, so every byte is copied), and the folder warmer's thread start adds 0.05 to 0.08 ms. Real-disc reads, where it is amortised, are unchanged.
 
 **Not run:** Finder, Spotlight and players on macOS; the file-handle tests as root; Roon and Plex at scale; the NAS OS VMs; the installer VM scenarios (smoke test only); a physical Windows PC, Mac or NAS; aarch64 on hardware; a soak of the published binaries or on real discs; NFSv4 through sacdfs-nfs (it serves NFSv3); a cold first listing; the #456 player on its own hardware (asked on #456); and the release's own artifacts (checked after the tag).
 
@@ -1176,4 +1176,4 @@ The corpus rows are slower on main in every round: each reads one area through 2
 - [Clients](clients.md)
 - [Development](development.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

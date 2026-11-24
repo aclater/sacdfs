@@ -14,7 +14,7 @@ Release:        1%{?dist}
 Summary:        Read-only FUSE filesystem that shows SACD disc images as DSF files
 # sacdfs itself; the vendored crates are under their own licences (vendor/*/).
 License:        GPL-3.0-or-later
-URL:            https://github.com/aclater/sacdfs
+URL:            https://github.com/dsd-toolbox/sacdfs
 # git archive --prefix=sacdfs-VERSION/ vVERSION
 Source0:        %{url}/archive/v%{upstream_version}/%{name}-%{upstream_version}.tar.gz
 # cargo vendor --locked --versioned-dirs, of Source0's Cargo.lock

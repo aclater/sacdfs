@@ -220,4 +220,4 @@ mount again after a restart: [SMB and restarts](../deployment.md#smb-and-restart
 - [Linux clients](linux-client.md)
 - [Install guide](README.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

@@ -18,11 +18,11 @@ capabilities:
   name: SYS_ADMIN
 categories:
 - media
-changelog_url: https://github.com/aclater/sacdfs/blob/main/CHANGELOG.md
+changelog_url: https://github.com/dsd-toolbox/sacdfs/blob/main/CHANGELOG.md
 date_added: '2026-11-08'
 description: sacdfs serves SACD disc images (ISO files) as DSF and WAV files, over
   SMB and NFS, so music servers and players can read them like ordinary albums
-home: https://github.com/aclater/sacdfs
+home: https://github.com/dsd-toolbox/sacdfs
 host_mounts: []
 icon: https://media.sys.truenas.net/apps/sacdfs/icons/icon.svg
 keywords:
@@ -47,7 +47,7 @@ screenshots: []
 sources:
 - https://apps.truenas.com/catalog/sacdfs_community/
 - https://ghcr.io/aclater/sacdfs
-- https://github.com/aclater/sacdfs
+- https://github.com/dsd-toolbox/sacdfs
 title: sacdfs
 train: community
 version: 1.0.4

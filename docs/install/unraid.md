@@ -19,7 +19,7 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
    ```sh
    wget -O /boot/config/plugins/dockerMan/templates-user/sacdfs.xml \
-     https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/unraid/sacdfs.xml
+     https://raw.githubusercontent.com/dsd-toolbox/sacdfs/main/deploy/unraid/sacdfs.xml
    ```
 
    *You should see* the download finish without an error. *(untested)*
@@ -34,7 +34,7 @@ In the container's logs, *you should see* the number of image files, `mounted`, 
 
 ## If something goes wrong
 
-- **You see:** the container stops at once, or the logs say `/dev/fuse` or `mount` is not permitted. **Do this:** the container needs the FUSE device and seven capabilities. The template passes them in **Extra Parameters**: `--device=/dev/fuse --cap-drop=ALL --cap-add=SYS_ADMIN --cap-add=DAC_OVERRIDE --cap-add=DAC_READ_SEARCH --cap-add=SETUID --cap-add=SETGID --cap-add=NET_BIND_SERVICE --cap-add=SETPCAP --security-opt no-new-privileges:true --security-opt apparmor=unconfined`. If you edited that field, put them back. Whether Unraid allows them is not known: please report it with the [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml).
+- **You see:** the container stops at once, or the logs say `/dev/fuse` or `mount` is not permitted. **Do this:** the container needs the FUSE device and seven capabilities. The template passes them in **Extra Parameters**: `--device=/dev/fuse --cap-drop=ALL --cap-add=SYS_ADMIN --cap-add=DAC_OVERRIDE --cap-add=DAC_READ_SEARCH --cap-add=SETUID --cap-add=SETGID --cap-add=NET_BIND_SERVICE --cap-add=SETPCAP --security-opt no-new-privileges:true --security-opt apparmor=unconfined`. If you edited that field, put them back. Whether Unraid allows them is not known: please report it with the [NAS test report form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=nas-test-report.yml).
 - **You see:** the share is empty. **Do this:** the **SACD images** path is wrong or holds no `.iso` files.
 - **You see:** clients can't connect. **Do this:** name the ports 10445 and 12049 when you mount, and check **NFS clients** covers the client's address.
 
@@ -49,7 +49,7 @@ In the container's logs, *you should see* the number of image files, `mounted`, 
 - **Compose plugin instead of the template** *(untested on Unraid)*: [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml) is the one Compose file for every NAS container manager. It was run with Docker Compose and Podman on other systems ([docker-podman.md](docker-podman.md), [asustor.md](asustor.md#container-route)). In the Compose plugin, add a stack from the file (the menu names were not seen) and change the one marked line to the path of your images. It publishes ports 10445 and 12049 for the same reason.
 - **Why not privileged:** the template passes only the device and the capabilities, not `--privileged`. Every setting is in the [deployment guide](../deployment.md).
 
-Reports are welcome through the [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml), with the system's version, how the container was started, and what worked.
+Reports are welcome through the [NAS test report form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=nas-test-report.yml), with the system's version, how the container was started, and what worked.
 
 ## See also
 
@@ -58,4 +58,4 @@ Reports are welcome through the [NAS test report form](https://github.com/aclate
 - [Deployment reference](../deployment.md)
 - [Beta testing](../beta-testing.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

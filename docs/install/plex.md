@@ -59,13 +59,13 @@ Each multichannel disc is listed twice, as "Album" and "Album (Multichannel)", a
 
 - **`SACDFS_FLATTEN=1`.** Each disc's `Stereo` and `Multichannel` folders then sit under the album. Leave `SACDFS_FORMATS` at its default.
 - **Cache.** The Plex tests ran with `SACDFS_CACHE_MB=16`; the default (32 MiB, or 16 under a memory limit below 256 MiB) is close, measured at 48 MiB peak for a Plex-like scan.
-- **Prefer local metadata.** Without it Plex's default agent gives both copies of a multichannel disc the online release's title ([#138](https://github.com/aclater/sacdfs/issues/138)); the "Plex Personal Media" agent also works.
+- **Prefer local metadata.** Without it Plex's default agent gives both copies of a multichannel disc the online release's title ([#138](https://github.com/dsd-toolbox/sacdfs/issues/138)); the "Plex Personal Media" agent also works.
 - **Share the folder that holds the mount, with `ro,rslave`.** Sharing the mount point itself leaves the container on a dead mount after sacdfs restarts.
 - **Plex as an app on the same TrueNAS.** Let TrueNAS share sacdfs's files on port 445 ([truenas-scale.md](truenas-scale.md#share-through-truenass-own-smb-port-445)). In the Plex app's storage add an SMB share entry, read-only: server = the NAS's own address, path `sacd`, the TrueNAS user and password. Mount it at, say, `/data/sacd`; the library folder is then `/data/sacd/sacd`. Do steps 4 onward. Checked with the Plex app's container reading every file, after sacdfs restarts and TrueNAS restarts; not with a Plex scan. Not a Host Path entry: the Plex form binds it so that Plex loses the folder when sacdfs restarts.
 
 ### More problems
 
-- Plex does not use sacdfs's folder art; it fetches art online ([#95](https://github.com/aclater/sacdfs/issues/95)).
+- Plex does not use sacdfs's folder art; it fetches art online ([#95](https://github.com/dsd-toolbox/sacdfs/issues/95)).
 - Plex's nightly deep analysis read every file once in one test (55 GiB in 874 s, 701 MiB RSS).
 - Three albums (26 tracks) showed a blank album title in Plex on 0.4.1-rc.1 although sacdfs serves one; the cause was not found.
 
@@ -75,4 +75,4 @@ Each multichannel disc is listed twice, as "Album" and "Album (Multichannel)", a
 - [Clients](../clients.md)
 - [Deployment reference](../deployment.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

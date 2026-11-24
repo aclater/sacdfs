@@ -43,8 +43,8 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
    ```powershell
    cd $HOME\Downloads
-   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-windows.zip
-   curl.exe -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-windows.zip.sha256
+   curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-windows.zip
+   curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-windows.zip.sha256
    ```
 
 3. **Check the download.**
@@ -127,7 +127,7 @@ under their own account, and stop it cleanly.
    A folder with a backslash at the end (`D:\Music\SACD\`) and a whole drive (`E:\`) work
    from the version after 0.6.5. In 0.6.5 and earlier the launcher passes them on in a way that
    sacdfs-win can't read, and you see `OK` but no drive
-   ([#466](https://github.com/aclater/sacdfs/issues/466)): there, leave the backslash out, and
+   ([#466](https://github.com/dsd-toolbox/sacdfs/issues/466)): there, leave the backslash out, and
    for a whole drive write `E:\.` (with the dot). The same applies to the logon task below.
 
 3. **Stop it:**
@@ -275,7 +275,7 @@ time.
   registration's `CommandLine` (as for `sacdfs-all` below, which logs to
   `C:\ProgramData\sacdfs.log`), start it again and read that file. With 0.6.5 and earlier, a
   folder ending with a backslash does this: leave it out, and for a whole drive write `E:\.`
-  ([#466](https://github.com/aclater/sacdfs/issues/466)).
+  ([#466](https://github.com/dsd-toolbox/sacdfs/issues/466)).
 - **Something else:** start it with `-v` for more detail, and see
   [reporting a problem](../../CONTRIBUTING.md).
 
@@ -335,4 +335,4 @@ time.
 - [Platforms](../../README.md#platforms)
 - [Clients](../clients.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

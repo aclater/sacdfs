@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Offline checks of the Markdown files: no network, so GitHub's 429 and 503 can't fail it.
 
-- Relative links (and links to github.com/aclater/sacdfs/blob|tree/main/...) must name a file
+- Relative links (and links to github.com/dsd-toolbox/sacdfs/blob|tree/main/...) must name a file
   or folder in the checkout; a #fragment on a Markdown file must be a heading anchor
   (GitHub's slugs, with -1, -2 for repeats) or an <a id/name> in that file.
-- No link or mention of the old repository name aclater/sacd (now aclater/dsd-toolbox) in
+- No link or mention of the old repository name aclater/sacd (now dsd-toolbox/dsd-toolbox) in
   any tracked file; aclater/sacdfs and aclater/sacd-spec are fine.
 
     scripts/check-docs.py [FILE.md ...]     (default: every tracked .md but tests/corpus/)
@@ -20,7 +20,7 @@ import sys
 import urllib.parse
 
 SKIP_PREFIXES = ("tests/corpus/",)  # a verbatim copy of sacd-spec's corpus, links to that repo
-SELF = re.compile(r"^https://github\.com/aclater/sacdfs/(?:blob|tree)/main/([^?#]*)(#.*)?$")
+SELF = re.compile(r"^https://github\.com/(?:aclater|dsd-toolbox)/sacdfs/(?:blob|tree)/main/([^?#]*)(#.*)?$")
 OLD_REPO = re.compile(r"aclater/sacd(?![\w-])")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 INLINE_CODE = re.compile(r"(`+)(.+?)\1")
@@ -147,7 +147,7 @@ def main(argv):
             continue
         where, _, text = hit.partition(":")
         n, _, text = text.partition(":")
-        problems.append(f"{where}:{n}: names aclater/sacd, now aclater/dsd-toolbox: {text.strip()[:120]}")
+        problems.append(f"{where}:{n}: names aclater/sacd, now dsd-toolbox/dsd-toolbox: {text.strip()[:120]}")
     for p in problems:
         print(p)
     print(f"check-docs: {len(files)} files, {len(problems)} problems", file=sys.stderr)

@@ -1,13 +1,13 @@
-<img src="https://raw.githubusercontent.com/aclater/sacdfs/main/docs/assets/icon-256.png" alt="" width="96">
+<img src="https://raw.githubusercontent.com/dsd-toolbox/sacdfs/main/docs/assets/icon-256.png" alt="" width="96">
 
 # sacdfs
 
-[![CI](https://github.com/aclater/sacdfs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aclater/sacdfs/actions/workflows/ci.yml)
+[![CI](https://github.com/dsd-toolbox/sacdfs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dsd-toolbox/sacdfs/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/aclater/sacdfs/branch/main/graph/badge.svg)](https://codecov.io/gh/aclater/sacdfs)
-[![CodeQL](https://github.com/aclater/sacdfs/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/aclater/sacdfs/actions/workflows/codeql.yml)
+[![CodeQL](https://github.com/dsd-toolbox/sacdfs/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/dsd-toolbox/sacdfs/actions/workflows/codeql.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](COPYING)
 [![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-orange)](Cargo.toml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aclater/sacdfs/badge)](https://scorecard.dev/viewer/?uri=github.com/aclater/sacdfs)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dsd-toolbox/sacdfs/badge)](https://scorecard.dev/viewer/?uri=github.com/dsd-toolbox/sacdfs)
 
 sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
 player or music server. Nothing is extracted: keep the ISOs, delete the extracted copies.
@@ -37,7 +37,7 @@ Synology NAS; type your own folder instead.
 1. Install sacdfs and start it:
 
    ```sh
-   curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh \
+   curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh \
      | sudo sh -s -- --iso-dir /volume1/music
    ```
 
@@ -78,7 +78,7 @@ All documents: [docs/README.md](docs/README.md).
 - [Options](docs/options.md) (and `man sacdfs`) · [what the mount shows](docs/layout.md) · [limits](docs/limits.md)
 - [Deployment reference](docs/deployment.md) · [small NAS sizing](docs/deployment.md#small-nas-sizing)
 - [Design](docs/design.md) · [performance](docs/performance.md) · [PCM quality](docs/pcm-quality.md)
-- [Changelog](CHANGELOG.md) · [releases](https://github.com/aclater/sacdfs/releases) ·
+- [Changelog](CHANGELOG.md) · [releases](https://github.com/dsd-toolbox/sacdfs/releases) ·
   [contributing](CONTRIBUTING.md) · [releasing](docs/release.md)
 
 ## Licence and credits
@@ -88,10 +88,10 @@ option) any later version.
 
 - [scarletbook](https://github.com/aclater/scarletbook-rs) (MIT OR Apache-2.0) does the SACD
   parsing, DST decoding and DSD-to-PCM conversion, through its public APIs.
-- [pysacd](https://github.com/aclater/pysacd) (GPL-2.0-or-later) made the reference hashes the
+- [pysacd](https://github.com/dsd-toolbox/pysacd) (GPL-2.0-or-later) made the reference hashes the
   DSF files are checked against; sacdfs 0.1's converter was ported from it, with a first stage
   after Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
 - The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec), is
   public domain under CC0 1.0 ([licence](tests/corpus/LICENSE)).
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

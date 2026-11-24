@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thank you. Requests like this tell us which systems are worth a new build.
-        **First, check whether someone has already asked for the same system:** [existing requests](https://github.com/aclater/sacdfs/issues?q=label%3Aunsupported-system). If yours is there, add a comment or a 👍 to it instead.
+        **First, check whether someone has already asked for the same system:** [existing requests](https://github.com/dsd-toolbox/sacdfs/issues?q=label%3Aunsupported-system). If yours is there, add a comment or a 👍 to it instead.
 
         sacdfs runs on Linux: a NAS or a Linux computer, with a 64-bit Intel or AMD (x86-64) or 64-bit ARM (aarch64) processor and glibc 2.17 or later. Macs and Windows PCs play from it over the network; sacdfs doesn't run on them, so there is nothing to request for those.
   - type: input

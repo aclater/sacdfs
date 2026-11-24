@@ -1,7 +1,7 @@
 # Offline checks of the docs, on every pull request and push to main (no paths filter, so it
 # can be a required check: a workflow skipped by `paths` leaves its check pending), and weekly.
 #   - docs links (offline): relative links and #anchors in every Markdown file, links to this
-#     repository's main branch, and no mention of the old repository name (now aclater/dsd-toolbox)
+#     repository's main branch, and no mention of the old repository name (now dsd-toolbox/dsd-toolbox)
 #     (scripts/check-docs.py). No network, so GitHub's 429 and 503 answers can't fail it; the
 #     external links are docs-links.yml's job.
 #   - docs version drift: Cargo.toml's version against the install guides and deploy files,

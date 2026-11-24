@@ -24,4 +24,4 @@ What sacdfs does not do, and how it behaves at the edges.
 - [Options](options.md)
 - [Platforms](../README.md#platforms)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

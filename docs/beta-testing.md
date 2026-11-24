@@ -6,7 +6,7 @@
 images keep them on a NAS: Synology, QNAP, UGREEN, Unraid, TrueNAS, ASUSTOR, TerraMaster, OpenMediaVault
 or a home-built box. So far sacdfs has been checked on most of those systems only in virtual machines, which
 cannot tell us what real hardware does (real NAS hardware so far: an ASUSTOR AS-302T,
-[#456](https://github.com/aclater/sacdfs/issues/456)). A report from your NAS can.
+[#456](https://github.com/dsd-toolbox/sacdfs/issues/456)). A report from your NAS can.
 
 ## What to do
 
@@ -15,7 +15,7 @@ cannot tell us what real hardware does (real NAS hardware so far: an ASUSTOR AS-
 2. **Try it with your player or server**, if you have one: Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD
    or just a file manager. See whether the discs show up, play, and have titles and art.
 3. **Tell us how it went** with the
-   [NAS test report form](https://github.com/aclater/sacdfs/issues/new?template=nas-test-report.yml).
+   [NAS test report form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=nas-test-report.yml).
    You need a free GitHub account. Only a few fields are required.
 
 **Failure reports are just as useful as successes.** "I got stuck at step 3 and saw this message" is
@@ -23,7 +23,7 @@ exactly what lets us fix a guide or a bug before everybody else meets it. You do
 the cause. If you can't finish, tell us where you stopped.
 
 If the installer says your system isn't supported (an older or 32-bit processor, an old system),
-tell us with the [unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml).
+tell us with the [unsupported system form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=unsupported-system.yml).
 Requests there show which systems are worth a new build.
 
 ## sacdfs does not touch your ISOs
@@ -50,14 +50,14 @@ The installer prints the system details for you. Run this, as a normal user, on 
 its block into the form (with your result, whether it worked or not):
 
 ```sh
-curl -fsSL https://github.com/aclater/sacdfs/releases/latest/download/install.sh | sh -s -- --report
+curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh | sh -s -- --report
 ```
 
 It changes nothing and sends nothing. The block covers the processor, memory, OS and NAS version,
 kernel, C library, FUSE, systemd and the container engine, with no host name, address, serial
 number, user name or folder. If the installer stopped because your system isn't supported, it
 already printed this block, with a link to the
-[unsupported system form](https://github.com/aclater/sacdfs/issues/new?template=unsupported-system.yml).
+[unsupported system form](https://github.com/dsd-toolbox/sacdfs/issues/new?template=unsupported-system.yml).
 The block replaces sections 1 and 2 below; the log (section 3) is still useful.
 *(Checked in the BusyBox and Fedora 44 test containers, and on QNAP QuTScloud 5.2.9 and TerraMaster
 TOS 7.0 in VMs, not on the vendor's hardware; untested on other systems. Until 0.6.4 is
@@ -163,8 +163,8 @@ Check with `ls /path/to/mountpoint`, which should now be empty, and with
 
 ## Questions
 
-Ask in the report, or in [an issue](https://github.com/aclater/sacdfs/issues). Reports so far are listed
-under the [nas-test-report label](https://github.com/aclater/sacdfs/issues?q=label%3Anas-test-report). Other ways to help are
+Ask in the report, or in [an issue](https://github.com/dsd-toolbox/sacdfs/issues). Reports so far are listed
+under the [nas-test-report label](https://github.com/dsd-toolbox/sacdfs/issues?q=label%3Anas-test-report). Other ways to help are
 in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## See also
@@ -173,4 +173,4 @@ in [CONTRIBUTING.md](../CONTRIBUTING.md).
 - [Clients](clients.md)
 - [User guide: troubleshooting](user-guide.md#troubleshooting)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

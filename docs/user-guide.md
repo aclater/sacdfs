@@ -591,7 +591,7 @@ sacdfs tags fetch --tags ~/music/sacd-tags --lookup-name --lookup-durations --ac
   N skipped, N left for another day; N tracks, N requests; N CPU seconds`.
 
 Not yet: fingerprinting inside a mount (with `--musicbrainz`), which waits for a soak of 300 discs or
-more ([#296](https://github.com/aclater/sacdfs/issues/296)). This step was tested with synthetic
+more ([#296](https://github.com/dsd-toolbox/sacdfs/issues/296)). This step was tested with synthetic
 discs, a stand-in for `fpcalc` and recorded answers, and the real `fpcalc` on synthetic audio; it
 has not yet been run against AcoustID with an application key or on real discs.
 
@@ -871,7 +871,7 @@ in no file, and the files are reported `NO-MATCH` ("they lack audio sacdfs serve
 
 A chain made with `-z -b` holds every pause, which sacdfs serves only with `--pauses kept`, and
 one made with `-z` alone holds none. When a chain matches only in the other mode, the reason says
-so; check it again with that `--pauses`. ([#442](https://github.com/aclater/sacdfs/issues/442))
+so; check it again with that `--pauses`. ([#442](https://github.com/dsd-toolbox/sacdfs/issues/442))
 
 **What a deletion would lose.** The `loses` column lists what the extract's tags hold that
 sacdfs's own tag for the track doesn't: `musicbrainz` (MusicBrainz IDs), `art` (embedded
@@ -1173,4 +1173,4 @@ scripts/trace-replay.py --player tests/fixtures/players/zidoo-wav.json /mnt/sacd
 - [Clients](clients.md)
 - [Install guide](install/README.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

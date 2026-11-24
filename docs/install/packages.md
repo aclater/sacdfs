@@ -25,8 +25,8 @@ The commands below are for x86_64; on aarch64 (`uname -m` prints `aarch64`) use 
 1. **Download the package and its checksum, and check it:**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm.sha256
    sha256sum -c sacdfs-0.7.2-1.x86_64.rpm.sha256
    ```
 
@@ -97,8 +97,8 @@ instead of being the release archive's.
 1. **Download the package and its checksum, and check it:**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb.sha256
    sha256sum -c sacdfs_0.7.2-1_amd64.deb.sha256
    ```
 
@@ -169,4 +169,4 @@ sacdfs restarts on the new program.
 - [User guide](../user-guide.md)
 - [Options](../options.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

@@ -44,8 +44,8 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 4. **Download sacdfs and its checksum file.**
 
    ```sh
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
@@ -120,7 +120,7 @@ To stop sacdfs by hand: `SACDFS_CONF=/share/CACHEDEV1_DATA/.sacdfs/sacdfs.conf /
 
 ## Moving an earlier install out of the shared folder
 
-Up to 0.6.3, this page and the installer put sacdfs's files in `/share/CACHEDEV1_DATA/Multimedia/sacdfs`, inside a shared folder, and the DSF and WAV files in `/share/CACHEDEV1_DATA/Multimedia/sacd` ([GHSA-wfjg-pqhm-4mm2](https://github.com/aclater/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2)). Move them:
+Up to 0.6.3, this page and the installer put sacdfs's files in `/share/CACHEDEV1_DATA/Multimedia/sacdfs`, inside a shared folder, and the DSF and WAV files in `/share/CACHEDEV1_DATA/Multimedia/sacd` ([GHSA-wfjg-pqhm-4mm2](https://github.com/dsd-toolbox/sacdfs/security/advisories/GHSA-wfjg-pqhm-4mm2)). Move them:
 
 - **With the installer (0.6.4 or later):** run it again, as you first did. It installs into `/share/CACHEDEV1_DATA/.sacdfs`, points `autorun.sh` there, stops the old sacdfs without running anything from the old folder, starts the new one on `/share/CACHEDEV1_DATA/sacd`, and removes the old files. `--uninstall` also finds an install in the old place.
 - **By hand:** stop sacdfs with `kill $(cat /var/run/sacdfs.pid)` (a polite stop, not `-9`; don't run the old `sacdfs-ctl`, as someone may have changed it), delete `/share/CACHEDEV1_DATA/Multimedia/sacdfs`, then follow steps 3 to 10 above.
@@ -175,7 +175,7 @@ Container Station 3.1.4 came from QNAP's App Center (`qpkg_cli -g container-stat
 - **You see:** `... a sacdfs mount of this user's is still mounted there ...`. **Do this:** sacdfs already runs on that folder; `sacdfs-ctl stop` first.
 - **You see:** `Illegal instruction`. **Do this:** you used the `x86_64-v3` build on a CPU without AVX2; use the `x86_64` archive ([binary.md](binary.md#binaries)).
 
-Reports from real QNAP hardware are welcome on [#82](https://github.com/aclater/sacdfs/issues/82), with the system's version, how sacdfs was started, and what worked.
+Reports from real QNAP hardware are welcome on [#82](https://github.com/dsd-toolbox/sacdfs/issues/82), with the system's version, how sacdfs was started, and what worked.
 
 ## See also
 
@@ -184,4 +184,4 @@ Reports from real QNAP hardware are welcome on [#82](https://github.com/aclater/
 - [Deployment reference](../deployment.md)
 - [Beta testing](../beta-testing.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).
