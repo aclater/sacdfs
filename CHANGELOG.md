@@ -43,6 +43,17 @@ All notable changes to sacdfs are recorded here. The format follows
   workflow can sign it through SSL.com eSigner, switched by the repository variable
   `WINDOWS_SIGNING` (`off` for now).
 
+- **A full scan of a DSF library reads about 8 % more image data than in 0.7.2.** Reading the
+  first and the last 64 KiB of every file of a 7,519-file DSF-only library reads 20,522 calls and
+  1,528,744,192 bytes of the images where 0.7.2 read 19,815 calls and 1,416,357,584 bytes (+3.6 %
+  calls, +7.9 % bytes). The files sacdfs serves are byte-identical. The growth comes with the
+  scarletbook version, not with a change in sacdfs: this release's tree built on scarletbook 0.6.2
+  reads 19,822 calls and 1,415,730,896 bytes, and the step from 0.6.2 to 0.7.0 alone gives the
+  growth (it stays through 1.0.x). Listing the library reads nothing; the folder warmer reads
+  3 calls and 335,872 bytes in 90 s of idle. Tracked in
+  [scarletbook-rs#431](https://github.com/aclater/scarletbook-rs/issues/431).
+  `scripts/read_phases.py` now measures the reads by phase and compares two builds, so a jump
+  like this fails a release test ([test plan](docs/test-plan.md#read-counts-by-phase)).
 - **scarletbook 1.0.1 (`=1.0.1`); scarletbook-pcm stays at 0.7.0.** 1.0.0 is 0.7.0's code under
   a 1.0 version, with the Rust API frozen under Semantic Versioning, and 1.0.1 is 1.0.0 released
   again so that `scarletbook-ffi` 1.x reaches crates.io

@@ -1,0 +1,5 @@
+{
+  "list": {"files": 7519, "calls": 0, "bytes": 0},
+  "idle90": {"files": 7519, "calls": 3, "bytes": 335872},
+  "headtail": {"files": 7519, "calls": 20522, "bytes": 1528744192}
+}

@@ -592,6 +592,28 @@ byte-identical across the three.
 earlier run of 1 to 3 rounds on the same machine, was within 0.6 % of 0.6.2 too: the lone
 6-channel frame that 0.6.2 sped up (scarletbook-rs #378) is too rare in a whole-area read to show.
 
+### Image reads by phase, scarletbook 0.6.2 against 0.7.0 and later (0.8.0)
+
+A DSF-only mount of a 7,519-file library, a fresh index cache for each phase, the image reads
+the mount logs at unmount (`scripts/read_phases.py`): calls and bytes. Not a timing run.
+
+| Phase | 0.7.2 | 0.8.0 on scarletbook 0.6.2 | 0.8.0 (scarletbook 1.0.2) |
+|---|---|---|---|
+| list the tree | 0 / 0 | 0 / 0 | 0 / 0 |
+| list, then 90 s idle | 0 / 0 | not run | 3 / 335,872 (the folder warmer; 0 with it never armed) |
+| first and last 64 KiB of every file | 19,815 / 1,416,357,584 | 19,822 / 1,415,730,896 | 20,522 / 1,528,744,192 |
+
+The growth, +3.6 % calls and +7.9 % bytes, is the scarletbook version: building the commits
+between 0.7.2 and 0.8.0 puts it at the step from scarletbook 0.6.2 to 0.7.0, whose commit changes
+no code of sacdfs, and it stays through 1.0.1 and 1.0.2. It is not the folder warmer (the same
+numbers with the warmer never armed), the in-place rewrite check (#588) or the kept heads (#589).
+Head reads only (the first 64 KiB of every file) are identical on both: 14,828 calls and
+831,479,312 bytes. Tail reads only, with an empty seek index: 0.6.2 11,127 calls and 527,315,712
+bytes, 0.7.0 11,834 calls and 500,588,416 bytes. With the seek index loaded from the earlier
+pass, head then tail: 9,973 calls on both, 962,452,176 bytes on 0.6.2 and 1,070,446,432 on 0.7.0
+(+11 %). The files read are identical byte for byte. Tracked in
+[scarletbook-rs#431](https://github.com/aclater/scarletbook-rs/issues/431).
+
 ### By scarletbook release (1.0.1)
 
 scarletbook 1.0.0 and 1.0.1 are 0.7.0's code under a new version, so no change is expected.
