@@ -7,7 +7,7 @@ has the details.
 
 ## Layout
 
-```
+```text
 MOUNTPOINT/
   <directory of the image, relative to SOURCE>/<image file name without .iso>/
     Stereo/
@@ -43,7 +43,7 @@ With `--flatten`, a folder whose only content is one image, directly or through 
 folders that each hold nothing else, holds that image's `Stereo` and `Multichannel` folders
 itself. Folders directly in `SOURCE` (usually artists) are always kept. For example
 
-```
+```text
 SOURCE/Artist/2001 - Album [SACD]/Artist - Album (rip)/Album/disc.iso
 ```
 
@@ -54,7 +54,7 @@ of the collapsed folders all show in the one that is kept, next to `Stereo`.
 
 ## Formats and quality
 
-The **DSF files** (DSD64, 2.8224 MHz, 1 bit) hold each track's audio bit-identical to what
+The **DSF files** (DSD64, 2.8224 MHz, 1 bit) hold each track's audio byte-identical to what
 the reference extractors (pysacd's `pysacd-extract`, scarletbook's `bench decode`) write, with
 an ID3v2.4 tag from the disc's text. The **WAV files** are the same tracks converted to 24-bit
 PCM at 176.4 kHz (or 88.2 or 352.8 kHz), band-limited to 40 kHz by default (30 kHz, or about

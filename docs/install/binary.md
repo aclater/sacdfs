@@ -22,12 +22,14 @@ See [Details](#details).
 
 1. **Install the mount helper.** Fedora or RHEL:
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    sudo dnf install fuse3
    ```
 
    Debian or Ubuntu:
 
+   <!-- docs-run: group=deb-binary image=debian setup="apt-get update -qq && apt-get install -y -qq sudo curl ca-certificates && echo 'APT::Get::Assume-Yes \"true\";' > /etc/apt/apt.conf.d/90yes" -->
    ```sh
    sudo apt install fuse3
    ```
@@ -35,34 +37,46 @@ See [Details](#details).
 2. **Download sacdfs and its checksum.** `uname -m` prints your CPU. The commands are for
    `x86_64`; on `aarch64`, write `aarch64` for `x86_64` in every file name of steps 2 to 4.
 
+   <!-- docs-run: -->
    ```sh
    cd ~
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
+   # /facts
    ```
 
 3. **Check the download.**
 
+   <!-- docs-run: -->
    ```sh
-   sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
+   sha256sum -c sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
+   # /facts
    ```
 
-   *You should see* `sacdfs-0.7.2-x86_64-linux.tar.gz: OK`.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.8.0-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 
 4. **Unpack it and put the program in your own `bin` folder.**
 
+   <!-- docs-run: expect="sacdfs {version}" -->
    ```sh
-   tar -xzf sacdfs-0.7.2-x86_64-linux.tar.gz
+   # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz'
+   tar -xzf sacdfs-0.8.0-x86_64-linux.tar.gz
+   # /facts
    mkdir -p ~/.local/bin
-   install -m 0755 sacdfs-0.7.2-x86_64-linux/sacdfs ~/.local/bin/
+   # facts:release repo=dsd-toolbox/sacdfs fmt='install -m 0755 sacdfs-{version}-x86_64-linux/sacdfs ~/.local/bin/'
+   install -m 0755 sacdfs-0.8.0-x86_64-linux/sacdfs ~/.local/bin/
+   # /facts
    ~/.local/bin/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.7.2`.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.8.0`<!-- /facts -->.
 
 5. **Make an empty folder to mount on, and start sacdfs.** While it runs, this folder shows the
    DSF and WAV files; anything already in it is hidden.
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    mkdir -p ~/sacd
    ~/.local/bin/sacdfs ~/music/sacd-images ~/sacd
@@ -72,6 +86,7 @@ See [Details](#details).
 
 6. **To stop it,** type:
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    fusermount3 -u ~/sacd
    ```
@@ -82,6 +97,7 @@ See [Details](#details).
 
 ## Check it worked
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 ls ~/sacd
 ```
@@ -140,10 +156,13 @@ clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributi
 **With `gh` instead of `curl`,** and checking where it was built (for the other builds, write
 `x86_64-v3` or `aarch64` for `x86_64`):
 
+<!-- docs-run: skip="needs the GitHub CLI signed in, or a personal API key" -->
 ```sh
-gh release download v0.7.2 -R dsd-toolbox/sacdfs -p 'sacdfs-0.7.2-x86_64-linux.tar.gz*'
-sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
-gh attestation verify sacdfs-0.7.2-x86_64-linux.tar.gz --owner aclater
+# facts:release repo=dsd-toolbox/sacdfs fmt='gh release download {tag} -R dsd-toolbox/sacdfs -p '"'"'sacdfs-{version}-x86_64-linux.tar.gz*'"'"'\nsha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256\ngh attestation verify sacdfs-{version}-x86_64-linux.tar.gz -R dsd-toolbox/sacdfs'
+gh release download v0.8.0 -R dsd-toolbox/sacdfs -p 'sacdfs-0.8.0-x86_64-linux.tar.gz*'
+sha256sum -c sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
+gh attestation verify sacdfs-0.8.0-x86_64-linux.tar.gz -R dsd-toolbox/sacdfs
+# /facts
 ```
 
 The checksum shows the download is intact; the attestation (GitHub's build provenance, signed with
@@ -151,7 +170,7 @@ Sigstore) shows this repository's release workflow built it, and from which comm
 `gh attestation verify` also accepts the `.intoto.jsonl` bundle next to each archive, with `--bundle`,
 to check offline. Releases up to 0.7.2 were built while the project lived under the `aclater`
 account, so their attestations are found with `--owner aclater`; from 0.8.0 use
-`-R dsd-toolbox/sacdfs`. On TerraMaster TOS, `install` is a different program: use `cp`
+`-R dsd-toolbox/sacdfs`, as above. On TerraMaster TOS, `install` is a different program: use `cp`
 ([the NAS steps](nas-binary.md)).
 
 ### 32-bit x86
@@ -185,6 +204,7 @@ playing in real time on an Atom.
 sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through `/dev/fuse` and, as
 a user other than root, mounts with `fusermount3` (or FUSE 2's `fusermount`), without linking libfuse.
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 cargo install --locked sacdfs     # from crates.io, from 0.4.0
 # before 0.4.0, from the release tag:

@@ -43,7 +43,7 @@
 #     "packages-test"); and the source RPM for COPR, sacdfs-<version>-1.src.rpm (the tag's
 #     source, its vendored crates and packaging/sacdfs.spec), after it rebuilt offline on UBI 9,
 #     UBI 10 and Fedora (job "srpm-test");
-#   - the container image, ghcr.io/aclater/sacdfs:<version> and :latest, a multi-arch manifest
+#   - the container image, ghcr.io/dsd-toolbox/sacdfs:<version> and :latest, a multi-arch manifest
 #     (amd64 and arm64, #43), attested, after the container share test passed on each very image.
 #   - the crate on crates.io (#155), for final versions only (no hyphen: not 0.4.0-rc.1),
 #     through crates.io trusted publishing (no token stored here). A version already on
@@ -66,6 +66,11 @@
 # existing release, appends their lines to SHA256SUMS and adds their lines to the notes. The
 # tag and the other assets are not touched (job "packages-publish").
 #
+# Signing check: run by hand with `sign_check` set to "true" on a branch, it also runs job
+# "macos-sign" on the run's unsigned macOS archives (signs, notarises, verifies), then discards
+# the signed archives: nothing is uploaded, attached to a release or published. It uses the
+# environment "release" and its secrets, so that environment must allow the branch.
+#
 # The release checklist is in CONTRIBUTING.md, "Releasing".
 name: release
 
@@ -84,6 +89,10 @@ on:
         default: ""
       packages_tag:
         description: "Publish only: an existing release's tag (e.g. v0.6.5) to add Linux packages to (empty: dry run)"
+        required: false
+        default: ""
+      sign_check:
+        description: "Dry run only: \"true\" also runs job macos-sign on this run's unsigned macOS archives, to prove the signing and notarisation setup; the signed archives are discarded, never uploaded or published"
         required: false
         default: ""
   pull_request:
@@ -109,7 +118,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_STABLE: 1.99.1
-  IMAGE: ghcr.io/aclater/sacdfs
+  IMAGE: ghcr.io/dsd-toolbox/sacdfs
 
 defaults:
   run:
@@ -299,8 +308,8 @@ jobs:
           chmod 0755 "dist/$pkg/install.sh"
           # The Compose file names this release's image, or the container route would run whatever
           # version main's copy names (0.6.2-rc.1 shipped one naming 0.6.1).
-          sed "s#ghcr.io/aclater/sacdfs:[^ ]*\$#ghcr.io/aclater/sacdfs:$VERSION#" deploy/nas-compose.yaml > "dist/$pkg/nas-compose.yaml"
-          grep -q "image: ghcr.io/aclater/sacdfs:$VERSION\$" "dist/$pkg/nas-compose.yaml"
+          sed "s#ghcr.io/dsd-toolbox/sacdfs:[^ ]*\$#ghcr.io/dsd-toolbox/sacdfs:$VERSION#" deploy/nas-compose.yaml > "dist/$pkg/nas-compose.yaml"
+          grep -q "image: ghcr.io/dsd-toolbox/sacdfs:$VERSION\$" "dist/$pkg/nas-compose.yaml"
           chmod 0644 "dist/$pkg/nas-compose.yaml"
           # install.sh verifies release files beside it against built-in checksums: this
           # archive's, from the exact files packed. Last before packing, so nothing changes them.
@@ -537,7 +546,10 @@ jobs:
   # carry the notarisation ticket (no stapling), so Gatekeeper checks it online on first run.
   macos-sign:
     name: sign and notarise (${{ matrix.name }}-macos)
-    if: github.ref_type == 'tag'
+    if: >-
+      github.ref_type == 'tag'
+      || (github.event_name == 'workflow_dispatch' && inputs.sign_check == 'true'
+      && inputs.macos_run == '' && inputs.packages_tag == '')
     needs: [preflight, macos]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -660,7 +672,9 @@ jobs:
           "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" --version
           "$RUNNER_TEMP/check/$PKG/sacdfs" verify --help > /dev/null
           tests/macos-nfs.sh "$RUNNER_TEMP/check/$PKG/sacdfs-nfs" macos.sha256
+      # A sign check (sign_check) stops here: the signed archives are discarded.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: github.ref_type == 'tag'
         with:
           name: mac-${{ matrix.name }}
           path: |
@@ -914,10 +928,10 @@ jobs:
             sudo chmod go-w "$d"
           done
           t=$RUNNER_TEMP
-          mkdir -p "$t/srv/aclater/sacdfs/releases/download/v$VERSION" "$t/u"
-          cp dist/*.tar.gz "$t/srv/aclater/sacdfs/releases/download/v$VERSION/"
+          mkdir -p "$t/srv/dsd-toolbox/sacdfs/releases/download/v$VERSION" "$t/u"
+          cp dist/*.tar.gz "$t/srv/dsd-toolbox/sacdfs/releases/download/v$VERSION/"
           python3 -I -m http.server --bind 127.0.0.1 --directory "$t/srv" 18766 >"$t/http.log" 2>&1 &
-          url=http://127.0.0.1:18766/aclater/sacdfs/releases
+          url=http://127.0.0.1:18766/dsd-toolbox/sacdfs/releases
           for _ in $(seq 50); do curl -fsS -o /dev/null "$url/download/v$VERSION/" && break; sleep 0.2; done
           pkg=sacdfs-$VERSION-x86_64-linux
           tar -C "$t/u" -xzf "dist/$pkg.tar.gz"
@@ -939,7 +953,7 @@ jobs:
           run
           grep -q "sacdfs-ctl doesn't match the checksum built into install.sh" "$t/out.log"
           grep -q 'checksum OK (built in)' "$t/out.log"
-          grep -q "\"GET /aclater/sacdfs/releases/download/v$VERSION/$pkg.tar.gz " "$t/http.log"
+          grep -q "\"GET /dsd-toolbox/sacdfs/releases/download/v$VERSION/$pkg.tar.gz " "$t/http.log"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: installer

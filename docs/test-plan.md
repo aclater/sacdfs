@@ -188,6 +188,7 @@ Real images can't go into CI, so four `#[ignore]`d tests (`dsf_header::real_disc
 run by hand. Before each release candidate the
 coordinator runs, on a build of the candidate commit:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 scripts/real-discs.sh DIR
 ```

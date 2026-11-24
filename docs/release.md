@@ -51,7 +51,7 @@ never moved.
    `required` stops the run in preflight. Dry runs never sign: their macOS archives are named
    `-unsigned`.
 6. **After:** the release has its archives, packages and `install.sh`, each with `.sha256` and
-   `.intoto.jsonl`, and `SHA256SUMS`; `ghcr.io/aclater/sacdfs:X.Y.Z` and `:latest` exist; check one asset with
+   `.intoto.jsonl`, and `SHA256SUMS`; `ghcr.io/dsd-toolbox/sacdfs:X.Y.Z` and `:latest` exist (`ghcr.io/aclater/sacdfs` is frozen at 0.7.2 for existing users); check one asset with
    `gh attestation verify`; the workflow's last image step has verified the image index, each
    architecture's image by its digest and each `-<arch>` tag (#379). A version with a hyphen
    (`0.2.0-rc.1`) is marked as a pre-release and doesn't move `:latest`.
@@ -62,6 +62,15 @@ never moved.
    image digest in `ix_values.yaml`.
 8. **Roll-up:** update [RELEASES.md](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/RELEASES.md)
    in dsd-toolbox/dsd-toolbox (the minor version's summary and release list).
+
+## Checking the macOS signing before a tag
+
+A dry run does not sign. To prove the signing and notarisation setup (the environment `release`
+and its six `MACOS_*` secrets) without a tag: `gh workflow run release.yml -R dsd-toolbox/sacdfs
+--ref BRANCH -f sign_check=true`. Job `macos-sign` then signs, notarises and verifies the run's
+unsigned archives, and discards the signed ones: nothing is uploaded, attached to a release or
+published. The environment must allow the branch for the run to start; it normally allows `v*`
+tags only.
 
 ## macOS archives of an earlier release
 
@@ -119,9 +128,21 @@ crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:
    (scope `publish-new`, short expiry), entered with `cargo login` or `CARGO_REGISTRY_TOKEN`.
    Revoke the token afterwards.
 3. On crates.io, the crate's Settings, "Trusted Publishing": add GitHub, repository
-   `aclater/sacdfs`, workflow `release.yml`, no environment.
+   `dsd-toolbox/sacdfs`, workflow `release.yml`, no environment.
 4. Re-run the failed `crates-publish` job: it finds 0.4.0 on crates.io and succeeds without
    publishing. From 0.4.1 on, the job publishes by itself.
+
+<!-- docs-audit:begin -->
+## After the release: run the docs audit
+
+After the release: run the docs audit. Do it once the tag, the packages and the release notes are public, and before the release is announced.
+
+1. Run the `docs-audit` workflow from the Actions tab of the repository (Run workflow). It runs the docs lint, the link check with external URLs and the docs facts check, and fails if any of them does.
+2. Open the checklist it prints: every page that mentions a version, a command-line option or a platform, to compare with the release just published. Fix each mismatch in a docs-only change, or write down why it is right.
+3. Record the result in the release notes or the release checklist: the workflow run, and how many checklist items were fixed.
+
+Every project also runs this audit each month (the `docs-monthly` workflow in the DSD Toolbox repository), so a missed audit shows up within a month.
+<!-- docs-audit:end -->
 
 ## See also
 

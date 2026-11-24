@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-25
+
 ### Added
 
 - **Manual pages (#581).** `sacdfs(1)`, `sacdfs-nfs(1)` and `sacdfs-ctl(8)`, with every option
@@ -17,6 +19,20 @@ All notable changes to sacdfs are recorded here. The format follows
   macOS release archives carry them in `man/`, and the container image has `sacdfs(1)`.
 
 ### Changed
+
+- **The project, its releases and its container image are now under `dsd-toolbox`.** From this
+  release the image is `ghcr.io/dsd-toolbox/sacdfs` (`:0.8.0` and `:latest`), attested as before, and
+  `install.sh`, the Compose file, the Unraid template and the TrueNAS app name it. Earlier
+  releases keep their images and attestations under `ghcr.io/aclater/sacdfs` (frozen: no new
+  tags, so `:latest` there stays at 0.7.2); verify releases up to 0.7.2 with
+  `gh attestation verify --owner aclater` and later ones with `-R dsd-toolbox/sacdfs`.
+  To move an existing container, change its image to `ghcr.io/dsd-toolbox/sacdfs:0.8.0`.
+  `install.sh` downloads from `dsd-toolbox/sacdfs`; `--version` still takes an earlier release.
+- **Documentation checks.** The shared DSD Toolbox documentation tools run on every pull
+  request: page shape, links, spelling and terminology, a facts check for versions, release
+  files and install lines, and a run of the documented commands in a fresh container against the
+  published release. The licence files, `CITATION.cff` and the docs layout follow the toolbox
+  standard.
 
 - **macOS programs signed and notarised.** From this release, `sacdfs-nfs` and `sacdfs` in the
   macOS archives are signed with a Developer ID (hardened runtime, secure timestamp) and
@@ -340,6 +356,7 @@ those with non-ASCII tags change only in their `INFO` chunk. Known: DST multicha
 3 to 6 % slower than 0.6.5 on a hybrid Intel CPU with scarletbook 0.6.0, within the gate's 10 %
 limit ([#493](https://github.com/dsd-toolbox/sacdfs/issues/493)).
 
+<!-- docs-lint: ignore changelog-format -- a release candidate sits below its release, with the same x.y.z -->
 ## [0.7.0-rc.2] - 2026-11-19
 
 A read trace (`-vv`) with a replay script (#486), and the start-of-track decode-ahead now also
@@ -370,6 +387,7 @@ close in the same millisecond (#492). Results: docs/test-plan.md, "Results: 0.7.
   stalls there, since those cores make it at 1.4 times real time while the player reads the
   album's other files (docs/deployment.md, "Starting playback on a slow CPU").
 
+<!-- docs-lint: ignore changelog-format -- a release candidate sits below its release, with the same x.y.z -->
 ## [0.7.0-rc.1] - 2026-11-19
 
 Linux `.rpm` and `.deb` packages and macOS archives in the release itself, the start of a track
@@ -512,6 +530,7 @@ images whose tracks overlap, which #402 changes. Known: the first listing of a l
 share takes one NFS round trip more per disc area for the hole check of #402 (0.18 s to 0.32 s for
 416 images; #451).
 
+<!-- docs-lint: ignore changelog-format -- a release candidate sits below its release, with the same x.y.z -->
 ## [0.6.5-rc.1] - 2026-11-16
 
 The Windows front end `sacdfs-win` and its release zip, the core's platform layer, the macOS
@@ -693,7 +712,7 @@ docs/test-plan.md ("Results: 0.6.5 gate").
   of short plain-DSD files 10 % slower (#403). Audio bytes are unchanged: only when frames are
   decoded ahead changes.
 
-### Documentation
+### Changed
 - **SMB clients on 0.6.3 and main: leases, listing cost and read-ahead (#325, #205, #266).**
   Re-measured with the Linux kernel client and Windows 11 (in a VM): with directory leases on,
   neither client shows a new image in a folder it keeps using, for an ordinary folder as much as
@@ -752,7 +771,7 @@ docs/test-plan.md ("Results: 0.6.4 gate").
   ([GHSA-825f-7xrc-fqf7](https://github.com/dsd-toolbox/sacdfs/security/advisories/GHSA-825f-7xrc-fqf7), Medium).**
   Upgrade to 0.6.4.
 
-### Upgrading
+### Changed
 - **Installs made with the installer:** run it again as you first did. On QNAP, and wherever
   sacdfs's folder was inside a shared folder, it moves sacdfs's files to a folder only root can
   change (on QNAP `/share/CACHEDEV1_DATA/.sacdfs`, with the DSF and WAV files in
@@ -802,7 +821,7 @@ docs/test-plan.md ("Results: 0.6.4 gate").
   - sockets for the journal and MusicBrainz only;
   - a system call deny list;
   - native calls only;
-  - no namespaces, realtime scheduling, setuid files, writable-and-executable memory, clock
+  - no namespaces, real-time scheduling, setuid files, writable-and-executable memory, clock
     or hostname changes.
 
   Options that give the service its own mount namespace (`ProtectSystem=`, `PrivateTmp=` and the
@@ -910,6 +929,7 @@ same CPU as 0.6.2. Known: a second player starting beside four copies waits long
 reads than on 0.6.2 (#363); a macOS client copying four files beside a player on a busy server
 stalls the player for seconds, as 0.6.2 does.
 
+<!-- docs-lint: ignore changelog-format -- a release candidate sits below its release, with the same x.y.z -->
 ## [0.6.3-rc.1] - 2026-11-13
 
 ### Fixed
@@ -944,7 +964,7 @@ stalls the player for seconds, as 0.6.2 does.
   are not covered ([performance](docs/performance.md#a-player-beside-copies-on-a-slow-server-357)).
   Audio bytes are unchanged: only when frames are decoded ahead changes.
 
-### Documentation
+### Changed
 - **A Linux SMB mount for a player or for copies: add `rsize=262144` (part of #266).** Measured on
   a NAS with a Linux 6.19 client: by default the client's 4 MiB reads and 8 MiB read-ahead made a
   header-and-tags scan cost sacdfs 1.8 MB of audio per file; with `rsize=262144` 262 KB and about
@@ -955,7 +975,6 @@ stalls the player for seconds, as 0.6.2 does.
   ([performance](docs/performance.md#client-settings-on-a-nas-062), deployment, Linux client and
   Navidrome guides, clients).
 
-### Known issues
 - **A tag scan through a Linux SMB mount with default settings uses 2–10 % more CPU than on
   0.6.2**, a side effect of the #357 change (measured on a 4-CPU container, 222 files; copies and
   player reads are equal or better). With `rsize=262144` on the mount, as the docs now advise,
@@ -982,6 +1001,7 @@ longer than on 0.6.1 (#357); it stalls on 0.6.1 too.
   archive is now stamped with the release version, as `install.sh` is. In 0.6.2-rc.1 it named
   0.6.1, so the installer's container route ran 0.6.1 unless given `--version`.
 
+<!-- docs-lint: ignore changelog-format -- a release candidate sits below its release, with the same x.y.z -->
 ## [0.6.2-rc.1] - 2026-11-11
 
 ### Added
@@ -1142,7 +1162,7 @@ could stall a player beside four starting copies (#338); 0.6.1 keeps 0.6.0's pac
   `dir_cache_off=yes` in `nsmb.conf` fixed it on macOS 27.2 in a VM. `docs/deployment.md` (macOS)
   says so. No code or Samba setting changed. Checked on macOS in a VM, not on Apple hardware.
 
-### Documentation
+### Changed
 - **What a player's import costs over SMB, and the settings that change it (part of #266).**
   Through a Linux kernel SMB mount, Navidrome's scan made sacdfs serve 3.5 times the bytes, and
   use 5 times the CPU, of a direct mount. The cause is the client reading ahead around each
@@ -1244,7 +1264,7 @@ change on top of the rc.1 code. The results are in docs/clients.md and docs/test
   Podman's default stop timeout then killed the container ("resorting to SIGKILL"). The entry point
   now waits only while the mount exists: 0 of 75 stops took over a second, against 14 of 75 before (Podman on Fedora and Docker on ADM).
 
-### Documentation
+### Changed
 
 - **A player beside whole-file scans, checked on a NAS's own CPU (#230).** The 0.5.0 image as an app on
   a NAS's E-cores, client on another host over SMB and NFS: a 6-channel WAV player held real time with
@@ -1289,7 +1309,7 @@ Tested before release:
 - **Clients.** Jellyfin, Navidrome, Lyrion, MPD and MinimServer behave as on 0.4.1, and so do NFS and SMB clients on seven Linux distributions.
 - **Release binaries.** Checked in a glibc 2.17 container. See [the test plan](docs/test-plan.md) and [clients](docs/clients.md).
 
-### Upgrade notes
+### Changed
 
 What to do, or what you may see, after the move from 0.4.1 to 0.5.0.
 
@@ -1525,7 +1545,7 @@ What to do, or what you may see, after the move from 0.4.1 to 0.5.0.
   retrying without a pause now gets its errors at once rather than once per timeout. Logged once
   when an image starts failing its reads this way and once when it reads again.
 
-### Documentation
+### Changed
 
 - **Beta testing for NAS owners:** a [beta testing page](docs/beta-testing.md) (what to do, copy-and-paste
   commands that collect the NAS, kernel, `/dev/fuse`, container runtime and log details, and how to remove
@@ -1581,7 +1601,7 @@ Fixed). The rc.2 gate, on 2026-11-06:
   12 minutes after the move. FUSE request counts per kind were not obtained.
 - **Not verified:** the arm64 image at run time; a cold-cache mount.
 
-### Upgrade notes
+### Changed
 
 What a scanner may see after the move from 0.4.0 to 0.4.1, with counts from one library of 4,902
 tracks. These are what was seen, not a prediction for yours.
@@ -1747,7 +1767,6 @@ tracks. These are what was seen, not a prediction for yours.
   ceiling (`--thread-spike`), instead of the maximum of each half. A single sample taken during
   an induced stall no longer fails a run, and accumulating threads still do (#179).
 
-### Continuous integration
 
 - Pull requests that touch the code run an informational benchmark: base and head read DST stereo,
   DST multichannel and plain DSD through the mount, and a slowdown over 10% is flagged in the job
@@ -1757,7 +1776,6 @@ tracks. These are what was seen, not a prediction for yours.
   a `SKIPPED` line, and the test jobs count skips in their summary and fail if they differ from
   `tests/expected-skips.json` (`scripts/check_skips.py`, see docs/development.md).
 
-### Documentation
 
 - **Install guides for ASUSTOR and TerraMaster, and results for Synology, QNAP and UGREEN's kernel.**
   Checked on ADM 5.1.4, TOS 7.0.1422, DSM 7.4.1 and QuTScloud 5.2.9 in VMs, not on the vendors'
@@ -1878,7 +1896,7 @@ no read slower by more than noise (docs/clients.md, #151).
   soak on real discs is still to run). DST stereo reads are unchanged (0.517 ms before and
   after, median of 3,000).
 
-### Documentation
+### Changed
 
 - Short install guides in `docs/install/` (#82), one per NAS system and music server, each
   with numbered steps and a check that it works: TrueNAS SCALE, Docker or Podman, OpenMediaVault,
@@ -1945,7 +1963,7 @@ tags) and with five other media servers on the candidate itself (see `docs/clien
   reuses a freed device number at once, and sacdfs told its own mount by that number alone;
   it now also checks that its own FUSE connection is still up.
 
-### Documentation
+### Changed
 
 - docs/clients.md (#82): the clients sacdfs has been tested with (Roon, Plex, Jellyfin, Navidrome, Lyrion, MPD, MinimServer, Windows, foobar2000; JRiver untested), the versions and results, and the recommended setup for each.
 
@@ -2041,7 +2059,7 @@ regressions of new-file pickup (#101) that the NAS tests found.
   #123). In 0.2.0-rc.3 such a folder's first listing showed it as it was at mount, and the new
   file never appeared.
 
-### Known issues
+### Changed
 
 - Reading plain-DSD WAV files is about 29 % slower than in 0.1.1 (a whole stereo area,
   2.07 s against 2.68 s on a Zen 5 machine). This comes from the PCM conversion, which is now
@@ -2049,7 +2067,6 @@ regressions of new-file pickup (#101) that the NAS tests found.
   about 1,000x real time per stream. The fix is being worked on upstream
   (scarletbook-rs#216), and sacdfs will pick it up in a later release.
 
-### Documentation
 
 - CI: a "no private names" check of commit identities and tracked files (`scripts/check-private-names.sh`, adapted from pysacd's). The Roon example in `docs/deployment.md` uses an arbitrary container subnet.
 
@@ -2074,7 +2091,7 @@ Folder art, scans and playlists for players such as Roon, and far fewer requests
 ### Changed
 
 - scarletbook 0.5.2 (was 0.5.0), the engine for 0.2.0: sacdfs's output is unchanged (DSF
-  files bit-identical to the reference extractor on all 93 tracks of the real discs, the same
+  files byte-identical to the reference extractor on all 93 tracks of the real discs, the same
   WAV bytes). One test changed: on the hostile corpus image `area-audio-past-end`,
   scarletbook's provisional (cold) readings now all equal its exact ones, where 0.5.0's
   differed, and no corpus image gives a differing one on 0.5.2. A new test makes one (a copy
@@ -2097,7 +2114,7 @@ Folder art, scans and playlists for players such as Roon, and far fewer requests
 - `df` and SMB clients saw a 0-byte filesystem (#62): `statfs` now reports the size of the
   filesystem holding SOURCE, with nothing free.
 
-### Documentation
+### Changed
 
 - `docs/deployment.md`, Roon: discs also present as extracted files are merged by Roon,
   which may play either copy. Folder art and playlists now work (#79, #75).
@@ -2196,7 +2213,7 @@ The first release.
   OpenSSF Scorecard, coverage, a check that the README's options table matches
   `sacdfs --help`, and a link check of the Markdown files.
 
-### Documentation
+### Changed
 
 - The oldest distributions the README names were tested (#58): RHEL 8.10, Debian 10,
   Ubuntu 20.04 and Fedora 29, each on its own kernel (4.18 to 5.4) with its own
@@ -2241,7 +2258,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.6.5...v0.7.0

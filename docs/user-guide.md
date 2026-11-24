@@ -8,6 +8,7 @@ what to do when something goes wrong. Installing is in the [install guides](inst
 
 ## Quick start
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 mkdir -p ~/sacd
 sacdfs ~/music/sacd-images ~/sacd       # returns once mounted
@@ -22,7 +23,7 @@ nothing but one image, and `--format dsf` if a library scanner should see only t
 
 ## Options
 
-```
+```text
 sacdfs [OPTIONS] SOURCE MOUNTPOINT
 ```
 
@@ -210,7 +211,7 @@ heads read` when re-reads hold it back. What it measured:
 
 Standard DSF files: DSD64 (2.8224 MHz), 1 bit, 4096-byte blocks per channel, with an
 ID3v2.4 tag at the end.
-- The audio is the track's frames as the disc's table of contents gives them, bit-identical
+- The audio is the track's frames as the disc's table of contents gives them, byte-identical
   to what the reference extractors (pysacd's `pysacd-extract`, scarletbook's `bench decode`)
   write. The pauses between tracks are not included.
 - The channel type follows the disc's speaker layout: stereo, 5 channels (3/2) or 5.1.
@@ -313,6 +314,7 @@ on a 0.4.0 mount (`sacd-migrate --catalogue --mount`) still point at the old nam
    [quick start](#quick-start), where `~/sacd` is the mount and `~/music/sacd-images` the
    images folder you gave sacdfs:
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    beet sacd-migrate --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
    beet sacd-migrate --apply --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
@@ -358,7 +360,7 @@ file through FFmpeg, so every WAV file is converted for that probe: in a test of
 first scan took about 9 s with `dsf,wav` and 0.6 s with `dsf` (about 15 times as long), and
 a library of 1,000 discs would cost about an hour of CPU. The same happens after any MPD
 database rebuild. Incremental `mpc update` reads nothing. If a player needs WAV files, mount
-twice as above. Jellyfin's LUFS normalization and Plex's nightly deep analysis read every
+twice as above. Jellyfin's LUFS normalisation and Plex's nightly deep analysis read every
 file in full; turn them off, or use `--cache-mb 16`.
 
 ## Your own tags (`--tags`)
@@ -426,6 +428,7 @@ album = "Album Name (5.1)"
 **From extracts: `sacdfs tags import`.** Before deleting extracts, copy what their tags have
 and sacdfs's lack into the tags directory:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sacdfs tags import --tags ~/music/sacd-tags --map ~/music/dsf ~/music/sacd-images \
     ~/music/sacd-images ~/music/dsf
@@ -464,6 +467,7 @@ summary says how many were left out. 1 when the import couldn't run or didn't fi
 **From MusicBrainz: `sacdfs tags fetch`.** For a disc with little or no text, this looks it up and
 writes what it finds to its tags file:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sacdfs tags fetch --tags ~/music/sacd-tags --dry-run ~/music/sacd-images/disc.iso   # look first
 sacdfs tags fetch --tags ~/music/sacd-tags ~/music/sacd-images/disc.iso
@@ -542,6 +546,7 @@ stereo area and looks the fingerprints up in [AcoustID](https://acoustid.org), w
 MusicBrainz recordings. The release holding the most of those recordings, at their places on the
 disc, then goes through the same checks as the other steps.
 
+<!-- docs-run: skip="uses a personal account, key or password, so it cannot run unattended" -->
 ```sh
 export ACOUSTID_API_KEY=...   # your own application key, see below
 sacdfs tags fetch --tags ~/music/sacd-tags --acoustid --dry-run ~/music/sacd-images/disc.iso
@@ -599,6 +604,7 @@ has not yet been run against AcoustID with an application key or on real discs.
 
 With `--musicbrainz`, the mount does the same lookup by itself, for the discs that need it:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sacdfs --tags ~/music/sacd-tags --musicbrainz ~/music/sacd-images ~/music/sacd
 sacdfs --tags ~/music/sacd-tags --musicbrainz=name,durations ~/music/sacd-images ~/music/sacd
@@ -733,7 +739,7 @@ included, after sacdfs restarts. `/etc/exports` needs an `fsid` (a FUSE mount ha
 number of its own), and sacdfs `--allow-other`, even when sacdfs runs as root (from 0.6.0,
 the default as root):
 
-```
+```text
 /srv/sacd  192.0.2.0/24(ro,fsid=4242,no_subtree_check)
 ```
 
@@ -803,7 +809,7 @@ another tool), sacdfs can replace them: it serves every track from the image on 
 `sacdfs verify` tells you, file by file, whether that is safe. It reads the extracts and the
 images and writes a report; **it never deletes, moves or changes a file.**
 
-```
+```text
 sacdfs verify [OPTIONS] SOURCE [EXTRACTS]...
 ```
 
@@ -920,12 +926,13 @@ a device counts as a file: it is replaced by the report.
 
 Examples:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 # Extracts next to the images; then list what is safe to delete.
 sacdfs verify -o report.tsv ~/music/sacd-images
 awk -F'\t' '$1 == "IDENTICAL" && $11 == "" {print $2}' report.tsv
 
-# Extracts in ~/music/dsf/<artist>/<album>/, images in ~/music/sacd-images/<artist>/<album>/.
+# Extracts in a folder per artist and album under ~/music/dsf/, images likewise under ~/music/sacd-images/.
 sacdfs verify -o report.tsv --map ~/music/dsf ~/music/sacd-images ~/music/sacd-images ~/music/dsf
 ```
 
@@ -970,7 +977,7 @@ looks for a helper named `mount.fuse.sacdfs` or `mount.fuse`; Fedora's `fuse3` p
 parameter 'cache_mb'". (`fuse3.sacdfs` as the type does not work: `mount.fuse3` takes it for a
 command name.)
 
-```
+```text
 # /etc/fstab
 /srv/sacd  /mnt/sacd  fuse.sacdfs  ro,allow_other,cache_mb=64,format=dsf,_netdev,nofail  0 0
 ```
@@ -1121,6 +1128,7 @@ as in the trace, so a faster mount gets the next one sooner. It prints the read 
 open file (`--play`, its `r=` number) and how a player buffering it would have fared: when its
 audio could start and how long it stalled. `--help` says how traced files map to the mount's.
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 sacdfs -vv --log-file /tmp/sacdfs-trace.log /music/Example.iso /mnt/sacd   # then play
 scripts/trace-replay.py /tmp/sacdfs-trace.log --play 12                     # the trace's own numbers
@@ -1161,6 +1169,7 @@ network player of #456, each with the command that derives it from a trace in
 CPU and anonymised). The CI stall gate replays them
 ([performance.md](performance.md#the-ci-stall-gate)).
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 scripts/trace-replay.py tests/fixtures/traces/player-mpv-wav.trace.gz --play 0 --profile --wav-audio-start 264000
 scripts/trace-replay.py --player tests/fixtures/players/zidoo-wav.json /mnt/sacd

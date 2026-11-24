@@ -38,20 +38,21 @@ cause not found.
 
 To run a job's tests the same way locally:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
-podman run --rm -it --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD:/src:Z" -w /src \
+podman run --rm -it --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:Z -w /src \
     registry.access.redhat.com/ubi10/ubi:10.3 bash
 # then: dnf -y install git-core gcc fuse3 python3, install Rust, and run cargo test as a normal user
 ```
 
 ## Image scan
 
-`.github/workflows/image-scan.yml` scans the published image `ghcr.io/aclater/sacdfs:latest` with
+`.github/workflows/image-scan.yml` scans the published image `ghcr.io/dsd-toolbox/sacdfs:latest` with
 grype every Wednesday, for linux/amd64 and linux/arm64, and on demand from the Actions tab with
 any image reference. grype is the release binary, pinned by version and SHA-256. The job fails
 when a High or Critical finding has a fixed package version; the full table of fixable findings
 is in the log and the job summary. To run it by hand:
-`grype registry:ghcr.io/aclater/sacdfs:latest --platform linux/amd64 --only-fixed --fail-on high`.
+`grype registry:ghcr.io/dsd-toolbox/sacdfs:latest --platform linux/amd64 --only-fixed --fail-on high`.
 
 ## The no-growth test
 
@@ -70,6 +71,7 @@ Leaking one tree per cycle adds about 40 KiB a cycle, so the test fails on that 
 margin. The first cycle is a warm-up: process-wide state is set up once (the rayon pool, the
 tags store, the handle cache).
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 SACDFS_FUSE_TESTS=1 cargo test --test no_growth -- --nocapture
 ```
@@ -79,6 +81,7 @@ one test.
 
 ## What a listing holds
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 cargo run --release --example listing_mem -- SOURCE
 RUSTFLAGS='--cfg heap_dhat' cargo run --release --example listing_mem -- SOURCE
@@ -92,6 +95,7 @@ of each allocation site are what the listing holds. The breakdown in
 
 ## The soak
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 cargo build --release --bins --example stallfs
 python3 scripts/soak.py --sacdfs target/release/sacdfs --images DIR --hours 2 --out soak.tsv
@@ -217,9 +221,10 @@ benchmarks alone, for example `taskset -c 12-19 python3 scripts/soak.py ...` on 
 
 ## Heap profile of a soak segment (massif)
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 podman build -t sacdfs-leak -f scripts/leak-check.Containerfile scripts
-podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD":/src:z -v DIR:/images:ro,z \
+podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:z -v DIR:/images:ro,z \
     -w /src sacdfs-leak scripts/leak-check.sh massif /images 40
 ```
 
@@ -239,8 +244,9 @@ is not in UBI, and massif gives the same two answers.
 
 ## The test suite under memcheck
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
-podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v "$PWD":/src:z -w /src \
+podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:z -w /src \
     sacdfs-leak scripts/leak-check.sh memcheck
 ```
 
@@ -272,7 +278,7 @@ processes.
 
 A Rust test can't skip itself at run time. A guard that returns early reports as `ok`, and no
 count shows it. In pysacd, that hid a comparison job that had stopped comparing for six releases
-(aclater/pysacd#131). So a guard here goes through `common::skip!` (`tests/common/mod.rs`), and
+(dsd-toolbox/pysacd#131). So a guard here goes through `common::skip!` (`tests/common/mod.rs`), and
 never a bare `return`:
 
 ```rust
@@ -311,6 +317,7 @@ and where the test does run.
 
 To run the same check locally:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 SACDFS_FUSE_TESTS=1 cargo test --locked 2>&1 | tee target/test-output.txt
 python3 -I scripts/check_skips.py --job tests target/test-output.txt
@@ -350,6 +357,7 @@ over NFS for comparing changes; it checks nothing and the script below does not 
 
 Run them with:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 scripts/real-discs.sh DIR
 ```

@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use sacdfs, please cite it as below."
+title: "sacdfs"
+abstract: "Shows Super Audio CD images (.iso files) as DSF and WAV tracks, with tags, to any player or music server, with nothing extracted."
+type: software
+authors:
+  - name: "The sacdfs authors"
+license: GPL-3.0-or-later
+repository-code: "https://github.com/dsd-toolbox/sacdfs"
+url: "https://github.com/dsd-toolbox/sacdfs"
+version: "0.8.0"
+date-released: "2026-11-25"
+keywords:
+  - SACD
+  - DSD
+  - DSF
+  - FUSE
+  - NFS

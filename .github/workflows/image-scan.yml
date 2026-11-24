@@ -1,7 +1,7 @@
 # Weekly scan of the published container image for known vulnerabilities with grype (#399).
 # Fails on High or Critical findings that have a fixed package version, so a base-image update
 # that is due shows up between releases. The full table is in the log and the job summary.
-# Locally: `grype registry:ghcr.io/aclater/sacdfs:latest --platform linux/amd64 --only-fixed --fail-on high`
+# Locally: `grype registry:ghcr.io/dsd-toolbox/sacdfs:latest --platform linux/amd64 --only-fixed --fail-on high`
 name: image-scan
 
 on:
@@ -12,7 +12,7 @@ on:
       image:
         description: Image reference to scan
         required: false
-        default: ghcr.io/aclater/sacdfs:latest
+        default: ghcr.io/dsd-toolbox/sacdfs:latest
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.run_id }}
@@ -33,7 +33,7 @@ jobs:
         # no emulation), so both run on the amd64 runner.
         platform: [linux/amd64, linux/arm64]
     env:
-      IMAGE: ${{ inputs.image || 'ghcr.io/aclater/sacdfs:latest' }}
+      IMAGE: ${{ inputs.image || 'ghcr.io/dsd-toolbox/sacdfs:latest' }}
       PLATFORM: ${{ matrix.platform }}
       # The release binary (static), pinned by version and SHA-256, in place of the grype
       # action, which installs it with a script fetched at run time.

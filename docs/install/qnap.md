@@ -19,6 +19,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 1. **Log in over SSH as `admin`.** In QNAP's Control Panel, Network & File Services, Telnet / SSH, tick "Allow SSH connection" *(untested)*. On your computer (Windows: PowerShell; macOS: Terminal) type `ssh admin@your-nas-address`. On QNAP `admin` is root. Check:
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    id -u && uname -m
    ```
@@ -26,6 +27,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* `0` and `x86_64`.
 2. **Check that FUSE is there.** FUSE is the part of the system that lets sacdfs show files. QNAP has it.
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    ls -l /dev/fuse
    ```
@@ -33,6 +35,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* a line starting with `crw`.
 3. **Make the folders and go into the first.** sacdfs's own files go in a hidden folder at the top of the data volume, `/share/CACHEDEV1_DATA/.sacdfs`, next to QNAP's own `.qpkg`: not in a shared folder, and not in QNAP's system folders, which are on a small RAM disk. Root runs these files at every start, so only root may be able to change them: in a shared folder, any user who can write to its top could swap them for their own. `/share/CACHEDEV1_DATA/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs.
 
+   <!-- docs-run: skip="QNAP's own volume path, /share/CACHEDEV1_DATA, which the docs-run container does not have" -->
    ```sh
    ls -ld /share/CACHEDEV1_DATA
    mkdir -p /share/CACHEDEV1_DATA/.sacdfs/cache /share/CACHEDEV1_DATA/sacd
@@ -43,30 +46,40 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* a line starting `drwxr-xr-x` with the owner `admin` *(untested on QNAP hardware: QuTScloud in the VM had no volume of its own)*. If it starts `drwxrwxrwx` or similar, other users can write there: use another folder that only `admin` can change, and the same in every step below. [The installer](README.md#where-the-files-go) checks this for you.
 4. **Download sacdfs and its checksum file.**
 
+   <!-- docs-run: -->
    ```sh
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
+   # /facts
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
 5. **Check the download.**
 
+   <!-- docs-run: -->
    ```sh
-   sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
+   sha256sum -c sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
+   # /facts
    ```
 
-   *You should see* `sacdfs-0.7.2-x86_64-linux.tar.gz: OK`.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.8.0-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 6. **Unpack it and copy out the program and its start script.**
 
+   <!-- docs-run: skip="copies into QNAP's own volume path, which the docs-run container does not have" -->
    ```sh
-   tar -xzf sacdfs-0.7.2-x86_64-linux.tar.gz
-   cp sacdfs-0.7.2-x86_64-linux/sacdfs sacdfs-0.7.2-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/.sacdfs/
+   # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz\ncp sacdfs-{version}-x86_64-linux/sacdfs sacdfs-{version}-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/.sacdfs/'
+   tar -xzf sacdfs-0.8.0-x86_64-linux.tar.gz
+   cp sacdfs-0.8.0-x86_64-linux/sacdfs sacdfs-0.8.0-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/.sacdfs/
+   # /facts
    /share/CACHEDEV1_DATA/.sacdfs/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.7.2`.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.8.0`<!-- /facts -->.
 7. **Write the settings file.** Change the first line to your images folder. Keep each path in single quotes.
 
+   <!-- docs-run: skip="writes into QNAP's own volume path, which the docs-run container does not have" -->
    ```sh
    cat > /share/CACHEDEV1_DATA/.sacdfs/sacdfs.conf <<'EOF'
    SACDFS_IMAGES='/share/CACHEDEV1_DATA/Multimedia/music'
@@ -77,6 +90,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    ```
 8. **Start sacdfs.**
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    SACDFS_CONF=/share/CACHEDEV1_DATA/.sacdfs/sacdfs.conf /share/CACHEDEV1_DATA/.sacdfs/sacdfs-ctl start
    ls /share/CACHEDEV1_DATA/sacd
@@ -85,6 +99,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* `sacdfs started`, then one folder per image. Each holds `Stereo` and, on multichannel discs, `Multichannel`, with files like `01 - Title.dsf` and `01 - Title.wav`. sacdfs goes on running after you log out. If `sacdfs-ctl` says `not run as root: ...`, a folder on the way can be changed by other users: it names the folder and the fix.
 9. **Switch on "run user defined processes".** QNAP only runs start-up scripts when this is on. Type:
 
+   <!-- docs-run: skip="runs on the NAS's own operating system, which is not available here" -->
    ```sh
    setcfg Misc Autorun TRUE -f /etc/config/uLinux.conf
    ```
@@ -92,6 +107,8 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    (The same switch is in the QNAP settings, Control Panel, System, Hardware, General, "Run user defined processes during startup" *(untested)*.)
 10. **Make it start with the NAS.** QNAP runs `autorun.sh` early at start-up, before the data volume is ready, so this script waits for the volume in the background and then starts sacdfs. The file lives on a small flash partition, which these commands open and close.
 
+    <!-- docs-run: skip="runs on the NAS's own operating system, which is not available here" -->
+    <!-- docs-lint: ignore placeholder -- the shell variables belong to the autorun script, and the boot partition differs per QNAP model -->
     ```sh
     mount $(/sbin/hal_app --get_boot_pd port_id=0)6 -t ext2 /tmp/config
     cat > /tmp/config/autorun.sh <<'EOF'
@@ -110,6 +127,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
     QNAP has no shut-down hook; its own restart sends every program a polite stop signal, and sacdfs unmounts cleanly on it. (Never stop sacdfs with `kill -9`: it leaves a dead mount.)
 11. **Restart the NAS, and look again.**
 
+    <!-- docs-run: skip="runs on the NAS's own operating system, which is not available here" -->
     ```sh
     reboot
     ```
@@ -129,6 +147,7 @@ Then point your players at the new `sacd` folder (see below).
 
 ## Check it worked
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 ls /share/CACHEDEV1_DATA/sacd
 ```
@@ -137,7 +156,7 @@ ls /share/CACHEDEV1_DATA/sacd
 
 ## If something goes wrong
 
-- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses 0.7.2).
+- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses <!-- facts:release repo=dsd-toolbox/sacdfs fmt='{version}' -->0.8.0<!-- /facts -->).
 - **You see:** `sha256sum: ... no properly formatted SHA256 checksum lines found`, or `gzip: stdin: not in gzip format`. **Do this:** the download saved an error page. Delete the two downloaded files and run step 4 again later.
 - **You see:** `Permission denied` when a share or an app opens the folder. **Do this:** you started sacdfs without being root. Run `id -u` (it must print `0`), stop sacdfs (see above) and start it again.
 

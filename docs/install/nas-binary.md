@@ -22,6 +22,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 1. **Check that FUSE is there.** FUSE is the part of the system that lets sacdfs show files.
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    ls -l /dev/fuse
    ```
@@ -29,36 +30,47 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* a line starting with `crw`. If you see `No such file or directory`, type `modprobe fuse` and check again.
 2. **Make the folders and go into the first.** Keep sacdfs on the data volume, not in `/root` or `/usr/local/bin` (on some NAS systems those are small or read-only). `/volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs. Keep both folders at the top of the data volume, `/volume1`, not inside a shared folder: sacdfs runs as root, and a user who can write to the top of a shared folder could swap the folders for their own (`ls -ld /volume1` should show `drwxr-xr-x` and the owner `root`; [why](README.md#where-the-files-go)).
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    mkdir -p /volume1/sacdfs/cache /volume1/sacd
    cd /volume1/sacdfs
    ```
 3. **Download sacdfs and its checksum file.**
 
+   <!-- docs-run: -->
    ```sh
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
+   # /facts
    ```
 
    *You should see* two progress tables and no line starting `curl: (`.
 4. **Check the download.**
 
+   <!-- docs-run: -->
    ```sh
-   sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
+   sha256sum -c sacdfs-0.8.0-x86_64-linux.tar.gz.sha256
+   # /facts
    ```
 
-   *You should see* `sacdfs-0.7.2-x86_64-linux.tar.gz: OK`.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.8.0-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 5. **Unpack it and copy out the program and its start script.** (Use `cp`: on TerraMaster `install` is a different tool.)
 
+   <!-- docs-run: -->
    ```sh
-   tar -xzf sacdfs-0.7.2-x86_64-linux.tar.gz
-   cp sacdfs-0.7.2-x86_64-linux/sacdfs sacdfs-0.7.2-x86_64-linux/sacdfs-ctl /volume1/sacdfs/
+   # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz\ncp sacdfs-{version}-x86_64-linux/sacdfs sacdfs-{version}-x86_64-linux/sacdfs-ctl /volume1/sacdfs/'
+   tar -xzf sacdfs-0.8.0-x86_64-linux.tar.gz
+   cp sacdfs-0.8.0-x86_64-linux/sacdfs sacdfs-0.8.0-x86_64-linux/sacdfs-ctl /volume1/sacdfs/
+   # /facts
    /volume1/sacdfs/sacdfs --version
    ```
 
-   *You should see* `sacdfs 0.7.2`.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.8.0`<!-- /facts -->.
 6. **Write the settings file.** Change the first line to your images folder.
 
+   <!-- docs-run: -->
    ```sh
    cat > /volume1/sacdfs/sacdfs.conf <<'EOF'
    SACDFS_IMAGES='/volume1/music'
@@ -69,6 +81,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    ```
 7. **Start sacdfs.**
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    SACDFS_CONF=/volume1/sacdfs/sacdfs.conf /volume1/sacdfs/sacdfs-ctl start
    ls /volume1/sacd
@@ -78,6 +91,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 8. **Make it start with the NAS, and stop cleanly.** Until you do this, sacdfs does not come back after a restart. How depends on the system: use the guide of your NAS's make, or [Start at boot and stop safely](#start-at-boot-and-stop-safely) below for any system with systemd. *(Untested on systems other than the six above.)*
 9. **To stop sacdfs,** type the line below. Never use `kill -9`: it leaves a dead mount, and everything that touches the folder fails with `Transport endpoint is not connected` until someone runs `umount -l` on it.
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    SACDFS_CONF=/volume1/sacdfs/sacdfs.conf /volume1/sacdfs/sacdfs-ctl stop
    ```
@@ -86,6 +100,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 ## Check it worked
 
+<!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
 ```sh
 SACDFS_CONF=/volume1/sacdfs/sacdfs.conf /volume1/sacdfs/sacdfs-ctl status
 ls /volume1/sacd
@@ -130,11 +145,14 @@ Both routes read one settings file (`SACDFS_IMAGES`, `SACDFS_MOUNT`, `SACDFS_OPT
 
 **With systemd** (`systemctl --version` works: TerraMaster, UGREEN, ReadyNAS OS 6, Debian-based systems). The archive holds `sacdfs.service`; it expects the program at `/usr/local/bin/sacdfs` and the settings at `/etc/default/sacdfs`:
 
+<!-- docs-run: skip="starts a systemd service, which the docs-run container does not have" -->
 ```sh
 mkdir -p /usr/local/bin
-cp sacdfs-0.7.2-x86_64-linux/sacdfs /usr/local/bin/sacdfs
-cp sacdfs-0.7.2-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
-cp sacdfs-0.7.2-x86_64-linux/sacdfs.conf.example /etc/default/sacdfs   # then edit the two paths
+# facts:release repo=dsd-toolbox/sacdfs fmt='cp sacdfs-{version}-x86_64-linux/sacdfs /usr/local/bin/sacdfs\ncp sacdfs-{version}-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service\ncp sacdfs-{version}-x86_64-linux/sacdfs.conf.example /etc/default/sacdfs   # then edit the two paths'
+cp sacdfs-0.8.0-x86_64-linux/sacdfs /usr/local/bin/sacdfs
+cp sacdfs-0.8.0-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
+cp sacdfs-0.8.0-x86_64-linux/sacdfs.conf.example /etc/default/sacdfs   # then edit the two paths
+# /facts
 systemctl daemon-reload
 systemctl enable --now sacdfs
 systemctl is-active sacdfs

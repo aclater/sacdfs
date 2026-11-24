@@ -6,7 +6,7 @@
   or folder in the checkout; a #fragment on a Markdown file must be a heading anchor
   (GitHub's slugs, with -1, -2 for repeats) or an <a id/name> in that file.
 - No link or mention of the old repository name aclater/sacd (now dsd-toolbox/dsd-toolbox) in
-  any tracked file; aclater/sacdfs and aclater/sacd-spec are fine.
+  any tracked file; aclater/sacd-spec is fine (it stays under aclater).
 
     scripts/check-docs.py [FILE.md ...]     (default: every tracked .md but tests/corpus/)
 
@@ -20,7 +20,7 @@ import sys
 import urllib.parse
 
 SKIP_PREFIXES = ("tests/corpus/",)  # a verbatim copy of sacd-spec's corpus, links to that repo
-SELF = re.compile(r"^https://github\.com/(?:aclater|dsd-toolbox)/sacdfs/(?:blob|tree)/main/([^?#]*)(#.*)?$")
+SELF = re.compile(r"^https://github\.com/dsd-toolbox/sacdfs/(?:blob|tree)/main/([^?#]*)(#.*)?$")
 OLD_REPO = re.compile(r"aclater/sacd(?![\w-])")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 INLINE_CODE = re.compile(r"(`+)(.+?)\1")

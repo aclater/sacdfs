@@ -2,6 +2,8 @@
 
 # Deploying sacdfs on a NAS
 
+The reference for running sacdfs in a container on a NAS: what each part does, every setting, and why.
+
 > **Installing?** Start with the short [install guides](install/README.md): one per NAS system
 > and music server, with numbered steps and a check that it works. This page is the
 > reference behind them: every setting, and why.
@@ -38,11 +40,14 @@ shares. The clients tested so far, with the settings that worked for each, are i
 
 ## What the container does
 
-```
- host                          container
- /path/to/images  ──(ro)──►  /images ──► sacdfs (FUSE) ──► /srv/sacd ──┬─► smbd         :445  SMB share "sacd"
-                                                                      └─► NFS-Ganesha  :2049 NFSv4 export "/sacd"
- volume           ────────►  /cache   (sacdfs's persistent seek index)
+```mermaid
+flowchart LR
+    images["host: /path/to/images"] -- read-only --> c_images["/images in the container"]
+    c_images --> sacdfs["sacdfs (FUSE)"]
+    sacdfs --> mount["/srv/sacd"]
+    mount --> smb["smbd, port 445: SMB share sacd"]
+    mount --> nfs["NFS-Ganesha, port 2049: NFSv4 export /sacd"]
+    volume["host: volume"] --> cache["/cache: sacdfs's persistent seek index"]
 ```
 
 - The images come in **read-only** from the host. sacdfs mounts them at `/srv/sacd` inside
@@ -83,16 +88,22 @@ hosts; the runtime picks the right one), each built for a generic CPU by the rel
 after the share test (SMB and NFS) passed on that very image, on a native runner of that
 architecture:
 
+<!-- docs-run: skip="needs a container engine and the GitHub CLI signed in" -->
 ```sh
-docker pull ghcr.io/aclater/sacdfs:0.7.2       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 --owner aclater
+# facts:release repo=dsd-toolbox/sacdfs fmt='docker pull ghcr.io/dsd-toolbox/sacdfs:{version}       # a release; :latest is the newest\ngh attestation verify oci://ghcr.io/dsd-toolbox/sacdfs:{version} -R dsd-toolbox/sacdfs'
+docker pull ghcr.io/dsd-toolbox/sacdfs:0.8.0       # a release; :latest is the newest
+gh attestation verify oci://ghcr.io/dsd-toolbox/sacdfs:0.8.0 -R dsd-toolbox/sacdfs
+# /facts
 ```
 
-The attestation shows which commit and workflow built it. In the commands below, use
-`ghcr.io/aclater/sacdfs:<version>` where they say `sacdfs`, or build the image yourself.
+The attestation shows which commit and workflow built it. Releases up to 0.7.2 were published to
+`ghcr.io/aclater/sacdfs`, which stays as it is for existing users (no new tags; verify those with
+`--owner aclater`). To move a running container, change its image to the one above. In the commands below, use
+`ghcr.io/dsd-toolbox/sacdfs:<version>` where they say `sacdfs`, or build the image yourself.
 
 ## Building the image
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 git clone https://github.com/dsd-toolbox/sacdfs && cd sacdfs
 podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
@@ -184,6 +195,7 @@ The container drops the runtime's whole default set of capabilities and adds bac
 seven its programs need (#386). The Compose files, the TrueNAS app and the Unraid template set
 all of this already; with `docker run` or `podman run`, pass:
 
+<!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
 ```sh
 --device /dev/fuse --cap-drop ALL \
 --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
@@ -940,6 +952,7 @@ format to bound, check and keep safe for a gain on one start per mount.
 
 ### Docker or Podman
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 docker run -d --name sacdfs --restart unless-stopped \
   --device /dev/fuse --cap-drop ALL \
@@ -971,6 +984,7 @@ clients can use other ports. Windows 11 build 26200 also mounted a share on anot
 
 `deploy/compose.yaml` builds and runs the image with the settings above:
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 SACD_IMAGES=/path/to/images docker compose -f deploy/compose.yaml up -d --build
 docker compose -f deploy/compose.yaml logs -f
@@ -996,7 +1010,7 @@ installed through the API call behind "Install via YAML", with the YAML below an
 (step 2). Both shares served a 154-image library, and the app turned healthy within a minute.
 The names of screens and fields may differ between releases.
 
-1. **The image.** Use the published one, `ghcr.io/aclater/sacdfs:<version>`. TrueNAS
+1. **The image.** Use the published one, `ghcr.io/dsd-toolbox/sacdfs:<version>`. TrueNAS
    cannot build images: for a build of your own, build it elsewhere (above) and push it to
    a registry the NAS can reach, or load it from a file in a shell on the NAS
    (`docker load`).
@@ -1027,7 +1041,9 @@ The names of screens and fields may differ between releases.
    ```yaml
    services:
      sacdfs:
-       image: ghcr.io/aclater/sacdfs:0.7.2
+       # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/dsd-toolbox/sacdfs:{version}'
+       image: ghcr.io/dsd-toolbox/sacdfs:0.8.0
+       # /facts
        restart: unless-stopped
        devices:
          - /dev/fuse
@@ -1093,6 +1109,7 @@ host networking, on the same NAS as sacdfs.
   address on a Docker network of its own instead. Roon, on the host network, reaches it there
   on 445:
 
+  <!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
   ```yaml
   services:
     sacdfs:
@@ -1113,6 +1130,7 @@ host networking, on the same NAS as sacdfs.
   ```
 
   Pick a subnet that nothing else on the NAS uses. In Roon, add the network share
+  <!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
   `\\172.29.42.10\sacd` with `SMB_USER` and its password.
 - **Roon's container needs the right to mount SMB.** Roon on Linux mounts a network share with
   the kernel's CIFS client inside its own container. Without the right to mount, it fails with
@@ -1155,7 +1173,7 @@ containers, or as TrueNAS apps) can read sacdfs's mount directly, with no SMB or
 ([#186](https://github.com/dsd-toolbox/sacdfs/issues/186)). The mount is shared through a directory on
 the host:
 
-```
+```text
  host directory /mnt/pool/apps/sacdfs-mnt
    sacdfs container:  bound over /srv, rshared   -> sacdfs mounts /srv/sacd, which appears on the host
    player container:  bound at /music, ro,rslave -> the player reads /music/sacd
@@ -1205,6 +1223,7 @@ the host:
   before the containers start, and again after every boot (it doesn't persist; how to run it at boot
   differs per NAS and is untested):
 
+  <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
   ```sh
   # the host directory that sacdfs's /srv and the player bind, for example /volume1/sacdfs-mnt
   mount --bind /volume1/sacdfs-mnt /volume1/sacdfs-mnt
@@ -1227,6 +1246,7 @@ With Docker or Podman (on SELinux hosts add `--security-opt label=disable` to bo
 were run with `sudo podman run` on Fedora 45, with Jellyfin as the player; Docker was run through the
 Compose file below, on TrueNAS:
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 mkdir -p /srv/sacdfs-mnt
 docker run -d --name sacdfs --restart unless-stopped \
@@ -1249,7 +1269,9 @@ player wait for sacdfs's health check:
 ```yaml
 services:
   sacdfs:
-    image: ghcr.io/aclater/sacdfs:0.7.2
+    # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/dsd-toolbox/sacdfs:{version}'
+    image: ghcr.io/dsd-toolbox/sacdfs:0.8.0
+    # /facts
     # needed with 0.4.1 and earlier images only (0.5.0 makes /srv/sacd itself); or make sacd in the host directory first
     entrypoint: ["bash", "-c", "mkdir -p /srv/sacd 2>/dev/null; exec /usr/local/bin/entrypoint.sh"]
     restart: unless-stopped
@@ -1426,6 +1448,7 @@ setting for this; the stereo and multichannel files already have different album
 
 NFS (package `nfs-utils` or `nfs-common`):
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sudo mkdir -p /mnt/sacd
 sudo mount -t nfs4 -o ro,vers=4.2 nas:/sacd /mnt/sacd
@@ -1435,12 +1458,13 @@ sudo mount -t nfs4 -o ro,vers=4.2 nas:/sacd /mnt/sacd
 
 SMB (package `cifs-utils`):
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,guest,vers=3.1.1
 # with SMB_USER: keep the password in a file readable only by root
 #   /root/.sacd-smb:  username=music
 #                     password=...
-sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,uid=$(id -u)
+sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,uid=1000
 ```
 
 **Add `rsize=262144` to an SMB mount that a player scans or that copies files** (#266). The
@@ -1463,6 +1487,7 @@ File managers open `smb://nas/sacd` directly.
 
 If the container publishes other ports (TrueNAS, step 2), give them to the client:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sudo mount -t nfs4 -o ro,vers=4.2,port=12049 nas:/sacd /mnt/sacd
 sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,port=10445
@@ -1481,6 +1506,7 @@ serve that container, which never sees the new one. Bind the parent directory wi
 propagation, so the new mount shows up inside the container (tested with rootless Podman on
 0.3.0-rc.1, see [clients](clients.md#general-recommendations)):
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 # sacdfs mounted at /srv/sacd/music; bind /srv/sacd, not /srv/sacd/music
 podman run -v /srv/sacd:/media:ro,rslave ...
@@ -1555,7 +1581,7 @@ a second container (or mount) with `dsf,wav` for it.
 Jellyfin behaves the same way: in its first scan on 0.3.0-rc.1 sacdfs served 17.9 MiB for 93
 DSF files and 648.5 MiB with `dsf,wav`, because its ffprobe reads about 7 MB of each WAV file
 (sacdfs used 1 CPU-second against 24 to 26). Use `dsf` unless it needs WAV files. Jellyfin's
-LUFS normalization reads every file about twice (39.8 GiB for 22.0 GiB of DSF files in the
+LUFS normalisation reads every file about twice (39.8 GiB for 22.0 GiB of DSF files in the
 same test), and Plex's nightly deep analysis reads every file once (on 0.1.1): turn them off,
 or use a 16 MiB `--cache-mb` as on a NAS ([clients](clients.md#jellyfin)).
 

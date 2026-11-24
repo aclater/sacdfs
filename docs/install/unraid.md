@@ -17,6 +17,7 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 1. **Open a terminal on the server.** In Unraid's web page, click the `>_` (Terminal) icon at the top right *(untested)*.
 2. **Copy the template into Unraid.** A template is a ready-made set of container settings.
 
+   <!-- docs-run: skip="runs in Unraid's own shell, on its flash drive" -->
    ```sh
    wget -O /boot/config/plugins/dockerMan/templates-user/sacdfs.xml \
      https://raw.githubusercontent.com/dsd-toolbox/sacdfs/main/deploy/unraid/sacdfs.xml
@@ -24,6 +25,7 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 
    *You should see* the download finish without an error. *(untested)*
 3. **Add the container.** Docker, **Add Container**, and under **Template** pick `sacdfs` (in the "User templates" group). *(untested)*
+<!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
 4. **Fill in the form.** Set **SACD images** to your share (for example `/mnt/user/music`). Set **SMB user** and **SMB password**: without them the share is open, read-only, to the whole network. Set **NFS clients** (for example `192.168.1.0/24`) to limit NFS. Leave the rest. *(untested)*
 5. **Apply.** *You should see* a container named `sacdfs` that shows a health status after its start period (up to 5 minutes). *(untested)*
 6. **Stop it cleanly when you need to.** Use the container's Stop (or `docker stop sacdfs`), never a forced kill: the template gives it 30 seconds to unmount. *(untested)*

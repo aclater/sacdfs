@@ -37,7 +37,7 @@ old_version=0.6.3
 arch=$(uname -m)
 pkg=sacdfs-$version-$arch-linux
 port=${PORT:-18765}
-url=http://127.0.0.1:$port/aclater/sacdfs/releases
+url=http://127.0.0.1:$port/dsd-toolbox/sacdfs/releases
 
 # Pinned by digest. Red Hat-built bases only: Hummingbird (Fedora-derived, hardened) for the
 # BusyBox images, Fedora, and UBI 7 for glibc 2.17.
@@ -88,7 +88,7 @@ if [ "$mode" = unsupported ]; then
     # The server logs requests at all: one to it now must show up.
     curl -s -o /dev/null "$url/canary"
     sleep 1
-    grep -q '"GET /aclater/sacdfs/releases/canary' "$work/http.log" || { echo "the server's log doesn't work"; failed+=(log); }
+    grep -q '"GET /dsd-toolbox/sacdfs/releases/canary' "$work/http.log" || { echo "the server's log doesn't work"; failed+=(log); }
     if [ "${#failed[@]}" -gt 0 ]; then
         echo "failed: ${failed[*]}"
         exit 1
@@ -98,7 +98,7 @@ if [ "$mode" = unsupported ]; then
 fi
 
 # The release, served in GitHub's layout.
-rel=$work/srv/aclater/sacdfs/releases
+rel=$work/srv/dsd-toolbox/sacdfs/releases
 mkdir -p "$rel/download/v$version" "$rel/latest/download" "$work/pub" "$work/pkg/$pkg"
 gh_url=https://github.com/dsd-toolbox/sacdfs/releases/download/v$version/$pkg.tar.gz
 curl -fsSL -o "$work/pub/$pkg.tar.gz" "$gh_url"

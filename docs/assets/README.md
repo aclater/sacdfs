@@ -1,6 +1,8 @@
+[sacdfs](../../README.md) › [Documentation](../README.md) › Icon
+
 # Icon
 
-The sacdfs icon (a folder with a DSF waveform), © the sacdfs project, under the repository's licence, GPL-3.0-or-later. It is one of the DSD Toolbox icons: a silver disc on a navy rounded square, with the project's motif on an amber panel below it.
+The sacdfs icon (a folder with a DSF waveform), © the sacdfs project, under [CC BY 4.0](../../LICENSES/CC-BY-4.0.txt). It is one of the DSD Toolbox icons: a silver disc on a navy rounded square, with the project's motif on an amber panel below it.
 
 | File | Use |
 |---|---|
@@ -13,3 +15,10 @@ Every file here is exported from `icon.svg`. To change the icon, replace all of 
 keep the file names, so links to them keep working. `deploy/icon.svg` and `deploy/icon.png` are
 the same drawing for the app stores ([store-apps.md](../install/store-apps.md#the-icon)); update them
 too.
+
+## See also
+
+- [Store apps](../install/store-apps.md#the-icon): the same icon in the app stores
+- [Documentation index](../README.md)
+
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

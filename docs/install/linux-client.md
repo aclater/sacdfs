@@ -18,24 +18,28 @@ on 0.4.0. See [Details](#details).
 
 1. **Install the mount tools.** Fedora or RHEL:
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    sudo dnf install nfs-utils cifs-utils
    ```
 
    Debian or Ubuntu:
 
+   <!-- docs-run: group=deb-linux-client image=debian setup="apt-get update -qq && apt-get install -y -qq sudo curl ca-certificates && echo 'APT::Get::Assume-Yes \"true\";' > /etc/apt/apt.conf.d/90yes" -->
    ```sh
    sudo apt install nfs-common cifs-utils
    ```
 
 2. **Make an empty folder to mount on.**
 
+   <!-- docs-run: -->
    ```sh
    sudo mkdir -p /mnt/sacd
    ```
 
 3. **Mount the share.** Use NFS (the first line) or SMB (the second). One is enough.
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    sudo mount -t nfs4 -o ro,vers=4.2 nas:/sacd /mnt/sacd
    sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,guest,vers=3.1.1
@@ -51,13 +55,14 @@ on 0.4.0. See [Details](#details).
 4. **To mount at every start,** add **one** of these lines to the end of `/etc/fstab` (open it with
    `sudo nano /etc/fstab`), then type `sudo systemctl daemon-reload && sudo mount -a`:
 
-   ```
+   ```text
    nas:/sacd   /mnt/sacd  nfs4  ro,vers=4.2,_netdev,nofail  0 0
    //nas/sacd  /mnt/sacd  cifs  ro,guest,vers=3.1.1,_netdev,nofail,x-systemd.automount  0 0
    ```
 
 ## Check it worked
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 findmnt /mnt/sacd
 ls /mnt/sacd
@@ -83,6 +88,7 @@ file in your player.
 
 If the server has an `SMB_USER`, keep the password in a file only root can read:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 printf 'username=music\npassword=YOUR-PASSWORD\n' | sudo tee /root/.sacd-smb >/dev/null
 sudo chmod 600 /root/.sacd-smb
@@ -95,6 +101,7 @@ In `/etc/fstab`, replace `guest` with `credentials=/root/.sacd-smb`.
 
 If the server publishes other ports (as on [TrueNAS](truenas-scale.md), or the Compose file), add them:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sudo mount -t nfs4 -o ro,vers=4.2,port=12049 nas:/sacd /mnt/sacd
 sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,port=10445

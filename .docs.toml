@@ -1,0 +1,77 @@
+# Settings for the shared docs tools (dsd-toolbox docs/docs-tooling.md).
+name = "sacdfs"
+kind = "app"
+default_branch = "main"
+
+[lint]
+# The release steps live in docs/release.md (the test plan is its gate and links to it).
+release_files = ["docs/release.md"]
+# "catalog" is the TrueNAS app catalog (a product term); "center" is part of "Media Center".
+allow_words = ["catalog", "center"]
+# Product names in headings: Lyrion / Logitech Media Server, Windows Explorer, PowerShell, Robocopy, JRiver Media Center.
+proper_nouns = ["Lyrion", "Logitech", "Media", "Server", "Windows", "Explorer", "PowerShell", "Robocopy", "JRiver", "Center"]
+
+[[lint.ignore]]
+path = "CHANGELOG.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
+
+[[lint.ignore]]
+path = "docs/deployment.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
+
+[[lint.ignore]]
+path = "docs/install/docker-podman.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
+
+[[lint.ignore]]
+path = "docs/install/packages.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
+
+[[lint.ignore]]
+path = "docs/install/store-apps.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
+
+[[lint.ignore]]
+path = "docs/performance.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
+
+[[lint.ignore]]
+path = "docs/release.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
+
+[[lint.ignore]]
+path = "docs/test-plan.md"
+rule = "old-owner"
+reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; the frozen image and the COPR project are still under aclater"
+
+[links]
+# tests/corpus/ is a verbatim copy of the sacd-spec conformance corpus (tests/corpus/SOURCE.md); its
+# relative links point into that repository, so they cannot resolve here.
+exclude_files = ["tests/corpus/**"]
+
+# Images the documented commands may run in (docs-run reads this list; a marker names an alias only).
+# Fedora is the built-in default. Debian is for the apt commands of the install pages.
+[run.images.debian]
+ref = "docker.io/library/debian@sha256:1c2fd3096624441883bc13fd646c376664b3ee8a990fde0f6246e567349512e9"
+network = true
+
+[run.images.fedora45]
+ref = "registry.fedoraproject.org/fedora@sha256:a0b2f99b239e0157abe5bf3efba79808e63f190d2200a6ad273bb404f5fc861b"
+network = true
+
+[run.images.ubi9]
+ref = "registry.access.redhat.com/ubi9/ubi@sha256:5a8bf48617eb65228e6ed828995ad896492915918632ccce7233a840a5aba664"
+network = true
+
+[touched]
+# A change to these needs a change to the docs, or a "Docs: none needed — reason" line.
+code = ["src/**", "winfsp/src/**", "man/**", "deploy/**", "packaging/**", "Containerfile", "Cargo.toml"]
+docs = ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "docs/**", "man/**", "**/README.md"]
+ignore = ["tests/**", "fuzz/**", "benches/**", "examples/**", ".github/**", "scripts/**"]

@@ -1,0 +1,105 @@
+# The docs checks, from the shared reusable workflows of dsd-toolbox/dsd-toolbox (docs/docs-tooling.md
+# there), pinned to one commit. Settings are in .docs.toml.
+#   - docs-lint: page shape, README, spelling, terminology, no old-owner links, licence and citation files.
+#   - docs-links: relative links and anchors on every pull request; every external URL weekly.
+#   - docs-touched: a change to code or options also changes the docs (pull requests; each commit of a batch).
+#   - docs-facts: versions, release files and install lines equal the latest release (read-only check).
+#     Weekly, docs-facts-generate pushes the branch docs/facts-update when a region is stale; a person
+#     opens the pull request (the organisation keeps "Actions can create pull requests" off).
+#   - docs-run: the documented commands run in a fresh container against the published release.
+#   - docs-audit: after a release (run it by hand) and monthly: lint, links, facts and the checklist.
+# scripts/check-docs.py and scripts/check-version-drift.py stay in docs-check.yml: they are required
+# checks, and they also cover files and deploy settings that the shared tools do not read.
+# A failed weekly run opens an issue, or comments on the open one.
+
+name: docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "29 6 * * 1"   # weekly: external links rot, regions go stale, commands break
+    - cron: "11 5 3 * *"   # monthly: the docs audit
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # a new push supersedes the old PR run; main runs finish
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-lint.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    with:
+      tools_ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+
+  links:
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-links.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    with:
+      tools_ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      external: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+
+  touched:
+    if: github.event_name == 'pull_request'
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-touched.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    with:
+      tools_ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+
+  facts:
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-facts.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    with:
+      tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+
+  # The only job with a write token: schedule or manual run on the default branch, never a pull request.
+  # It pushes the branch docs/facts-update and fails, naming it; a person opens the pull request.
+  facts-refresh:
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: facts
+    permissions:
+      contents: write
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-facts-generate.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    with:
+      tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+
+  commands:
+    # Not for pull requests from forks: their Markdown would run on the runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-run.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    with:
+      tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      version-of: dsd-toolbox/sacdfs
+      require-coverage: "29"
+      fail_unmarked: true
+
+  audit:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '11 5 3 * *'
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-audit.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    with:
+      tools_ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+
+  report:
+    name: weekly report
+    needs: [lint, links, facts, commands]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Weekly docs check failed"
+          body="The scheduled docs run failed: $RUN_URL (the lint, links, facts or commands job lists what)."
+          n=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label documentation --label P3 --milestone Docs
+          fi

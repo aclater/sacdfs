@@ -16,6 +16,7 @@ Checked on 0.6.0 with Lyrion 9.1.1 (the `lmscommunity/lyrionmusicserver` image) 
 
 1. **Check the mount.**
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    ls /srv/media/sacd
    ```
@@ -24,6 +25,7 @@ Checked on 0.6.0 with Lyrion 9.1.1 (the `lmscommunity/lyrionmusicserver` image) 
 
 2. **Start Lyrion.** The folder that holds the mount (`/srv/media`) is shared into the container, not the mount point itself, with `ro,rslave`. This keeps Lyrion working when sacdfs restarts.
 
+   <!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
    ```sh
    podman run -d --name lyrion --security-opt label=disable -p 9000:9000 \
      -v lyrion-config:/config -v /srv/media:/media:ro,rslave \

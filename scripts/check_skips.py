@@ -13,7 +13,7 @@ list), on a changed reason, and on output with no tests. It reads cargo's output
 file, so that nothing has to reach a test run under sudo or in a container. The counts and the list
 go to the job summary when GITHUB_STEP_SUMMARY names a file.
 
-The method follows pysacd's tools/check_skips.py (aclater/pysacd#131).
+The method follows pysacd's tools/check_skips.py (dsd-toolbox/pysacd#131).
 """
 
 from __future__ import annotations

@@ -12,7 +12,7 @@ listed yet. This page says what is in the repository, how to use the Unraid temp
 and what was checked where.
 
 Both entries run the same published image as [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml):
-`ghcr.io/aclater/sacdfs:0.7.2`, with the FUSE device, all capabilities dropped but the seven
+`ghcr.io/dsd-toolbox/sacdfs:0.8.0`, with the FUSE device, all capabilities dropped but the seven
 the programs need (`SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`, `SETGID`,
 `NET_BIND_SERVICE`, `SETPCAP`; [why each one](../deployment.md#privileges)), no new privileges,
 AppArmor unconfined, SMB on port 10445 and NFS on 12049 (the NAS's own
@@ -138,6 +138,7 @@ Unraid.
   Run on a Linux host with rootless Podman standing in for Docker. Up to 0.6.3 one message was
   logged on every render: "No cap_drop for service: sacdfs", because the app kept the runtime's
   default capabilities; from 0.6.4 the app drops them all (see above).
+- **0.8.0:** the image tag set to 0.8.0 without a digest; the release's multi-arch index digest is pinned after the release (`docs/release.md`, step 7). The catalog tooling and a TrueNAS install were not re-run on 0.8.0.
 - **0.7.2:** the image tag set to 0.7.2, `app_version` 0.7.2 and `version` 1.0.4, the number the catalog published 0.7.2 under (the catalog numbers its app itself; this copy follows it), pinned by digest to the release's multi-arch index (`0.7.2@sha256:f385ba80…`). The catalog tooling and a TrueNAS install were not re-run on 0.7.2.
 - **0.7.1:** the image tag set to 0.7.1, `app_version` 0.7.1 and `version` 1.0.4, by hand as the catalog's `generate_metadata.py` sets them, pinned by digest to the release's multi-arch index (`0.7.1@sha256:51191f1c…`). The catalog tooling and a TrueNAS install were not re-run on 0.7.1.
 - **0.6.5:** the image tag set to 0.6.5, pinned by digest (`0.6.5@sha256:73eb56cb…`, the release's multi-arch index), `app_version` 0.6.5 and `version` 1.0.3, by hand as the catalog's `generate_metadata.py` sets them; the catalog tooling and a TrueNAS install were not re-run on 0.6.5.

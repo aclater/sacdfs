@@ -49,6 +49,7 @@ fill in what you know on the form and skip the rest.
 The installer prints the system details for you. Run this, as a normal user, on the NAS, and paste
 its block into the form (with your result, whether it worked or not):
 
+<!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
 ```sh
 curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh | sh -s -- --report
 ```
@@ -70,6 +71,7 @@ This block works on any Linux-based NAS. It prints the CPU, RAM, kernel, whether
 which `fusermount` helper is installed, the container runtime, and the sacdfs version if the binary
 is on your path. Paste it into the terminal as it is:
 
+<!-- docs-run: skip="ends by listing /dev/fuse, which the docs-run container does not have" -->
 ```sh
 echo "== Kernel"; uname -srm
 echo "== CPU and RAM"
@@ -135,6 +137,7 @@ Removing it leaves your ISOs, and anything else in your music folder, exactly as
 **Container route** (the same commands work for `docker`; they were run with Podman 6.1.3, the Docker
 versions are untested):
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 podman stop sacdfs
 podman rm sacdfs
@@ -142,7 +145,7 @@ podman volume rm sacdfs-cache     # sacdfs's own cache; only if you used a volum
 ```
 
 If you used Compose, run `docker compose down` in the folder of your compose file instead of the first
-two lines. If you also want the image gone: `podman rmi ghcr.io/aclater/sacdfs:TAG`, with the tag you
+two lines. If you also want the image gone: `podman rmi ghcr.io/dsd-toolbox/sacdfs:TAG`, with the tag you
 pulled (untested). Remove any share or mount you added on your other computers, or they will point at
 nothing. In a NAS web interface, stop and delete the container or app there instead (untested); its
 volume or data folder is deleted separately.

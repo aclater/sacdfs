@@ -29,7 +29,7 @@ from a network share (client-side). The design behind these figures is in
   DST 5 channels (a hybrid disc); and two DST stereo images in 2064-byte raw sectors. Seven
   areas, 93 tracks. "Plain DSD" is a disc stored without DST compression, which sacdfs only
   demultiplexes; DST areas are decoded too. Both builds passed the DSF gate (all 93 tracks
-  bit-identical to the reference extractor) before the round.
+  byte-identical to the reference extractor) before the round.
 - **Time per seek** is `open`, one 128 KiB `pread` and `close`, timed inside one process.
 
 The figures of earlier pull requests, each against its own "before", are in the
@@ -1826,6 +1826,7 @@ a required check, so it may be path-filtered, and it never fails over a slowdown
 
 To run it by hand, with two built binaries (needs `fusermount3`; under `benchlock` if others benchmark):
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 python3 -I scripts/bench_compare.py --base OLD_SACDFS --head NEW_SACDFS \
     --measure "python3 -I scripts/bench_workload.py" dst-stereo dst-multichannel plain-dsd
@@ -1894,6 +1895,7 @@ player starting a track wait or stall clearly longer than base did, on a CPU abo
 
 To run it by hand (needs `fusermount3` and systemd's user session for the CPU quota):
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 scripts/play-disc.py /tmp/disc/play.iso
 scripts/stall-gate.py --base OLD_SACDFS --head NEW_SACDFS --source /tmp/disc --cpus 0,1 --client-cpus 2,3 \
@@ -1902,6 +1904,7 @@ scripts/stall-gate.py --base OLD_SACDFS --head NEW_SACDFS --source /tmp/disc --c
 
 ## Reproducing
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 # straight read of an area, against scarletbook's own decoder
 bench decode IMAGE --area 2ch --threads 0 --sink raw /dev/shm/out
