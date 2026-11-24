@@ -141,15 +141,17 @@ clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributi
 `x86_64-v3` or `aarch64` for `x86_64`):
 
 ```sh
-gh release download v0.7.2 -R aclater/sacdfs -p 'sacdfs-0.7.2-x86_64-linux.tar.gz*'
+gh release download v0.7.2 -R dsd-toolbox/sacdfs -p 'sacdfs-0.7.2-x86_64-linux.tar.gz*'
 sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
-gh attestation verify sacdfs-0.7.2-x86_64-linux.tar.gz -R aclater/sacdfs
+gh attestation verify sacdfs-0.7.2-x86_64-linux.tar.gz --owner aclater
 ```
 
 The checksum shows the download is intact; the attestation (GitHub's build provenance, signed with
 Sigstore) shows this repository's release workflow built it, and from which commit.
 `gh attestation verify` also accepts the `.intoto.jsonl` bundle next to each archive, with `--bundle`,
-to check offline. On TerraMaster TOS, `install` is a different program: use `cp`
+to check offline. Releases up to 0.7.2 were built while the project lived under the `aclater`
+account, so their attestations are found with `--owner aclater`; from 0.8.0 use
+`-R dsd-toolbox/sacdfs`. On TerraMaster TOS, `install` is a different program: use `cp`
 ([the NAS steps](nas-binary.md)).
 
 ### 32-bit x86

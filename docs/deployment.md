@@ -85,7 +85,7 @@ architecture:
 
 ```sh
 docker pull ghcr.io/aclater/sacdfs:0.7.2       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 -R aclater/sacdfs
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 --owner aclater
 ```
 
 The attestation shows which commit and workflow built it. In the commands below, use

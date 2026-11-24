@@ -52,7 +52,7 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    ```
 
    *You should see* `sacdfs-0.7.2-aarch64-macos.tar.gz: OK`. On a computer with the GitHub CLI,
-   `gh attestation verify sacdfs-0.7.2-aarch64-macos.tar.gz -R aclater/sacdfs` also checks that
+   `gh attestation verify sacdfs-0.7.2-aarch64-macos.tar.gz --owner aclater` also checks that
    GitHub's release workflow built it.
 
 3. **Unpack it:**

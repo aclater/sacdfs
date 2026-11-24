@@ -227,7 +227,7 @@ can change them, and checks that before it writes anything
   files then appear in `/share/CACHEDEV1_DATA/sacd`: share that folder and point players at
   it. `--uninstall` finds both places.
 - **Checksums:** each release's `install.sh` carries the SHA-256 of that release's archives,
-  and is itself attested (`gh attestation verify install.sh -R aclater/sacdfs`). A download
+  and is itself attested (`gh attestation verify install.sh --owner aclater`). A download
   that doesn't match stops it. With `--version` for another release, it can only compare with
   the `.sha256` from the same server: it says so, and then needs `curl` (HTTPS only, TLS 1.2
   or later) or GNU Wget, which check the server's certificate; BusyBox's `wget` doesn't, so
@@ -279,7 +279,7 @@ sudo sh install.sh --iso-dir /volume1/music --dry-run
 sudo sh install.sh --iso-dir /volume1/music
 ```
 
-`gh attestation verify install.sh -R aclater/sacdfs` also shows that this repository's release
+`gh attestation verify install.sh --owner aclater` also shows that this repository's release
 workflow built it. *(Checked on 0.6.2 from the `latest` address in both forms above, and the
 attestation passes; see [the installer on 0.6.2](../test-plan.md#results-installer-on-062).)*
 

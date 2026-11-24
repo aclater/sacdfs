@@ -31,7 +31,7 @@ The commands below are for x86_64; on aarch64 (`uname -m` prints `aarch64`) use 
    ```
 
    *You should see* `sacdfs-0.7.2-1.x86_64.rpm: OK`. With the GitHub CLI,
-   `gh attestation verify sacdfs-0.7.2-1.x86_64.rpm -R aclater/sacdfs` also checks where it
+   `gh attestation verify sacdfs-0.7.2-1.x86_64.rpm --owner aclater` also checks where it
    was built.
 
 2. **Install it:**
@@ -103,7 +103,7 @@ instead of being the release archive's.
    ```
 
    *You should see* `sacdfs_0.7.2-1_amd64.deb: OK`. With the GitHub CLI,
-   `gh attestation verify sacdfs_0.7.2-1_amd64.deb -R aclater/sacdfs` also checks where it was
+   `gh attestation verify sacdfs_0.7.2-1_amd64.deb --owner aclater` also checks where it was
    built.
 
 2. **Install it:**

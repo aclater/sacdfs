@@ -86,7 +86,9 @@ macOS assets": delete the macOS assets it uploaded (`gh release delete-asset`), 
 Every release run packs and tests the `.rpm`
 and `.deb` packages and the source RPM (`packaging/`). To add them to a release made before
 that: `gh workflow run release.yml -R dsd-toolbox/sacdfs --ref main -f packages_tag=vX.Y.Z`. The run
-checks the release's x86_64 and aarch64 archives against `SHA256SUMS` and their attestations,
+checks the release's x86_64 and aarch64 archives against `SHA256SUMS` and their attestations
+(releases up to 0.7.2 were attested under the `aclater` account, which GitHub does not move with a
+repository, so those are verified with `--owner aclater` and that account's workflow as the signer),
 packs them and the tag's source, runs the package and SRPM tests, then (job
 `packages-publish`) attests the five files, uploads them with their `.sha256` and
 `.intoto.jsonl`, appends their lines to `SHA256SUMS` (the other lines stay byte for byte) and
