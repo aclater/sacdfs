@@ -8,6 +8,7 @@
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](COPYING)
 [![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-orange)](Cargo.toml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aclater/sacdfs/badge)](https://scorecard.dev/viewer/?uri=github.com/aclater/sacdfs)
+[![crates.io](https://img.shields.io/crates/v/sacdfs)](https://crates.io/crates/sacdfs)
 
 sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
 player or music server. Nothing is extracted: keep the ISOs, delete the extracted copies.
