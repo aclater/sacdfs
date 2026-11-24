@@ -10,8 +10,8 @@ package manager installs with it). About 5 minutes.
 
 | System | Package |
 |---|---|
-| Fedora 44 and 45, RHEL 9 and 10 | `sacdfs-0.7.2-1.x86_64.rpm`, `sacdfs-0.7.2-1.aarch64.rpm` |
-| Debian 12 and 13, Ubuntu 22.04 and 24.04 | `sacdfs_0.7.2-1_amd64.deb`, `sacdfs_0.7.2-1_arm64.deb` |
+| Fedora 44 and 45, RHEL 9 and 10 | <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-1.x86_64.rpm`' -->`sacdfs-0.7.2-1.x86_64.rpm`<!-- /facts -->, <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-1.aarch64.rpm`' -->`sacdfs-0.7.2-1.aarch64.rpm`<!-- /facts --> |
+| Debian 12 and 13, Ubuntu 22.04 and 24.04 | <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs_{version}-1_amd64.deb`' -->`sacdfs_0.7.2-1_amd64.deb`<!-- /facts -->, <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs_{version}-1_arm64.deb`' -->`sacdfs_0.7.2-1_arm64.deb`<!-- /facts --> |
 
 The packages are not signed with a package key. Check each download against its `.sha256`
 file, and, on a computer with the GitHub CLI, against its attestation, which shows that
@@ -25,19 +25,23 @@ The commands below are for x86_64; on aarch64 (`uname -m` prints `aarch64`) use 
 1. **Download the package and its checksum, and check it:**
 
    ```sh
+   # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-1.x86_64.rpm\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-1.x86_64.rpm.sha256\nsha256sum -c sacdfs-{version}-1.x86_64.rpm.sha256'
    curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm
    curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm.sha256
    sha256sum -c sacdfs-0.7.2-1.x86_64.rpm.sha256
+   # /facts
    ```
 
-   *You should see* `sacdfs-0.7.2-1.x86_64.rpm: OK`. With the GitHub CLI,
-   `gh attestation verify sacdfs-0.7.2-1.x86_64.rpm --owner aclater` also checks where it
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-1.x86_64.rpm: OK`' -->`sacdfs-0.7.2-1.x86_64.rpm: OK`<!-- /facts -->. With the GitHub CLI,
+   <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`gh attestation verify sacdfs-{version}-1.x86_64.rpm -R dsd-toolbox/sacdfs`' -->`gh attestation verify sacdfs-0.7.2-1.x86_64.rpm -R dsd-toolbox/sacdfs`<!-- /facts --> also checks where it
    was built.
 
 2. **Install it:**
 
    ```sh
+   # facts:release repo=dsd-toolbox/sacdfs fmt='sudo dnf install ./sacdfs-{version}-1.x86_64.rpm'
    sudo dnf install ./sacdfs-0.7.2-1.x86_64.rpm
+   # /facts
    ```
 
    *You should see* `Complete!`, with `fuse3` installed too if it wasn't there.
@@ -82,7 +86,7 @@ sudo curl -fsSL -o /etc/yum.repos.d/aclater-sacdfs.repo https://copr.fedorainfra
 sudo dnf install sacdfs
 ```
 
-*You should see* `Complete!`; `sacdfs --version` then prints `sacdfs 0.7.2`. On RHEL,
+*You should see* `Complete!`; `sacdfs --version` then prints <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.7.2`<!-- /facts -->. On RHEL,
 `sudo dnf copr enable dsd-toolbox/sacdfs` alone looks for an EPEL build, which this project
 doesn't have; with `dnf-plugins-core` installed, `sudo dnf copr enable dsd-toolbox/sacdfs
 rhel-9-x86_64` works too. Then go on with step 3 above (settings, then start).
@@ -97,19 +101,23 @@ instead of being the release archive's.
 1. **Download the package and its checksum, and check it:**
 
    ```sh
+   # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs_{version}-1_amd64.deb\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs_{version}-1_amd64.deb.sha256\nsha256sum -c sacdfs_{version}-1_amd64.deb.sha256'
    curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb
    curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb.sha256
    sha256sum -c sacdfs_0.7.2-1_amd64.deb.sha256
+   # /facts
    ```
 
-   *You should see* `sacdfs_0.7.2-1_amd64.deb: OK`. With the GitHub CLI,
-   `gh attestation verify sacdfs_0.7.2-1_amd64.deb --owner aclater` also checks where it was
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs_{version}-1_amd64.deb: OK`' -->`sacdfs_0.7.2-1_amd64.deb: OK`<!-- /facts -->. With the GitHub CLI,
+   <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`gh attestation verify sacdfs_{version}-1_amd64.deb -R dsd-toolbox/sacdfs`' -->`gh attestation verify sacdfs_0.7.2-1_amd64.deb -R dsd-toolbox/sacdfs`<!-- /facts --> also checks where it was
    built.
 
 2. **Install it:**
 
    ```sh
+   # facts:release repo=dsd-toolbox/sacdfs fmt='sudo apt install ./sacdfs_{version}-1_amd64.deb'
    sudo apt install ./sacdfs_0.7.2-1_amd64.deb
+   # /facts
    ```
 
 3. **Name your folders** in `/etc/default/sacdfs` (`sudoedit /etc/default/sacdfs`), as in

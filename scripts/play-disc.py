@@ -9,7 +9,7 @@ instead, which costs only the PCM conversion.
 
   scripts/play-disc.py OUT.iso [--first 60] [--others 10] [--tracks 12] [--dsd]
 
-The layout follows the image builder of aclater/pysacd's tests (tests/sacdgen.py, same
+The layout follows the image builder of dsd-toolbox/pysacd's tests (tests/sacdgen.py, same
 author, GPL-2.0-or-later): master TOC at sector 510 (copies at 520 and 530), then the area's
 TOC-1, its audio sectors and its TOC-2, one packet per frame per sector.
 """

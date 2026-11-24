@@ -32,6 +32,7 @@ Podman (SMB only); step 4 was not. See [Details](#details).
    Podman:
 
    ```sh
+   # facts:release repo=dsd-toolbox/sacdfs fmt='sudo podman run -d --name sacdfs --restart unless-stopped \\n  --device /dev/fuse --cap-drop ALL \\n  --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \\n  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \\n  --security-opt no-new-privileges:true \\n  --security-opt label=disable \\n  -p 445:445 -p 2049:2049 \\n  -v /srv/music:/images:ro \\n  -v sacdfs-cache:/cache \\n  --health-cmd /usr/local/bin/healthcheck.sh --health-interval 30s \\n  --health-timeout 10s --health-start-period 300s --health-retries 3 \\n  ghcr.io/aclater/sacdfs:{version}'
    sudo podman run -d --name sacdfs --restart unless-stopped \
      --device /dev/fuse --cap-drop ALL \
      --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
@@ -44,11 +45,13 @@ Podman (SMB only); step 4 was not. See [Details](#details).
      --health-cmd /usr/local/bin/healthcheck.sh --health-interval 30s \
      --health-timeout 10s --health-start-period 300s --health-retries 3 \
      ghcr.io/aclater/sacdfs:0.7.2
+   # /facts
    ```
 
    Docker:
 
    ```sh
+   # facts:release repo=dsd-toolbox/sacdfs fmt='sudo docker run -d --name sacdfs --restart unless-stopped \\n  --device /dev/fuse --cap-drop ALL \\n  --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \\n  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \\n  --security-opt no-new-privileges:true \\n  --security-opt label=disable \\n  -p 445:445 -p 2049:2049 \\n  -v /srv/music:/images:ro \\n  -v sacdfs-cache:/cache \\n  ghcr.io/aclater/sacdfs:{version}'
    sudo docker run -d --name sacdfs --restart unless-stopped \
      --device /dev/fuse --cap-drop ALL \
      --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
@@ -59,6 +62,7 @@ Podman (SMB only); step 4 was not. See [Details](#details).
      -v /srv/music:/images:ro \
      -v sacdfs-cache:/cache \
      ghcr.io/aclater/sacdfs:0.7.2
+   # /facts
    ```
 
    *You should see* a long hexadecimal ID. On Debian or Ubuntu, write `--security-opt apparmor=unconfined`

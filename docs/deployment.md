@@ -89,8 +89,10 @@ after the share test (SMB and NFS) passed on that very image, on a native runner
 architecture:
 
 ```sh
+# facts:release repo=dsd-toolbox/sacdfs fmt='docker pull ghcr.io/aclater/sacdfs:{version}       # a release; :latest is the newest\ngh attestation verify oci://ghcr.io/aclater/sacdfs:{version} -R dsd-toolbox/sacdfs'
 docker pull ghcr.io/aclater/sacdfs:0.7.2       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 --owner aclater
+gh attestation verify oci://ghcr.io/aclater/sacdfs:0.7.2 -R dsd-toolbox/sacdfs
+# /facts
 ```
 
 The attestation shows which commit and workflow built it. In the commands below, use
@@ -1032,7 +1034,9 @@ The names of screens and fields may differ between releases.
    ```yaml
    services:
      sacdfs:
+       # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/aclater/sacdfs:{version}'
        image: ghcr.io/aclater/sacdfs:0.7.2
+       # /facts
        restart: unless-stopped
        devices:
          - /dev/fuse
@@ -1256,7 +1260,9 @@ player wait for sacdfs's health check:
 ```yaml
 services:
   sacdfs:
+    # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/aclater/sacdfs:{version}'
     image: ghcr.io/aclater/sacdfs:0.7.2
+    # /facts
     # needed with 0.4.1 and earlier images only (0.5.0 makes /srv/sacd itself); or make sacd in the host directory first
     entrypoint: ["bash", "-c", "mkdir -p /srv/sacd 2>/dev/null; exec /usr/local/bin/entrypoint.sh"]
     restart: unless-stopped

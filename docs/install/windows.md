@@ -43,14 +43,18 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
    ```powershell
    cd $HOME\Downloads
+   # facts:release repo=dsd-toolbox/sacdfs fmt='curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-windows.zip\ncurl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-windows.zip.sha256'
    curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-windows.zip
    curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-windows.zip.sha256
+   # /facts
    ```
 
 3. **Check the download.**
 
    ```powershell
+   # facts:release repo=dsd-toolbox/sacdfs fmt='(Get-FileHash sacdfs-{version}-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-{version}-x86_64-windows.zip.sha256).Split(" ")[0]'
    (Get-FileHash sacdfs-0.7.2-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.7.2-x86_64-windows.zip.sha256).Split(" ")[0]
+   # /facts
    ```
 
    *You should see* `True`. If you see `False`, delete both files and download them again.
@@ -58,7 +62,9 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 4. **Unpack it into your programs folder.**
 
    ```powershell
+   # facts:release repo=dsd-toolbox/sacdfs fmt='Expand-Archive sacdfs-{version}-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs'
    Expand-Archive sacdfs-0.7.2-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
+   # /facts
    Unblock-File $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe
    ```
 

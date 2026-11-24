@@ -65,3 +65,8 @@ reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project a
 path = "docs/test-plan.md"
 rule = "old-owner"
 reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project aclater/sacdfs; both still live under aclater"
+
+[links]
+# tests/corpus/ is a verbatim copy of the sacd-spec conformance corpus (tests/corpus/SOURCE.md); its
+# relative links point into that repository, so they cannot resolve here.
+exclude_files = ["tests/corpus/**"]

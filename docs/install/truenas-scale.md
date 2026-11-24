@@ -37,7 +37,9 @@ The catalog takes a new sacdfs release through its maintainers' automated update
    ```yaml
    services:
      sacdfs:
+       # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/aclater/sacdfs:{version}'
        image: ghcr.io/aclater/sacdfs:0.7.2
+       # /facts
        restart: unless-stopped
        devices:
          - /dev/fuse
@@ -90,7 +92,9 @@ Windows drive mapping, Roon's "Add network share" and the SMB storage of other T
    ```yaml
    services:
      sacdfs:
+       # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/aclater/sacdfs:{version}'
        image: ghcr.io/aclater/sacdfs:0.7.2
+       # /facts
        restart: unless-stopped
        devices:
          - /dev/fuse
