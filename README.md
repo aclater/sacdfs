@@ -36,6 +36,7 @@ Synology NAS; type your own folder instead.
 
 1. Install sacdfs and start it:
 
+   <!-- docs-run: skip="installs sacdfs for real, which needs /dev/fuse and a mount; the docs-run container has neither" -->
    ```sh
    curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh \
      | sudo sh -s -- --iso-dir /volume1/music
@@ -48,6 +49,7 @@ Synology NAS; type your own folder instead.
 2. Look at the tracks in that folder: `/srv/sacd` on a Linux computer, `/volume1/sacd` on a
    Synology NAS. On a Linux computer:
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    ls -R /srv/sacd
    ```

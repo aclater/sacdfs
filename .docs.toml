@@ -70,3 +70,23 @@ reason = "names the container image ghcr.io/aclater/sacdfs or the COPR project a
 # tests/corpus/ is a verbatim copy of the sacd-spec conformance corpus (tests/corpus/SOURCE.md); its
 # relative links point into that repository, so they cannot resolve here.
 exclude_files = ["tests/corpus/**"]
+
+# Images the documented commands may run in (docs-run reads this list; a marker names an alias only).
+# Fedora is the built-in default. Debian is for the apt commands of the install pages.
+[run.images.debian]
+ref = "docker.io/library/debian@sha256:1c2fd3096624441883bc13fd646c376664b3ee8a990fde0f6246e567349512e9"
+network = true
+
+[run.images.fedora45]
+ref = "registry.fedoraproject.org/fedora@sha256:a0b2f99b239e0157abe5bf3efba79808e63f190d2200a6ad273bb404f5fc861b"
+network = true
+
+[run.images.ubi9]
+ref = "registry.access.redhat.com/ubi9/ubi@sha256:5a8bf48617eb65228e6ed828995ad896492915918632ccce7233a840a5aba664"
+network = true
+
+[touched]
+# A change to these needs a change to the docs, or a "Docs: none needed — reason" line.
+code = ["src/**", "winfsp/src/**", "man/**", "deploy/**", "packaging/**", "Containerfile", "Cargo.toml"]
+docs = ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "docs/**", "man/**", "**/README.md"]
+ignore = ["tests/**", "fuzz/**", "benches/**", "examples/**", ".github/**", "scripts/**"]

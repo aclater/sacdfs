@@ -19,6 +19,7 @@ Podman (SMB only); step 4 was not. See [Details](#details).
 
 1. **Check that the ports are free.** Type:
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    sudo ss -ltn | grep -E ':(445|2049) ' || echo free
    ```
@@ -31,6 +32,7 @@ Podman (SMB only); step 4 was not. See [Details](#details).
 
    Podman:
 
+   <!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sudo podman run -d --name sacdfs --restart unless-stopped \\n  --device /dev/fuse --cap-drop ALL \\n  --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \\n  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \\n  --security-opt no-new-privileges:true \\n  --security-opt label=disable \\n  -p 445:445 -p 2049:2049 \\n  -v /srv/music:/images:ro \\n  -v sacdfs-cache:/cache \\n  --health-cmd /usr/local/bin/healthcheck.sh --health-interval 30s \\n  --health-timeout 10s --health-start-period 300s --health-retries 3 \\n  ghcr.io/aclater/sacdfs:{version}'
    sudo podman run -d --name sacdfs --restart unless-stopped \
@@ -50,6 +52,7 @@ Podman (SMB only); step 4 was not. See [Details](#details).
 
    Docker:
 
+   <!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sudo docker run -d --name sacdfs --restart unless-stopped \\n  --device /dev/fuse --cap-drop ALL \\n  --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \\n  --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add SETPCAP \\n  --security-opt no-new-privileges:true \\n  --security-opt label=disable \\n  -p 445:445 -p 2049:2049 \\n  -v /srv/music:/images:ro \\n  -v sacdfs-cache:/cache \\n  ghcr.io/aclater/sacdfs:{version}'
    sudo docker run -d --name sacdfs --restart unless-stopped \
@@ -73,6 +76,7 @@ Podman (SMB only); step 4 was not. See [Details](#details).
 3. **Wait for it to be healthy.** Type this every few seconds, until it says `healthy` (up to a minute;
    a big library on a slow disk takes longer):
 
+   <!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
    ```sh
    sudo podman inspect -f '{{.State.Health.Status}}' sacdfs
    ```
@@ -91,6 +95,7 @@ Open one in your player.
 
 To see the server's own view:
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 sudo podman logs sacdfs 2>&1 | grep -E 'image files|mounted|NFS SERVER INITIALIZED'
 ```
@@ -116,6 +121,7 @@ More: [Details](#more-problems).
 
 **Never stop it with `kill -9` or `docker kill`.** That leaves a dead mount behind. Use:
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 sudo podman stop sacdfs
 sudo podman start sacdfs
@@ -159,6 +165,7 @@ image and publishes ports 10445 (SMB) and 12049 (NFS). Edit the one marked line,
 comment on each setting says what it is for. It carries the health check, so Podman needs no `--health-*`
 options. On SELinux hosts, uncomment `label=disable`.
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 docker compose -f nas-compose.yaml up -d      # or: sudo podman compose -f nas-compose.yaml up -d
 docker compose -f nas-compose.yaml ps         # healthy, within a minute

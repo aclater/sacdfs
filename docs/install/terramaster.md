@@ -19,6 +19,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 1. **Log in over SSH as root.** In TOS's Control Panel, Terminal, switch on SSH *(untested)*. On your computer (Windows: PowerShell; macOS: Terminal) type `ssh youradmin@your-nas-address`, then `sudo -i` and your password *(untested: the VM login was already root)*. Check:
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    id -u && uname -m
    ```
@@ -26,6 +27,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* `0` and `x86_64`.
 2. **Check that FUSE is there.** FUSE is the part of the system that lets sacdfs show files. TOS has it, and `fusermount3`.
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    ls -l /dev/fuse
    ```
@@ -33,12 +35,14 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* a line starting with `crw`.
 3. **Make the folders and go into the first.** `/Volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs. Keep both folders at the top of the data volume, `/Volume1`, not inside a shared folder: sacdfs runs as root, and a user who can write to the top of a shared folder could swap the folders for their own (`ls -ld /Volume1` should show `drwxr-xr-x` and the owner `root`; [why](README.md#where-the-files-go)).
 
+   <!-- docs-run: -->
    ```sh
    mkdir -p /Volume1/sacdfs /Volume1/sacd
    cd /Volume1/sacdfs
    ```
 4. **Download sacdfs and its checksum file.**
 
+   <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
    curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
@@ -49,6 +53,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* two progress tables and no line starting `curl: (`.
 5. **Check the download.**
 
+   <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
    sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
@@ -58,6 +63,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.7.2-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 6. **Unpack it and put the program and the start-up unit in place.** The unit is the file that tells systemd (the part of the system that starts services) how to run sacdfs.
 
+   <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz'
    tar -xzf sacdfs-0.7.2-x86_64-linux.tar.gz
@@ -73,6 +79,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.7.2`<!-- /facts -->.
 7. **Write the settings file.** Change the first line to your images folder.
 
+   <!-- docs-run: -->
    ```sh
    cat > /etc/default/sacdfs <<'EOF'
    SACDFS_IMAGES='/Volume1/music'
@@ -81,6 +88,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    ```
 8. **Start sacdfs, and make it start with the NAS.**
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    systemctl daemon-reload
    systemctl enable --now sacdfs
@@ -91,6 +99,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* `active`, then one folder per image. Each holds `Stereo` and, on multichannel discs, `Multichannel`, with files like `01 - Title.dsf` and `01 - Title.wav`. sacdfs goes on running after you log out.
 9. **Restart the NAS, and look again.** systemd stops sacdfs cleanly on a restart. (Never stop sacdfs with `kill -9`: it leaves a dead mount that fails with `Transport endpoint is not connected` until someone runs `umount -l` on it.)
 
+   <!-- docs-run: skip="runs on the NAS's own operating system, which is not available here" -->
    ```sh
    reboot
    ```
@@ -101,6 +110,7 @@ To stop sacdfs by hand: `systemctl stop sacdfs` (it waits up to 30 seconds for o
 
 ## Check it worked
 
+<!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
 ```sh
 systemctl is-active sacdfs
 ls /Volume1/sacd

@@ -16,6 +16,7 @@ Checked on 0.6.0 with Navidrome 0.64.2 (official image) in rootless Podman on Fe
 
 1. **Check the mount.**
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    ls /srv/media/sacd
    ```
@@ -24,6 +25,7 @@ Checked on 0.6.0 with Navidrome 0.64.2 (official image) in rootless Podman on Fe
 
 2. **Start Navidrome.** The folder that holds the mount (`/srv/media`) is shared into the container, not the mount point itself, with `ro,rslave`. This keeps Navidrome working when sacdfs restarts.
 
+   <!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
    ```sh
    podman run -d --name navidrome --security-opt label=disable -p 4533:4533 \
      -v navidrome-data:/data -v /srv/media:/media:ro,rslave \

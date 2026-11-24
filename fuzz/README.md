@@ -30,6 +30,7 @@ out.
 
 You need a nightly toolchain and cargo-fuzz, and C++ for libFuzzer:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 rustup toolchain install nightly --profile minimal
 cargo +nightly install cargo-fuzz --locked
@@ -37,6 +38,7 @@ cargo +nightly install cargo-fuzz --locked
 
 Then, with nightly as the default toolchain in this directory or with `RUSTUP_TOOLCHAIN=nightly`:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 fuzz/run.sh 60 4                  # every target for 60 s, four at a time
 fuzz/run.sh 600 2 tags_toml names # these two, for 10 minutes each
@@ -46,6 +48,7 @@ On 32-bit x86 (#498), with the i686 standard library (`rustup target add i686-un
 and 32-bit C and C++ libraries (Fedora: `libstdc++-devel.x86_64 glibc-devel.i686 libstdc++-devel.i686 libgcc.i686
 libatomic.i686`):
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 FUZZ_TRIPLE=i686-unknown-linux-gnu fuzz/run.sh 60 4
 ```
@@ -60,6 +63,7 @@ in. It prints one line per target and exits non-zero if a target crashed. A targ
 in `fuzz/logs/<target>.log`, and the input that crashed it in `fuzz/artifacts/<target>/`. To
 run one again:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 cargo fuzz run TARGET fuzz/artifacts/TARGET/crash-...
 ```

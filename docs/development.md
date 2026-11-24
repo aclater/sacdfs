@@ -38,6 +38,7 @@ cause not found.
 
 To run a job's tests the same way locally:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 podman run --rm -it --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:Z -w /src \
     registry.access.redhat.com/ubi10/ubi:10.3 bash
@@ -70,6 +71,7 @@ Leaking one tree per cycle adds about 40 KiB a cycle, so the test fails on that 
 margin. The first cycle is a warm-up: process-wide state is set up once (the rayon pool, the
 tags store, the handle cache).
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 SACDFS_FUSE_TESTS=1 cargo test --test no_growth -- --nocapture
 ```
@@ -79,6 +81,7 @@ one test.
 
 ## What a listing holds
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 cargo run --release --example listing_mem -- SOURCE
 RUSTFLAGS='--cfg heap_dhat' cargo run --release --example listing_mem -- SOURCE
@@ -92,6 +95,7 @@ of each allocation site are what the listing holds. The breakdown in
 
 ## The soak
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 cargo build --release --bins --example stallfs
 python3 scripts/soak.py --sacdfs target/release/sacdfs --images DIR --hours 2 --out soak.tsv
@@ -217,6 +221,7 @@ benchmarks alone, for example `taskset -c 12-19 python3 scripts/soak.py ...` on 
 
 ## Heap profile of a soak segment (massif)
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 podman build -t sacdfs-leak -f scripts/leak-check.Containerfile scripts
 podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:z -v DIR:/images:ro,z \
@@ -239,6 +244,7 @@ is not in UBI, and massif gives the same two answers.
 
 ## The test suite under memcheck
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 podman run --rm --device /dev/fuse --cap-add SYS_ADMIN -v .:/src:z -w /src \
     sacdfs-leak scripts/leak-check.sh memcheck
@@ -311,6 +317,7 @@ and where the test does run.
 
 To run the same check locally:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 SACDFS_FUSE_TESTS=1 cargo test --locked 2>&1 | tee target/test-output.txt
 python3 -I scripts/check_skips.py --job tests target/test-output.txt
@@ -350,6 +357,7 @@ over NFS for comparing changes; it checks nothing and the script below does not 
 
 Run them with:
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 scripts/real-discs.sh DIR
 ```

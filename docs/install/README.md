@@ -29,6 +29,7 @@ does. About 5 minutes.
    `ssh youradmin@your-nas-address`.
 2. **See what it would do.** Type this, with your folder. It changes nothing:
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh \
      | sudo sh -s -- --iso-dir /volume1/music --dry-run
@@ -39,6 +40,7 @@ does. About 5 minutes.
    on QNAP the `admin` login is).
 3. **Install.** The same line without `--dry-run`:
 
+   <!-- docs-run: skip="installs sacdfs for real, which needs /dev/fuse and a mount; the docs-run container has neither" -->
    ```sh
    curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh \
      | sudo sh -s -- --iso-dir /volume1/music
@@ -67,6 +69,7 @@ Then set up your player: [which player](#3-which-player-or-music-server).
 - **You see:** `curl: command not found`. **Do this:** download it with `wget`, then run it
   (don't pipe `wget` into `sh`):
 
+  <!-- docs-run: skip="installs sacdfs for real, which needs /dev/fuse and a mount; the docs-run container has neither" -->
   ```sh
   wget -O install.sh https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh && sudo sh install.sh --iso-dir /volume1/music
   ```
@@ -270,12 +273,19 @@ single-quoted values the same way, for the characters the installer allows).)*
 
 **To read it before you run it,** download it, check it, and run it:
 
+<!-- docs-run: -->
 ```sh
 curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh
 curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh.sha256
 sha256sum -c install.sh.sha256      # install.sh: OK
 less install.sh
 sudo sh install.sh --iso-dir /volume1/music --dry-run
+```
+
+Then run it:
+
+<!-- docs-run: skip="installs sacdfs for real, which needs /dev/fuse and a mount; the docs-run container has neither" -->
+```sh
 sudo sh install.sh --iso-dir /volume1/music
 ```
 
@@ -319,6 +329,7 @@ release's `i686` archive, with its download link, to install by hand, and links
 **`--report`** prints the same block on any Linux system and changes nothing. It needs neither
 root nor `--iso-dir`:
 
+<!-- docs-run: -->
 ```sh
 curl -fsSL https://github.com/dsd-toolbox/sacdfs/releases/latest/download/install.sh | sh -s -- --report
 ```

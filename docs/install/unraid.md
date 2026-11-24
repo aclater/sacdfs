@@ -17,6 +17,7 @@ sacdfs shows your SACD images (`.iso` files) as folders of DSF and WAV files tha
 1. **Open a terminal on the server.** In Unraid's web page, click the `>_` (Terminal) icon at the top right *(untested)*.
 2. **Copy the template into Unraid.** A template is a ready-made set of container settings.
 
+   <!-- docs-run: skip="runs in Unraid's own shell, on its flash drive" -->
    ```sh
    wget -O /boot/config/plugins/dockerMan/templates-user/sacdfs.xml \
      https://raw.githubusercontent.com/dsd-toolbox/sacdfs/main/deploy/unraid/sacdfs.xml

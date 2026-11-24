@@ -26,6 +26,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
 1. **Install WinFsp.** Type:
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    winget install WinFsp.WinFsp
    ```
@@ -41,6 +42,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
 2. **Download sacdfs-win and its checksum.**
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    cd $HOME\Downloads
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-windows.zip\ncurl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-windows.zip.sha256'
@@ -51,6 +53,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
 3. **Check the download.**
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    # facts:release repo=dsd-toolbox/sacdfs fmt='(Get-FileHash sacdfs-{version}-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-{version}-x86_64-windows.zip.sha256).Split(" ")[0]'
    (Get-FileHash sacdfs-0.7.2-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.7.2-x86_64-windows.zip.sha256).Split(" ")[0]
@@ -61,6 +64,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
 4. **Unpack it into your programs folder.**
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    # facts:release repo=dsd-toolbox/sacdfs fmt='Expand-Archive sacdfs-{version}-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs'
    Expand-Archive sacdfs-0.7.2-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
@@ -76,6 +80,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
 5. **Mount your images.** Pick a free drive letter; this uses `S:`.
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    & $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe D:\Music\SACD S:
    ```
@@ -99,6 +104,7 @@ under their own account, and stop it cleanly.
 
 1. **Register sacdfs-win with the launcher** (once, in PowerShell **as administrator**):
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    Copy-Item $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe "C:\Program Files\sacdfs-win.exe"
    $key = "HKLM:\SOFTWARE\WOW6432Node\WinFsp\Services\sacdfs"
@@ -124,6 +130,7 @@ under their own account, and stop it cleanly.
 2. **Start it** (a normal PowerShell window from now on), with your folder and drive letter.
    `music` is a name for this mount, used to stop it:
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    & "C:\Program Files (x86)\WinFsp\bin\launchctl-x64.exe" start sacdfs music D:\Music\SACD S:
    ```
@@ -138,6 +145,7 @@ under their own account, and stop it cleanly.
 
 3. **Stop it:**
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    & "C:\Program Files (x86)\WinFsp\bin\launchctl-x64.exe" stop sacdfs music
    ```
@@ -149,6 +157,7 @@ under their own account, and stop it cleanly.
 With the launcher registered (above), a scheduled task can start it at each logon. In a normal
 PowerShell window:
 
+<!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
 ```powershell
 $launchctl = "C:\Program Files (x86)\WinFsp\bin\launchctl-x64.exe"
 $action = New-ScheduledTaskAction -Execute $launchctl -Argument "start sacdfs music D:\Music\SACD S:"
@@ -169,6 +178,7 @@ and password (`Access is denied`), and every user of the PC can read the files
 (`--no-allow-other` limits them to administrators). In PowerShell **as administrator**, register
 it under a second name, without `RunAs`:
 
+<!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
 ```powershell
 $key = "HKLM:\SOFTWARE\WOW6432Node\WinFsp\Services\sacdfs-all"
 New-Item $key -Force | Out-Null
@@ -191,10 +201,12 @@ a drive. The examples use a NAS called `nas` with a share `isos` and the user `m
 Mount it with the share's path, or with a drive letter mapped to it (`secret` stands for the
 share's password):
 
+<!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
 ```powershell
 & $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe \\nas\isos S:
 ```
 
+<!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
 ```powershell
 net use N: \\nas\isos /user:music secret
 & $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe N:\ S:
@@ -205,6 +217,7 @@ without the backslash), except as SYSTEM (see [For every user of the PC](#for-ev
 the share's password for your account once, so the task can reach the share at the next logon,
 then use the share's path in the task:
 
+<!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
 ```powershell
 cmdkey /add:nas /user:music /pass:secret
 ```
@@ -291,6 +304,7 @@ time.
    and, in PowerShell as administrator, `stop sacdfs-all music` the same way if you set that up.
 2. In a normal PowerShell window, remove the logon task, the program and its seek index:
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    Unregister-ScheduledTask -TaskName sacdfs -Confirm:$false
    Remove-Item -Recurse $env:LOCALAPPDATA\Programs\sacdfs, $env:LOCALAPPDATA\sacdfs
@@ -299,6 +313,7 @@ time.
 3. In PowerShell **as administrator**, remove the launcher entries, the copied program, the
    SYSTEM log and the SYSTEM account's seek index:
 
+   <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    Remove-Item "HKLM:\SOFTWARE\WOW6432Node\WinFsp\Services\sacdfs", "HKLM:\SOFTWARE\WOW6432Node\WinFsp\Services\sacdfs-all"
    Remove-Item "C:\Program Files\sacdfs-win.exe", C:\ProgramData\sacdfs.log

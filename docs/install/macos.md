@@ -27,6 +27,7 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
 
 1. **Download the archive and its checksum** in Terminal. On Apple Silicon (M1 and later):
 
+   <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    mkdir -p ~/sacdfs
    cd ~/sacdfs
@@ -38,6 +39,7 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
 
    On an Intel Mac, the same with `x86_64` (not run in the VM, which is Apple Silicon):
 
+   <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    mkdir -p ~/sacdfs
    cd ~/sacdfs
@@ -51,6 +53,7 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
 
 2. **Check the download:**
 
+   <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='shasum -a 256 -c sacdfs-{version}-aarch64-macos.tar.gz.sha256'
    shasum -a 256 -c sacdfs-0.7.2-aarch64-macos.tar.gz.sha256
@@ -63,6 +66,7 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
 
 3. **Unpack it:**
 
+   <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-aarch64-macos.tar.gz\n~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs --version'
    tar -xzf sacdfs-0.7.2-aarch64-macos.tar.gz
@@ -75,6 +79,7 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
 
 4. **Make an empty folder to mount on, and start sacdfs.**
 
+   <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    mkdir -p ~/SACD
    # facts:release repo=dsd-toolbox/sacdfs fmt='~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs ~/Music/"SACD images" ~/SACD'
@@ -97,6 +102,7 @@ For 0.7.2 and earlier, which are not signed. A browser marks what it downloads a
 and macOS refuses to start an unsigned program from such a file. With both files in Downloads, check the archive and remove the mark **before
 you unpack it**:
 
+<!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
 ```sh
 cd ~/Downloads
 # facts:release repo=dsd-toolbox/sacdfs fmt='shasum -a 256 -c sacdfs-{version}-aarch64-macos.tar.gz.sha256\nxattr -d com.apple.quarantine sacdfs-{version}-aarch64-macos.tar.gz'
@@ -126,6 +132,7 @@ screen.
 
 1. **Install Apple's command line tools** (the compiler's linker):
 
+   <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    xcode-select --install
    ```
@@ -135,6 +142,7 @@ screen.
 
 2. **Install Rust**, for your user only:
 
+   <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
    source ~/.cargo/env
@@ -144,6 +152,7 @@ screen.
 
 3. **Build and install sacdfs** with the Mac's mount (`--features nfs`):
 
+   <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    cargo install --locked --features nfs --git https://github.com/dsd-toolbox/sacdfs sacdfs
    ~/.cargo/bin/sacdfs-nfs --version
@@ -157,6 +166,7 @@ screen.
 
 Instead of step 4, write a launch agent with the same command and `--launch-agent`:
 
+<!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
 ```sh
 # facts:release repo=dsd-toolbox/sacdfs fmt='~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD'
 ~/sacdfs/sacdfs-0.7.2-aarch64-macos/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD
@@ -170,6 +180,7 @@ Its log is `~/Library/Logs/sacdfs-nfs.log`. The launch agent names the program b
 keep that folder; after unpacking a newer release elsewhere, write the launch agent again. To
 stop it and keep it from starting:
 
+<!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
 ```sh
 launchctl unload -w ~/Library/LaunchAgents/io.github.aclater.sacdfs-nfs.plist
 ```

@@ -24,6 +24,7 @@ The commands below are for x86_64; on aarch64 (`uname -m` prints `aarch64`) use 
 
 1. **Download the package and its checksum, and check it:**
 
+   <!-- docs-run: group=packages-rpm image=fedora45 setup="dnf -y -q install sudo tar iproute && echo assumeyes=True >> /etc/dnf/dnf.conf" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-1.x86_64.rpm\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-1.x86_64.rpm.sha256\nsha256sum -c sacdfs-{version}-1.x86_64.rpm.sha256'
    curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-1.x86_64.rpm
@@ -38,6 +39,7 @@ The commands below are for x86_64; on aarch64 (`uname -m` prints `aarch64`) use 
 
 2. **Install it:**
 
+   <!-- docs-run: group=packages-rpm image=fedora45 expect="Complete!" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sudo dnf install ./sacdfs-{version}-1.x86_64.rpm'
    sudo dnf install ./sacdfs-0.7.2-1.x86_64.rpm
@@ -49,13 +51,14 @@ The commands below are for x86_64; on aarch64 (`uname -m` prints `aarch64`) use 
 3. **Name your folders** in `/etc/sysconfig/sacdfs` (`sudoedit /etc/sysconfig/sacdfs`): the
    folder that holds your SACD images, and an empty folder to show the tracks in. For example:
 
-   ```sh
+   ```text
    SACDFS_IMAGES=/srv/sacd-images
    SACDFS_MOUNT=/srv/sacd
    ```
 
 4. **Start sacdfs, and start it at each boot:**
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    sudo systemctl enable --now sacdfs
    ls /srv/sacd
@@ -74,21 +77,23 @@ COPR, and dnf checks the signature.
 
 Fedora 44 and 45:
 
+<!-- docs-run: group=packages-copr image=fedora45 setup="dnf -y -q install sudo tar iproute && echo assumeyes=True >> /etc/dnf/dnf.conf" -->
 ```sh
-sudo dnf copr enable dsd-toolbox/sacdfs
+sudo dnf copr enable aclater/sacdfs
 sudo dnf install sacdfs
 ```
 
 RHEL 9 (on RHEL 10, put `10` for each `9`):
 
+<!-- docs-run: group=packages-rhel image=ubi9 setup="dnf -y -q install sudo && echo assumeyes=True >> /etc/dnf/dnf.conf" expect="Complete!" -->
 ```sh
 sudo curl -fsSL -o /etc/yum.repos.d/aclater-sacdfs.repo https://copr.fedorainfracloud.org/coprs/aclater/sacdfs/repo/rhel-9/aclater-sacdfs-rhel-9.repo
 sudo dnf install sacdfs
 ```
 
 *You should see* `Complete!`; `sacdfs --version` then prints <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.7.2`<!-- /facts -->. On RHEL,
-`sudo dnf copr enable dsd-toolbox/sacdfs` alone looks for an EPEL build, which this project
-doesn't have; with `dnf-plugins-core` installed, `sudo dnf copr enable dsd-toolbox/sacdfs
+`sudo dnf copr enable aclater/sacdfs` alone looks for an EPEL build, which this project
+doesn't have; with `dnf-plugins-core` installed, `sudo dnf copr enable aclater/sacdfs
 rhel-9-x86_64` works too. Then go on with step 3 above (settings, then start).
 
 A COPR build sorts newer than the release's `.rpm` of the same version (`0.7.2-1.el9` after
@@ -100,6 +105,7 @@ instead of being the release archive's.
 
 1. **Download the package and its checksum, and check it:**
 
+   <!-- docs-run: group=packages-deb image=debian setup="apt-get update -qq && apt-get install -y -qq sudo curl ca-certificates && echo 'APT::Get::Assume-Yes \"true\";' > /etc/apt/apt.conf.d/90yes" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs_{version}-1_amd64.deb\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs_{version}-1_amd64.deb.sha256\nsha256sum -c sacdfs_{version}-1_amd64.deb.sha256'
    curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs_0.7.2-1_amd64.deb
@@ -114,6 +120,7 @@ instead of being the release archive's.
 
 2. **Install it:**
 
+   <!-- docs-run: group=packages-deb image=debian -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sudo apt install ./sacdfs_{version}-1_amd64.deb'
    sudo apt install ./sacdfs_0.7.2-1_amd64.deb
@@ -125,6 +132,7 @@ instead of being the release archive's.
 
 4. **Start sacdfs, and start it at each boot:**
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    sudo systemctl enable --now sacdfs
    ls /srv/sacd

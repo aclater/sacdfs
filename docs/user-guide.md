@@ -8,6 +8,7 @@ what to do when something goes wrong. Installing is in the [install guides](inst
 
 ## Quick start
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 mkdir -p ~/sacd
 sacdfs ~/music/sacd-images ~/sacd       # returns once mounted
@@ -313,6 +314,7 @@ on a 0.4.0 mount (`sacd-migrate --catalogue --mount`) still point at the old nam
    [quick start](#quick-start), where `~/sacd` is the mount and `~/music/sacd-images` the
    images folder you gave sacdfs:
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    beet sacd-migrate --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
    beet sacd-migrate --apply --mount ~/sacd --source ~/music/sacd-images ~/music/sacd-images
@@ -426,6 +428,7 @@ album = "Album Name (5.1)"
 **From extracts: `sacdfs tags import`.** Before deleting extracts, copy what their tags have
 and sacdfs's lack into the tags directory:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sacdfs tags import --tags ~/music/sacd-tags --map ~/music/dsf ~/music/sacd-images \
     ~/music/sacd-images ~/music/dsf
@@ -464,6 +467,7 @@ summary says how many were left out. 1 when the import couldn't run or didn't fi
 **From MusicBrainz: `sacdfs tags fetch`.** For a disc with little or no text, this looks it up and
 writes what it finds to its tags file:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sacdfs tags fetch --tags ~/music/sacd-tags --dry-run ~/music/sacd-images/disc.iso   # look first
 sacdfs tags fetch --tags ~/music/sacd-tags ~/music/sacd-images/disc.iso
@@ -542,6 +546,7 @@ stereo area and looks the fingerprints up in [AcoustID](https://acoustid.org), w
 MusicBrainz recordings. The release holding the most of those recordings, at their places on the
 disc, then goes through the same checks as the other steps.
 
+<!-- docs-run: skip="uses a personal account, key or password, so it cannot run unattended" -->
 ```sh
 export ACOUSTID_API_KEY=...   # your own application key, see below
 sacdfs tags fetch --tags ~/music/sacd-tags --acoustid --dry-run ~/music/sacd-images/disc.iso
@@ -599,6 +604,7 @@ has not yet been run against AcoustID with an application key or on real discs.
 
 With `--musicbrainz`, the mount does the same lookup by itself, for the discs that need it:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sacdfs --tags ~/music/sacd-tags --musicbrainz ~/music/sacd-images ~/music/sacd
 sacdfs --tags ~/music/sacd-tags --musicbrainz=name,durations ~/music/sacd-images ~/music/sacd
@@ -920,6 +926,7 @@ a device counts as a file: it is replaced by the report.
 
 Examples:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 # Extracts next to the images; then list what is safe to delete.
 sacdfs verify -o report.tsv ~/music/sacd-images
@@ -1121,6 +1128,7 @@ as in the trace, so a faster mount gets the next one sooner. It prints the read 
 open file (`--play`, its `r=` number) and how a player buffering it would have fared: when its
 audio could start and how long it stalled. `--help` says how traced files map to the mount's.
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 sacdfs -vv --log-file /tmp/sacdfs-trace.log /music/Example.iso /mnt/sacd   # then play
 scripts/trace-replay.py /tmp/sacdfs-trace.log --play 12                     # the trace's own numbers
@@ -1161,6 +1169,7 @@ network player of #456, each with the command that derives it from a trace in
 CPU and anonymised). The CI stall gate replays them
 ([performance.md](performance.md#the-ci-stall-gate)).
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 scripts/trace-replay.py tests/fixtures/traces/player-mpv-wav.trace.gz --play 0 --profile --wav-audio-start 264000
 scripts/trace-replay.py --player tests/fixtures/players/zidoo-wav.json /mnt/sacd

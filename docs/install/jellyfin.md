@@ -16,6 +16,7 @@ Checked on 0.6.0 with Jellyfin 12.4.0 (official image) in rootless Podman on Fed
 
 1. **Check the mount.**
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    ls /srv/media/sacd
    ```
@@ -24,6 +25,7 @@ Checked on 0.6.0 with Jellyfin 12.4.0 (official image) in rootless Podman on Fed
 
 2. **Start Jellyfin.** The folder that holds the mount (`/srv/media`) is shared into the container, not the mount point itself, with `ro,rslave`. This keeps Jellyfin working when sacdfs restarts.
 
+   <!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
    ```sh
    podman run -d --name jellyfin --security-opt label=disable -p 8096:8096 \
      -v jellyfin-config:/config -v jellyfin-cache:/cache \

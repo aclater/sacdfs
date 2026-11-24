@@ -22,12 +22,14 @@ See [Details](#details).
 
 1. **Install the mount helper.** Fedora or RHEL:
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    sudo dnf install fuse3
    ```
 
    Debian or Ubuntu:
 
+   <!-- docs-run: group=deb-binary image=debian setup="apt-get update -qq && apt-get install -y -qq sudo curl ca-certificates && echo 'APT::Get::Assume-Yes \"true\";' > /etc/apt/apt.conf.d/90yes" -->
    ```sh
    sudo apt install fuse3
    ```
@@ -35,6 +37,7 @@ See [Details](#details).
 2. **Download sacdfs and its checksum.** `uname -m` prints your CPU. The commands are for
    `x86_64`; on `aarch64`, write `aarch64` for `x86_64` in every file name of steps 2 to 4.
 
+   <!-- docs-run: -->
    ```sh
    cd ~
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
@@ -45,6 +48,7 @@ See [Details](#details).
 
 3. **Check the download.**
 
+   <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
    sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
@@ -55,6 +59,7 @@ See [Details](#details).
 
 4. **Unpack it and put the program in your own `bin` folder.**
 
+   <!-- docs-run: expect="sacdfs {version}" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz'
    tar -xzf sacdfs-0.7.2-x86_64-linux.tar.gz
@@ -71,6 +76,7 @@ See [Details](#details).
 5. **Make an empty folder to mount on, and start sacdfs.** While it runs, this folder shows the
    DSF and WAV files; anything already in it is hidden.
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    mkdir -p ~/sacd
    ~/.local/bin/sacdfs ~/music/sacd-images ~/sacd
@@ -80,6 +86,7 @@ See [Details](#details).
 
 6. **To stop it,** type:
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    fusermount3 -u ~/sacd
    ```
@@ -90,6 +97,7 @@ See [Details](#details).
 
 ## Check it worked
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 ls ~/sacd
 ```
@@ -148,6 +156,7 @@ clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributi
 **With `gh` instead of `curl`,** and checking where it was built (for the other builds, write
 `x86_64-v3` or `aarch64` for `x86_64`):
 
+<!-- docs-run: skip="needs the GitHub CLI signed in, or a personal API key" -->
 ```sh
 # facts:release repo=dsd-toolbox/sacdfs fmt='gh release download {tag} -R dsd-toolbox/sacdfs -p '"'"'sacdfs-{version}-x86_64-linux.tar.gz*'"'"'\nsha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256\ngh attestation verify sacdfs-{version}-x86_64-linux.tar.gz -R dsd-toolbox/sacdfs'
 gh release download v0.7.2 -R dsd-toolbox/sacdfs -p 'sacdfs-0.7.2-x86_64-linux.tar.gz*'
@@ -195,6 +204,7 @@ playing in real time on an Atom.
 sacdfs needs Rust 1.85 or later and nothing else: it talks to the kernel through `/dev/fuse` and, as
 a user other than root, mounts with `fusermount3` (or FUSE 2's `fusermount`), without linking libfuse.
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 cargo install --locked sacdfs     # from crates.io, from 0.4.0
 # before 0.4.0, from the release tag:

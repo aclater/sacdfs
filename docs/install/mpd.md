@@ -16,6 +16,7 @@ Checked on 0.6.0 with MPD 0.24.18 and mpc 0.35 (Fedora 44 packages, in a contain
 
 1. **Check the mount.**
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    ls /srv/media/sacd
    ```
@@ -32,6 +33,7 @@ Checked on 0.6.0 with MPD 0.24.18 and mpc 0.35 (Fedora 44 packages, in a contain
 
 3. **Start MPD.**
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    sudo systemctl enable --now mpd
    ```
@@ -40,6 +42,7 @@ Checked on 0.6.0 with MPD 0.24.18 and mpc 0.35 (Fedora 44 packages, in a contain
 
 4. **Build the database.**
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    mpc update --wait
    mpc stats
@@ -49,6 +52,7 @@ Checked on 0.6.0 with MPD 0.24.18 and mpc 0.35 (Fedora 44 packages, in a contain
 
 ## Check it worked
 
+<!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
 ```sh
 mpc list album
 mpc add "Artist/Disc/Stereo/01 - Title.dsf"   # one of the paths from: mpc listall

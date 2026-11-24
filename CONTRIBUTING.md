@@ -23,6 +23,7 @@ contains security fixes. See [How a report is handled](SECURITY.md#how-a-report-
    while yours waits, merge it into your branch (no force-push) and let the checks run again.
 3. Run the checks before you push:
 
+   <!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
    ```sh
    cargo fmt --all --check
    cargo clippy --all-targets --locked -- -D warnings
@@ -49,7 +50,12 @@ contains security fixes. See [How a report is handled](SECURITY.md#how-a-report-
    under "Unreleased". `python3 scripts/check-docs.py` checks relative links, anchors and the
    old repository name offline, and `python3 scripts/check-version-drift.py` checks that the
    install guides, deploy files, scarletbook pin quotes and CHANGELOG dates match Cargo.toml
-   and the releases; CI runs both (docs-check.yml).
+   and the releases; CI runs both (docs-check.yml). The shared docs tools of the
+   [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/docs/docs-tooling.md) check
+   the page shape, spelling and licence files (docs lint), every link, that a code change also
+   changes the docs, that versions and release files equal the latest release, and that the
+   documented commands run (docs.yml; settings in `.docs.toml`). Each command block in the docs
+   carries a `docs-run` marker: it runs, or it is skipped with a reason.
 
 ## Code acceptance rules
 

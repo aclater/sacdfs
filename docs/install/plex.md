@@ -15,6 +15,7 @@ Not tested on 0.6.0. Plex was last checked on 0.4.1-rc.1 (Plex Media Server 1.43
 
 1. **Check the mount.**
 
+   <!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
    ```sh
    ls /srv/media/sacd
    ```
@@ -23,6 +24,7 @@ Not tested on 0.6.0. Plex was last checked on 0.4.1-rc.1 (Plex Media Server 1.43
 
 2. **Start Plex.** Share the folder that holds the mount (`/srv/media`), not the mount point itself, read-only with `rslave`. This keeps Plex working when sacdfs restarts.
 
+   <!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
    ```sh
    podman run -d --name plex --security-opt label=disable --network host \
      -v plex-config:/config -v /srv/media:/data:ro,rslave \

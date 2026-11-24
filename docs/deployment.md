@@ -88,6 +88,7 @@ hosts; the runtime picks the right one), each built for a generic CPU by the rel
 after the share test (SMB and NFS) passed on that very image, on a native runner of that
 architecture:
 
+<!-- docs-run: skip="needs a container engine and the GitHub CLI signed in" -->
 ```sh
 # facts:release repo=dsd-toolbox/sacdfs fmt='docker pull ghcr.io/aclater/sacdfs:{version}       # a release; :latest is the newest\ngh attestation verify oci://ghcr.io/aclater/sacdfs:{version} -R dsd-toolbox/sacdfs'
 docker pull ghcr.io/aclater/sacdfs:0.7.2       # a release; :latest is the newest
@@ -100,6 +101,7 @@ The attestation shows which commit and workflow built it. In the commands below,
 
 ## Building the image
 
+<!-- docs-run: skip="builds or tests from a source checkout; the docs-run container holds only the commands, not the repository" -->
 ```sh
 git clone https://github.com/dsd-toolbox/sacdfs && cd sacdfs
 podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
@@ -191,6 +193,7 @@ The container drops the runtime's whole default set of capabilities and adds bac
 seven its programs need (#386). The Compose files, the TrueNAS app and the Unraid template set
 all of this already; with `docker run` or `podman run`, pass:
 
+<!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
 ```sh
 --device /dev/fuse --cap-drop ALL \
 --cap-add SYS_ADMIN --cap-add DAC_OVERRIDE --cap-add DAC_READ_SEARCH \
@@ -947,6 +950,7 @@ format to bound, check and keep safe for a gain on one start per mount.
 
 ### Docker or Podman
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 docker run -d --name sacdfs --restart unless-stopped \
   --device /dev/fuse --cap-drop ALL \
@@ -978,6 +982,7 @@ clients can use other ports. Windows 11 build 26200 also mounted a share on anot
 
 `deploy/compose.yaml` builds and runs the image with the settings above:
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 SACD_IMAGES=/path/to/images docker compose -f deploy/compose.yaml up -d --build
 docker compose -f deploy/compose.yaml logs -f
@@ -1216,6 +1221,7 @@ the host:
   before the containers start, and again after every boot (it doesn't persist; how to run it at boot
   differs per NAS and is untested):
 
+  <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
   ```sh
   # the host directory that sacdfs's /srv and the player bind, for example /volume1/sacdfs-mnt
   mount --bind /volume1/sacdfs-mnt /volume1/sacdfs-mnt
@@ -1238,6 +1244,7 @@ With Docker or Podman (on SELinux hosts add `--security-opt label=disable` to bo
 were run with `sudo podman run` on Fedora 45, with Jellyfin as the player; Docker was run through the
 Compose file below, on TrueNAS:
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 mkdir -p /srv/sacdfs-mnt
 docker run -d --name sacdfs --restart unless-stopped \
@@ -1439,6 +1446,7 @@ setting for this; the stereo and multichannel files already have different album
 
 NFS (package `nfs-utils` or `nfs-common`):
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sudo mkdir -p /mnt/sacd
 sudo mount -t nfs4 -o ro,vers=4.2 nas:/sacd /mnt/sacd
@@ -1448,6 +1456,7 @@ sudo mount -t nfs4 -o ro,vers=4.2 nas:/sacd /mnt/sacd
 
 SMB (package `cifs-utils`):
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,guest,vers=3.1.1
 # with SMB_USER: keep the password in a file readable only by root
@@ -1476,6 +1485,7 @@ File managers open `smb://nas/sacd` directly.
 
 If the container publishes other ports (TrueNAS, step 2), give them to the client:
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 sudo mount -t nfs4 -o ro,vers=4.2,port=12049 nas:/sacd /mnt/sacd
 sudo mount -t cifs //nas/sacd /mnt/sacd -o ro,credentials=/root/.sacd-smb,vers=3.1.1,port=10445
@@ -1494,6 +1504,7 @@ serve that container, which never sees the new one. Bind the parent directory wi
 propagation, so the new mount shows up inside the container (tested with rootless Podman on
 0.3.0-rc.1, see [clients](clients.md#general-recommendations)):
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 # sacdfs mounted at /srv/sacd/music; bind /srv/sacd, not /srv/sacd/music
 podman run -v /srv/sacd:/media:ro,rslave ...

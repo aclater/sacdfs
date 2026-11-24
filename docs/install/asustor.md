@@ -19,6 +19,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
 
 1. **Log in over SSH as root.** In ADM, Settings, Services, Terminal, tick "Enable SSH service" *(untested)*. On your computer (Windows: PowerShell; macOS: Terminal) type `ssh youradmin@your-nas-address`, then `sudo -i` and your password *(untested: the VM login was already root)*. Check:
 
+   <!-- docs-run: setup="dnf -y -q install sudo tar iproute wget less && echo assumeyes=True >> /etc/dnf/dnf.conf && mkdir -p /volume1/music /etc/systemd/system" -->
    ```sh
    id -u && uname -m
    ```
@@ -26,6 +27,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* `0` and `x86_64`.
 2. **Check that FUSE is there.** FUSE is the part of the system that lets sacdfs show files. ADM has it.
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    ls -l /dev/fuse
    ```
@@ -33,12 +35,14 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* a line starting with `crw`.
 3. **Make the folders and go into the first.** `/volume1/sacd` is where the DSF and WAV files will appear; anything already in it is hidden while sacdfs runs. Keep both folders at the top of the data volume, `/volume1`, not inside a shared folder: sacdfs runs as root, and a user who can write to the top of a shared folder could swap the folders for their own (`ls -ld /volume1` should show `drwxr-xr-x` and the owner `root`; [why](README.md#where-the-files-go)).
 
+   <!-- docs-run: -->
    ```sh
    mkdir -p /volume1/sacdfs/cache /volume1/sacd
    cd /volume1/sacdfs
    ```
 4. **Download sacdfs and its checksum file.**
 
+   <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
    curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
@@ -49,6 +53,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* two progress tables and no line starting `curl: (`.
 5. **Check the download.**
 
+   <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
    sha256sum -c sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
@@ -58,6 +63,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.7.2-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 6. **Unpack it and copy out the program and its start script.**
 
+   <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz\ncp sacdfs-{version}-x86_64-linux/sacdfs sacdfs-{version}-x86_64-linux/sacdfs-ctl /volume1/sacdfs/'
    tar -xzf sacdfs-0.7.2-x86_64-linux.tar.gz
@@ -69,6 +75,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.7.2`<!-- /facts -->.
 7. **Write the settings file.** Change the first line to your images folder.
 
+   <!-- docs-run: -->
    ```sh
    cat > /volume1/sacdfs/sacdfs.conf <<'EOF'
    SACDFS_IMAGES='/volume1/music'
@@ -79,6 +86,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    ```
 8. **Start sacdfs.**
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    SACDFS_CONF=/volume1/sacdfs/sacdfs.conf /volume1/sacdfs/sacdfs-ctl start
    ls /volume1/sacd
@@ -87,6 +95,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* `sacdfs started`, then one folder per image. Each holds `Stereo` and, on multichannel discs, `Multichannel`, with files like `01 - Title.dsf` and `01 - Title.wav`. sacdfs goes on running after you log out.
 9. **Make it start and stop with the NAS.** ADM runs every `S??*` file in `/usr/local/etc/init.d` with `start` at start-up, and every `K??*` file with `stop` at shut-down (it waits up to 60 seconds). One file does both. (The stop matters: never stop sacdfs with `kill -9`, it leaves a dead mount.)
 
+   <!-- docs-run: skip="needs /dev/fuse, a mount or systemd, which the docs-run container does not have" -->
    ```sh
    cat > /usr/local/etc/init.d/S99sacdfs <<'EOF'
    #!/bin/sh
@@ -103,6 +112,7 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    *You should see* `S99sacdfs` and the link `K01sacdfs`.
 10. **Restart the NAS, and look again.** Restart it from ADM's web page, or type:
 
+    <!-- docs-run: skip="runs on the NAS's own operating system, which is not available here" -->
     ```sh
     reboot
     ```
@@ -113,6 +123,7 @@ To stop sacdfs by hand: `SACDFS_CONF=/volume1/sacdfs/sacdfs.conf /volume1/sacdfs
 
 ## Check it worked
 
+<!-- docs-run: skip="needs the reader's own SACD images or a running mount, which the docs-run container does not have" -->
 ```sh
 ls /volume1/sacd
 ```
@@ -148,6 +159,7 @@ Checked on ADM 5.1.4 in a VM, not on ASUSTOR hardware. Storage setup and app sto
 
 ADM's Docker package (Docker CE 25.0.5, Compose v2.24.7) ran [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml), the one Compose file for every NAS container manager, as a Compose project. Put it in a folder of its own (for example `/volume1/docker/sacdfs/compose.yaml`), change the one marked line, `/volume1/music`, to your images folder, and run:
 
+<!-- docs-run: skip="starts or builds containers, which needs a container engine inside the docs-run container" -->
 ```sh
 docker compose up -d
 docker inspect -f '{{.State.Health.Status}}' sacdfs
