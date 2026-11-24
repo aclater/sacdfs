@@ -65,11 +65,14 @@ jobs:
       tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
 
   commands:
+    # Not for pull requests from forks: their Markdown would run on the runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-run.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
     with:
       tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
       version-of: dsd-toolbox/sacdfs
       require-coverage: "29"
+      fail_unmarked: true
 
   audit:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '11 5 3 * *'
