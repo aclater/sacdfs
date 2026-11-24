@@ -71,7 +71,7 @@ row with no result is untested.
 
 ## Test libraries
 
-All libraries use genuine discs. Synthetic discs are for CI's parsers only: the owner decided
+All libraries use genuine discs. Synthetic discs are for CI's parsers only: the maintainer decided
 that coverage gaps are filled by real discs as the library grows, because what breaks clients comes
 from real pressings.
 
@@ -111,7 +111,7 @@ otherwise stated as untested.
 | JRiver Media Center | 2 | SMB 3 | Windows VM, trial | 0.4.1-rc.1, partial | Carried over from rc.1 (see [results](#results-041-rc2-gate-2026-11-06)) | Not run on 0.5.0 |
 | Kodi, Gerbera (DLNA), Strawberry | 2 | Mount and shares | Containers or VMs | Kodi 21.3 on main (November 2026), Windows WinFsp and SMB; Gerbera and Strawberry **never** | Never run | Not run on 0.5.0 |
 | macOS 15 in a VM on Apple hardware (and the newest release when available): `mount_smbfs`, `cp`, `rsync`, Spotlight, Quick Look, CoreAudio tools; Finder and free players (library import, tags and art, with audio off) | 2 | SMB 3 | macOS 15 in a VM on Apple hardware, tests run over SSH | File tools on 0.4.0; macOS 27.2 VM results in clients.md since: SMB on 0.6.0-rc.1, media servers on main (November 2026); Finder and players **never** | A baseline exists on 0.4.0 (restart and listing counts, `mount_smbfs`, in [#204](https://github.com/dsd-toolbox/sacdfs/issues/204) and [#205](https://github.com/dsd-toolbox/sacdfs/issues/205)); not run on rc.2. Those two issues also record an rc.1 re-run of the same two checks | Not run on 0.5.0 |
-| Sonos, using the music-library share | 3 | SMB | Needs the owner; record its format and protocol limits | **Never** | Never run | Not run on 0.5.0 |
+| Sonos, using the music-library share | 3 | SMB | Needs the maintainer; record its format and protocol limits | **Never** | Never run | Not run on 0.5.0 |
 | Phones and hardware streamers (WiiM, Bluesound, others) | 3 | SMB, NFS, UPnP | No hardware to automate | **Never** | Never run | Not run on 0.5.0 |
 
 Client versions are recorded each run. Tier 1 images are refreshed to current at each candidate;

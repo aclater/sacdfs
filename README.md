@@ -11,8 +11,7 @@
 [![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-blue)](COPYING)
 
 sacdfs shows your Super Audio CD images (`.iso` files) as DSF and WAV tracks, with tags, to any
-player or music server, with nothing extracted: keep the ISOs, delete the extracted copies. It is fast enough to play stereo and multichannel DST discs in real time on a 2011 dual-core 32-bit
-Atom D2700 NAS.
+player or music server, with nothing extracted: keep the ISOs, delete the extracted copies. On a 2011 dual-core 32-bit Atom D2700 NAS it plays stereo and multichannel DST discs as DSF in real time ([#456](https://github.com/dsd-toolbox/sacdfs/issues/456)); multichannel WAV in real time on that Atom is not measured.
 
 ## Platforms
 
@@ -90,7 +89,7 @@ option) any later version. The text, documentation, icons and data are licensed 
 [CC BY 4.0](LICENSES/CC-BY-4.0.txt): reuse them with credit to the sacdfs authors.
 
 How to cite: see [CITATION.cff](CITATION.cff), which GitHub's "Cite this repository" button reads.
-Each release is archived with a DOI on Zenodo.
+From 0.8.0 on, each release is archived with a DOI on Zenodo.
 
 - [scarletbook](https://github.com/aclater/scarletbook-rs) (MIT OR Apache-2.0) does the SACD
   parsing, DST decoding and DSD-to-PCM conversion, through its public APIs.

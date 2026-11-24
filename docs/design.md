@@ -87,7 +87,7 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   is being deprecated, and does not depend on `scarletbook`, so there is one copy of each.
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
-  *Why:* it measured within the owner's 15 % leeway and no less exact
+  *Why:* it measured within the maintainer's 15 % leeway and no less exact
   ([Seeking](#seeking-scarletbooks-28)). Not used: cancellation (`CancelToken`) and progress
   (`Progress`); cancellation could later back FUSE `INTERRUPT` (#45). The tests use
   scarletbook's exact seek index as a reference.
@@ -172,7 +172,7 @@ before. Two changes, each needed:
   It grows with the number of images listed (see above) and with decoder threads,
   not with the cache, and does not depend on `--max-open-images`.
 - **One TOC per image** (#136). `Disc::toc()` is a method over scarletbook's copy instead of a
-  clone held in a field. *Why:* the owner's target is peak RSS within the cache cap plus 50 MB
+  clone held in a field. *Why:* the maintainer's target is peak RSS within the cache cap plus 50 MB
   (#73), and the second copy was about 60 KB per image (16 MB over 271 images). *Alternative:*
   an `Arc<Toc>` shared by `Disc` and the library: not possible without changing scarletbook,
   and the borrow from the library's disc costs nothing per read. *Trade-off:* the TOC is
@@ -189,7 +189,7 @@ and 5,000 images (`examples/listing_mem.rs`), at 24.8 files per image: 47% is bu
 tag bytes, the structs), 18% is the TOC and text, 19% the tree's nodes, entries and names, 2% the
 walk, and 13% the allocator's overhead. Over 90% of the bytes requested can be rebuilt from the image.
 
-**The decision.** The owner's direction was for running short of memory to make sacdfs slower rather
+**The decision.** The maintainer's direction was for running short of memory to make sacdfs slower rather
 than kill it, with re-reading the TOC as the accepted cost. So the unit dropped is the whole image:
 its disc, areas and files. *Why it stays correct:* numbers come from paths (see [`ident`](../src/ident.rs)),
 and a number not in the tree is already looked for along its path, for NFS handles kept across a
@@ -289,7 +289,7 @@ NFS clients and `--tags` found them.
 
 ### Memory: the default cache and the fixed overhead (#150)
 
-The owner asked for lower memory use after 0.3.0: peak RSS under 100 MiB at the default cache and
+The maintainer asked for lower memory use after 0.3.0: peak RSS under 100 MiB at the default cache and
 under 64 MiB at the smallest, on the import replay, with straight reads and seeks within 5 % of
 0.3.0. Measured on the five bench images (`scripts/import-replay.py`; a 32-thread host):
 
@@ -384,7 +384,7 @@ MOUNT/
 - File names come from the track text (title), with `/`, NUL and control characters
   replaced; a track without a title is `NN - Track NN.dsf` ([#185](#discs-without-text-185)).
   Duplicates get ` (2)`, ` (3)`.
-- **DSF and WAV files side by side** in the same folder (owner decision, #11): `--format dsf`,
+- **DSF and WAV files side by side** in the same folder (maintainer decision, #11): `--format dsf`,
   `wav` or `dsf,wav` (the default) selects which appear. *Why:* one mount and one tree, no
   duplicate folders to browse or configure; players and taggers handle two files with the
   same name and different extensions. Listing, `stat` and tag reads cost nothing for the
@@ -518,17 +518,17 @@ Artist/Year - Album/Artist - Album (rip)/Album/disc.iso
 - *Why these rules* (#13): always flattening would change paths for existing users;
   collapsing the top level too would drop the album name of a single-album artist; naming
   folders from the TOC's text is a separate option if ever wanted, since disc titles are
-  often less descriptive than the owner's folder names. Deciding from the TOCs
+  often less descriptive than the maintainer's folder names. Deciding from the TOCs
   would mean opening every image at mount, which is the cost the lazy tree exists to avoid; the
   walk reads only the signature of each (#175).
 
 ### Sidecar files (#79, #75)
 
-The owner's goal for sacdfs (#82, 2026-11-01) is to architect it for reclaiming storage
+The maintainer's goal for sacdfs (#82, 2026-11-01) is to architect it for reclaiming storage
 space: people delete the DSF files they extracted
 and lose nothing. The first gap was everything else in the album folders. sacdfs showed only
 what it makes from images, so a player reading through it saw no local art (in a real Roon
-test on the owner's NAS, Roon fell back to its online art), and a playlist could not live on
+test on the maintainer's NAS, Roon fell back to its online art), and a playlist could not live on
 the share (Roon imports playlist entries only from inside the same storage location, #75).
 
 So sacdfs passes **sidecar files** of SOURCE through, read-only and byte for byte, at their
@@ -541,7 +541,7 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   includes macOS's `._folder.jpg`) never pass. The list is applied from left to right
   (`default`, `ext`, `Name/`, `-item`, `none`), so one option widens (`default,cue`), narrows
   (`default,-webp`), replaces (`jpg,png`) or turns it off (`none`, exactly 0.1.0's tree).
-  *Why an allow-list, not "everything that isn't an image":* the owner's library keeps the
+  *Why an allow-list, not "everything that isn't an image":* the maintainer's library keeps the
   extracted DSF, DFF and FLAC files next to the images (#82 counts them); passed through,
   every track would show twice in a player, once as the extract and once as sacdfs's file,
   and logs, `.cue` sheets pointing at files that aren't there, or `Thumbs.db` would ride
@@ -625,7 +625,7 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   93/93). *Why the same inode, not a copy:* nothing is stored or made, a changed cover
   changes in both places, and a server that walks both finds one file. *Selection:* it uses
   the `--sidecars` list, so a removed extension is not shown in either place and `none` shows
-  no art; there is no separate option, since the owner's wish is that nothing is
+  no art; there is no separate option, since the maintainer's wish is that nothing is
   configured client-side (#95 acceptance) and the list already gives control. *Source of the
   list:* `Art` holds the image sidecars of the image's folder (with `--flatten`, of the chain,
   as the collapsed folder shows them); images in one folder share it. `nlink` stays 1 (the
@@ -634,7 +634,7 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   when the art holds no `cover.*` (any case), the area listing adds one more name for the first
   of it (`folder.*`, then `front.*`, then by name) as `cover.<ext>`, with the extension in
   lower case and `jpeg` as `jpg`: the same node again, not a copy, and only in the areas
-  (the album folder is the source's). *Why only when there is no `cover.*`:* the owner's own
+  (the album folder is the source's). *Why only when there is no `cover.*`:* the maintainer's own
   cover wins, and a library that already names its covers sees no change. *Alternative:*
   name the art `cover.*` in the source, which a library of thousands cannot be asked to do.
   *Trade-off:* a `Cover.PNG` (other case) counts as a cover and gets no alias, so if MPD matches
@@ -735,12 +735,12 @@ export of one FUSE mount doesn't have; and old clients go stale once on the upgr
   collision case above.
 
 **Multichannel album suffix (#97).** The album tag of a multichannel area's DSF and WAV files
-ends in ` (Multichannel)` unless `--no-multichannel-album-suffix`. *Owner decision:* multichannel
+ends in ` (Multichannel)` unless `--no-multichannel-album-suffix`. *Maintainer decision:* multichannel
 copies get their own album name in the tags by default, with an option to turn it off.
 *Why:* Navidrome, LMS, MPD and MinimServer all showed a disc's two copies as one album.
 *Sources:* the client tests on #82. *Alternatives:* no change; a separate album-artist or
 comment tag (servers group by album name); hiding an area (loses content). *Trade-off:* the
-tag bytes differ from an extract's, which the owner allows (only audio must match); the
+tag bytes differ from an extract's, which the maintainer allows (only audio must match); the
 output versions move (DSF 3, WAV 4). The option is a process-wide switch in `dsf.rs`, and
 toggling it does not move mtimes. A tags file's album name wins and gets no suffix
 ([Tag layer](#tag-layer-81)).
@@ -1097,7 +1097,7 @@ RIFF <size> WAVE   fmt <40>   JUNK <zeros>   data <frames x S x C x 3>   LIST <I
   `--pcm-cutoff wide` (about 80 kHz) is offered at 176.4 and 352.8 kHz only. *Why the option:*
   Philips listening tests (Nuijten and Reefman, AES paper 5399, 2001) found wideband filters at
   80 or 100 kHz undetected where 50 kHz was detected, and other sources (Reefman and Janssen,
-  Stuart, Craven, JAES 2004) favour a wider channel. *Why not the default:* the owner keeps
+  Stuart, Craven, JAES 2004) favour a wider channel. *Why not the default:* the maintainer keeps
   Weiss's 40 kHz, which keeps DSD's ultrasonic noise out of unknown playback chains; the
   listening tests don't answer that concern. *Why refused at 88.2 kHz:* that rate holds
   only up to 44.1 kHz, so sacdfs refuses `wide` with `--pcm-rate 88200` at startup, with a
@@ -1316,7 +1316,7 @@ discs, every frame read through sacdfs equals the exact reading (`tests/library_
   well-formed disc there is nothing to act on. Were a refuted reading to be served, the frames
   would sit in the frame cache and the kernel's page cache until evicted. A follow-up could run
   verification while idle on local images and then drop those frames (`notify_inval_inode`).
-- *Why not keep the locator:* the owner's offload rule (adopt scarletbook when it is exact and
+- *Why not keep the locator:* the maintainer's offload rule (adopt scarletbook when it is exact and
   within 15 % of sacdfs's own code on the measure that matters, here latency); the measurements
   are below. It removes the hardest code sacdfs had (`disc.rs` went from 1 022 lines to 584, 500 fewer in all).
 
@@ -2354,7 +2354,7 @@ approval.
   unmounts the folder itself, which also ends a mount left behind; `soft` failed every read
   after 6 to 8 s on macOS 27.2, whatever `timeo` and `retrans` said), `rsize=1048576` and
   `rdirplus`. On Linux: `soft,timeo=10,retrans=30`.
-- **Signing and notarisation: Developer ID from 0.8.0.** The owner chose Developer ID signing
+- **Signing and notarisation: Developer ID from 0.8.0.** The maintainer chose Developer ID signing
   and notarisation, so a browser download starts like any other signed program and the guide's
   quarantine step is only for older releases. The release job `macos-sign` (tag runs only, in
   the environment `release`, which allows only `v*` tags and waits for its reviewer) imports
@@ -2687,14 +2687,14 @@ alternatives and the trade-off.
 - a pass band to 40 kHz (the default, fully attenuated by 48 kHz), to 30 kHz (attenuated by 36 kHz), or a wide 80 kHz (176.4 and 352.8 kHz only, attenuated by the Nyquist frequency at 176.4 kHz);
 - a gain, 0 dB by default, where 100 % DSD modulation is full scale.
 
-**Why scarletbook-pcm (#84).** The owner's decision (2026-11-01) was to keep scarletbook-rs's clean converter, measure it against sacdfs's own, and switch when it is within the 15 % offload leeway and meets the targets above.
+**Why scarletbook-pcm (#84).** The maintainer's decision (2026-11-01) was to keep scarletbook-rs's clean converter, measure it against sacdfs's own, and switch when it is within the 15 % offload leeway and meets the targets above.
 - **0.5.2 did not:**
   - it was 33 to 46 % slower with the default filter;
   - its wide filter folded 88.2-96 kHz back below Nyquist at 176.4 kHz;
   - its 30 kHz filter stopped from 38 kHz;
   - DSD silence did not convert to exact zero.
 - **0.5.3 fixed all four** (scarletbook-rs#170 to #173), so sacdfs's own converter, about 1 600 lines, was deleted.
-- *Alternative:* keep sacdfs's converter (ported from pysacd's), which has a flatter pass band (±0.00003 against ±0.004 dB) and a 4 dB lower noise floor. Neither difference is audible, and the code would be maintained twice, which the owner wants to avoid.
+- *Alternative:* keep sacdfs's converter (ported from pysacd's), which has a flatter pass band (±0.00003 against ±0.004 dB) and a 4 dB lower noise floor. Both differences are far inside the targets (a measurement, not a listening test), and the code would be maintained twice, which the maintainer wants to avoid.
 - *Trade-off:* the WAV files' samples changed (by less than -72 dB against the signal in the audio band), so their output version moved to 3 ([identity](#file-identity-and-nfs-export)): new mtimes and generations, so copies and library scanners pick up the new bytes.
 
 **Stateless per frame (why: random reads).** Frame `f`'s PCM is computed from DSD frames `f - 1`, `f` and `f + 1` only, and equals, bit for bit, a conversion of the whole area in one pass. `pcm::convert_area` and scarletbook-pcm's own tests check this for every frame, 1 to 6 channels, every rate and cutoff, and by proptest on random windows and runs. Each output sample depends on at most 195 bytes per channel of each neighbour, far less than a frame.
@@ -2883,7 +2883,7 @@ shows is derived from images that root chose to share.
 warning on a background start goes nowhere without `--log-file`, and the user would still meet
 "Permission denied" first. Turning it on for every user: a non-root user without
 `user_allow_other` would then fail to mount at all, a change in behaviour for desktop users who
-mount for themselves. `allow_root` (root and the owner): fuser enforces it itself, and it would
+mount for themselves. `allow_root` (root and the maintainer): fuser enforces it itself, and it would
 not help Samba guests or app users, which are neither.
 
 **Trade-off.** A root mount that should be private now needs `--allow-other=no`, and a reader
@@ -2898,7 +2898,7 @@ The checklist is in [release.md](release.md). The decisions, each with its reaso
 
 - **glibc 2.17 through zig (#244), not static musl, not container-only.** *Why:* the release
   binary built on UBI 8 needed glibc 2.28, and QNAP's QuTScloud 5.2.9 has glibc 2.21: the binary
-  stopped at start (`symbol statx, version GLIBC_2.28 not defined`). The owner chose to build
+  stopped at start (`symbol statx, version GLIBC_2.28 not defined`). The maintainer chose to build
   against glibc 2.17's symbols, the oldest Rust's std supports, with
   [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild): zig, as the linker, links
   against the symbol versions of the glibc named in the target (`x86_64-unknown-linux-gnu.2.17`)
@@ -3003,12 +3003,12 @@ MusicBrainz IDs on 26.
   scarletbook gives the same key, and any copy of the same pressing does too. Text is left out
   so that a TOC text decoding fix can't move a key. *Trade-off:* two pressings with identical
   numbers would share a file; with sector-exact track positions that needs the same master.
-- **Out of band only; no writable mount.** *Owner decision:* out-of-band only,
+- **Out of band only; no writable mount.** *Maintainer decision:* out-of-band only,
   through `sacdfs tags import` from extracts, beets-pysacd export, and a CLI/TOML for hand edits;
   the mount stays read-only, and a writable mount is not planned. *Why:* taggers rewrite whole
   multi-gigabyte files; accepting that over FUSE, NFS and SMB is a lot of risk for what the
   importer and beets already give.
-- **Art only when named.** *Owner decision:* art is embedded only when a disc's tags file names an
+- **Art only when named.** *Maintainer decision:* art is embedded only when a disc's tags file names an
   image, and with no tags file the output stays byte-identical. The picture is an `APIC` front cover
   appended to scarletbook's tag (as `Tags::Raw`), at most 960 KiB, since scarletbook caps a tag
   at 1 MiB. *Trade-off:* the tag is held in memory per listed track file, so a picture costs
@@ -3075,7 +3075,7 @@ MusicBrainz IDs on 26.
   untagged served file (so nothing the TOC already says is copied) and the front cover. Values
   shared by every track of an area become area-album values, shared by both areas album
   values. Existing tags files keep their values (hand edits win), and files are written
-  through a rename. *Why reuse verify:* the owner asked for verify's matching, and it is the
+  through a rename. *Why reuse verify:* the maintainer asked for verify's matching, and it is the
   proof the extract may be deleted.
 
 ### Discs without text (#185)
@@ -3087,7 +3087,7 @@ with no network and no stored state; the lookups of its later phases write tags 
 - **Titles.** A track without a title gets the title `Track NN` and the file name
   `NN - Track NN.dsf`. Titles stay per area: a stereo area's title does not fill a multichannel
   track, since nothing says the two areas hold the same tracks in the same order.
-- **Album and artist from the path.** `fallback.rs` holds the rule. *Owner decision (the phase
+- **Album and artist from the path.** `fallback.rs` holds the rule. *Maintainer decision (the phase
   split was delegated):* this part is always on and never uses the network. *Why so narrow:* a
   wrong artist is worse than a blank one, because a player then files the disc under someone else.
   So only a shape that can't be read another way counts (`Artist - YYYY - Album [...]` in the
@@ -3175,7 +3175,7 @@ schedules it, or turns on `--musicbrainz`.
   503s. *Trade-off:* a wrong release with the same number, the same track count and tracks within
   15 s would pass; none was seen. Real discs still refused: 16 of 60, 8 with no release found, 5 on ISRCs
   that disagree and 3 on durations.
-- **ISRCs that disagree still refuse, also by number.** The coordinator decided this under the owner's
+- **ISRCs that disagree still refuse, also by number.** The coordinator decided this under the maintainer's
   delegation, after real discs. *Why:* a wrong tag written to a library costs more than a disc left
   unmatched, and the sample is small. *Measured:* without the rule, 49 of 60 discs matched against 44, and
   the 5 extra were right by hand. *Alternative:* no refusal at the number step, where the number and
@@ -3249,10 +3249,10 @@ through the mount's images and calls the same code as `tags fetch` for each disc
   *Trade-off:* the in-process AcoustID switch still waits for its soak, and the worker will gain it
   only then.
 - **AcoustID fingerprinting is not part of 0.6.0 (#185 closed; the rest is #296, milestone Later).**
-  The owner delegated the split. *Why:* it needs two things that are not code: an AcoustID API key
+  The maintainer delegated the split. *Why:* it needs two things that are not code: an AcoustID API key
   (an external account), and a Chromaprint source. The choices are the C library (a new native
   dependency, against the glibc-2.17 baseline), `fpcalc` as a run-time program, or a Rust port. Each
-  needs a decision of its own, and a soak that proves the owner's CPU, memory and thread bounds
+  needs a decision of its own, and a soak that proves the maintainer's CPU, memory and thread bounds
   before the in-process switch. The other lookups already match the discs in the real-disc sample that
   carry no text (19 of 21, by number), so the fingerprint is a last resort for a small group.
   *Alternatives:* ship `tags fetch --acoustid` now with `fpcalc` required on `PATH` (rejected: nobody
@@ -3293,11 +3293,11 @@ through the mount's images and calls the same code as `tags fetch` for each disc
 
 ## Verifying extracts (`sacdfs verify`, #80)
 
-The owner's aim for sacdfs is reclaiming storage (#82): people delete the DSF and DFF files
+The maintainer's aim for sacdfs is reclaiming storage (#82): people delete the DSF and DFF files
 they extracted from their images and keep one copy of each disc, the image. `sacdfs verify`
 gives the per-file proof that this loses no audio, and lists what it would lose in tags. It
 never deletes anything; the user acts on its report. The method is the one a one-off run on
-the owner's NAS already used.
+the maintainer's NAS already used.
 
 - **A subcommand, `sacdfs verify`, not a separate binary.** *Why:* one binary to install,
   ship and package: the release archives, the container image and the packaging all carry
@@ -3330,7 +3330,7 @@ the owner's NAS already used.
   misnumbered file still matches. A file that matches nothing gets the nearest track by length
   in its reason, since a track-boundary difference (pauses included or not) is the usual
   cause.
-- **Separate trees by prefix mapping (`--map FROM TO`).** *Why:* the two layouts the owner's
+- **Separate trees by prefix mapping (`--map FROM TO`).** *Why:* the two layouts the maintainer's
   library and common practice use are extracts next to the image and a mirror tree; a prefix
   map covers the second without guessing from names. Matching by disc text or digest across
   the whole library would cost a decode of every disc per unmatched file.
@@ -3632,17 +3632,17 @@ waits for step 1's soak.
 
 ### Leaks (#151)
 
-The owner asked for leak tracing and profiling: sacdfs runs for days on a NAS. How to run
+The maintainer asked for leak tracing and profiling: sacdfs runs for days on a NAS. How to run
 each tool is in [development.md](development.md).
 
 - **On every PR: `tests/no_growth.rs`, a dhat-rs test.** It runs mount cycles in-process
   and requires the heap left after each unmount to stay flat.
   - *Why in-process:* dhat counts only its own process's allocations, so the filesystem
     runs on a fuser background session in the test.
-  - *Why mount cycles, not hours:* the owner asked that CI not take too long. The test
+  - *Why mount cycles, not hours:* the maintainer asked that CI not take too long. The test
     takes about 14 s on the CI runners, and the `tests` job grew from 2 min 23 s to
     2 min 51 s on main to 3 min 12 s on the PR's first run. That is under the 1-minute budget
-    the owner set.
+    the maintainer set.
   - *Why 16 KiB of slack:* a deliberately leaked tree per cycle adds about 40 KiB a cycle,
     while the measured noise is 32 bytes.
   - *Alternatives:* a counting global allocator written in the test. Rejected because it

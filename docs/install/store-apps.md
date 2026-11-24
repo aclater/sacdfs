@@ -168,12 +168,12 @@ Unraid.
 - **Unraid Community Applications:** `deploy/unraid/sacdfs.xml` and `ca_profile.xml` are well
   formed and pass a check of the elements and `Config` attributes that the community CA starter
   kit's validator requires (written out by hand here, because Unraid publishes no validator).
-  Unraid's own validate and scan on `ca.unraid.net/submit` has not been run: it needs the owner's
+  Unraid's own validate and scan on `ca.unraid.net/submit` has not been run: it needs a maintainer's
   account.
 
 ## Before a store listing
 
-Submission is the owner's step and is not done. The repository is ready for it: icon, template,
+Submission is the maintainer's step and is not done. The repository is ready for it: icon, template,
 `ca_profile.xml` (the repository profile Community Applications requires in the root), and the
 catalog app directory. Still needed from outside: an Unraid forum account and support thread, and
 a pull request to the TrueNAS apps repository (and an issue there first, as their template asks). In that pull request the

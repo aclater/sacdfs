@@ -78,7 +78,7 @@ frame cache and seek index cold). 3 rounds of 3 seeks per disc, at other positio
 | Cold seek over SMB, DSF, server's page cache evicted | < 25 ms | **4.8 ms** plain DSD, **5.7 ms** DST stereo (worst 6.1 ms) | met |
 | Cold seek over SMB, WAV, the same | < 25 ms | **5.4 ms** plain DSD, **6.1 ms** DST stereo (worst 6.6 ms) | met |
 | The same with the server's page cache warm | | DSF 3.2 / 5.1 ms, WAV 4.4 / 5.5 ms | |
-| Cold seek over NFS and SMB, the published container on the owner's NAS (hard disks) | < 25 ms | **15 to 22 ms** with the NAS's cache warm; **31 to 61 ms** (worst 92 ms) when the audio comes from its hard disks ([below](#on-a-nas-server-side-21-part-2)) | met from the NAS's cache; not met from its hard disks |
+| Cold seek over NFS and SMB, the published container on the maintainer's NAS (hard disks) | < 25 ms | **15 to 22 ms** with the NAS's cache warm; **31 to 61 ms** (worst 92 ms) when the audio comes from its hard disks ([below](#on-a-nas-server-side-21-part-2)) | met from the NAS's cache; not met from its hard disks |
 
 On the emulated LAN the open takes 0.6 ms (one round trip) and the read 2.1 to 5.0 ms:
 sacdfs's cold seek on the server's own disk (1.8 to 3.0 ms without netem, "loopback") plus a
@@ -213,7 +213,7 @@ sacdfs 0.2.0 seeks with scarletbook 0.5.2 ([design](design.md#seeking-scarletboo
 builds below are scarletbook 0.5.2, generic x86-64: **(a)** sacdfs's own frame locator (0.1.0's
 code), **(b)** scarletbook's provisional readings and seek hints. Measured on 2026-11-01 under
 the benchmark lock, (a) and (b) interleaved, their order swapped every other round. *Not a quiet
-machine:* other agents' work kept the load average at 5 to 20 between parts, and the cleanroom VM
+machine:* other jobs on the machine kept the load average at 5 to 20 between parts, and the cleanroom VM
 averaged 2.5 threads busy; the NAS was serving a library import over SMB at the same time. Times
 are noisier than in the 0.1.0 round; calls and bytes are not affected.
 
@@ -663,7 +663,7 @@ Multiples of real time per stereo stream:
 | Cold WAV seek, DST stereo, mean (worst) | 0.95 ms (1.63) | 0.97 ms (1.62) | 0.93 ms (1.95) | 0.96 ms (2.31) |
 | Cold WAV seek, plain DSD stereo, mean (worst) | 0.40 ms (1.16) | 0.41 ms (0.93) | 0.38 ms (0.90) | 0.42 ms (1.11) |
 
-Everything is within the owner's 15 % leeway. The largest gap is the plain DSD WAV read, where conversion is the only CPU work: +10 %.
+Everything is within the maintainer's 15 % leeway. The largest gap is the plain DSD WAV read, where conversion is the only CPU work: +10 %.
 ## Concurrency and memory
 
 The scenario of #6, for 30 s: four players each reading 128 KiB at a time in real time with a
@@ -880,7 +880,7 @@ could matter there. The 0.6.5 gate measured the same listing on another client a
 memory figure below is not the current one; see the [deployment guide](deployment.md#memory) and
 [Small NAS: sizing](deployment.md#small-nas-sizing) for today's.
 
-Measured by #21 part 1 on the owner's NAS, a different machine from the rest of this page, so
+Measured by #21 part 1 on the maintainer's NAS, a different machine from the rest of this page, so
 kept apart: a 12th-gen Intel Core i5-1235U (2 performance and 8 efficiency cores, 12 threads,
 AVX2) with 96 GB of RAM; a generic build of the release code (with #53) in a one-shot app;
 images read-only on local ZFS (hard disks), 3 stereo areas and 1 six-channel area. The ZFS

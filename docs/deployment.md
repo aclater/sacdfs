@@ -1145,7 +1145,7 @@ host networking, on the same NAS as sacdfs.
   natively and converts it to PCM where an endpoint needs that.
 - **Discs you have also extracted.** If the same disc is also in your library as extracted
   files, Roon merges the two into one album and plays whichever copy it makes primary,
-  hiding the other. In the owner's test it chose sacdfs's copy for some albums and the
+  hiding the other. In the maintainer's test it chose sacdfs's copy for some albums and the
   library's for others. So beside existing extracts you aren't always playing from sacdfs.
   Removing the extracts (the space sacdfs saves) removes the ambiguity.
 - **Folder art** works: `folder.jpg`, `cover.jpg` and the other sidecar files next to the
