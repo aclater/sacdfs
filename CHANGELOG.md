@@ -34,6 +34,9 @@ All notable changes to sacdfs are recorded here. The format follows
   only the version moves. The corpus and eight real discs are byte-identical to 0.7.0's, so `DSF_VERSION` and `WAV_VERSION` stay, and whole-area reads on an i9-13900H take the same time ([figures](docs/performance.md#by-scarletbook-release-101)). `scarletbook-pcm` is outside the freeze and keeps 0.7.0; it does not
   depend on `scarletbook`, so the build holds one copy of each.
 
+- **scarletbook 1.0.2 (`=1.0.2`).** A documentation and comments release of scarletbook: no code,
+  API or ABI change, so only the version moves. The corpus is byte-identical to 1.0.1's.
+
 - **Fewer command-line options (#560).** `sacdfs --help` lists 12 options instead of 27. The
   tuning options (`--threads`, `--cache-mb`, `--listing-mb`, `--start-burst`,
   `--start-burst-secs`, `--max-open-images`, `--request-timeout`, `--stop-grace`,
@@ -75,6 +78,13 @@ All notable changes to sacdfs are recorded here. The format follows
   of the custom app in YAML, which the guide keeps for settings the catalog form doesn't have.
 
 ### Fixed
+
+- **The private-names CI check fails closed.** `scripts/check-private-names.sh` could pass when it
+  had found a private name, or could not search at all (more than one `xargs` batch, a
+  directory symlink or submodule, an invalid `PRIVATE_NAMES` regex, a `git log` error). It now
+  uses `git grep` and treats exit 0 as a hit, 1 as clean and anything else as a failed check;
+  an empty alternative in `PRIVATE_NAMES` is refused. `scripts/test-check-private-names.sh`
+  covers these cases in CI.
 
 - **Short reads on a fresh mount got slower in 0.7.2 (#589).** A kept head (#456) was copied
   into a slab of heads at the read, a cost per mount and per file that long tracks hide. The
