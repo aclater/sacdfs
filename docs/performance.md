@@ -611,7 +611,10 @@ Head reads only (the first 64 KiB of every file) are identical on both: 14,828 c
 831,479,312 bytes. Tail reads only, with an empty seek index: 0.6.2 11,127 calls and 527,315,712
 bytes, 0.7.0 11,834 calls and 500,588,416 bytes. With the seek index loaded from the earlier
 pass, head then tail: 9,973 calls on both, 962,452,176 bytes on 0.6.2 and 1,070,446,432 on 0.7.0
-(+11 %). The files read are identical byte for byte. Tracked in
+(+11 %); with `--index-cache off` both read 9,973 calls and 962,061,008 bytes, so the growth needs
+the seek index, built or loaded, and the default mount uses one. The files read are identical byte
+for byte. Repeated alone and in turn, three times each, the fresh-index runs differ by +2.8 to
++4.6 % calls and +6.9 to +7.9 % bytes, the warm-index runs by +9.5 to +10.9 % bytes. Tracked in
 [scarletbook-rs#431](https://github.com/aclater/scarletbook-rs/issues/431).
 
 ### By scarletbook release (1.0.1)
