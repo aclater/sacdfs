@@ -282,7 +282,7 @@ failing phase on each.
 Base for 0.8.0, on the maintainer's library of 7,519 DSF files (`scripts/read-phases-0.8.0.json`):
 listing 0 calls and 0 bytes; listing and 90 s idle 3 calls and 335,872 bytes; head and tail
 20,522 calls and 1,528,744,192 bytes (the default index cache, fresh). 0.8.0 itself failed this
-check against 0.7.2 (+7.9 % bytes; with `--index-cache off` the reads are identical): explained by
+check against 0.7.2 (+7.9 % bytes; with `--index-cache off` the reads were identical in five of six runs, one first run after a pause read more, see performance.md): explained by
 scarletbook 0.7.0 and later ([performance](performance.md#image-reads-by-phase-scarletbook-062-against-070-and-later-080),
 [scarletbook-rs#431](https://github.com/aclater/scarletbook-rs/issues/431)) and recorded in the
 CHANGELOG. A different library needs its own base run on the previous release.
