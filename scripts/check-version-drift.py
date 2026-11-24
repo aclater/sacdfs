@@ -22,7 +22,7 @@ import subprocess
 import sys
 import urllib.request
 
-REPO = "aclater/sacdfs"
+REPO = "dsd-toolbox/sacdfs"
 V = r"\d+\.\d+\.\d+(?:-rc\.\d+)?"
 # How a guide tells users which release to take.
 GUIDE_FORMS = [

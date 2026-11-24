@@ -10,6 +10,6 @@
     sacdfs source, its container image and the Unraid template. Support happens in the
     repository's GitHub issues.
   </Profile>
-  <Icon>https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/icon.png</Icon>
-  <WebPage>https://github.com/aclater/sacdfs</WebPage>
+  <Icon>https://raw.githubusercontent.com/dsd-toolbox/sacdfs/main/deploy/icon.png</Icon>
+  <WebPage>https://github.com/dsd-toolbox/sacdfs</WebPage>
 </CommunityApplications>

@@ -7,7 +7,7 @@ branches: if you're on an older release, the fix is to upgrade.
 
 | Version | Supported |
 | --- | --- |
-| latest release ([releases](https://github.com/aclater/sacdfs/releases)) | yes |
+| latest release ([releases](https://github.com/dsd-toolbox/sacdfs/releases)) | yes |
 | `main` | yes |
 | anything older | no |
 
@@ -16,10 +16,10 @@ branches: if you're on an older release, the fix is to upgrade.
 Please don't open a public issue, pull request or discussion for a vulnerability. Report it
 privately through GitHub's private vulnerability reporting:
 
-**<https://github.com/aclater/sacdfs/security/advisories/new>**
+**<https://github.com/dsd-toolbox/sacdfs/security/advisories/new>**
 
 (or the **Report a vulnerability** button on the repository's
-[Security tab](https://github.com/aclater/sacdfs/security)). Only the maintainer sees the
+[Security tab](https://github.com/dsd-toolbox/sacdfs/security)). Only the maintainer sees the
 report.
 
 Please include:

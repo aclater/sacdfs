@@ -45,7 +45,7 @@ jobs:
             --accept '100..=103,200..=299,429,503'
             --exclude '^https://api\.scorecard\.dev/'
             --exclude '^https://img\.shields\.io/'
-            --exclude '^https://raw\.githubusercontent\.com/aclater/sacdfs/main/docs/assets/'
+            --exclude '^https://raw\.githubusercontent\.com/dsd-toolbox/sacdfs/main/docs/assets/'
             --exclude-path 'tests/corpus/'
             '**/*.md'
           fail: true

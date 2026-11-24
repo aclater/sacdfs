@@ -1,6 +1,6 @@
 # sacdfs
 
-[sacdfs](https://github.com/aclater/sacdfs) serves SACD disc images (ISO files) as DSF and WAV
+[sacdfs](https://github.com/dsd-toolbox/sacdfs) serves SACD disc images (ISO files) as DSF and WAV
 files over SMB and NFS, so music servers and players read them like ordinary albums. The images
 stay untouched and are mounted read-only.
 

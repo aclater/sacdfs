@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/aclater/sacdfs/main/deploy/icon.svg" alt="" width="96">
+<img src="https://raw.githubusercontent.com/dsd-toolbox/sacdfs/main/deploy/icon.svg" alt="" width="96">
 
 [sacdfs](../README.md) › Documentation
 
@@ -45,6 +45,6 @@ user guide.
 ## See also
 
 - [README](../README.md)
-- [Releases](https://github.com/aclater/sacdfs/releases)
+- [Releases](https://github.com/dsd-toolbox/sacdfs/releases)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

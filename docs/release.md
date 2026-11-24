@@ -4,7 +4,7 @@
 
 How a sacdfs release is made, from the checks before the tag to the assets after it. The
 process shared by the DSD Toolbox projects is in its
-[CI/CD guide](https://github.com/aclater/dsd-toolbox/blob/main/docs/ci-cd.md).
+[CI/CD guide](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/docs/ci-cd.md).
 
 ## Steps
 
@@ -17,7 +17,7 @@ never moved.
 2. **Test:** run the [release test plan](test-plan.md) on a release candidate; its exit criteria
    decide whether the final version is tagged.
 3. **Dry run:** Actions, "release", "Run workflow" on `main` (or
-   `gh workflow run release.yml -R aclater/sacdfs --ref main`). It builds and tests every
+   `gh workflow run release.yml -R dsd-toolbox/sacdfs --ref main`). It builds and tests every
    archive, package and the image, runs the container share test, and publishes nothing; its summary
    lists the assets and checksums a tag would publish. Pull requests that change the release
    files run it too.
@@ -60,15 +60,15 @@ never moved.
    catalog published it under (the catalog numbers its app itself;
    [store-apps.md](install/store-apps.md#checked-with-the-stores-own-tooling)), and pin the
    image digest in `ix_values.yaml`.
-8. **Roll-up:** update [RELEASES.md](https://github.com/aclater/dsd-toolbox/blob/main/RELEASES.md)
-   in aclater/dsd-toolbox (the minor version's summary and release list).
+8. **Roll-up:** update [RELEASES.md](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/RELEASES.md)
+   in dsd-toolbox/dsd-toolbox (the minor version's summary and release list).
 
 ## macOS archives of an earlier release
 
 Every release run builds and tests both macOS
 archives; the release gets them only when the repository variable `SACDFS_MACOS_RELEASE` is
 `true`. To add them later to a release whose run held them back, while the run's artifacts
-last (7 days): `gh workflow run release.yml -R aclater/sacdfs --ref main -f macos_run=RUN_ID
+last (7 days): `gh workflow run release.yml -R dsd-toolbox/sacdfs --ref main -f macos_run=RUN_ID
 -f tag=vX.Y.Z`. The job `macos-publish` checks that the run is the tag's successful release
 run and that the release has no macOS assets yet, verifies the checksums, attests the two
 archives, uploads them with their `.sha256` and `.intoto.jsonl`, appends their two lines to
@@ -85,7 +85,7 @@ macOS assets": delete the macOS assets it uploaded (`gh release delete-asset`), 
 
 Every release run packs and tests the `.rpm`
 and `.deb` packages and the source RPM (`packaging/`). To add them to a release made before
-that: `gh workflow run release.yml -R aclater/sacdfs --ref main -f packages_tag=vX.Y.Z`. The run
+that: `gh workflow run release.yml -R dsd-toolbox/sacdfs --ref main -f packages_tag=vX.Y.Z`. The run
 checks the release's x86_64 and aarch64 archives against `SHA256SUMS` and their attestations,
 packs them and the tag's source, runs the package and SRPM tests, then (job
 `packages-publish`) attests the five files, uploads them with their `.sha256` and
@@ -128,4 +128,4 @@ crate that already exists on crates.io, so sacdfs 0.4.0 is published by hand:
 - [Contributing](../CONTRIBUTING.md)
 - [Install guide](install/README.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

@@ -37,8 +37,8 @@ See [Details](#details).
 
    ```sh
    cd ~
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
-   curl -fLO https://github.com/aclater/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.7.2/sacdfs-0.7.2-x86_64-linux.tar.gz.sha256
    ```
 
 3. **Check the download.**
@@ -103,7 +103,7 @@ More: [the user guide](../user-guide.md) (running it, fstab, systemd, troublesho
 
 ### Binaries
 
-Each [release](https://github.com/aclater/sacdfs/releases) has these builds:
+Each [release](https://github.com/dsd-toolbox/sacdfs/releases) has these builds:
 
 - `sacdfs-<version>-x86_64-linux.tar.gz`: generic x86-64, for any x86_64 CPU. Its WAV converter
   already uses AVX2 where the CPU has it.
@@ -174,7 +174,7 @@ static program can crash the kernel (CVE-2014-4508), and sacdfs is no exception:
 binary serves the test corpus with the x86_64 build's bytes. Before 0.7.1, the same build on an
 i9-13900H served the corpus (910 files) and three real discs (94 DSF and WAV files) with the bytes
 of the x86_64 build. Test builds of the same recipe ran on an ASUSTOR AS-302T (Atom D2700, ADM) in
-[#456](https://github.com/aclater/sacdfs/issues/456), and on CentOS 7 i386 (kernel 3.10) in a VM,
+[#456](https://github.com/dsd-toolbox/sacdfs/issues/456), and on CentOS 7 i386 (kernel 3.10) in a VM,
 where the audit crash above was seen. Not checked: other 32-bit systems, and multichannel WAV
 playing in real time on an Atom.
 
@@ -186,7 +186,7 @@ a user other than root, mounts with `fusermount3` (or FUSE 2's `fusermount`), wi
 ```sh
 cargo install --locked sacdfs     # from crates.io, from 0.4.0
 # before 0.4.0, from the release tag:
-cargo install --locked --git https://github.com/aclater/sacdfs --tag v0.3.0
+cargo install --locked --git https://github.com/dsd-toolbox/sacdfs --tag v0.3.0
 # or, in a clone:
 cargo build --release && target/release/sacdfs --help
 ```
@@ -210,4 +210,4 @@ distributions. Options: [options.md](../options.md).
 - [User guide](../user-guide.md)
 - [Options](../options.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

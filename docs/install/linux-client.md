@@ -124,4 +124,4 @@ More about clients and other systems: [deployment guide](../deployment.md#mounti
 - [Deployment: mounting the shares](../deployment.md#mounting-the-shares-on-clients)
 - [Clients](../clients.md)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

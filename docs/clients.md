@@ -6,7 +6,7 @@ This page lists the music servers, players and file tools that sacdfs has been t
 version of each, how it was connected, what happened, and how to set sacdfs and the client up.
 
 Everything here comes from the client-test reports on
-[#82](https://github.com/aclater/sacdfs/issues/82) and the issues linked below; a result is
+[#82](https://github.com/dsd-toolbox/sacdfs/issues/82) and the issues linked below; a result is
 only stated where a test showed it, and a setting is only recommended where a test on the
 version named ran with it. "Untested", "partial" and "not validated" mean what they say. For
 the container, shares and mounting, see the [deployment guide](deployment.md); for the
@@ -22,11 +22,11 @@ are multichannel). No file was over 4 GiB, so RF64 WAV was not exercised.
 | Client | Version tested | sacdfs tested | Connection | Result | Notes |
 |---|---|---|---|---|---|
 | [Roon](#roon) | Roon 2.x (Roon Server official image); 2.74 build 1719 on 0.4.1-rc.1 | 0.1.1, 0.2.0-rc.1 to rc.4, 0.2.0 final, 0.4.1-rc.1 | SMB, same NAS | Works (0.4.1-rc.1: no regression, no extended-attribute requests in a Force Rescan) | Use `dsf` only; needs the SMB-mount rights; art and playlists work; picks up upgrades by itself; multichannel areas are separate albums |
-| [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4, 0.4.1-rc.1 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 0.4.1-rc.1: healthy, upgrade and rollback from 0.4.0 fine, 279 untitled tracks named, 3 albums (26 tracks) still blank in Plex (cause unknown); 0.1.1: 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used on 0.2.0-rc.4 ([#95](https://github.com/aclater/sacdfs/issues/95)), used on main in November 2026 ([media servers on main](#media-servers-on-main-2026-11-15)) |
+| [Plex](#plex) | Plex Media Server 1.43.5 | 0.1.1, 0.2.0-rc.4, 0.4.1-rc.1 | SMB (CIFS, read-only), same NAS; container with an `rslave` bind | Works with settings | 0.4.1-rc.1: healthy, upgrade and rollback from 0.4.0 fine, 279 untitled tracks named, 3 albums (26 tracks) still blank in Plex (cause unknown); 0.1.1: 406 of 406 tracks found; turn on "Prefer local metadata"; folder art not used on 0.2.0-rc.4 ([#95](https://github.com/dsd-toolbox/sacdfs/issues/95)), used on main in November 2026 ([media servers on main](#media-servers-on-main-2026-11-15)) |
 | [Jellyfin](#jellyfin) | 12.4.0 (official image) | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.4.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); use `dsf`; leave LUFS normalization off; folder art used; multichannel areas are separate albums |
 | [Navidrome](#navidrome) | 0.64.2 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; multichannel areas are separate albums; renamed and removed images followed |
 | [Lyrion / Logitech Media Server](#lyrion--logitech-media-server) | 9.1.1 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works with settings | 93 of 93 (`dsf`), 186 of 186 (`dsf,wav`); folder art used; needs a DSD-capable player; run LMS as root on a direct mount |
-| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.19 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/aclater/sacdfs/issues/148)) |
+| [MPD](#mpd-moode-volumio) (so moOde, Volumio) | 0.24.19 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works with settings | Use `dsf`: the first scan is about 10 times faster; plays DSD natively; folder art found in 6 of 6 areas with a cover once sacdfs also shows it as `cover.*` (after 0.4.0: 1 of 6; [#148](https://github.com/dsd-toolbox/sacdfs/issues/148)) |
 | [MinimServer](#minimserver) | 2.2, update 275 | 0.1.1, 0.3.0-rc.1, 0.4.0-rc.2, 0.4.1-rc.1, 0.5.0-rc.1, 0.7.2 | Container with an `rslave` bind of the mount's parent | Works | 93 of 93; folder art used; no transcoding without MinimStreamer |
 | [Windows Explorer, PowerShell, Robocopy](#windows-explorer-powershell-and-robocopy) | Windows 11 build 26200 (25H2 26200.9974 on 0.7.2) | 0.2.0-rc.1, 0.4.1-rc.1, 0.6.0-rc.1, 0.7.2 | SMB 3, SMB 3.1.1, same host | Works | 0.4.1-rc.1: 186 of 186 audio copies byte-identical, a second Robocopy pass skips all 196 files; RF64 reads and seeks past 4 GiB; another SMB port works (`/TCPPORT`) |
 | [foobar2000](#foobar2000) | 2.26.2 (portable), 2.26.3; foo_input_sacd 2.0.27 | 0.2.0-rc.1, 0.4.1-rc.1, main (November 2026), 0.6.5 | SMB 3, SMB 3.1.1; WinFsp | Works (0.4.1-rc.1; main: 93 of 93 with tags and art over WinFsp) | 186 files found with tags and length; stereo, 5ch, 6ch start in under 0.4 s; 0.6.5: audio at the sound device bit-identical to a local copy, full tracks of stereo DSF, 5-channel DST DSF and WAV; seek, pause, track change and playback during a library scan correct ([0.6.5 Windows checks](#065-windows-checks)) |
@@ -120,7 +120,7 @@ Each app ran in the logged-on session and was driven through its own API or comm
 | Emby | 4.10.2 | 93 of 93, 31 albums, stream and transcode; no album art | the same | as on Linux |
 | foobar2000 + foo_input_sacd, driven by foo_beefweb | 2.26.2, 2.0.27, 0.10 | 93 of 93 with tags, lengths, channels 1 to 6 and DSD64; art in 22 of 42 folders | tags and lengths the same; art not confirmed (see below) | |
 | Kodi | 21.3 | 70 of 93 tracks, 32 albums, CJK titles, thumbnails for 15 albums | the same | The 23 missing tracks are the repeated discs (one disc in three sector formats), which Kodi merges; the same on a plain copy |
-| Windows Media Player library (COM) | Windows 11 | WAV: 93 of 93 added, durations right; DSF refused (no DSF support) | not run | Non-ASCII WAV tags show as mojibake, as in Explorer ([#444](https://github.com/aclater/sacdfs/issues/444)) |
+| Windows Media Player library (COM) | Windows 11 | WAV: 93 of 93 added, durations right; DSF refused (no DSF support) | not run | Non-ASCII WAV tags show as mojibake, as in Explorer ([#444](https://github.com/dsd-toolbox/sacdfs/issues/444)) |
 | VLC (command line) | 3.0.24 | No DSD decoder; a stereo WAV decodes to a file; short WAVs of other discs gave no output | not run | as on macOS |
 | Plex Media Server | 1.43.5 | Untested beyond start-up: like macOS, the Windows build answers API calls from the same host with 401 when unclaimed | — | |
 | Universal Media Server | 15.9.0 | Untested: installed, but it opened no port within minutes in the VM; cause not found | — | |
@@ -140,7 +140,7 @@ Run on the 0.6.5 release zip with WinFsp 2.1, as a standard (non-administrator) 
 
 - **[The Windows guide](install/windows.md), word for word,** on both versions: install, checksum, mount, Explorer (including large icons), Ctrl+C, the launcher per user and as SYSTEM, and the logon task across a restart all work. A standard user gets UAC's credential prompt (an administrator's name and password). Windows 10 has no winget; the MSI works. A zip downloaded with Edge carries the download mark, but `Expand-Archive` doesn't pass it on to the program; SmartScreen showed only when the marked program was opened from Explorer. File hashes on the drive equal the Linux build's read.
 - **Audio at the sound device:** the VM's emulated sound device was recorded on the host and compared with the same file played from a local copy, same player and settings. foobar2000 2.26.3 with foo_input_sacd 2.0.27: bit-identical over full tracks of stereo DSF, a 5-channel DST DSF (downmixed by Windows) and a stereo WAV, also while foobar2000 added the whole drive and 2.7 GB of multichannel WAV were read meanwhile. After seek, pause and a track change the audio follows the same path as with the local copy (equal to 70 to 76 dB after a seek, the same for the local copy: the player's resampler, not the file). MPC-HC 2.8.5: bit-identical. JRiver 36.0.51 (with DSP Studio's output set to 48 kHz, which the VM's sound device needs for local files too) and MusicBee 3.7.0 don't give bit-identical output from run to run even for a local file; sacdfs adds no difference beyond that.
-- **Images on a NAS** (Samba share, user and password): the share's path and a mapped drive letter both work, directly and with the per-user launcher, and a logon task with the share's path and a password saved with `cmdkey` survives a restart. As SYSTEM, a mapped drive fails (path not found) and the share fails (access denied). If Samba restarts during playback, foobar2000 stops, as it does for a plain file on the same share; the drive reads again afterwards. A SOURCE ending in a backslash fails silently through the launcher ([#466](https://github.com/aclater/sacdfs/issues/466)).
+- **Images on a NAS** (Samba share, user and password): the share's path and a mapped drive letter both work, directly and with the per-user launcher, and a logon task with the share's path and a password saved with `cmdkey` survives a restart. As SYSTEM, a mapped drive fails (path not found) and the share fails (access denied). If Samba restarts during playback, foobar2000 stops, as it does for a plain file on the same share; the drive reads again afterwards. A SOURCE ending in a backslash fails silently through the launcher ([#466](https://github.com/dsd-toolbox/sacdfs/issues/466)).
 - **Hibernate** with the drive mounted and a file being read: the drive and the read survive. Sleep (S3): not run, the VMs don't wake from it with or without sacdfs.
 - **90-minute read soak** on the NAS-backed drive (476,000 file reads, 9,100 CPU-seconds, 0 errors): private bytes 27 to 35 MiB, peak working set 49 MiB, 154 to 155 handles, 21 to 22 threads, flat.
 - Not run: a physical PC, Plex, Roon and Audirvana (accounts).
@@ -170,7 +170,7 @@ Run on the v0.6.5-rc.1 release binary and the published `0.6.5-rc.1` image, side
 - **Windows 11, in a VM, not on physical hardware** (build 26200, WinFsp 2.1), on five real discs (186 DSF and WAV files, 59.0 GB; 14 names with colons or question marks):
   - **Native `sacdfs-win`** from the release zip, following [the Windows guide](install/windows.md) as a normal user: install, checksum, mount as a drive letter, Explorer, Ctrl+C and Ctrl+Break unmount, WinFsp.Launcher (per user and as SYSTEM), a logon task across a restart and a Windows service all work. All 186 files hash like the Linux build's read, including two RF64 WAV files over 4 GiB (`--pcm-rate 352800`) read and seeked past 4 GiB. Robocopy `/MIR` copied 58 files (11.5 GB) byte-identical and a second pass skipped all. Every name opens; WAV tags and thumbnails show; 8 of 8 write operations are refused.
   - **SMB 3.1.1** to the 0.6.5-rc.1 image, against 0.6.4: listing 40 requests on both; the same names, WAV tags, thumbnails (198, 361 requests against 321, no storm) and write refusals; Robocopy `/MIR` of 58 files hashes like the server's read on both, and a second pass skips all. One WAV copied by Robocopy, median of alternating rounds: stereo 667 MB 1.73 s (0.6.4: 1.68 s), 6-channel 1.66 GB 6.26 s (0.6.4: 6.47 s).
-  - Not run: the UAC and SmartScreen prompts, a physical PC, Explorer's large-icon view (all but the physical PC run on 0.6.5: [0.6.5 Windows checks](#065-windows-checks)). Non-ASCII WAV INFO tags still show wrongly in Explorer ([#444](https://github.com/aclater/sacdfs/issues/444)).
+  - Not run: the UAC and SmartScreen prompts, a physical PC, Explorer's large-icon view (all but the physical PC run on 0.6.5: [0.6.5 Windows checks](#065-windows-checks)). Non-ASCII WAV INFO tags still show wrongly in Explorer ([#444](https://github.com/dsd-toolbox/sacdfs/issues/444)).
 - **Players beside copies** over SMB and NFS: see the [test plan](test-plan.md#results-065-gate).
 - **Not run on 0.6.5-rc.1:** macOS, Roon and Plex at scale, foobar2000, JRiver, the Tier 2 tools, Plex and Emby among the scripted servers, and the SMB route for the scripted servers.
 
@@ -209,10 +209,10 @@ Run on the v0.6.0-rc.1 release binary and the published `0.6.0-rc.1` image; 0.5.
   | Tags | `afinfo` reads the WAV; it cannot open a DSF (no CoreAudio DSD support, as before); `mdls` gives kind and title, other audio attributes are null |
 
   Not run on macOS: request counts per kind (the test server was not logging FUSE requests), Finder views, DSD player apps, sound or playback.
-- **Windows 11 (Explorer, PowerShell, Robocopy):** build 26200 in a VM, SMB 3.1.1 to the published 0.6.0-rc.1 image on the same host, user authentication, `dsf,wav`, `--flatten`, the same 93 DSF + 93 WAV (54.96 GiB) plus art as the 0.4.1-rc.1 run; the VM used a virtio-net card (see [#225](https://github.com/aclater/sacdfs/issues/225)). The 0.4.1-rc.1 result holds, with fewer requests:
+- **Windows 11 (Explorer, PowerShell, Robocopy):** build 26200 in a VM, SMB 3.1.1 to the published 0.6.0-rc.1 image on the same host, user authentication, `dsf,wav`, `--flatten`, the same 93 DSF + 93 WAV (54.96 GiB) plus art as the 0.4.1-rc.1 run; the VM used a virtio-net card (see [#225](https://github.com/dsd-toolbox/sacdfs/issues/225)). The 0.4.1-rc.1 result holds, with fewer requests:
   - A recursive listing of 213 entries took 107 FUSE requests from a cold mount (0.4.1-rc.1: 321). A repeat listing took 72.
   - 14 names have SFM private-use characters (12 colon, 2 question mark); all 14 open and read.
-  - The shell reads WAV tags (title, artist, album, length) on 93 files from 268 reads; DSF shows no tags, as before. folder.jpg has a thumbnail, audio files have none. A thumbnail pass over all 196 files took 1,802 requests, linear in the file count (about 800 are directory opens and releases), no storm. 0.4.1-rc.1 counted 809 for the same pass. Run on 0.4.1, 0.5.0 and 0.6.0 in one VM (virtio-net), it counts 921 to 941, 508 to 514 and 2,104 to 2,166 requests; the listing alone is 327, 108 and 107. The extra 0.6.0 requests are 800 `OPENDIR` and `RELEASEDIR` pairs, from the container's `smb3 directory leases = no` (#205), not from how sacdfs answers `opendir`: with leases on, 0.6.0 counts 496 (details and the time on a larger tree in [deployment.md](deployment.md); [#312](https://github.com/aclater/sacdfs/issues/312)).
+  - The shell reads WAV tags (title, artist, album, length) on 93 files from 268 reads; DSF shows no tags, as before. folder.jpg has a thumbnail, audio files have none. A thumbnail pass over all 196 files took 1,802 requests, linear in the file count (about 800 are directory opens and releases), no storm. 0.4.1-rc.1 counted 809 for the same pass. Run on 0.4.1, 0.5.0 and 0.6.0 in one VM (virtio-net), it counts 921 to 941, 508 to 514 and 2,104 to 2,166 requests; the listing alone is 327, 108 and 107. The extra 0.6.0 requests are 800 `OPENDIR` and `RELEASEDIR` pairs, from the container's `smb3 directory leases = no` (#205), not from how sacdfs answers `opendir`: with leases on, 0.6.0 counts 496 (details and the time on a larger tree in [deployment.md](deployment.md); [#312](https://github.com/dsd-toolbox/sacdfs/issues/312)).
   - Robocopy `/MIR` copied 196 of 196 files with no failures. All 186 audio copies hash identically to the served files (and the served files hash the same as on 0.4.1); 21 of 21 files sampled by `Get-FileHash` also match. Run 1 needed two Robocopy invocations because the test harness stopped the first one at its 60-minute limit; the second copied the remaining 47 files and skipped 149. About 449,000 requests in all (0.4.1-rc.1: 465,000). A second `/MIR` pass copied 0 and skipped 196 in 0.1 s with 77 requests (0.4.1-rc.1: 342); sizes and times were equal for all 196.
   - RF64: one WAV of 4.07 GiB at `--pcm-rate 352800` has an RF64 header, reads at 4 GiB + 12,345 and hashes identically to the server's (one file over 4 GiB; 0.4.1-rc.1 used two larger ones).
   - A non-445 port works with `/TCPPORT` (18445 and 18446, one at a time).
@@ -325,14 +325,14 @@ What the scripts check, and so what is "not checked":
 share added as a network share (SMB). Roon imported folder art and `Artwork/` trees, and a
 relative-path playlist with all of its entries. Re-checks of 0.2.0 release candidates on a NAS
 found two Roon-visible bugs, both fixed in 0.2.0: Roon saw no change after an upgrade or a new
-sidecar because folder times did not move ([#123](https://github.com/aclater/sacdfs/issues/123)),
-and sidecars added after the mount were not listed ([#101](https://github.com/aclater/sacdfs/issues/101)).
+sidecar because folder times did not move ([#123](https://github.com/dsd-toolbox/sacdfs/issues/123)),
+and sidecars added after the mount were not listed ([#101](https://github.com/dsd-toolbox/sacdfs/issues/101)).
 **Final results on 0.2.0** (Roon 2.x, NAS container, SMB share): a relative-path `.m3u8` added
 next to an image was listed at once and imported by a Force Rescan (adds 51, 5,820 files seen,
 2.6 s); Roon's periodic scan (every 4 hours) picked up the 0.1 to 0.2 change unprompted
 (3,211 modifications and 446 adds, the new per-area art); it shows 46 multichannel areas as
 separate albums, under its own canonical titles, so the suffix is not visible there (Roon
-already split them before [#97](https://github.com/aclater/sacdfs/issues/97)); and playback
+already split them before [#97](https://github.com/dsd-toolbox/sacdfs/issues/97)); and playback
 continued through a sacdfs restart. A library import of 271 images and 3,216 tracks was replayed against 0.1.0 for #73's memory
 figures; the deployment guide's figures are now the replay of #150 over the bench images.
 
@@ -378,7 +378,7 @@ times; see [restarts and rescans](#restarts-and-rescans).
 - Turn on **Prefer local metadata** (library settings, Advanced) or use the "Plex Personal
   Media" agent. Without it Plex's default agent gives both copies of a disc the online
   release's title and shows them as two albums with the same name; with it, "Album" and
-  "Album (Multichannel)" ([#138](https://github.com/aclater/sacdfs/issues/138), tested on 10
+  "Album (Multichannel)" ([#138](https://github.com/dsd-toolbox/sacdfs/issues/138), tested on 10
   discs, 6 with a multichannel area). For an existing library, turn it on and run "Refresh
   All Metadata".
 - For a Plex container on a host that mounts sacdfs, bind the mount's parent with `rslave`.
@@ -386,12 +386,12 @@ times; see [restarts and rescans](#restarts-and-rescans).
 
 **Limits.**
 - On main in November 2026 (Plex 1.43.5, Prefer local metadata on, the CC0 corpus), Plex used the folder art: 24 of 42 albums had a poster, the same on a plain copy of the tree ([above](#media-servers-on-main-2026-11-15)). The older result follows.
-  On 0.2.0-rc.4 and 0.1.1, Plex did not use the folder art from sacdfs ([#95](https://github.com/aclater/sacdfs/issues/95)):
+  On 0.2.0-rc.4 and 0.1.1, Plex did not use the folder art from sacdfs ([#95](https://github.com/dsd-toolbox/sacdfs/issues/95)):
   in the 0.2.0-rc.4 run 230 of 264 album bundles held a local-style poster and 71 an online one
   (approximate), and on 0.1.1 every poster of a 32-disc subset came from online sources.
 - In the whole-tree 0.2.0-rc.4 run Plex still merged the Stereo and Multichannel copies of a
   disc into one album and showed 42 duplicate artist and title pairs; only 1 album was named
-  "(Multichannel)". That run did not use "Prefer local metadata" ([#138](https://github.com/aclater/sacdfs/issues/138)).
+  "(Multichannel)". That run did not use "Prefer local metadata" ([#138](https://github.com/dsd-toolbox/sacdfs/issues/138)).
   The 10-disc test above is the one with the setting.
 - 20 of the 291 images were not seen in Plex's paths in that run, and the cause was not found.
 
@@ -429,7 +429,7 @@ image, 2 CPUs), one music library.
 
 **Recommended setup.**
 - `--format dsf`: it saves sacdfs converting about 7 MB of PCM per WAV file on every first
-  scan or rebuild ([#96](https://github.com/aclater/sacdfs/issues/96)).
+  scan or rebuild ([#96](https://github.com/dsd-toolbox/sacdfs/issues/96)).
 - Leave LUFS normalization off (the default): with it on, Jellyfin reads about twice the
   whole library, and sacdfs must decode all of it.
 - Bind the mount's parent directory with `rslave`.
@@ -450,7 +450,7 @@ the running container, the parent bind showed all 93 files again and a full scan
 0.3.0-rc.1, a full re-scan with nothing changed opened the files but read nothing
 from sacdfs (0 reads); that was not counted again.
 
-*Renamed and removed images* ([#153](https://github.com/aclater/sacdfs/issues/153), new in
+*Renamed and removed images* ([#153](https://github.com/dsd-toolbox/sacdfs/issues/153), new in
 0.4.0), on 0.4.0-rc.2 under the running container: an image's folder renamed on the source
 showed under its new name inside the container within 5 s, and a full scan then listed 93 files
 with none missing; a disc's folder removed from the
@@ -496,7 +496,7 @@ validated with LMS.
 
 ## MPD, moOde, Volumio
 
-**0.4.1-rc.1:** MPD 0.24.15 in the same container. 93 of 93 and 186 of 186, 7 albums, 2 "… (Multichannel)". **Art ([#148](https://github.com/aclater/sacdfs/issues/148)): `albumart` found the cover in 4 of 4 album areas that have one, against 1 of 4 on the 0.4.0 release binary** (the 3 areas without a cover still have none). First scan with `dsf`: 0.47 s on rc.1, 0.46 s on 0.4.0; `mpc update` with nothing changed 0.05 s, 0 opens. DSF plays as `dsd64:2` and `dsd64:6`, and `seekcur 100` worked in both.
+**0.4.1-rc.1:** MPD 0.24.15 in the same container. 93 of 93 and 186 of 186, 7 albums, 2 "… (Multichannel)". **Art ([#148](https://github.com/dsd-toolbox/sacdfs/issues/148)): `albumart` found the cover in 4 of 4 album areas that have one, against 1 of 4 on the 0.4.0 release binary** (the 3 areas without a cover still have none). First scan with `dsf`: 0.47 s on rc.1, 0.46 s on 0.4.0; `mpc update` with nothing changed 0.05 s, 0 opens. DSF plays as `dsd64:2` and `dsd64:6`, and `seekcur 100` worked in both.
 
 
 **Tested on 0.4.0-rc.2** (and 0.3.0-rc.1). MPD 0.24.15 (Fedora 44 package, in a container),
@@ -510,7 +510,7 @@ and 5.6 s.) 7 albums, 2 of them "… (Multichannel)". `mpc update` with nothing 
 capable output, otherwise MPD converts); a seek to 100 s in a 5.1 DST DSF worked at once.
 Album art: on 0.4.0-rc.2, `albumart` found the cover in **1 of 4** album areas with one: the
 disc whose cover is named `cover.jpg`. MPD looks only for files named `cover.*` in the track's
-folder, so `folder.jpg` is not used. **After [#148](https://github.com/aclater/sacdfs/issues/148)**
+folder, so `folder.jpg` is not used. **After [#148](https://github.com/dsd-toolbox/sacdfs/issues/148)**
 (tested on the branch that adds it, built from the 0.4.1 work; MPD 0.24.15 in the same
 container setup, 5 test discs, 93 tracks, 7 album areas of which 6 have a cover, one named
 `folder.jpg` on two discs, `front.png` on one and `cover.jpg` on one): the 0.4.0 release
@@ -520,7 +520,7 @@ cover still has none. When the art has no `cover.*`, sacdfs shows one of its ima
 
 **Recommended setup.**
 - `--format dsf`: the first scan was about 10 times as fast as with `dsf,wav`. The WAV cost is
-  FFmpeg's 5,000,000-byte probe of each WAV file ([#96](https://github.com/aclater/sacdfs/issues/96)).
+  FFmpeg's 5,000,000-byte probe of each WAV file ([#96](https://github.com/dsd-toolbox/sacdfs/issues/96)).
   If another client needs WAV, run a second container or mount with `dsf,wav` for it.
 - `--flatten`; bind the mount's parent with `rslave` if MPD is in a container.
 - Art needs no renaming: sacdfs shows a folder's cover also as `cover.*` in the areas. (A file
@@ -572,9 +572,9 @@ authentication, sacdfs 0.2.0-rc.1, `dsf,wav`, `--flatten`, 93 DSF + 93 WAV (54.9
 
 Not checked: Explorer's large-icon view in a real window, a real audio output, Japanese, Chinese or Korean names, library changes, an output-version change.
 
-**Non-ASCII WAV tags** (main, November 2026, Windows 11 in a VM): Explorer and the Windows Media Player library showed accented and CJK titles in WAV files as mojibake, because the files' `LIST`/`INFO` tags were UTF-8 and Windows reads them in the ANSI code page ([#444](https://github.com/aclater/sacdfs/issues/444)). Since 0.7.0, INFO text is Windows-1252, and a field with characters outside it (CJK, Cyrillic, Greek) is left out, so Explorer shows no value there instead of mojibake. Programs that read the `id3 ` chunk show the full text. Not yet re-checked on Windows.
+**Non-ASCII WAV tags** (main, November 2026, Windows 11 in a VM): Explorer and the Windows Media Player library showed accented and CJK titles in WAV files as mojibake, because the files' `LIST`/`INFO` tags were UTF-8 and Windows reads them in the ANSI code page ([#444](https://github.com/dsd-toolbox/sacdfs/issues/444)). Since 0.7.0, INFO text is Windows-1252, and a field with characters outside it (CJK, Cyrillic, Greek) is left out, so Explorer shows no value there instead of mojibake. Programs that read the `id3 ` chunk show the full text. Not yet re-checked on Windows.
 
-**Robocopy speed ([#225](https://github.com/aclater/sacdfs/issues/225)).** Robocopy from a Windows VM ran at one of two speeds, 3 to 4.5 times apart. The test VM's emulated network card caused it, not sacdfs, Samba, Robocopy or the sacdfs version. Windows 11 25H2 ran in a VM (4 vCPUs configured, of which Windows used 2; 8 GB) and the container in a Fedora 44 VM (8 vCPUs) on one host's libvirt bridge. Each run copied one DST disc (61 files, 19.8 GiB) with `robocopy /MIR /MT:1` from a fresh container over a new SMB connection:
+**Robocopy speed ([#225](https://github.com/dsd-toolbox/sacdfs/issues/225)).** Robocopy from a Windows VM ran at one of two speeds, 3 to 4.5 times apart. The test VM's emulated network card caused it, not sacdfs, Samba, Robocopy or the sacdfs version. Windows 11 25H2 ran in a VM (4 vCPUs configured, of which Windows used 2; 8 GB) and the container in a Fedora 44 VM (8 vCPUs) on one host's libvirt bridge. Each run copied one DST disc (61 files, 19.8 GiB) with `robocopy /MIR /MT:1` from a fresh container over a new SMB connection:
 
 | Windows VM network card | Runs | Robocopy time | Slow runs |
 |---|---|---|---|
@@ -663,7 +663,7 @@ with its own kernel and `nfs-utils` and `cifs-utils`:
 | Ubuntu 24.04 | 6.8 | All pass except that non-ASCII names are shown in ISO-8859-1 over SMB (below) |
 
 The checks, on each of NFS and SMB: `find` lists all 206 files; `ls -lR` exits 0 with no
-error output (the NFS half of [#174](https://github.com/aclater/sacdfs/issues/174));
+error output (the NFS half of [#174](https://github.com/dsd-toolbox/sacdfs/issues/174));
 `stat` sizes of all 206 files equal the server's; `df` reports a non-zero size; `du` works; `getfattr -d` on a file returns
 at once with no attributes; `touch`, `mkdir`, `rm`, `mv`, `truncate` and an append all fail
 at once, none hangs; 19 sample files (DSF, WAV and the over-4 GiB WAV) hash like the server's
@@ -676,7 +676,7 @@ files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network
   shows a name with a non-ASCII character (an acute accent) as a single byte, which a path from
   the server then does not match (`stat` fails for 4 of 206 files). With the package installed
   the 4 files are found. Ubuntu 26.04 was fine. This is the client's packaging, not sacdfs.
-- **Read-ahead of the kernel SMB client** ([#266](https://github.com/aclater/sacdfs/issues/266), 0.6.2,
+- **Read-ahead of the kernel SMB client** ([#266](https://github.com/dsd-toolbox/sacdfs/issues/266), 0.6.2,
   Fedora 44 client, kernel 6.19, against a NAS): by default the client reads 4 MiB at a time and
   reads ahead up to 8 MiB, so a library scan that wants each file's header and tags makes sacdfs
   read, decode and serve about 1.8 MB per file. `rsize=262144` on the mount brings that to 262 KB,
@@ -687,7 +687,7 @@ files all finish (slowest reader 0.2 to 1.0 s for 60 MiB, over a virtual network
   and no difference between the two. Windows 11 (in a VM, not on the vendor's hardware) reads
   about 261 KB of each WAV file for its tags and no DSF file, with or without the share's
   `smb2 max read = 262144` ([performance](performance.md#client-read-ahead-by-client-and-release-063-main)).
-- **Extended attributes** ([#174](https://github.com/aclater/sacdfs/issues/174)), counted from
+- **Extended attributes** ([#174](https://github.com/dsd-toolbox/sacdfs/issues/174)), counted from
   sacdfs's FUSE request log (the published 0.4.0 and 0.4.1-rc.1 images under rootful Podman,
   alternating, two runs each, Fedora 44 client): `ls -lR` over NFS, which exited 0 with no
   errors, caused 1 `GETXATTR` and 238 `LISTXATTR` requests for the 206 files, the same on both
@@ -727,7 +727,7 @@ Cold-seek and read-latency figures for NFS and SMB, server-side and client-side,
   0.3.0-rc.1, MPD's first scan with `dsf,wav` peaked at 300 MiB RSS at the old default of
   256 MiB against 58 MiB at 16, in the same 5.6 s. 16 still works (the 0.3.0-rc.1 tests used
   it); 32 keeps several fast readers of one image at full speed. See
-  [Memory](deployment.md#memory) and [#94](https://github.com/aclater/sacdfs/issues/94).
+  [Memory](deployment.md#memory) and [#94](https://github.com/dsd-toolbox/sacdfs/issues/94).
 - **Containers on a host that mounts sacdfs:** bind the mount's *parent* directory with
   `rslave` (`-v /srv/sacd:/media:ro,rslave`), not the mount point. Tested with rootless
   Podman on 0.3.0-rc.1, and the clean stop again on 0.4.0-rc.2: after sacdfs was killed and
@@ -743,12 +743,12 @@ Cold-seek and read-latency figures for NFS and SMB, server-side and client-side,
   Jellyfin) and for Roon; `dsf,wav` only where a client needs WAV. Use `--flatten` so that
   each disc's `Stereo` and `Multichannel` folders sit under the album.
 - **Folder art:** sacdfs 0.2.0 and later place a copy of the cover beside the image inside
-  each area folder (`Stereo`, `Multichannel`; [#95](https://github.com/aclater/sacdfs/issues/95)).
+  each area folder (`Stereo`, `Multichannel`; [#95](https://github.com/dsd-toolbox/sacdfs/issues/95)).
   On 0.4.0-rc.2 (as on 0.3.0-rc.1), Jellyfin, Navidrome, LMS and MinimServer used it for all
   4 album areas with a cover. MPD uses only files named `cover.*`, so it found 1 of 4 (the one named
-  `cover.jpg`) until sacdfs showed the cover under that name as well ([#148](https://github.com/aclater/sacdfs/issues/148), tested on the 0.4.1 branch: 6 of 6). Roon used the art on 0.2.0; for Plex (0.2.0-rc.4) see [its section](#plex).
+  `cover.jpg`) until sacdfs showed the cover under that name as well ([#148](https://github.com/dsd-toolbox/sacdfs/issues/148), tested on the 0.4.1 branch: 6 of 6). Roon used the art on 0.2.0; for Plex (0.2.0-rc.4) see [its section](#plex).
 - **Multichannel copies:** sacdfs adds ` (Multichannel)` to the album tag by default
-  ([#97](https://github.com/aclater/sacdfs/issues/97)). With it, Jellyfin, Navidrome, LMS, MPD
+  ([#97](https://github.com/dsd-toolbox/sacdfs/issues/97)). With it, Jellyfin, Navidrome, LMS, MPD
   and MinimServer showed the 2 multichannel areas as their own albums on 0.4.0-rc.2 and
   0.3.0-rc.1. Plex
   needs "Prefer local metadata" to show it. `--no-multichannel-album-suffix` turns it off; it
@@ -760,20 +760,20 @@ Cold-seek and read-latency figures for NFS and SMB, server-side and client-side,
   folders (Roon) decide from folder modification times. From 0.2.0, a new sidecar, tag or
   version change moves the times of the disc's folders and every folder above it, and new
   sidecars and images show up within a few seconds without a restart
-  ([#101](https://github.com/aclater/sacdfs/issues/101),
-  [#123](https://github.com/aclater/sacdfs/issues/123); tested with Roon on 0.2.0). 0.4.1 moves
+  ([#101](https://github.com/dsd-toolbox/sacdfs/issues/101),
+  [#123](https://github.com/dsd-toolbox/sacdfs/issues/123); tested with Roon on 0.2.0). 0.4.1 moves
   the time of every folder with a disc below it once, and only the times of files of discs without text (the
   [user guide](user-guide.md#tagging-behaviour); untested with Roon, Plex and the other servers on
   0.4.1 at the time of writing, see the CHANGELOG). Server
   rescans with nothing changed read nothing: 0 opens for MPD, MinimServer and LMS on
   0.4.0-rc.2 and 0.3.0-rc.1, and 0 reads for Navidrome on 0.3.0-rc.1. From 0.4.0 a renamed
-  or removed image is also freed in sacdfs ([#153](https://github.com/aclater/sacdfs/issues/153));
+  or removed image is also freed in sacdfs ([#153](https://github.com/dsd-toolbox/sacdfs/issues/153));
   Navidrome followed both on 0.4.0-rc.2 ([its section](#navidrome)).
 - **Hard disks and simultaneous cold starts.** Once playing, no read took over 0.5 ms in the
   hard-disk test. Slow reads (116 to 156 ms worst) come from several players' first seeks
   queueing on one physical disk when four start at once (39 to 62 ms staggered by 2 s); it is
   bounded by the disk and no sacdfs setting changed it
-  ([#71](https://github.com/aclater/sacdfs/issues/71), [performance](performance.md#client-side-where-the-slow-reads-come-from-71)).
+  ([#71](https://github.com/dsd-toolbox/sacdfs/issues/71), [performance](performance.md#client-side-where-the-slow-reads-come-from-71)).
 
 ## Reported by users
 
@@ -782,7 +782,7 @@ the summary table above. The sacdfs version is given where the report gives it.
 
 - **Netgear ReadyNAS Pro Pioneer**, ReadyNAS OS 6.10.10, Intel Pentium Dual E2160 (2 cores,
   1.8 GHz), sacdfs built from source, files shared through the NAS's own Samba
-  ([#287](https://github.com/aclater/sacdfs/issues/287)). Playback was reported as perfect for:
+  ([#287](https://github.com/dsd-toolbox/sacdfs/issues/287)). Playback was reported as perfect for:
   - **Eversolo DMP-A6ME** (firmware 1.6.15): stereo and multichannel DSF and WAV.
   - **HEOS** on a Marantz AV10 and NR1200: stereo DSF and WAV.
   - **JRiver Media Center 36**: stereo and multichannel WAV, and stereo and multichannel DSF
@@ -816,4 +816,4 @@ Leave out names of albums, artists, paths, hostnames and addresses. Say "unteste
 - [Release test plan](test-plan.md)
 - [Install guides for players](install/README.md#3-which-player-or-music-server)
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).

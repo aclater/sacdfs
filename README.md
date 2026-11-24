@@ -89,10 +89,10 @@ option) any later version.
 
 - [scarletbook](https://github.com/aclater/scarletbook-rs) (MIT OR Apache-2.0) does the SACD
   parsing, DST decoding and DSD-to-PCM conversion, through its public APIs.
-- [pysacd](https://github.com/aclater/pysacd) (GPL-2.0-or-later) made the reference hashes the
+- [pysacd](https://github.com/dsd-toolbox/pysacd) (GPL-2.0-or-later) made the reference hashes the
   DSF files are checked against; sacdfs 0.1's converter was ported from it, with a first stage
   after Sebastian Gesemann's dsd2pcm (BSD-3-Clause).
 - The test corpus in `tests/corpus/`, from [sacd-spec](https://github.com/aclater/sacd-spec), is
   public domain under CC0 1.0 ([licence](tests/corpus/LICENSE)).
 
-Part of the [DSD Toolbox](https://github.com/aclater/dsd-toolbox).
+Part of the [DSD Toolbox](https://github.com/dsd-toolbox/dsd-toolbox).
