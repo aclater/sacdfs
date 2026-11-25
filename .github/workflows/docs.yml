@@ -32,26 +32,26 @@ permissions:
 
 jobs:
   lint:
-    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-lint.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-lint.yml@2672670176a87d427f4c6f115a7ba254aeab59c6
     with:
-      tools_ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      tools_ref: 2672670176a87d427f4c6f115a7ba254aeab59c6
 
   links:
-    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-links.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-links.yml@2672670176a87d427f4c6f115a7ba254aeab59c6
     with:
-      tools_ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      tools_ref: 2672670176a87d427f4c6f115a7ba254aeab59c6
       external: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
   touched:
     if: github.event_name == 'pull_request'
-    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-touched.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-touched.yml@2672670176a87d427f4c6f115a7ba254aeab59c6
     with:
-      tools_ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      tools_ref: 2672670176a87d427f4c6f115a7ba254aeab59c6
 
   facts:
-    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-facts.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-facts.yml@2672670176a87d427f4c6f115a7ba254aeab59c6
     with:
-      tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      tools-ref: 2672670176a87d427f4c6f115a7ba254aeab59c6
 
   # The only job with a write token: schedule or manual run on the default branch, never a pull request.
   # It pushes the branch docs/facts-update and fails, naming it; a person opens the pull request.
@@ -60,16 +60,16 @@ jobs:
     needs: facts
     permissions:
       contents: write
-    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-facts-generate.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-facts-generate.yml@2672670176a87d427f4c6f115a7ba254aeab59c6
     with:
-      tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      tools-ref: 2672670176a87d427f4c6f115a7ba254aeab59c6
 
   commands:
     # Not for pull requests from forks: their Markdown would run on the runner.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-run.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-run.yml@2672670176a87d427f4c6f115a7ba254aeab59c6
     with:
-      tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      tools-ref: 2672670176a87d427f4c6f115a7ba254aeab59c6
       version-of: dsd-toolbox/sacdfs
       # 57 of 197 command blocks run (28.9 %). 29 held at 196 blocks; the 0.9.0 docs split one block that
       # cannot run (docs/install/linux-client.md, the credentials file) into two, which made it 197.
@@ -78,9 +78,9 @@ jobs:
 
   audit:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '11 5 3 * *'
-    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-audit.yml@33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+    uses: dsd-toolbox/dsd-toolbox/.github/workflows/docs-audit.yml@2672670176a87d427f4c6f115a7ba254aeab59c6
     with:
-      tools_ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
+      tools_ref: 2672670176a87d427f4c6f115a7ba254aeab59c6
 
   report:
     name: weekly report

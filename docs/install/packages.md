@@ -85,7 +85,7 @@ sudo dnf install sacdfs
 
 RHEL 9 (on RHEL 10, put `10` for each `9`):
 
-<!-- docs-run: group=packages-rhel image=ubi9 setup="dnf -y -q install sudo && chmod 0600 /etc/shadow && echo assumeyes=True >> /etc/dnf/dnf.conf" expect="Complete!" -->
+<!-- docs-run: group=packages-rhel image=ubi9 setup="dnf -y -q install sudo && echo assumeyes=True >> /etc/dnf/dnf.conf" expect="Complete!" -->
 ```sh
 sudo curl -fsSL -o /etc/yum.repos.d/aclater-sacdfs.repo https://copr.fedorainfracloud.org/coprs/aclater/sacdfs/repo/rhel-9/aclater-sacdfs-rhel-9.repo
 sudo dnf install sacdfs
