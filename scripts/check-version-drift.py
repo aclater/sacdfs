@@ -46,6 +46,10 @@ def cargo():
     text = read("Cargo.toml")
     version = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE).group(1)
     pins = dict(re.findall(r'^(scarletbook(?:-pcm)?)\s*=\s*"=([^"]+)"', text, re.MULTILINE))
+    # `dsd2pcm = { version = "=0.2.0", default-features = false }` (0.9.0 and later)
+    m = re.search(r'^dsd2pcm\s*=\s*\{[^}]*version\s*=\s*"=([^"]+)"', text, re.MULTILINE)
+    if m:
+        pins["dsd2pcm"] = m.group(1)
     return version, pins
 
 
@@ -115,6 +119,19 @@ def check_pins(pins, problems):
                 problems.append(f"{path}:{line_of(text, m.start(i))}: scarletbook {m.group(i)}, Cargo.toml pins ={sb}")
     path = "docs/pcm-quality.md"
     text = read(path)
+    if pcm is None:
+        # 0.9.0 and later: the converter is the dsd2pcm crate and Cargo.toml no longer pins scarletbook-pcm,
+        # so the page's mention of scarletbook-pcm is history and has nothing to be compared with. If the
+        # page quotes the dsd2pcm version ("`dsd2pcm` (0.2.0)"), that one is compared with Cargo.toml's pin.
+        # With neither pin in Cargo.toml the check has nothing to guard and fails, so it cannot pass by default.
+        dsd = pins.get("dsd2pcm")
+        if dsd is None:
+            problems.append("Cargo.toml: neither a scarletbook-pcm nor a dsd2pcm pin found; update this check")
+            return
+        m = re.search(rf"`dsd2pcm` \(({V})\)", text)
+        if m and m.group(1) != dsd:
+            problems.append(f"{path}:{line_of(text, m.start(1))}: dsd2pcm {m.group(1)}, Cargo.toml pins ={dsd}")
+        return
     # "`scarletbook-pcm` (0.7.0)", or "(from 0.5.3; main pins 0.7.0, ...)", in its first mention.
     m = re.search(rf"`scarletbook-pcm` \((?:[^)]*?main pins )?({V})\b", text)
     if not m:

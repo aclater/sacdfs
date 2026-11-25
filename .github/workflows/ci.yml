@@ -117,6 +117,7 @@ jobs:
           python3 -I scripts/test_stall_gate.py
           python3 -I scripts/test_bench_compare.py
           python3 -I scripts/test_read_phases.py
+          python3 -I scripts/test_check_version_drift.py
           python3 -I scripts/check_skips.py --job tests "$RUNNER_TEMP/test-output.txt"
       - name: Converter benchmark (smoke test, each case once)
         run: cargo bench --locked --bench pcm -- --test

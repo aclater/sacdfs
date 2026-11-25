@@ -35,6 +35,7 @@ user guide.
 - [Design](design.md): architecture and decisions, with the reasons
 - [Performance](performance.md): measurements by release
 - [PCM quality](pcm-quality.md): how good the WAV conversion is
+- [Release quality comparison](quality/README.md): the WAV view measured against the previous release, by version
 - [Development](development.md): leak hunting, memory profiling, skipped and real-disc tests
 - [Icon](assets/README.md): the sacdfs icon and its files
 

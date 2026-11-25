@@ -10,7 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use proptest::prelude::*;
-use sacdfs::pcm::{Converter, Cutoff, DSD_SILENCE, FRAME_BYTES, PcmConfig, PcmRate, convert_area};
+use sacdfs::pcm::{Converter, Cutoff, DSD_SILENCE, FRAME_BYTES, Filter, PcmConfig, PcmRate, convert_area};
 use std::f64::consts::PI;
 
 const FS: f64 = 2_822_400.0;
@@ -19,11 +19,11 @@ const CUTOFFS: [Cutoff; 3] = [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80];
 
 /// Whether a rate and cutoff go together (the wide filter needs 176.4 or 352.8 kHz).
 fn valid(rate: PcmRate, cutoff: Cutoff) -> bool {
-    PcmConfig { rate, cutoff, gain_db: 0.0 }.validate().is_ok()
+    PcmConfig { rate, cutoff, gain_db: 0.0, filter: Filter::Fast }.validate().is_ok()
 }
 
 fn cfg(rate: PcmRate, cutoff: Cutoff) -> PcmConfig {
-    PcmConfig { rate, cutoff, gain_db: 0.0 }
+    PcmConfig { rate, cutoff, gain_db: 0.0, filter: Filter::Fast }
 }
 
 /// Pass band edge and stop band start of a cutoff, in Hz.
@@ -648,8 +648,10 @@ fn every_frame_alone_equals_the_area() {
                 if !valid(rate, cutoff) {
                     continue;
                 }
-                for gain_db in [0.0, 9.0] {
-                    check_frames(&PcmConfig { rate, cutoff, gain_db }, ch, &dsd);
+                for (gain_db, filter) in
+                    [0.0, 9.0].into_iter().flat_map(|g| [(g, Filter::Fast), (g, Filter::Precise)])
+                {
+                    check_frames(&PcmConfig { rate, cutoff, gain_db, filter }, ch, &dsd);
                 }
             }
         }
@@ -681,10 +683,12 @@ proptest! {
         rate in 0usize..3,
         cutoff in 0usize..3,
         gain in -6.0f32..12.0,
+        precise in any::<bool>(),
         seed in any::<u64>(),
         pick in any::<usize>(),
     ) {
-        let cfg = PcmConfig { rate: RATES[rate], cutoff: CUTOFFS[cutoff], gain_db: gain };
+        let filter = if precise { Filter::Precise } else { Filter::Fast };
+        let cfg = PcmConfig { rate: RATES[rate], cutoff: CUTOFFS[cutoff], gain_db: gain, filter };
         let n = usize::from(ch) * FRAME_BYTES;
         let dsd = noise(frames * n, seed);
         let (area, _) = convert_area(ch, &cfg, &dsd);
@@ -712,11 +716,13 @@ proptest! {
         rate in 0usize..3,
         cutoff in 0usize..3,
         gain in -6.0f32..12.0,
+        precise in any::<bool>(),
         seed in any::<u64>(),
         runs in proptest::collection::vec((any::<usize>(), 1usize..6), 1..4),
         short in 0usize..300,
     ) {
-        let cfg = PcmConfig { rate: RATES[rate], cutoff: CUTOFFS[cutoff], gain_db: gain };
+        let filter = if precise { Filter::Precise } else { Filter::Fast };
+        let cfg = PcmConfig { rate: RATES[rate], cutoff: CUTOFFS[cutoff], gain_db: gain, filter };
         let n = usize::from(ch) * FRAME_BYTES;
         let mut dsd = noise(frames * n, seed);
         // A short last frame: its missing bytes are silence in both.
@@ -754,12 +760,8 @@ proptest! {
     }
 }
 
-/// The output for a fixed input, pinned: any change to scarletbook-pcm's filters or
-/// arithmetic shows up here (and needs a `WAV_VERSION` bump, src/ident.rs). scarletbook-pcm
-/// gives the same bytes on every CPU and code path, which its own tests check; CI runs this
-/// on its machines too.
-#[test]
-fn golden_output() {
+/// First 8 bytes of the SHA-256 of the stereo output of each valid rate and cutoff, in loop order.
+fn golden_hashes(filter: Filter) -> Vec<String> {
     use sha2::{Digest, Sha256};
     let dsd = noise(3 * 2 * FRAME_BYTES, 11);
     let mut got = Vec::new();
@@ -768,13 +770,27 @@ fn golden_output() {
             if !valid(rate, cutoff) {
                 continue;
             }
-            let (pcm, _) = convert_area(2, &cfg(rate, cutoff), &dsd);
-            let h = Sha256::digest(&pcm);
-            let hex: String = h.iter().take(8).map(|b| format!("{b:02x}")).collect();
-            println!("{} {cutoff:?}: {hex}", rate.hz());
+            let (pcm, _) = convert_area(2, &PcmConfig { filter, ..cfg(rate, cutoff) }, &dsd);
+            let hex: String = Sha256::digest(&pcm).iter().take(8).map(|b| format!("{b:02x}")).collect();
+            println!("{filter:?} {} {cutoff:?}: {hex}", rate.hz());
             got.push(hex);
         }
     }
+    got
+}
+
+/// The output for a fixed input, pinned: any change to the converter's filters or
+/// arithmetic shows up here (and needs a `WAV_VERSION` bump, src/ident.rs). dsd2pcm, like
+/// scarletbook-pcm 0.7.0 before it (same hashes), gives the same bytes on every CPU and
+/// code path, which its own tests check; CI runs this on its machines too.
+#[test]
+fn golden_output() {
+    assert_eq!(
+        golden_hashes(Filter::Precise),
+        GOLDEN_PRECISE,
+        "precise bytes changed: bump WAV_VERSION (#89)"
+    );
+    let got = golden_hashes(Filter::Fast);
     // #89: these hashes belong to one WAV output version. A change to them (a scarletbook
     // update included) must bump `WAV_VERSION` (src/ident.rs) and `GOLDEN_WAV_VERSION` with
     // them, so that file times and NFS generations move with the bytes.
@@ -786,12 +802,49 @@ fn golden_output() {
     assert_eq!(got, GOLDEN, "PCM bytes changed: bump WAV_VERSION, then GOLDEN and GOLDEN_WAV_VERSION (#89)");
 }
 
+/// `precise` differs from `fast`: its output for the same input differs and is the same from
+/// one call to the next; `Filter::default()` is `precise`, except on 32-bit x86 (`fast`).
+#[test]
+fn precise_is_the_default_and_differs_from_fast() {
+    use sha2::{Digest, Sha256};
+    // `precise`, except on 32-bit x86, where `fast` is the default (the i686 CI job runs this).
+    let want = if cfg!(target_arch = "x86") { Filter::Fast } else { Filter::Precise };
+    assert_eq!(Filter::default(), want);
+    assert_eq!(PcmConfig::default().filter, want);
+    let dsd = noise(3 * 2 * FRAME_BYTES, 11);
+    let hash = |filter| {
+        let c = PcmConfig { filter, ..cfg(PcmRate::R176400, Cutoff::Khz40) };
+        let (pcm, _) = convert_area(2, &c, &dsd);
+        let h = Sha256::digest(&pcm);
+        h.iter().take(8).map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let (p, f) = (hash(Filter::Precise), hash(Filter::Fast));
+    println!("176400 Khz40 precise: {p} fast: {f}");
+    assert_ne!(p, f);
+    assert_eq!(p, hash(Filter::Precise));
+    assert_eq!(f, GOLDEN[1], "fast is scarletbook-pcm 0.7.0's output");
+    assert_eq!(p, GOLDEN_PRECISE[1], "precise bytes changed: bump WAV_VERSION (#89)");
+}
+
 /// The WAV output version (`sacdfs::ident::WAV_VERSION`) that [`GOLDEN`] was taken with. 5
-/// changed only the `INFO` chunk's text (#444), not the samples.
-const GOLDEN_WAV_VERSION: u32 = 5;
+/// changed only the `INFO` chunk's text (#444), not the samples. 6 made `precise` the default
+/// filter: the `fast` samples pinned here are unchanged.
+const GOLDEN_WAV_VERSION: u32 = 6;
 
 /// First 8 bytes of the SHA-256 of each configuration's output, in the order of the loops:
 /// 40 kHz at 88.2, 176.4, 352.8 kHz, then 30 kHz, then the wide filter at 176.4 and 352.8.
+/// The same for the `precise` filter, the default of 0.9.0.
+const GOLDEN_PRECISE: [&str; 8] = [
+    "baf39fd8b1d49e2b",
+    "64ed3350fa1bff6f",
+    "c48b2b0d321b2a21",
+    "15bc5d043f132d36",
+    "8bce5552a4754c00",
+    "5c72060f07a2f6e0",
+    "9b9eafb712427f2f",
+    "fdd500bd8e91afab",
+];
+
 const GOLDEN: [&str; 8] = [
     "9055de943f481f12",
     "0b965afacceb0855",
@@ -804,11 +857,22 @@ const GOLDEN: [&str; 8] = [
 ];
 
 /// The same pinning for 1, 2 and 6 channels and for gains of -3, 0 and +6 dB (#89): the
-/// gain path and the multichannel interleave are scarletbook-pcm's too, so a change there
-/// must show up here. Noise input at 3 frames, seeded; one entry per (channels, gain,
+/// gain path and the multichannel interleave are dsd2pcm's too, so a change there must
+/// show up here. Noise input at 3 frames, seeded; one entry per (channels, gain,
 /// cutoff, rate) in loop order, valid combinations only.
 #[test]
 fn golden_output_channels_and_gains() {
+    assert_eq!(
+        golden_ch_gain_hashes(Filter::Precise),
+        GOLDEN_CH_GAIN_PRECISE,
+        "precise bytes changed: bump WAV_VERSION, then the goldens (#89)"
+    );
+    let got = golden_ch_gain_hashes(Filter::Fast);
+    assert_eq!(sacdfs::ident::WAV_VERSION, GOLDEN_WAV_VERSION, "WAV_VERSION moved: update the goldens");
+    assert_eq!(got, GOLDEN_CH_GAIN, "PCM bytes changed: bump WAV_VERSION, then the goldens (#89)");
+}
+
+fn golden_ch_gain_hashes(filter: Filter) -> Vec<String> {
     use sha2::{Digest, Sha256};
     let mut got = Vec::new();
     for ch in [1u8, 2, 6] {
@@ -819,18 +883,93 @@ fn golden_output_channels_and_gains() {
                     if !valid(rate, cutoff) {
                         continue;
                     }
-                    let (pcm, _) = convert_area(ch, &PcmConfig { rate, cutoff, gain_db }, &dsd);
+                    let (pcm, _) = convert_area(ch, &PcmConfig { rate, cutoff, gain_db, filter }, &dsd);
                     let hex: String =
                         Sha256::digest(&pcm).iter().take(8).map(|b| format!("{b:02x}")).collect();
-                    println!("{ch}ch {gain_db:+} dB {} {cutoff:?}: {hex}", rate.hz());
+                    println!("{filter:?} {ch}ch {gain_db:+} dB {} {cutoff:?}: {hex}", rate.hz());
                     got.push(hex);
                 }
             }
         }
     }
-    assert_eq!(sacdfs::ident::WAV_VERSION, GOLDEN_WAV_VERSION, "WAV_VERSION moved: update the goldens");
-    assert_eq!(got, GOLDEN_CH_GAIN, "PCM bytes changed: bump WAV_VERSION, then the goldens (#89)");
+    got
 }
+
+/// The same for the `precise` filter.
+const GOLDEN_CH_GAIN_PRECISE: [&str; 72] = [
+    "55cefcb635e81ae7",
+    "38b06e79d5ce09c0",
+    "06d9719b821fa7e9",
+    "eeae4b4a7491f094",
+    "68c392840207a55f",
+    "52adc16746184869",
+    "d728d892699cf8bf",
+    "e51cb6a01bea632b",
+    "7b38f63e6371a3ce",
+    "3ed3c239a483ccc4",
+    "ae13b48afa5795ad",
+    "6669cf89b558247e",
+    "69b659bec8d29885",
+    "e7b7afba018febfa",
+    "d749bd8e37db50af",
+    "0d105cb9a2ad1cc4",
+    "8ab9cbffa74232e3",
+    "29607bf4b26aa73b",
+    "9d570f2f43abfc53",
+    "8bd312f6a227124f",
+    "f1be29ba42dc9d93",
+    "5f0eac99d8f14d99",
+    "c10e445ee97ede6f",
+    "69992e6a504bdaa5",
+    "3e777d50a9646e7f",
+    "e650c38a10636342",
+    "559da52a3a838ae0",
+    "60219f2f68df4020",
+    "f5231b34ed517c3b",
+    "b67d49b106c3f66f",
+    "1409d71d393ea959",
+    "a0863e79b7551866",
+    "7929615e264d7533",
+    "6bfef7fa857d478a",
+    "baef544f7f4eb358",
+    "63aa8469913171e8",
+    "56cb93045dbb372c",
+    "9bf8eb3239daff89",
+    "0adaac37b988bc22",
+    "9316cb13b064072a",
+    "7d1af086c4ccb766",
+    "84d3a6e61ddae487",
+    "de45f1b2b896e2a2",
+    "c8b090d1c833a8aa",
+    "b959696a55f462ab",
+    "1187a082302877aa",
+    "05a33823b598a7f6",
+    "e2831c4c57612b9c",
+    "563c0ed78d357bbf",
+    "e389220bd2bb726e",
+    "c82faf20a8cb4cfe",
+    "426a6b3b242d4602",
+    "4c42399241b8e311",
+    "073aae6da7d6c9fa",
+    "1881be7697e70d47",
+    "79c46ebd3cfdab91",
+    "1f7641308cfc38db",
+    "7a033d1ddca0c506",
+    "d4c0dcf266aaee72",
+    "b86efc3091655187",
+    "2ec128c8ab28baf7",
+    "79b1a2777433ca39",
+    "5e5aa6b7fad1df1c",
+    "281ab56205885b47",
+    "849adc042a1a6bab",
+    "8201d4ae179f592b",
+    "1317f37daf775d82",
+    "cd5bc71ceadc69ce",
+    "09f88fd797952455",
+    "ad1c5f1090839dea",
+    "6aea25a04615df0c",
+    "191412531c89768f",
+];
 
 const GOLDEN_CH_GAIN: [&str; 72] = [
     "ed81a13523f1ea66",

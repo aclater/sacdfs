@@ -24,7 +24,7 @@ use crate::disc::Tuning;
 use crate::engine::{Engine, default_threads};
 use crate::index_cache::{self, IndexCache};
 use crate::memory;
-use crate::pcm::{Cutoff, PcmConfig, PcmRate};
+use crate::pcm::{Cutoff, Filter, PcmConfig, PcmRate};
 use crate::sidecar::Sidecars;
 use crate::tree::{Output, SourceDir, Tree};
 
@@ -67,6 +67,11 @@ pub struct Options {
     /// --pcm-rate of 176400 or 352800).
     #[arg(hide = true, long, default_value = "40", value_name = "KHZ", value_parser = parse_cutoff)]
     pub pcm_cutoff: Cutoff,
+    /// Decimation filter of the PCM conversion: precise (the default, except on 32-bit x86;
+    /// about 20 dB lower distortion and noise, about 1.8 times the CPU time) or fast (the
+    /// filter of sacdfs 0.8.0 and earlier; the default on 32-bit x86).
+    #[arg(hide = true, long, default_value = Filter::DEFAULT_NAME, value_name = "FILTER", value_parser = parse_filter)]
+    pub pcm_filter: Filter,
     /// Gain of the PCM conversion in dB, -60 to +24; samples that would clip are clamped.
     #[arg(hide = true, long, default_value_t = 0.0, value_name = "DB", allow_hyphen_values = true, value_parser = parse_gain)]
     pub pcm_gain: f32,
@@ -136,7 +141,7 @@ pub struct Limits {
 
 /// The end of `--help`: where the options it leaves out are.
 pub const TUNING_HELP: &str = "Tuning options (--threads, --cache-mb, --listing-mb, --start-burst, \
---start-burst-secs, --max-open-images, --request-timeout, --pcm-cutoff, --pcm-gain, \
+--start-burst-secs, --max-open-images, --request-timeout, --pcm-cutoff, --pcm-filter, --pcm-gain, \
 --no-multichannel-album-suffix, and for sacdfs --stop-grace) are not listed here; their defaults \
 size themselves. They are described in docs/options.md, under Tuning.";
 
@@ -243,6 +248,14 @@ fn parse_cutoff(s: &str) -> Result<Cutoff, String> {
     }
 }
 
+fn parse_filter(s: &str) -> Result<Filter, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "precise" => Ok(Filter::Precise),
+        "fast" => Ok(Filter::Fast),
+        _ => Err("use precise or fast".to_owned()),
+    }
+}
+
 fn parse_gain(s: &str) -> Result<f32, String> {
     s.parse::<f32>()
         .ok()
@@ -328,7 +341,8 @@ impl Options {
             }
             crate::tags::install(Some(crate::tags::Store::new(&dir)));
         }
-        let pcm = PcmConfig { rate, cutoff: self.pcm_cutoff, gain_db: self.pcm_gain };
+        let pcm =
+            PcmConfig { rate, cutoff: self.pcm_cutoff, gain_db: self.pcm_gain, filter: self.pcm_filter };
         if let Err(e) = pcm.validate() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -641,6 +655,17 @@ mod option_tests {
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(std::iter::once("sacdfs").chain(args.iter().copied()))
+    }
+
+    /// The default filter is `precise`, except on 32-bit x86 (the i686 build), where it is
+    /// `fast`; `--pcm-filter` selects either on every target.
+    #[test]
+    fn pcm_filter_default_by_target() {
+        let want = if cfg!(target_arch = "x86") { Filter::Fast } else { Filter::Precise };
+        assert_eq!(parse(&[]).unwrap().options.pcm_filter, want);
+        assert_eq!(parse(&["--pcm-filter", "fast"]).unwrap().options.pcm_filter, Filter::Fast);
+        assert_eq!(parse(&["--pcm-filter", "precise"]).unwrap().options.pcm_filter, Filter::Precise);
+        assert!(parse(&["--pcm-filter", "default"]).is_err());
     }
 
     #[test]

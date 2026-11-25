@@ -24,8 +24,9 @@ include = [
 # The engine: SACD parsing, demultiplexing and DST decoding, from crates.io, pinned exactly
 # (published from the release tag).
 scarletbook = "=1.0.2"
-# The DSD-to-PCM converter behind the WAV files (#84); outside the 1.0 freeze, so it keeps 0.7.0.
-scarletbook-pcm = "=0.7.0"
+# The DSD-to-PCM converter behind the WAV files, from crates.io, pinned exactly. Without its FLAC
+# reader (default feature `flac`), which sacdfs does not use.
+dsd2pcm = { version = "=0.2.0", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
 clap_mangen = { version = "0.2", optional = true }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }

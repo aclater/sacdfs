@@ -1,0 +1,136 @@
+# Release quality comparison for sacdfs: the WAV view of a release against the previous one.
+# Licence: CC BY 4.0, like the rest of the documentation; the sacdfs authors.
+#
+# Measurement suite: dsd-measure, https://github.com/dsd-toolbox/dsd-measure
+# Pinned: version 0.1.2, tag v0.1.2, commit 3eaec2df13634f3bfc3968326a1dd7604ddfaf08.
+#   pipx install git+https://github.com/dsd-toolbox/dsd-measure@3eaec2df13634f3bfc3968326a1dd7604ddfaf08
+#
+# What is measured: the conversion behind the WAV files of a mount (`sacdfs::pcm`: SACD
+# frames converted with their neighbours, gain 0 dB), through the example `dsf_to_wav`, which
+# reads the suite's DSF and writes a 24-bit WAV. The mount adds the WAV header, tags and the
+# frame cache around those samples and does not change them (the release test plan compares
+# a mount's WAV files with the converter's own output). Two builds of the example sit under
+# target/quality/ (new: the release candidate; old: the previous release from its tag):
+#   cargo build --locked --release --example dsf_to_wav
+#   mkdir -p target/quality/new && cp target/release/examples/dsf_to_wav target/quality/new/
+# For old, check out the previous release's tag, copy examples/dsf_to_wav.rs from the new
+# tree, delete the whole `--filter` match arm (from the comment "FILTER" to its closing brace) and
+# `Filter` from the `use` line (that release has no filter option), build the same way and copy the program to target/quality/old/.
+#   dsd-measure run suites/sacdfs.toml --only reference_floor levels noise alias_tones
+#
+# Coverage: precise (the default from 0.9.0) and fast (the previous release's filter) at
+# every output rate with cutoff 40, and cutoff wide at 176400 and 352800; "old" is the
+# previous release at the same settings. Cutoff 30 is left out: it shares the design and
+# arithmetic of cutoff 40 and only moves the band edge.
+#
+# Metrics, from each device's results.json (as in suites/dsd2pcm.toml of dsd2pcm):
+#   SINAD             metrics.tone_0dbsacd.sinad_db
+#   THD+N             metrics.tone_0dbsacd.thdn_db
+#   noise floor       metrics.noise.unweighted_dbfs     20 Hz-20 kHz, unweighted
+#   alias rejection   metrics.alias_tones.worst_image_db   88200 and 176400 only
+#   null-test depth   dsd-measure null, old against each new filter (fast and precise) at each
+#                     rate and cutoff, on the quick-profile multitone
+#
+# A change of 0.01 dB or more, or a null that is no longer identical, is flagged.
+
+[suite]
+name = "sacdfs WAV view release comparison"
+profile = "quick"
+in_rate = 88200
+out = "target/quality/report"
+
+# ---- previous release ----
+
+[[device]]
+name = "old 40 88200"
+adapter = "cli"
+class = "A"
+command = "target/quality/old/dsf_to_wav --rate 88200 --cutoff 40 {input} {output}"
+
+[[device]]
+name = "old 40 176400"
+adapter = "cli"
+class = "A"
+command = "target/quality/old/dsf_to_wav --rate 176400 --cutoff 40 {input} {output}"
+
+[[device]]
+name = "old 40 352800"
+adapter = "cli"
+class = "A"
+command = "target/quality/old/dsf_to_wav --rate 352800 --cutoff 40 {input} {output}"
+
+[[device]]
+name = "old wide 176400"
+adapter = "cli"
+class = "A"
+command = "target/quality/old/dsf_to_wav --rate 176400 --cutoff wide {input} {output}"
+
+[[device]]
+name = "old wide 352800"
+adapter = "cli"
+class = "A"
+command = "target/quality/old/dsf_to_wav --rate 352800 --cutoff wide {input} {output}"
+
+# ---- fast: the previous release's filter, in the new build ----
+
+[[device]]
+name = "new fast 40 88200"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 88200 --cutoff 40 --filter fast {input} {output}"
+
+[[device]]
+name = "new fast 40 176400"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 176400 --cutoff 40 --filter fast {input} {output}"
+
+[[device]]
+name = "new fast 40 352800"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 352800 --cutoff 40 --filter fast {input} {output}"
+
+[[device]]
+name = "new fast wide 176400"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 176400 --cutoff wide --filter fast {input} {output}"
+
+[[device]]
+name = "new fast wide 352800"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 352800 --cutoff wide --filter fast {input} {output}"
+
+# ---- precise: the default ----
+
+[[device]]
+name = "new precise 40 88200"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 88200 --cutoff 40 --filter precise {input} {output}"
+
+[[device]]
+name = "new precise 40 176400"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 176400 --cutoff 40 --filter precise {input} {output}"
+
+[[device]]
+name = "new precise 40 352800"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 352800 --cutoff 40 --filter precise {input} {output}"
+
+[[device]]
+name = "new precise wide 176400"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 176400 --cutoff wide --filter precise {input} {output}"
+
+[[device]]
+name = "new precise wide 352800"
+adapter = "cli"
+class = "A"
+command = "target/quality/new/dsf_to_wav --rate 352800 --cutoff wide --filter precise {input} {output}"

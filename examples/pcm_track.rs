@@ -111,7 +111,7 @@ fn main() {
 
     for rate in [PcmRate::R88200, PcmRate::R176400, PcmRate::R352800] {
         for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
-            let cfg = PcmConfig { rate, cutoff, gain_db: 0.0 };
+            let cfg = PcmConfig { rate, cutoff, ..PcmConfig::default() };
             if cfg.validate().is_err() {
                 continue;
             }
