@@ -357,6 +357,22 @@ for case in "bad|doesn't match the checksum built into" "plain|no checksum built
     fi
 done
 
+# The repository's copy names no release: without --version it stops before any download, with
+# or without --dry-run, and installs nothing. The releases URL points at a port nothing listens
+# on, so a request would show as a failed download, and the log must not say "downloading".
+for extra in "" "--dry-run"; do
+    # shellcheck disable=SC2086 # $extra is empty or one option
+    SACDFS_RELEASES_URL=http://127.0.0.1:9/releases sh "$t/plain/install.sh" --iso-dir "$music" --platform linux --method ctl $extra >"$log" 2>&1
+    rc=$?
+    cat "$log"
+    if [ "$rc" != 0 ] && grep -q "the repository's copy, not a release's" "$log" && ! grep -qE 'downloading|download failed' "$log" &&
+        grep -q 'releases/latest/download/install.sh' "$log" && [ ! -e /opt/sacdfs ] && [ ! -e /srv/sacd ]; then
+        res "repository-copy-needs-version${extra:+ [$extra]}" "pass (refused, no download, nothing installed)"
+    else
+        res "repository-copy-needs-version${extra:+ [$extra]}" "FAIL (status $rc)"
+    fi
+done
+
 # --- 7. Upgrade on QNAP (getcfg and setcfg stand-ins, /tmp/config a tmpfs): an earlier
 # install in the shared folder is moved to the volume's .sacdfs, autorun.sh follows, the old
 # files go; then --uninstall. And --uninstall straight from an earlier install.
