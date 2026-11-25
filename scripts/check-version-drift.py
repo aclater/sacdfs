@@ -90,7 +90,7 @@ def check_guides(version, problems):
 def check_deploy(version, problems):
     checks = [
         ("deploy/nas-compose.yaml", rf"image:\s*ghcr\.io/dsd-toolbox/sacdfs:({V})"),
-        ("deploy/unraid/sacdfs.xml", rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})</Repository>"),
+        ("deploy/unraid/sacdfs.xml", rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})(?:@sha256:[0-9a-f]{{64}})?</Repository>"),
         ("deploy/truenas/sacdfs/ix_values.yaml", rf"repository:\s*ghcr\.io/dsd-toolbox/sacdfs\s*\n\s*tag:\s*\"?({V})"),
         ("deploy/truenas/sacdfs/app.yaml", rf"^app_version:\s*({V})\s*$"),
     ]

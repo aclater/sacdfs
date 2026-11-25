@@ -4,7 +4,7 @@
      store listing: docs/install/store-apps.md. -->
 <Container version="2">
   <Name>sacdfs</Name>
-  <Repository>ghcr.io/dsd-toolbox/sacdfs:0.9.0</Repository>
+  <Repository>ghcr.io/dsd-toolbox/sacdfs:0.9.0@sha256:b1abe3548e28afc62bfc40114f92d899bf3e9ffdbe1f65b009bd836a2bef932c</Repository>
   <Registry>https://github.com/dsd-toolbox/sacdfs/pkgs/container/sacdfs</Registry>
   <Network>bridge</Network>
   <MyIP/>
