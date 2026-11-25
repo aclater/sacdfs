@@ -162,10 +162,32 @@ mkdir -p "$work/music" "$work/ref-mnt"
 for i in dsd-stereo-mch-2048 dst-features-2ch-6ch dst-stereo-5ch-2054; do
     cp "tests/corpus/images/$i.iso" "$work/music/"
 done
-"$work/pub/$pkg/sacdfs" "$work/music" "$work/ref-mnt"
-(cd "$work/ref-mnt" && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) >"$work/ref.sha"
-fusermount3 -u "$work/ref-mnt" 2>/dev/null || fusermount -u "$work/ref-mnt"
+mkref() { # binary, list
+    "$1" "$work/music" "$work/ref-mnt"
+    (cd "$work/ref-mnt" && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) >"$2"
+    fusermount3 -u "$work/ref-mnt" 2>/dev/null || fusermount -u "$work/ref-mnt"
+}
+mkref "$work/pub/$pkg/sacdfs" "$work/ref.sha"
 echo "reference: $(wc -l <"$work/ref.sha") files"
+# The container route runs the image nas-compose.yaml names, which is not $pkg's release:
+# install.sh's DEFAULT_VERSION stays at an old release in the tree, and an old release converts
+# to WAV differently (0.9.0's dsd2pcm 0.2 changed it on purpose; #635). Its reference, next to
+# the other as ref-image.sha, is read with the release of the image's version.
+img_version=$(sed -n 's|^ *image: ghcr.io/[^/]*/sacdfs:\([0-9][^@ ]*\).*|\1|p' "$here/nas-compose.yaml")
+if [ -n "$img_version" ] && [ "$img_version" != "$version" ]; then
+    refpkg=sacdfs-$img_version-$arch-linux
+    mkdir -p "$work/refpub"
+    curl -fsSL -o "$work/refpub/$refpkg.tar.gz" "https://github.com/dsd-toolbox/sacdfs/releases/download/v$img_version/$refpkg.tar.gz"
+    curl -fsSL -o "$work/refpub/$refpkg.tar.gz.sha256" "https://github.com/dsd-toolbox/sacdfs/releases/download/v$img_version/$refpkg.tar.gz.sha256"
+    curl -fsSL -o "$work/refpub/$refpkg.tar.gz.intoto.jsonl" "https://github.com/dsd-toolbox/sacdfs/releases/download/v$img_version/$refpkg.tar.gz.intoto.jsonl"
+    (cd "$work/refpub" && sha256sum -c "$refpkg.tar.gz.sha256")
+    # The checksum comes from the same server as the archive: the build provenance says the
+    # archive is this repository's release build, before it runs here.
+    gh attestation verify "$work/refpub/$refpkg.tar.gz" -R dsd-toolbox/sacdfs --bundle "$work/refpub/$refpkg.tar.gz.intoto.jsonl"
+    tar -C "$work/refpub" -xzf "$work/refpub/$refpkg.tar.gz"
+    mkref "$work/refpub/$refpkg/sacdfs" "$work/ref-image.sha"
+    echo "reference of the image ($img_version): $(wc -l <"$work/ref-image.sha") files"
+fi
 chmod -R a+rX "$work"
 
 opts=(--network host --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined)

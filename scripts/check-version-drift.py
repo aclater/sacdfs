@@ -7,6 +7,9 @@
   (docs/install/*.md; table rows and history lines such as "Checked on 0.6.0" are skipped),
   deploy/nas-compose.yaml, the Unraid template and the TrueNAS app (image tag, app_version).
 - The scarletbook pins quoted in docs/design.md and docs/pcm-quality.md against Cargo.toml.
+- Once Cargo.toml's version is a published release (online only): the same three deploy files
+  pin the image by the digest of that tag's image index in ghcr.io (`:X.Y.Z@sha256:...`), so a
+  release whose pin commit is missing shows as a failing check.
 - CHANGELOG.md's "## [X.Y.Z] - DATE" headings against the published GitHub releases (date
   in UTC), through the GitHub API; --offline skips it.
 
@@ -90,7 +93,10 @@ def check_guides(version, problems):
 def check_deploy(version, problems):
     checks = [
         ("deploy/nas-compose.yaml", rf"image:\s*ghcr\.io/dsd-toolbox/sacdfs:({V})"),
-        ("deploy/unraid/sacdfs.xml", rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})(?:@sha256:[0-9a-f]{{64}})?</Repository>"),
+        (
+            "deploy/unraid/sacdfs.xml",
+            rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})(?:@sha256:[0-9a-f]{{64}})?</Repository>",
+        ),
         ("deploy/truenas/sacdfs/ix_values.yaml", rf"repository:\s*ghcr\.io/dsd-toolbox/sacdfs\s*\n\s*tag:\s*\"?({V})"),
         ("deploy/truenas/sacdfs/app.yaml", rf"^app_version:\s*({V})\s*$"),
     ]
@@ -104,6 +110,65 @@ def check_deploy(version, problems):
                 problems.append(
                     f"{path}:{line_of(text, m.start(1))}: names sacdfs {m.group(1)}, Cargo.toml is {version}"
                 )
+
+
+# The files that name the image, and how: the reference up to and including its optional digest.
+DIGEST_FILES = [
+    ("deploy/nas-compose.yaml", rf"image:\s*ghcr\.io/dsd-toolbox/sacdfs:({V})(@sha256:[0-9a-f]{{64}})?"),
+    (
+        "deploy/unraid/sacdfs.xml",
+        rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})(@sha256:[0-9a-f]{{64}})?</Repository>",
+    ),
+    (
+        "deploy/truenas/sacdfs/ix_values.yaml",
+        rf"repository:\s*ghcr\.io/dsd-toolbox/sacdfs\s*\n\s*tag:\s*\"({V})(@sha256:[0-9a-f]{{64}})?\"",
+    ),
+]
+
+
+def image_digest(version):
+    """The digest of ghcr.io/dsd-toolbox/sacdfs:VERSION's manifest (the image index), anonymously."""
+    repo = "dsd-toolbox/sacdfs"
+    with urllib.request.urlopen(f"https://ghcr.io/token?scope=repository:{repo}:pull", timeout=30) as r:
+        token = json.load(r)["token"]
+    req = urllib.request.Request(
+        f"https://ghcr.io/v2/{repo}/manifests/{version}",
+        method="HEAD",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.headers["Docker-Content-Digest"]
+
+
+def check_digest_text(path, text, pattern, version, digest, problems):
+    """Each image reference in `text` that names `version` pins `digest`."""
+    found = list(re.finditer(pattern, text, re.MULTILINE))
+    if not found:
+        problems.append(f"{path}: no pinned sacdfs image reference found (pattern {pattern!r}); update this check")
+    for m in found:
+        if m.group(1) != version:
+            continue  # the version check reports it
+        if m.group(2) != "@" + digest:
+            have = m.group(2) or "no digest"
+            problems.append(
+                f"{path}:{line_of(text, m.start(1))}: {version} is pinned by {have}, "
+                f"the published image index is {digest}"
+            )
+
+
+def check_digests(version, published, problems):
+    if version not in published:
+        return  # the release pull request's own version isn't published yet
+    try:
+        digest = image_digest(version)
+    except (OSError, ValueError, KeyError) as e:  # network or registry trouble is a failed check, not a pass
+        problems.append(f"ghcr.io/dsd-toolbox/sacdfs:{version}: cannot read the image digest ({e})")
+        return
+    for path, pattern in DIGEST_FILES:
+        check_digest_text(path, read(path), pattern, version, digest, problems)
 
 
 def check_pins(pins, problems):
@@ -166,8 +231,7 @@ def releases():
     return published
 
 
-def check_changelog(version, problems):
-    published = releases()
+def check_changelog(version, published, problems):
     path = "CHANGELOG.md"
     text = read(path)
     for m in re.finditer(r"^## \[([^\]]+)\] - (\d{4}-\d\d-\d\d)", text, re.MULTILINE):
@@ -194,7 +258,10 @@ def main(argv):
         check_deploy(version, problems)
     check_pins(pins, problems)
     if "--offline" not in argv:
-        check_changelog(version, problems)
+        published = releases()
+        if "-" not in version:
+            check_digests(version, published, problems)
+        check_changelog(version, published, problems)
     for p in problems:
         print(p)
     print(f"check-version-drift: sacdfs {version}, {len(problems)} problems", file=sys.stderr)
