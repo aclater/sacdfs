@@ -179,7 +179,11 @@ if [ -n "$img_version" ] && [ "$img_version" != "$version" ]; then
     mkdir -p "$work/refpub"
     curl -fsSL -o "$work/refpub/$refpkg.tar.gz" "https://github.com/dsd-toolbox/sacdfs/releases/download/v$img_version/$refpkg.tar.gz"
     curl -fsSL -o "$work/refpub/$refpkg.tar.gz.sha256" "https://github.com/dsd-toolbox/sacdfs/releases/download/v$img_version/$refpkg.tar.gz.sha256"
+    curl -fsSL -o "$work/refpub/$refpkg.tar.gz.intoto.jsonl" "https://github.com/dsd-toolbox/sacdfs/releases/download/v$img_version/$refpkg.tar.gz.intoto.jsonl"
     (cd "$work/refpub" && sha256sum -c "$refpkg.tar.gz.sha256")
+    # The checksum comes from the same server as the archive: the build provenance says the
+    # archive is this repository's release build, before it runs here.
+    gh attestation verify "$work/refpub/$refpkg.tar.gz" -R dsd-toolbox/sacdfs --bundle "$work/refpub/$refpkg.tar.gz.intoto.jsonl"
     tar -C "$work/refpub" -xzf "$work/refpub/$refpkg.tar.gz"
     mkref "$work/refpub/$refpkg/sacdfs" "$work/ref-image.sha"
     echo "reference of the image ($img_version): $(wc -l <"$work/ref-image.sha") files"
