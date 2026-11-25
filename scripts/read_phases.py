@@ -7,6 +7,9 @@ Phases (each on its own fresh mount):
   list      list the whole tree, unmount at once
   idle90    list, then 90 s with no read
   headtail  list, then read the first and the last 64 KiB of every file
+  headtail2 headtail twice on one index cache, the mount in between closed: the counts are the
+            second mount's, which opens the tracks from the saved seek index (scarletbook 1.1.1's
+            head-start fix, #437, shows only here)
 
   read_phases.py run --sacdfs BIN --library DIR --out RESULT.json [--format dsf] [--phases list,idle90,headtail]
   read_phases.py check --base BASE.json --head HEAD.json [--max-percent 1.0]
@@ -26,14 +29,14 @@ import sys
 import tempfile
 import time
 
-PHASES = ("list", "idle90", "headtail")
+PHASES = ("list", "idle90", "headtail", "headtail2")
 SLACK = {"bytes": 1 << 20, "calls": 50}
 LINE = re.compile(r"image reads for audio: (\d+) calls, (\d+) bytes")
 
 
-def run_phase(binary, library, fmt, phase, work):
+def run_phase(binary, library, fmt, phase, work, idx=None):
     mnt = tempfile.mkdtemp(prefix="mnt-", dir=work)
-    idx = tempfile.mkdtemp(prefix="idx-", dir=work)
+    idx = idx or tempfile.mkdtemp(prefix="idx-", dir=work)
     log = os.path.join(work, f"log-{phase}.txt")
     if os.path.exists(log):
         os.remove(log)
@@ -50,7 +53,7 @@ def run_phase(binary, library, fmt, phase, work):
     files = [os.path.join(r, f) for r, _, fs in os.walk(mnt) for f in fs]
     if phase == "idle90":
         time.sleep(90)
-    elif phase == "headtail":
+    elif phase in ("headtail", "headtail2"):
         for f in sorted(files):
             try:
                 fd = os.open(f, os.O_RDONLY)
@@ -78,7 +81,13 @@ def cmd_run(a):
         for ph in a.phases.split(","):
             if ph not in PHASES:
                 raise SystemExit(f"unknown phase {ph}")
-            out[ph] = run_phase(a.sacdfs, a.library, a.format, ph, work)
+            if ph == "headtail2":
+                # The first mount fills the index cache and is not counted; the second one loads it.
+                idx = tempfile.mkdtemp(prefix="idx2-", dir=work)
+                run_phase(a.sacdfs, a.library, a.format, "headtail", work, idx)
+                out[ph] = run_phase(a.sacdfs, a.library, a.format, "headtail", work, idx)
+            else:
+                out[ph] = run_phase(a.sacdfs, a.library, a.format, ph, work)
             print(f"{ph}: {out[ph]['calls']} calls, {out[ph]['bytes']} bytes, {out[ph]['files']} files", flush=True)
     with open(a.out, "w") as f:
         json.dump(out, f, indent=2)

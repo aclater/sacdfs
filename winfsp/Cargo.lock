@@ -911,9 +911,9 @@ dependencies = [
 
 [[package]]
 name = "scarletbook"
-version = "1.0.2"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37368f216246374818f64a4b4eed4139e405c3d288542fdbcac65823db807839"
+checksum = "321ac4ca37fb6108497936b0603e108ad0ed066abd579472b369eff6a9fc1bde"
 dependencies = [
  "thiserror",
 ]

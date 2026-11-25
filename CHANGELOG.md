@@ -6,11 +6,65 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A seccomp deny-list after the mount.** Once sacdfs has mounted, it refuses itself (with `EPERM`)
+  the system calls an attacker would use to leave a container or widen rights: `open_by_handle_at`,
+  the mount calls, `ptrace`, `bpf`, `keyctl`, `kexec_*`, the module loaders, `pivot_root`, `setns` and
+  `unshare`, `clone` with a namespace flag and `clone3`, and `umount2` once the daemon has dropped its capability;
+  another system call ABI is killed. Everything else is allowed. Not installed on ARM until it has run on ARM hardware. See [Privileges](docs/deployment.md#privileges).
+
 ### Changed
 
+- **sacdfs drops CAP_SYS_ADMIN once it has mounted.** With the unmount helper armed, the daemon cuts every thread
+  to `CAP_DAC_OVERRIDE` (or `CAP_DAC_READ_SEARCH`, only where `CAP_DAC_OVERRIDE` is not held), sets `no_new_privs`
+  and the securebits `NOROOT`: it can no longer mount, unmount, `ptrace` its helper or regain a capability through
+  an exec. The stop goes through the helper. It keeps the capability where no helper is armed (Linux before 4.11),
+  on ARM (built and tested on GitHub's arm64 runners, not yet run on ARM hardware of our own; the 0.9.0 note on
+  ARM testing applies, and no filter is installed there), and with `SACDFS_KEEP_SYS_ADMIN=1` (an escape hatch for this release).
+  The entry point and the shipped systemd unit add `CAP_SETPCAP` to sacdfs's bounding set for it. See
+  [Capabilities](docs/deployment.md#capabilities).
+- **Unmount helper.** A sacdfs that runs with `CAP_SYS_ADMIN` now forks a small helper before
+  any thread exists, which does the unmount on a stop (`MNT_DETACH`, through a descriptor of the
+  mount point, after checking that it is still the FUSE mount it was armed for) and detaches the
+  mount if the daemon crashes. It never asks the daemon, so a stuck daemon does not hold up the
+  unmount. It runs under its own seccomp filter. It is what lets the daemon drop `SYS_ADMIN` (above).
 - **The repository's `install.sh` needs `--version`.** A copy from a clone or from main has no release
   or checksums built in, and its default was an old release (0.6.0); without `--version` it now stops
   before downloading and names the release's own `install.sh`. A released `install.sh` is unchanged.
+- **The entry point warns about open shares.** At every start (the first run of the entry point), a log
+  line says when SMB lets guests in because neither `SMB_USER` nor the new `SMB_GUEST=1` is set, and when
+  `NFS_CLIENTS` is unset or contains `*`. Nothing else changes: both stay open by default in this
+  version. `SMB_GUEST=1` keeps guest access on purpose and ends the warning. A later version will
+  not start SMB or NFS in those cases. See "Who can reach the shares" in docs/deployment.md.
+- **Docs: macOS and a container restart (#624).** The SMB restart table records the drop on 0.8.0 and
+  0.7.2 and on macOS 15.7.7, the one-off empty read, and the unexplained drops without a restart.
+- **scarletbook 1.1.1 (was 1.0.2).** Two fixes to provisional seeking: no more fallback to an exact scan of the
+  area where the bit rate rises (#434), and a track's head, opened from a saved seek index, begins at the track's
+  start instead of at the previous track's tail (#437). They change which sectors are read, never the frames.
+  Measured against 1.0.2 on 40 real images (499 DSF files, head and tail of each, the mount opened a second
+  time on the saved index): image bytes read 120,219,648 -> 94,623,744 (-21.3 %) at the same 1,000 calls; on
+  the first mount 165,126,144 -> 137,056,256 (-17.0 %), calls 1,967 -> 1,979 (+0.6 %). Every DSF and WAV file the
+  mount serves hashes the same: 910 files of the 136-image test corpus and 156 files of 6 real images.
+
+### Fixed
+
+- **A reader of folder art no longer gets `EIO` while the art is replaced (#631).** The kernel
+  was told a new generation for the art's node number whenever its source file changed, and
+  took the number for another file: it marked the old inode bad, and every reader holding it
+  (open, `fstat`, read, `close`) failed with `EIO`, a replace by rename included. The kernel is now
+  told one generation per art file ([design](docs/design.md), "Changes while mounted"); the
+  generation in network file handles is unchanged.
+- **A reader of folder art no longer gets `ESTALE` while the art is rewritten in place
+  (#628).** An open that found the source changed since the lookup failed, relying on the
+  kernel's one retry; a second change in that time (a truncate, then a write) reached the
+  reader. The open now serves the file as it is, read directly. A network file handle to the
+  old file still gets `ESTALE`. Stress script: `scripts/art-replace-stress.py`.
+- **Release hash lists stop on an unreadable file.** The release checks that compare what the
+  mount serves with what another build serves listed the files with a `find | while` loop, so a
+  directory `find` could not enter was skipped without an error and a short list passed. They now
+  use `.github/scripts/hash-tree.sh`, which fails on anything it cannot list or read
+  (`tests/hash-tree.sh` tests it).
 
 ## [0.9.0] - 2026-11-25
 

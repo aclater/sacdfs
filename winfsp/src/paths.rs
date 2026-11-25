@@ -351,7 +351,7 @@ mod tests {
     }
 
     fn entry(ino: u64, kind: Kind, size: u64) -> EntryAttr {
-        EntryAttr { ttl: Duration::ZERO, attr: attr(ino, kind, size), generation: 0 }
+        EntryAttr { ttl: Duration::ZERO, attr: attr(ino, kind, size), generation: 0, kernel_generation: 0 }
     }
 
     /// A folder's entries: name, inode, kind, size.
