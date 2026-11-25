@@ -344,7 +344,9 @@ rm -rf /opt/c /srv/oldconf /srv/x
 # --- 6. Downloads: a wrong checksum built in, or none over plain HTTP: refused.
 for case in "bad|doesn't match the checksum built into" "plain|no checksum built in"; do
     name=${case%%|*}
-    SACDFS_RELEASES_URL=$url sh "$t/$name/install.sh" --iso-dir "$music" --platform linux --method ctl >"$log" 2>&1
+    # The repository's copy refuses without --version (it names no release); the test gives the one it serves.
+    ver=$(sed -n 's/^DEFAULT_VERSION=\([^ ]*\).*/\1/p' "$t/$name/install.sh")
+    SACDFS_RELEASES_URL=$url sh "$t/$name/install.sh" --iso-dir "$music" --platform linux --method ctl --version "$ver" >"$log" 2>&1
     rc=$?
     cat "$log"
     if [ "$rc" != 0 ] && grep -q "${case#*|}" "$log" && [ ! -e /opt/sacdfs ] && [ ! -e /srv/sacd ]; then
