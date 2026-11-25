@@ -98,6 +98,14 @@ else
         diff "$ref" /tmp/got.sha | head -40
         echo "--- files: errors of the listing:"
         head -20 /tmp/got.err
+        # Is the listing itself stable, and on what CPU did it run? A second listing and the CPU's
+        # model and instruction sets (the PCM kernels pick theirs at run time).
+        if [ -f /opt/sacdfs/compose.yaml ]; then
+            docker exec sacdfs sh -c "$hashes" sh /srv/sacd >/tmp/got2.sha 2>/dev/null
+            if same /tmp/got.sha /tmp/got2.sha; then echo "--- files: a second listing is identical to the first"; else echo "--- files: a second listing DIFFERS from the first:"; diff /tmp/got.sha /tmp/got2.sha | head -10; fi
+        fi
+        grep -m1 'model name' /proc/cpuinfo
+        grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(sse2|avx2|fma|avx512f)$' | tr '\n' ' '; echo
     fi
 
     echo "=== second run"
