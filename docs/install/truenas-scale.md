@@ -38,7 +38,7 @@ The catalog takes a new sacdfs release through its maintainers' automated update
    services:
      sacdfs:
        # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/dsd-toolbox/sacdfs:{version}'
-       image: ghcr.io/dsd-toolbox/sacdfs:0.8.0
+       image: ghcr.io/dsd-toolbox/sacdfs:0.9.0
        # /facts
        restart: unless-stopped
        devices:
@@ -93,7 +93,7 @@ Windows drive mapping, Roon's "Add network share" and the SMB storage of other T
    services:
      sacdfs:
        # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/dsd-toolbox/sacdfs:{version}'
-       image: ghcr.io/dsd-toolbox/sacdfs:0.8.0
+       image: ghcr.io/dsd-toolbox/sacdfs:0.9.0
        # /facts
        restart: unless-stopped
        devices:

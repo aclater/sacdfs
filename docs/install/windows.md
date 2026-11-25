@@ -47,8 +47,8 @@ administrator": a drive mounted from an administrator window is hidden from Expl
    ```powershell
    cd $HOME\Downloads
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-windows.zip\ncurl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-windows.zip.sha256'
-   curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-windows.zip
-   curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.8.0/sacdfs-0.8.0-x86_64-windows.zip.sha256
+   curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-windows.zip
+   curl.exe -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-windows.zip.sha256
    # /facts
    ```
 
@@ -57,7 +57,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
    <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    # facts:release repo=dsd-toolbox/sacdfs fmt='(Get-FileHash sacdfs-{version}-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-{version}-x86_64-windows.zip.sha256).Split(" ")[0]'
-   (Get-FileHash sacdfs-0.8.0-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.8.0-x86_64-windows.zip.sha256).Split(" ")[0]
+   (Get-FileHash sacdfs-0.9.0-x86_64-windows.zip).Hash -eq (Get-Content sacdfs-0.9.0-x86_64-windows.zip.sha256).Split(" ")[0]
    # /facts
    ```
 
@@ -68,7 +68,7 @@ administrator": a drive mounted from an administrator window is hidden from Expl
    <!-- docs-run: skip="Windows PowerShell commands; the docs-run container is Linux" -->
    ```powershell
    # facts:release repo=dsd-toolbox/sacdfs fmt='Expand-Archive sacdfs-{version}-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs'
-   Expand-Archive sacdfs-0.8.0-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
+   Expand-Archive sacdfs-0.9.0-x86_64-windows.zip $env:LOCALAPPDATA\Programs\sacdfs
    # /facts
    Unblock-File $env:LOCALAPPDATA\Programs\sacdfs\sacdfs-win.exe
    ```

@@ -56,14 +56,15 @@ class Pins(unittest.TestCase):
         self.assertEqual(len(bad), 1)
         self.assertIn("scarletbook-pcm 0.6.1, Cargo.toml pins =0.7.0", bad[0])
 
-    def test_without_the_pin_the_history_sentence_is_not_a_mismatch(self):
+    def test_without_the_scarletbook_pcm_pin_the_dsd2pcm_version_must_be_quoted(self):
         pins, out = Tree(CARGO_NEW, HISTORY).problems()
         self.assertEqual(pins, {"scarletbook": "1.0.2", "dsd2pcm": "0.2.0"})
-        self.assertEqual(out, [])
-
-    def test_a_quoted_dsd2pcm_version_is_compared_with_the_pin(self):
+        self.assertEqual(len(out), 1)  # the history sentence alone is not enough
+        self.assertIn('no "`dsd2pcm` (X)" mention', out[0])
         _, ok = Tree(CARGO_NEW, HISTORY + "The converter is `dsd2pcm` (0.2.0).\n").problems()
         self.assertEqual(ok, [])
+
+    def test_a_quoted_dsd2pcm_version_is_compared_with_the_pin(self):
         _, bad = Tree(CARGO_NEW, HISTORY + "The converter is `dsd2pcm` (0.1.2).\n").problems()
         self.assertEqual(len(bad), 1)
         self.assertIn("dsd2pcm 0.1.2, Cargo.toml pins =0.2.0", bad[0])
@@ -74,7 +75,7 @@ class Pins(unittest.TestCase):
         self.assertIn("neither a scarletbook-pcm nor a dsd2pcm pin", out[0])
 
     def test_the_design_pin_is_still_compared(self):
-        t = Tree(CARGO_NEW.replace("=1.0.2", "=1.0.3"), HISTORY)
+        t = Tree(CARGO_NEW.replace("=1.0.2", "=1.0.3"), HISTORY + "The converter is `dsd2pcm` (0.2.0).\n")
         _, out = t.problems()
         self.assertEqual(len(out), 2)  # both numbers of the line
 

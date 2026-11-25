@@ -335,6 +335,20 @@ jobs:
           (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /tmp/host.sha256
           fusermount3 -u /tmp/mnt
           exit $status
+      - name: The corpus hashed with each PCM filter named (the reference of the i686 build)
+        if: matrix.name == 'x86_64'
+        # The i686 build's default filter is fast and this build's is precise, so the WAV bytes differ by
+        # design: the i686 build is compared with each filter named on both sides, and the default itself
+        # is asserted here (no option = precise on this build).
+        run: |
+          for f in precise fast; do
+            "/tmp/check/$PKG/sacdfs" --pcm-filter "$f" tests/corpus/images /tmp/mnt 2> "/tmp/serve-$f.log"
+            (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r x; do sha256sum "$x"; done) > "/tmp/host-$f.sha256"
+            fusermount3 -u /tmp/mnt
+          done
+          wc -l /tmp/host.sha256 /tmp/host-precise.sha256 /tmp/host-fast.sha256
+          cmp /tmp/host.sha256 /tmp/host-precise.sha256
+          if cmp -s /tmp/host-precise.sha256 /tmp/host-fast.sha256; then echo "::error::the two filters gave the same bytes: the comparison would prove nothing"; exit 1; fi
       - name: The same bytes on glibc 2.17, mounted without fusermount (UBI 7)
         if: matrix.arch == 'x86_64'
         run: |
@@ -355,7 +369,10 @@ jobs:
         if: matrix.name == 'x86_64'
         with:
           name: corpus-sha256
-          path: /tmp/host.sha256
+          path: |
+            /tmp/host.sha256
+            /tmp/host-precise.sha256
+            /tmp/host-fast.sha256
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
@@ -445,7 +462,7 @@ jobs:
         with:
           name: corpus-sha256
           path: ${{ runner.temp }}/x86_64
-      - name: The packaged binary serves the corpus with the x86_64 build's bytes
+      - name: The packaged binary serves the corpus with the x86_64 build's bytes, filter for filter
         run: |
           mkdir -p /tmp/check /tmp/mnt
           tar -C /tmp/check -xzf "dist/$PKG.tar.gz"
@@ -457,8 +474,16 @@ jobs:
           (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /tmp/i686.sha256
           fusermount3 -u /tmp/mnt
           [[ $status == 0 ]] || exit $status
-          wc -l "$RUNNER_TEMP/x86_64/host.sha256" /tmp/i686.sha256
-          cmp "$RUNNER_TEMP/x86_64/host.sha256" /tmp/i686.sha256
+          # This build's default filter is fast, the x86_64 build's is precise: each filter is named on both
+          # sides, and the default itself is asserted (no option = fast here, precise on x86_64).
+          for f in precise fast; do
+            "$bin" --pcm-filter "$f" tests/corpus/images /tmp/mnt 2> "/tmp/serve-$f.log"
+            (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r x; do sha256sum "$x"; done) > "/tmp/i686-$f.sha256"
+            fusermount3 -u /tmp/mnt
+            wc -l "$RUNNER_TEMP/x86_64/host-$f.sha256" "/tmp/i686-$f.sha256"
+            cmp "$RUNNER_TEMP/x86_64/host-$f.sha256" "/tmp/i686-$f.sha256"
+          done
+          cmp /tmp/i686.sha256 /tmp/i686-fast.sha256
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: bin-i686

@@ -48,7 +48,7 @@ The image is `ghcr.io/dsd-toolbox/sacdfs` from 0.8.0. Releases up to 0.7.2 are i
      -v sacdfs-cache:/cache \
      --health-cmd /usr/local/bin/healthcheck.sh --health-interval 30s \
      --health-timeout 10s --health-start-period 300s --health-retries 3 \
-     ghcr.io/dsd-toolbox/sacdfs:0.8.0
+     ghcr.io/dsd-toolbox/sacdfs:0.9.0
    # /facts
    ```
 
@@ -66,7 +66,7 @@ The image is `ghcr.io/dsd-toolbox/sacdfs` from 0.8.0. Releases up to 0.7.2 are i
      -p 445:445 -p 2049:2049 \
      -v /srv/music:/images:ro \
      -v sacdfs-cache:/cache \
-     ghcr.io/dsd-toolbox/sacdfs:0.8.0
+     ghcr.io/dsd-toolbox/sacdfs:0.9.0
    # /facts
    ```
 
