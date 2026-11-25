@@ -55,14 +55,19 @@ never moved.
    `gh attestation verify`; the workflow's last image step has verified the image index, each
    architecture's image by its digest and each `-<arch>` tag (#379). A version with a hyphen
    (`0.2.0-rc.1`) is marked as a pre-release and doesn't move `:latest`.
-7. **TrueNAS catalog:** the catalog's own update pull requests take the release. Once it is
-   published there, set `version` in `deploy/truenas/sacdfs/app.yaml` to the number the
-   catalog published it under (the catalog numbers its app itself;
-   [store-apps.md](install/store-apps.md#checked-with-the-stores-own-tooling)), and pin the
-   image digest in `ix_values.yaml`. The same digest (that of the image index, from
-   `skopeo inspect --raw docker://ghcr.io/dsd-toolbox/sacdfs:X.Y.Z | sha256sum`) is pinned as
-   `:X.Y.Z@sha256:...` in `deploy/nas-compose.yaml` and `deploy/unraid/sacdfs.xml`; the release
-   archive's copy of `nas-compose.yaml` names the tag only.
+7. **Image digest pin:** straight after the GitHub release, in one commit, pin
+   `ghcr.io/dsd-toolbox/sacdfs:X.Y.Z@sha256:...` in `deploy/nas-compose.yaml`,
+   `deploy/unraid/sacdfs.xml` and the `tag` in `deploy/truenas/sacdfs/ix_values.yaml`. The digest is
+   that of the image index: `skopeo inspect --raw docker://ghcr.io/dsd-toolbox/sacdfs:X.Y.Z | sha256sum`.
+   Compare it with the digest the release run's last image step printed before you pin. The release
+   archive's copy of `nas-compose.yaml` names the tag only. `scripts/check-version-drift.py` compares
+   all three files with the published image index once the release exists, so main is red in docs-check
+   from the publication until this commit, by design: a missing pin shows.
+   **TrueNAS catalog:** the catalog's own update pull requests take the release. Once it is published
+   there, set `version` in `deploy/truenas/sacdfs/app.yaml` to the number the catalog published it under
+   (the catalog numbers its app itself;
+   [store-apps.md](install/store-apps.md#checked-with-the-stores-own-tooling)); the catalog's image
+   pin is the same digest.
 8. **Roll-up:** update [RELEASES.md](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/RELEASES.md)
    in dsd-toolbox/dsd-toolbox (the minor version's summary and release list).
 
