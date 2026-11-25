@@ -108,8 +108,9 @@ path: any character in the path, a comma included, is then safe. `-v` logs the s
   then reports IDENTICAL, not IDENTICAL-PAUSE, against such extracts. It applies to DSF and WAV
   files. The default, `--pauses dropped`, serves each track's own range; the container's
   `SACDFS_PAUSES` is the same setting. File sizes and durations change only in `kept` mode.
-- `--pcm-rate`, `--pcm-cutoff` and `--pcm-gain` choose how the WAV files are made
-  ([Formats](#wav-files)). `--pcm-cutoff wide` needs `--pcm-rate 176400` or `352800`; with
+- `--pcm-rate`, `--pcm-cutoff`, `--pcm-filter` and `--pcm-gain` choose how the WAV files are made
+  ([Formats](#wav-files)). `--pcm-filter fast` saves the converter's CPU time (the default, `precise`, takes about 1.8
+  times as much) on a NAS that is short of it. `--pcm-cutoff wide` needs `--pcm-rate 176400` or `352800`; with
   `88200` sacdfs refuses to start, since 88.2 kHz cannot hold an 80 kHz band.
 - `--flatten` collapses folders that hold nothing but one image (see
   [layout](layout.md#layout)).
@@ -168,8 +169,8 @@ its own mount, never one started on the same path since.
 - A dead mount of another file system, or any FUSE mount of another user, is left alone:
   sacdfs fails at once and says what is there.
 
-**CPU code paths.** The WAV converter (scarletbook-pcm) picks its code when it starts: AVX2 and
-FMA where the CPU has them, SSE2 otherwise, with the same output bit for bit.
+**CPU code paths.** The WAV converter (dsd2pcm) picks its code when it starts: AVX2 and
+FMA where the CPU has them, SSE2 on 32-bit x86, portable code otherwise, with the same output bit for bit.
 
 ### Slow CPUs and players starting a track
 
@@ -223,8 +224,17 @@ ID3v2.4 tag at the end.
 The same tracks converted to 24-bit PCM:
 - **Rate:** `--pcm-rate` 176 400 Hz (the default; DSD64 divided by exactly 16), 88 200 or
   352 800 Hz. Always 24-bit, so no dither is needed and every read of a file gives the same
-  bytes.
-- **Filter:** band-limited to 40 kHz by default, following Daniel Weiss's practice, which
+  bytes. The bytes can change between sacdfs releases when the conversion improves (0.9.0
+  did: [what changed](pcm-quality.md#what-changed-in-090)); the DSF files' bytes do not.
+- **Decimation filter:** `--pcm-filter precise` (the default, except in the 32-bit x86 build, where it is `fast`) or `fast` (the filter of 0.8.x and
+  earlier). The converter takes about 1.8 times the CPU time with `precise`; a whole-track WAV
+  read with `precise` was, against 0.8.0 on an i9-13900H, 12 % slower on DST discs and 38 % slower on
+  plain DSD (indicative, see
+  [performance](performance.md#wav-throughput-by-filter)). Measured figures for both:
+  [pcm-quality.md](pcm-quality.md#precise-and-fast). sacdfs does not choose between them by
+  itself: pick `fast` where the CPU cannot keep up with `precise` (see
+  [performance](performance.md#wav-throughput-by-filter)).
+- **Band limit:** band-limited to 40 kHz by default, following Daniel Weiss's practice, which
   keeps DSD's ultrasonic noise out of the playback chain; 30 kHz with `--pcm-cutoff 30`; or
   about 80 kHz with `--pcm-cutoff wide`, which lets more of the ultrasonic band, and of DSD's
   noise, through. Measured quality: [pcm-quality.md](pcm-quality.md).
@@ -758,7 +768,7 @@ in a VM, NFSv3).
   grace period.
 - A file whose image changed (size or modification time) is refused with "stale file
   handle" instead of showing other audio, as is a WAV file after a change of `--pcm-rate`,
-  `--pcm-cutoff` or `--pcm-gain`. Directories stay valid.
+  `--pcm-cutoff`, `--pcm-filter` or `--pcm-gain`. Directories stay valid.
 - With `--flatten` turned on or off, images, areas and files keep their numbers (a collapsed
   folder is the image's folder); only the folders that disappear or reappear change.
 - A sidecar file (folder art, a playlist) is numbered by its path in `SOURCE`, with or
@@ -771,8 +781,8 @@ in a VM, NFSv3).
 
 - **Sidecar files** show their source file's size and times as they are.
 - **Modification times.** A DSF or WAV file shows its image's modification time, moved
-  forward whenever its bytes would differ: a WAV file with a non-default `--pcm-cutoff` or
-  `--pcm-gain` shows a later time (by up to 7 hours, a different time for every cutoff and
+  forward whenever its bytes would differ: a WAV file with a non-default `--pcm-cutoff`,
+  `--pcm-filter` or `--pcm-gain` shows a later time (by up to 14 hours, a different time for every filter, cutoff and
   0.01 dB of gain), and a sacdfs release that changes the bytes of a format moves that
   format's times forward again; one that changes only some files' tags moves only those
   (0.4.1, [discs without text](#tagging-behaviour)). rsync, Plex, Roon and other tools that compare size and time
@@ -781,7 +791,7 @@ in a VM, NFSv3).
   `--pcm-rate` changes the files' size instead. With the default options, the times are the
   images' own.
   With non-default options, a file whose image changed in the last few hours can show a
-  time slightly in the future (up to 7 hours ahead); tools such as `tar` may warn about it.
+  time slightly in the future (up to 14 hours ahead with `fast` or another non-default option); tools such as `tar` may warn about it.
 - **Folder times and library scanners.** A folder shows the newest time of anything shown
   below it, at any depth (from 0.4.1, with a disc below it, 7 hours later than that, so a folder
   can show a time up to 7 hours ahead of a file you just added): a new or changed playlist, scan or image, or a sacdfs release that

@@ -8,7 +8,7 @@ sacdfs\-nfs \- Read\-only FUSE filesystem that shows SACD disc images as DSF fil
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBsacdfs\-nfs\fR [\fB\-\-threads\fR] [\fB\-\-cache\-mb\fR] [\fB\-\-listing\-mb\fR] [\fB\-\-start\-burst\fR] [\fB\-\-start\-burst\-secs\fR] [\fB\-\-format\fR] [\fB\-\-pauses\fR] [\fB\-\-pcm\-rate\fR] [\fB\-\-pcm\-cutoff\fR] [\fB\-\-pcm\-gain\fR] [\fB\-\-no\-multichannel\-album\-suffix\fR] [\fB\-\-tags\fR] [\fB\-\-musicbrainz\fR] [\fB\-\-flatten\fR] [\fB\-\-sidecars\fR] [\fB\-\-listen\fR] [\fB\-\-port\fR] [\fB\-\-allow\-other\fR] [\fB\-o\fR|\fB\-\-mount\-options\fR] [\fB\-\-index\-cache\fR] [\fB\-\-max\-open\-images\fR] [\fB\-\-request\-timeout\fR] [\fB\-\-launch\-agent\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fISOURCE\fR> [\fIMOUNTPOINT\fR] 
+\fBsacdfs\-nfs\fR [\fB\-\-threads\fR] [\fB\-\-cache\-mb\fR] [\fB\-\-listing\-mb\fR] [\fB\-\-start\-burst\fR] [\fB\-\-start\-burst\-secs\fR] [\fB\-\-format\fR] [\fB\-\-pauses\fR] [\fB\-\-pcm\-rate\fR] [\fB\-\-pcm\-cutoff\fR] [\fB\-\-pcm\-filter\fR] [\fB\-\-pcm\-gain\fR] [\fB\-\-no\-multichannel\-album\-suffix\fR] [\fB\-\-tags\fR] [\fB\-\-musicbrainz\fR] [\fB\-\-flatten\fR] [\fB\-\-sidecars\fR] [\fB\-\-listen\fR] [\fB\-\-port\fR] [\fB\-\-allow\-other\fR] [\fB\-o\fR|\fB\-\-mount\-options\fR] [\fB\-\-index\-cache\fR] [\fB\-\-max\-open\-images\fR] [\fB\-\-request\-timeout\fR] [\fB\-\-launch\-agent\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fISOURCE\fR> [\fIMOUNTPOINT\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
@@ -55,6 +55,9 @@ Sample rate of the WAV files, in Hz: 88200, 176400 or 352800
 .TP
 \fB\-\-pcm\-cutoff\fR \fI<KHZ>\fR [default: 40]
 Low\-pass cutoff of the PCM conversion: 40 or 30 (kHz), or wide (about 80 kHz; needs a \-\-pcm\-rate of 176400 or 352800)
+.TP
+\fB\-\-pcm\-filter\fR \fI<FILTER>\fR [default: precise]
+Decimation filter of the PCM conversion: precise (the default, except on 32\-bit x86; about 20 dB lower distortion and noise, about 1.8 times the CPU time) or fast (the filter of sacdfs 0.8.0 and earlier; the default on 32\-bit x86)
 .TP
 \fB\-\-pcm\-gain\fR \fI<DB>\fR [default: 0]
 Gain of the PCM conversion in dB, \-60 to +24; samples that would clip are clamped

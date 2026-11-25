@@ -85,6 +85,16 @@ a problem there is reported to that project, but a report here is welcome too.
 Out of scope: `--allow-other` exposes the mount to every local user, by design; and a user
 who can write to SOURCE controls what the mount shows.
 
+## Privileges of the mount process
+
+The process that parses disc images runs as root with `CAP_SYS_ADMIN` and `CAP_DAC_OVERRIDE`
+for its whole life. This is known. `CAP_SYS_ADMIN` is needed only to mount, and the plan is to
+drop it once the mount is made. `CAP_DAC_OVERRIDE` is there to read images whatever their owner
+and to write the index cache and the tags folder; the plan is to stop needing it by running the
+process as a user of its own that owns those two folders, with the images readable by its group.
+Running under seccomp and Landlock is being investigated. The container's capabilities are in
+[docs/deployment.md](docs/deployment.md#capabilities).
+
 ## Checking a release
 
 Every release file has a SHA-256 checksum and a signed build provenance attestation, and the

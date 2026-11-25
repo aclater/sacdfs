@@ -3252,9 +3252,11 @@ mod tests {
             v.sort();
             v
         };
-        let base = files(PcmConfig::default(), 2352);
+        // `precise` is explicit: the build's default is `fast` on 32-bit x86.
+        let precise = PcmConfig { filter: crate::pcm::Filter::Precise, ..PcmConfig::default() };
+        let base = files(precise, 2352);
         // The same options on another mount: the same numbers, generations and mtimes.
-        assert_eq!(files(PcmConfig::default(), 2352), base);
+        assert_eq!(files(precise, 2352), base);
         // With the default options, every file shows its image's mtime moved by its format's
         // output version (issue #64).
         let image = fs::metadata(dir.path().join("Artist/x.iso")).unwrap().modified().unwrap();
@@ -3266,9 +3268,10 @@ mod tests {
         assert!(base.iter().all(|f| f.3 == shown(&f.0)));
         // Options that keep the size move the WAV files' mtime; the rate changes the size.
         for (other, mtime_moves) in [
-            (files(PcmConfig { gain_db: -3.0, ..PcmConfig::default() }, 2352), true),
-            (files(PcmConfig { cutoff: crate::pcm::Cutoff::Khz30, ..PcmConfig::default() }, 2352), true),
-            (files(PcmConfig::default(), 4704), false),
+            (files(PcmConfig { gain_db: -3.0, ..precise }, 2352), true),
+            (files(PcmConfig { cutoff: crate::pcm::Cutoff::Khz30, ..precise }, 2352), true),
+            (files(PcmConfig { filter: crate::pcm::Filter::Fast, ..precise }, 2352), true),
+            (files(precise, 4704), false),
         ] {
             for (a, b) in base.iter().zip(&other) {
                 assert_eq!(a.0, b.0);

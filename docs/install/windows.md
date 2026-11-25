@@ -8,7 +8,8 @@ sacdfs on the NAS ([install guide](README.md)) and open its share from Windows.
 
 Checked with the 0.7.0 release candidates' zips, following these steps as a standard
 (non-administrator) user, on Windows 11 25H2 in a VM (x64), not on physical hardware, with WinFsp
-2.1; Windows 10 22H2 and the service, logon task and NAS steps were last checked with 0.6.5. See
+2.1; the 0.7.2 zip with WinFsp 2.2.26323, as winget installs it, on the same Windows 11 25H2 VM
+(standard user, the UAC password prompt answered); Windows 10 22H2 and the service, logon task and NAS steps were last checked with 0.6.5. See
 [Details](#details).
 
 ## What you need
@@ -37,8 +38,8 @@ administrator": a drive mounted from an administrator window is hidden from Expl
 
    Windows 10 doesn't include winget. There, and on any PC without winget, download
    `winfsp-2.1.25156.msi` from [WinFsp's releases](https://github.com/winfsp/winfsp/releases)
-   and open it. That is the version sacdfs was checked with; WinFsp 2.2, which winget now
-   installs, has not been checked yet.
+   and open it. That is the version most of this page was checked with; WinFsp 2.2, which winget
+   now installs, was checked with the 0.7.2 zip and worked.
 
 2. **Download sacdfs-win and its checksum.**
 
@@ -228,7 +229,7 @@ on a share. The drive works again once the NAS is back.
 ## Options
 
 sacdfs-win takes the options of the Linux mount that mean the same on Windows, with the same
-defaults: `--format`, `--pauses`, `--pcm-rate`, `--pcm-cutoff`, `--pcm-gain`, `--flatten`,
+defaults: `--format`, `--pauses`, `--pcm-rate`, `--pcm-cutoff`, `--pcm-filter`, `--pcm-gain`, `--flatten`,
 `--sidecars`, `--tags`, `--musicbrainz`, `--cache-mb`, `--threads`, `--index-cache` and the
 others in [options](../options.md). `sacdfs-win --help` lists them. Windows only:
 

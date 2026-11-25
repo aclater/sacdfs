@@ -1,0 +1,11 @@
+old,new,tier,depth_db_20hz_20khz,verdict
+old 40 176400,new fast 40 176400,identical,,Identical after alignment: the difference is zero to floating-point rounding.
+old 40 352800,new fast 40 352800,identical,,Identical after alignment: the difference is zero to floating-point rounding.
+old 40 88200,new fast 40 88200,identical,,Identical after alignment: the difference is zero to floating-point rounding.
+old wide 176400,new fast wide 176400,identical,,Identical after alignment: the difference is zero to floating-point rounding.
+old wide 352800,new fast wide 352800,identical,,Identical after alignment: the difference is zero to floating-point rounding.
+old 40 176400,new precise 40 176400,d60,73.5,Difference -74 dB relative to the music (null depth 74 dB): depth band 60 to 80 dB.
+old 40 352800,new precise 40 352800,d60,73.4,Difference -73 dB relative to the music (null depth 73 dB): depth band 60 to 80 dB.
+old 40 88200,new precise 40 88200,d60,73.5,Difference -74 dB relative to the music (null depth 74 dB): depth band 60 to 80 dB.
+old wide 176400,new precise wide 176400,d60,79.0,Difference -79 dB relative to the music (null depth 79 dB): depth band 60 to 80 dB.
+old wide 352800,new precise wide 352800,d60,74.4,Difference -74 dB relative to the music (null depth 74 dB): depth band 60 to 80 dB.

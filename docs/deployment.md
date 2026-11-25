@@ -112,7 +112,7 @@ podman build --format docker -t sacdfs .      # or: docker build -t sacdfs .
 `--format docker` keeps the health check, which the OCI image format has no field for. The
 published image is OCI, so for Podman give the check on `podman run` (see the
 [Docker and Podman guide](install/docker-podman.md)); Docker reads it from the image. On arm64
-the build uses the toolchain's default target and the WAV converter (scarletbook-pcm) picks the
+the build uses the toolchain's default target and the WAV converter (dsd2pcm) picks the
 code its CPU supports. On x86_64 the build compiles sacdfs for generic x86-64, whose converter
 already uses AVX2 where the CPU has it. On a NAS with an AVX2 CPU (most Intel and AMD CPUs since about 2015, including the
 Intel N100 family), `--build-arg RUSTFLAGS="-C target-cpu=x86-64-v3"` builds all of sacdfs
@@ -231,6 +231,13 @@ others back:
 | NFS-Ganesha | `DAC_READ_SEARCH` only: the export is read-only, and Ganesha takes on a client's identity only to create files |
 | the entry point | `SYS_ADMIN`, `DAC_OVERRIDE`, `SETPCAP`, and what it hands on |
 
+The sacdfs process, which parses the disc images, runs as root with `SYS_ADMIN` and
+`DAC_OVERRIDE` for its whole life. This is known. `SYS_ADMIN` is needed only to mount, and the plan
+is to drop it once the mount is made. `DAC_OVERRIDE` is there to read images whatever their owner
+and to write the index cache and the tags folder; the plan is to stop needing it by running the
+process as a user of its own that owns those two folders, with the images readable by its group.
+Running under seccomp and Landlock is being investigated ([SECURITY.md](../SECURITY.md#privileges-of-the-mount-process)).
+
 At its start, the entry point also drops from itself every capability that none of these
 need, so a container started with the runtime's default set (an older Compose file, for
 example) holds no more than these either. With `NFS=0` nothing keeps `DAC_READ_SEARCH`, and with
@@ -279,6 +286,7 @@ All settings are environment variables.
 | `SACDFS_PAUSES` | (dropped) | `--pauses`: `dropped`, or `kept` to serve each track with its pause (#112) |
 | `SACDFS_PCM_RATE` | (176400) | `--pcm-rate`: `88200`, `176400` or `352800` |
 | `SACDFS_PCM_CUTOFF` | (40) | `--pcm-cutoff`: `40`, `30` or `wide` |
+| `SACDFS_PCM_FILTER` | (precise; fast on 32-bit x86) | `--pcm-filter`: `precise` or `fast` |
 | `SACDFS_PCM_GAIN` | (0) | `--pcm-gain` in dB, -60 to +24 |
 | `SACDFS_FLATTEN` | `0` | `1` for `--flatten` |
 | `SACDFS_MC_ALBUM_SUFFIX` | `1` | `0` for `--no-multichannel-album-suffix`: leave the album tag of the multichannel files as the disc has it, without ` (Multichannel)` (see [the client notes](#multichannel-copies-and-music-servers)) |

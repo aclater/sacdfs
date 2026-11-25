@@ -479,6 +479,69 @@ fn format_and_rate_options() {
     mount.stop("TERM");
 }
 
+/// `--pcm-filter` (and `-o pcm_filter=`) changes the WAV files' samples and times and nothing else:
+/// the same size, a later time with `fast` (one output-version step, whatever
+/// the build's default filter), the same DSF files. An unknown filter is refused.
+#[test]
+fn pcm_filter_option() {
+    common::skip_without_fuse!();
+    use std::os::unix::fs::MetadataExt;
+    let images = corpus().join("images");
+    let one = |args: &[&str]| {
+        let mount = Mount::foreground(&images, args);
+        let area = mount.path().join("dsd-stereo-mch-2048/Stereo");
+        let mut names: Vec<_> = std::fs::read_dir(&area)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        let wav = area.join(names.iter().find(|n| n.ends_with(".wav")).unwrap());
+        let dsf = area.join(names.iter().find(|n| n.ends_with(".dsf")).unwrap());
+        let (m, d) = (std::fs::metadata(&wav).unwrap(), std::fs::metadata(&dsf).unwrap());
+        let out = (
+            m.len(),
+            m.ino(),
+            m.mtime(),
+            std::fs::read(&wav).unwrap(),
+            d.mtime(),
+            std::fs::read(&dsf).unwrap(),
+            names,
+        );
+        mount.stop("TERM");
+        out
+    };
+    let precise = one(&["--pcm-filter", "precise"]);
+    let fast = one(&["--pcm-filter", "fast"]);
+    let by_option = one(&["-o", "pcm_filter=fast"]);
+    // The same layout.
+    assert_eq!(precise.0, fast.0);
+    assert_eq!(precise.6, fast.6);
+    // Different samples, behind the same header.
+    let (p, f) = (parse_wav(&precise.3), parse_wav(&fast.3));
+    assert_eq!(precise.3[..p.data.start], fast.3[..f.data.start]);
+    assert_ne!(precise.3[p.data.start..], fast.3[f.data.start..]);
+    // The `fast` times are one output-version step (25,203 s) later; the DSF files are the same.
+    assert_eq!(fast.2, precise.2 + 25_203);
+    assert_eq!(precise.4, fast.4);
+    assert_eq!(precise.5, fast.5);
+    // The mount option is the same setting.
+    assert_eq!(
+        (&fast.0, &fast.1, &fast.2, &fast.3),
+        (&by_option.0, &by_option.1, &by_option.2, &by_option.3)
+    );
+    // An unknown filter is refused at the start.
+    common::spawns_children!();
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_sacdfs"))
+        .args(["--pcm-filter", "default"])
+        .arg(&images)
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("precise or fast"));
+}
+
 #[test]
 fn bad_arguments_fail_cleanly() {
     // No FUSE needed, but it spawns sacdfs: see `common::spawns_children!` (#335).
@@ -1297,7 +1360,7 @@ fn directory_mtimes_move_with_what_is_below_through_the_kernel() {
     for p in [album.join("disc.iso"), album.clone(), src.join("Artist"), src.clone()] {
         set(&p, old);
     }
-    let m = Mount::foreground(&src, &[]);
+    let m = Mount::foreground(&src, &["--pcm-filter", "precise"]);
     let mnt = m.path();
     let dirs = ["", "Artist", "Artist/Album", "Artist/Album/disc", "Artist/Album/disc/Stereo"];
     let mtime = |p: &str| std::fs::metadata(mnt.join(p)).unwrap().modified().unwrap();
