@@ -157,12 +157,26 @@ server=$!
 for _ in $(seq 50); do curl -fsS -o /dev/null "$url/latest/download/install.sh" && break; sleep 0.2; done
 
 # Three corpus images (stereo and multichannel, DSD and DST) and the reference: every file of
-# their mount, read with the release binary here.
+# their mount, read with the release binary of the image the compose file names. That is not
+# $pkg's: install.sh's DEFAULT_VERSION stays at an old release in the tree, and an old release
+# converts to WAV differently (0.9.0's dsd2pcm 0.2 changed it on purpose; #635).
+img_version=$(sed -n 's|^ *image: ghcr.io/[^/]*/sacdfs:\([0-9][^@ ]*\).*|\1|p' "$here/nas-compose.yaml")
+ref_bin=$work/pub/$pkg/sacdfs
+if [ -n "$img_version" ] && [ "$img_version" != "$version" ]; then
+    refpkg=sacdfs-$img_version-$arch-linux
+    mkdir -p "$work/refpub"
+    curl -fsSL -o "$work/refpub/$refpkg.tar.gz" "https://github.com/dsd-toolbox/sacdfs/releases/download/v$img_version/$refpkg.tar.gz"
+    curl -fsSL -o "$work/refpub/$refpkg.tar.gz.sha256" "https://github.com/dsd-toolbox/sacdfs/releases/download/v$img_version/$refpkg.tar.gz.sha256"
+    (cd "$work/refpub" && sha256sum -c "$refpkg.tar.gz.sha256")
+    tar -C "$work/refpub" -xzf "$work/refpub/$refpkg.tar.gz"
+    ref_bin=$work/refpub/$refpkg/sacdfs
+fi
+echo "reference binary: $("$ref_bin" --version)"
 mkdir -p "$work/music" "$work/ref-mnt"
 for i in dsd-stereo-mch-2048 dst-features-2ch-6ch dst-stereo-5ch-2054; do
     cp "tests/corpus/images/$i.iso" "$work/music/"
 done
-"$work/pub/$pkg/sacdfs" "$work/music" "$work/ref-mnt"
+"$ref_bin" "$work/music" "$work/ref-mnt"
 (cd "$work/ref-mnt" && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) >"$work/ref.sha"
 fusermount3 -u "$work/ref-mnt" 2>/dev/null || fusermount -u "$work/ref-mnt"
 echo "reference: $(wc -l <"$work/ref.sha") files"
