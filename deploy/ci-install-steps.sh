@@ -82,17 +82,22 @@ else
     hashes='cd "$1" && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done'
     if [ -f /opt/sacdfs/compose.yaml ]; then
         # The container route: the mount is inside the container, at /srv/sacd.
-        docker exec sacdfs sh -c "$hashes" sh /srv/sacd >/tmp/got.sha 2>/dev/null
+        docker exec sacdfs sh -c "$hashes" sh /srv/sacd >/tmp/got.sha 2>/tmp/got.err
     else
         # The value as install.sh writes it, in single quotes (bare before 0.6.4).
         mnt=$(sed -n "s/^SACDFS_MOUNT=//p" /etc/default/sacdfs /opt/sacdfs/sacdfs.conf "$vol/sacdfs/sacdfs.conf" "$vol/.sacdfs/sacdfs.conf" 2>/dev/null |
             head -n 1 | sed "s/^'\(.*\)'\$/\1/")
-        sh -c "$hashes" sh "$mnt" >/tmp/got.sha 2>/dev/null
+        sh -c "$hashes" sh "$mnt" >/tmp/got.sha 2>/tmp/got.err
     fi
     if [ -s /tmp/got.sha ] && same /tmp/got.sha "$ref"; then
         res files "pass ($(wc -l </tmp/got.sha | tr -d ' ') files identical)"
     else
         res files FAIL
+        # What differs, so a failure explains itself (#635).
+        echo "--- files: $(wc -l </tmp/got.sha | tr -d ' ') found, $(wc -l <"$ref" | tr -d ' ') expected; diff of the hash lists (expected first):"
+        diff "$ref" /tmp/got.sha | head -40
+        echo "--- files: errors of the listing:"
+        head -20 /tmp/got.err
     fi
 
     echo "=== second run"
