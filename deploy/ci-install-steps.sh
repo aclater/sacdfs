@@ -83,6 +83,8 @@ else
     if [ -f /opt/sacdfs/compose.yaml ]; then
         # The container route: the mount is inside the container, at /srv/sacd.
         docker exec sacdfs sh -c "$hashes" sh /srv/sacd >/tmp/got.sha 2>/tmp/got.err
+        # The image's own release made its reference, when it isn't the one installed (#635).
+        [ ! -f "${ref%.sha}-image.sha" ] || ref=${ref%.sha}-image.sha
     else
         # The value as install.sh writes it, in single quotes (bare before 0.6.4).
         mnt=$(sed -n "s/^SACDFS_MOUNT=//p" /etc/default/sacdfs /opt/sacdfs/sacdfs.conf "$vol/sacdfs/sacdfs.conf" "$vol/.sacdfs/sacdfs.conf" 2>/dev/null |
