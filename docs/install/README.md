@@ -387,16 +387,16 @@ The latest release is <!-- facts:release repo=dsd-toolbox/sacdfs fmt='{version},
 <!-- facts:assets repo=dsd-toolbox/sacdfs match='\.(tar\.gz|zip|rpm|deb)$|^install\.sh$' fmt='| `{name}` | {platform} | {size_mb} |' -->
 | `install.sh` | any | 0.1 |
 | `sacdfs-0.9.0-1.aarch64.rpm` | Linux aarch64 | 2.9 |
-| `sacdfs-0.9.0-1.src.rpm` | Linux | 29.2 |
-| `sacdfs-0.9.0-1.x86_64.rpm` | Linux x86-64 | 3.4 |
+| `sacdfs-0.9.0-1.src.rpm` | Linux | 29.4 |
+| `sacdfs-0.9.0-1.x86_64.rpm` | Linux x86-64 | 3.5 |
 | `sacdfs-0.9.0-aarch64-linux.tar.gz` | Linux aarch64 | 3.5 |
-| `sacdfs-0.9.0-aarch64-macos.tar.gz` | macOS aarch64 | 6.6 |
-| `sacdfs-0.9.0-i686-linux.tar.gz` | Linux i686 | 3.5 |
-| `sacdfs-0.9.0-x86_64-linux.tar.gz` | Linux x86-64 | 3.8 |
-| `sacdfs-0.9.0-x86_64-macos.tar.gz` | macOS x86-64 | 7.5 |
-| `sacdfs-0.9.0-x86_64-v3-linux.tar.gz` | Linux x86-64 | 3.8 |
-| `sacdfs-0.9.0-x86_64-windows.zip` | Windows x86-64 | 3.3 |
-| `sacdfs_0.9.0-1_amd64.deb` | Linux x86-64 | 3.4 |
+| `sacdfs-0.9.0-aarch64-macos.tar.gz` | macOS aarch64 | 6.7 |
+| `sacdfs-0.9.0-i686-linux.tar.gz` | Linux i686 | 3.6 |
+| `sacdfs-0.9.0-x86_64-linux.tar.gz` | Linux x86-64 | 3.9 |
+| `sacdfs-0.9.0-x86_64-macos.tar.gz` | macOS x86-64 | 7.6 |
+| `sacdfs-0.9.0-x86_64-v3-linux.tar.gz` | Linux x86-64 | 3.9 |
+| `sacdfs-0.9.0-x86_64-windows.zip` | Windows x86-64 | 3.4 |
+| `sacdfs_0.9.0-1_amd64.deb` | Linux x86-64 | 3.5 |
 | `sacdfs_0.9.0-1_arm64.deb` | Linux aarch64 | 2.9 |
 <!-- /facts -->
 
