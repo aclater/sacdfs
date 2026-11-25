@@ -62,7 +62,7 @@ never moved.
    image digest in `ix_values.yaml`. The same digest (that of the image index, from
    `skopeo inspect --raw docker://ghcr.io/dsd-toolbox/sacdfs:X.Y.Z | sha256sum`) is pinned as
    `:X.Y.Z@sha256:...` in `deploy/nas-compose.yaml` and `deploy/unraid/sacdfs.xml`; the release
-   archive's copy of `nas-compose.yaml` names the tag only.
+   archive's copy of `nas-compose.yaml` names the tag only. `scripts/check-version-drift.py` compares all three with the published image index once the release exists, so a missing pin commit fails docs-check.
 8. **Roll-up:** update [RELEASES.md](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/RELEASES.md)
    in dsd-toolbox/dsd-toolbox (the minor version's summary and release list).
 

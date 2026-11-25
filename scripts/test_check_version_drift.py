@@ -80,5 +80,59 @@ class Pins(unittest.TestCase):
         self.assertEqual(len(out), 2)  # both numbers of the line
 
 
+D = "a" * 64
+OTHER = "b" * 64
+FILES = dict(drift.DIGEST_FILES)
+COMPOSE = "services:\n  sacdfs:\n    image: ghcr.io/dsd-toolbox/sacdfs:0.9.0"
+UNRAID = "<Repository>ghcr.io/dsd-toolbox/sacdfs:0.9.0"
+TRUENAS = 'images:\n  image:\n    repository: ghcr.io/dsd-toolbox/sacdfs\n    tag: "0.9.0'
+
+
+class DigestPins(unittest.TestCase):
+    def check(self, path, text):
+        out = []
+        drift.check_digest_text(path, text, FILES[path], "0.9.0", "sha256:" + D, out)
+        return out
+
+    def texts(self, tail):
+        return {
+            "deploy/nas-compose.yaml": COMPOSE + tail + "\n",
+            "deploy/unraid/sacdfs.xml": UNRAID + tail + "</Repository>\n",
+            "deploy/truenas/sacdfs/ix_values.yaml": TRUENAS + tail + '"\n',
+        }
+
+    def test_the_published_digest_passes_in_all_three_files(self):
+        for path, text in self.texts("@sha256:" + D).items():
+            self.assertEqual(self.check(path, text), [], path)
+
+    def test_a_missing_pin_is_reported_in_all_three_files(self):
+        for path, text in self.texts("").items():
+            out = self.check(path, text)
+            self.assertEqual(len(out), 1, path)
+            self.assertIn("pinned by no digest", out[0])
+
+    def test_another_digest_is_reported(self):
+        for path, text in self.texts("@sha256:" + OTHER).items():
+            out = self.check(path, text)
+            self.assertEqual(len(out), 1, path)
+            self.assertIn(OTHER, out[0])
+
+    def test_no_image_reference_is_a_failure_of_the_check(self):
+        out = self.check("deploy/nas-compose.yaml", "services: {}\n")
+        self.assertEqual(len(out), 1)
+        self.assertIn("update this check", out[0])
+
+    def test_another_version_is_left_to_the_version_check(self):
+        out = []
+        drift.check_digest_text("deploy/nas-compose.yaml", COMPOSE.replace("0.9.0", "0.8.0") + "\n",
+                                FILES["deploy/nas-compose.yaml"], "0.9.0", "sha256:" + D, out)
+        self.assertEqual(out, [])
+
+    def test_an_unpublished_version_is_not_checked(self):
+        out = []
+        drift.check_digests("0.9.1", {"0.9.0": "2026-11-25"}, out)
+        self.assertEqual(out, [])
+
+
 if __name__ == "__main__":
     unittest.main()
