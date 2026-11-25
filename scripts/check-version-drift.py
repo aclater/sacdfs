@@ -93,7 +93,10 @@ def check_guides(version, problems):
 def check_deploy(version, problems):
     checks = [
         ("deploy/nas-compose.yaml", rf"image:\s*ghcr\.io/dsd-toolbox/sacdfs:({V})"),
-        ("deploy/unraid/sacdfs.xml", rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})(?:@sha256:[0-9a-f]{{64}})?</Repository>"),
+        (
+            "deploy/unraid/sacdfs.xml",
+            rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})(?:@sha256:[0-9a-f]{{64}})?</Repository>",
+        ),
         ("deploy/truenas/sacdfs/ix_values.yaml", rf"repository:\s*ghcr\.io/dsd-toolbox/sacdfs\s*\n\s*tag:\s*\"?({V})"),
         ("deploy/truenas/sacdfs/app.yaml", rf"^app_version:\s*({V})\s*$"),
     ]
@@ -112,7 +115,10 @@ def check_deploy(version, problems):
 # The files that name the image, and how: the reference up to and including its optional digest.
 DIGEST_FILES = [
     ("deploy/nas-compose.yaml", rf"image:\s*ghcr\.io/dsd-toolbox/sacdfs:({V})(@sha256:[0-9a-f]{{64}})?"),
-    ("deploy/unraid/sacdfs.xml", rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})(@sha256:[0-9a-f]{{64}})?</Repository>"),
+    (
+        "deploy/unraid/sacdfs.xml",
+        rf"<Repository>ghcr\.io/dsd-toolbox/sacdfs:({V})(@sha256:[0-9a-f]{{64}})?</Repository>",
+    ),
     (
         "deploy/truenas/sacdfs/ix_values.yaml",
         rf"repository:\s*ghcr\.io/dsd-toolbox/sacdfs\s*\n\s*tag:\s*\"({V})(@sha256:[0-9a-f]{{64}})?\"",
@@ -158,7 +164,7 @@ def check_digests(version, published, problems):
         return  # the release pull request's own version isn't published yet
     try:
         digest = image_digest(version)
-    except Exception as e:  # network or registry trouble is a failed check, not a pass
+    except (OSError, ValueError, KeyError) as e:  # network or registry trouble is a failed check, not a pass
         problems.append(f"ghcr.io/dsd-toolbox/sacdfs:{version}: cannot read the image digest ({e})")
         return
     for path, pattern in DIGEST_FILES:

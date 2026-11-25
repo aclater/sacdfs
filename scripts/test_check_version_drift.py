@@ -124,8 +124,14 @@ class DigestPins(unittest.TestCase):
 
     def test_another_version_is_left_to_the_version_check(self):
         out = []
-        drift.check_digest_text("deploy/nas-compose.yaml", COMPOSE.replace("0.9.0", "0.8.0") + "\n",
-                                FILES["deploy/nas-compose.yaml"], "0.9.0", "sha256:" + D, out)
+        drift.check_digest_text(
+            "deploy/nas-compose.yaml",
+            COMPOSE.replace("0.9.0", "0.8.0") + "\n",
+            FILES["deploy/nas-compose.yaml"],
+            "0.9.0",
+            "sha256:" + D,
+            out,
+        )
         self.assertEqual(out, [])
 
     def test_an_unpublished_version_is_not_checked(self):
