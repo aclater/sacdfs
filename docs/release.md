@@ -59,7 +59,10 @@ never moved.
    published there, set `version` in `deploy/truenas/sacdfs/app.yaml` to the number the
    catalog published it under (the catalog numbers its app itself;
    [store-apps.md](install/store-apps.md#checked-with-the-stores-own-tooling)), and pin the
-   image digest in `ix_values.yaml`.
+   image digest in `ix_values.yaml`. The same digest (that of the image index, from
+   `skopeo inspect --raw docker://ghcr.io/dsd-toolbox/sacdfs:X.Y.Z | sha256sum`) is pinned as
+   `:X.Y.Z@sha256:...` in `deploy/nas-compose.yaml` and `deploy/unraid/sacdfs.xml`; the release
+   archive's copy of `nas-compose.yaml` names the tag only.
 8. **Roll-up:** update [RELEASES.md](https://github.com/dsd-toolbox/dsd-toolbox/blob/main/RELEASES.md)
    in dsd-toolbox/dsd-toolbox (the minor version's summary and release list).
 
