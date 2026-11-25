@@ -71,7 +71,9 @@ jobs:
     with:
       tools-ref: 33e1b0308e4bb9890701d5e3bb857c9ce9fe110f
       version-of: dsd-toolbox/sacdfs
-      require-coverage: "29"
+      # 57 of 197 command blocks run (28.9 %). 29 held at 196 blocks; the 0.9.0 docs split one block that
+      # cannot run (docs/install/linux-client.md, the credentials file) into two, which made it 197.
+      require-coverage: "28.9"
       fail_unmarked: true
 
   audit:
