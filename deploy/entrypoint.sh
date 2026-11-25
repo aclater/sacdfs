@@ -92,6 +92,30 @@ if on "${SMB:-1}"; then
     done <<<"$extra"
     unset extra first line
 fi
+# Who may reach the shares (F2). Today an unset SMB_USER means guest access and an unset
+# NFS_CLIENTS means every host; both stay the default in this version and the entry point says
+# so at every start, on the first run only. SMB_GUEST=1 (guest access on purpose) and an
+# NFS_CLIENTS list say it is meant: neither warns. A later version will not start SMB with
+# neither, and not NFS without NFS_CLIENTS (docs/deployment.md, "Who can reach the shares").
+warn_exposure() {
+    if on "${SMB:-1}"; then
+        if [ -n "${SMB_USER:-}" ]; then
+            ! on "${SMB_GUEST:-0}" || warn_setting "SMB_GUEST=1 is ignored because SMB_USER is set: the share needs that user's password"
+        elif ! on "${SMB_GUEST:-0}"; then
+            warn_setting "SMB: neither SMB_USER nor SMB_GUEST=1 is set, so the share '$SHARE' is open to every client that can reach port 445 (guest access). Set SMB_USER and SMB_PASSWORD (or SMB_PASSWORD_FILE) to require a login, or SMB_GUEST=1 to keep guest access on purpose and silence this; a later version will not start SMB with neither"
+        fi
+    fi
+    if on "${NFS:-1}"; then
+        if [ -z "${NFS_CLIENTS:-}" ]; then
+            warn_setting "NFS: NFS_CLIENTS is not set, so every host that can reach port 2049 may mount the export. Set NFS_CLIENTS to a list of hosts or networks (a.b.c.d/n); a later version will not start NFS without it"
+        elif [[ $NFS_CLIENTS == *'*'* ]]; then
+            warn_setting "NFS: NFS_CLIENTS contains *, so every host that can reach port 2049 may mount the export. List the hosts or networks (a.b.c.d/n) that need it instead"
+        elif [[ ,$NFS_CLIENTS, == *,0.0.0.0/0,* || ,$NFS_CLIENTS, == *,::/0,* ]]; then
+            warn_setting "NFS: NFS_CLIENTS contains a network that is every address (0.0.0.0/0 or ::/0), so every host that can reach port 2049 may mount the export. List the hosts or networks that need it instead"
+        fi
+    fi
+}
+warn_exposure
 write_smb_conf() {
     local access
     if [ -n "${SMB_USER:-}" ]; then
@@ -322,7 +346,8 @@ preflight
 # --- capabilities (#386) -----------------------------------------------------------------
 # Each program starts with only the capabilities it needs in its bounding set: setpriv drops
 # the others before it starts, so neither it nor anything it runs can get them back.
-#   sacdfs:      SYS_ADMIN, to mount; DAC_OVERRIDE, to read the images (and write the tags
+#   sacdfs:      SYS_ADMIN, to mount, which it drops once the mount exists; SETPCAP, to cut its
+#                bounding set and its unmount helper's, dropped with it; DAC_OVERRIDE, to read the images (and write the tags
 #                folder) whatever their owner and mode on the host.
 #   smbd:        SETUID and SETGID, to act as the connecting user or guest; NET_BIND_SERVICE,
 #                for port 445.
@@ -333,7 +358,7 @@ preflight
 # writes /etc/shadow, mode 0000, for SMB_USER) and SETPCAP (to drop capabilities), plus
 # what it hands on. With NFS=0 nothing keeps DAC_READ_SEARCH, with SMB=0 nothing keeps
 # NET_BIND_SERVICE. Docs: docs/deployment.md, "Capabilities".
-CAPS_SACDFS=sys_admin,dac_override
+CAPS_SACDFS=sys_admin,dac_override,setpcap
 CAPS_SMBD=setuid,setgid,net_bind_service
 CAPS_GANESHA=dac_read_search
 CAPS_SELF=sys_admin,dac_override,setpcap

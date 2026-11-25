@@ -332,7 +332,7 @@ jobs:
           "$bin" tests/corpus/images /tmp/mnt 2> /tmp/serve.log
           status=0
           python3 -I deploy/check-share.py tests/corpus/manifest.json /tmp/mnt --min 400 --wav || status=$?
-          (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /tmp/host.sha256
+          .github/scripts/hash-tree.sh /tmp/mnt > /tmp/host.sha256
           fusermount3 -u /tmp/mnt
           exit $status
       - name: The corpus hashed with each PCM filter named (the reference of the i686 build)
@@ -343,7 +343,7 @@ jobs:
         run: |
           for f in precise fast; do
             "/tmp/check/$PKG/sacdfs" --pcm-filter "$f" tests/corpus/images /tmp/mnt 2> "/tmp/serve-$f.log"
-            (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r x; do sha256sum "$x"; done) > "/tmp/host-$f.sha256"
+            .github/scripts/hash-tree.sh /tmp/mnt > "/tmp/host-$f.sha256"
             fusermount3 -u /tmp/mnt
           done
           wc -l /tmp/host.sha256 /tmp/host-precise.sha256 /tmp/host-fast.sha256
@@ -353,14 +353,14 @@ jobs:
         if: matrix.arch == 'x86_64'
         run: |
           docker run --rm --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
-            -v "/tmp/check/$PKG:/d:ro" -v "$PWD/tests/corpus/images:/images:ro" -v /tmp:/out \
+            -v "/tmp/check/$PKG:/d:ro" -v "$PWD/tests/corpus/images:/images:ro" -v "$PWD/.github/scripts:/s:ro" -v /tmp:/out \
             "$UBI7" bash -euc '
               rpm -q glibc
               if command -v fusermount3 || command -v fusermount; then echo "this image has fusermount: the mount below would not show that sacdfs mounts without it"; exit 1; fi
               /d/sacdfs --version
               mkdir -p /mnt/s
               /d/sacdfs /images /mnt/s 2> /out/ubi7.log
-              (cd /mnt/s && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /out/ubi7.sha256
+              /s/hash-tree.sh /mnt/s > /out/ubi7.sha256
               umount /mnt/s'
           wc -l /tmp/host.sha256 /tmp/ubi7.sha256
           cmp /tmp/host.sha256 /tmp/ubi7.sha256
@@ -471,14 +471,14 @@ jobs:
           "$bin" tests/corpus/images /tmp/mnt 2> /tmp/serve.log
           status=0
           python3 -I deploy/check-share.py tests/corpus/manifest.json /tmp/mnt --min 400 --wav || status=$?
-          (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > /tmp/i686.sha256
+          .github/scripts/hash-tree.sh /tmp/mnt > /tmp/i686.sha256
           fusermount3 -u /tmp/mnt
           [[ $status == 0 ]] || exit $status
           # This build's default filter is fast, the x86_64 build's is precise: each filter is named on both
           # sides, and the default itself is asserted (no option = fast here, precise on x86_64).
           for f in precise fast; do
             "$bin" --pcm-filter "$f" tests/corpus/images /tmp/mnt 2> "/tmp/serve-$f.log"
-            (cd /tmp/mnt && find . -type f | LC_ALL=C sort | while read -r x; do sha256sum "$x"; done) > "/tmp/i686-$f.sha256"
+            .github/scripts/hash-tree.sh /tmp/mnt > "/tmp/i686-$f.sha256"
             fusermount3 -u /tmp/mnt
             wc -l "$RUNNER_TEMP/x86_64/host-$f.sha256" "/tmp/i686-$f.sha256"
             cmp "$RUNNER_TEMP/x86_64/host-$f.sha256" "/tmp/i686-$f.sha256"

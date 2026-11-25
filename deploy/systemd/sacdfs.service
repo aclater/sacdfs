@@ -43,9 +43,10 @@ RestartSec=5
 # limits; only sacdfs itself gets them. (The "+" prefix would do the same per line, but
 # systemd before v231 doesn't know it.)
 PermissionsStartOnly=yes
-# Mounting needs CAP_SYS_ADMIN; reading the images, and writing the index cache and tags
-# folders, whatever their owner and mode, CAP_DAC_OVERRIDE. Nothing else.
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE
+# Mounting needs CAP_SYS_ADMIN, which sacdfs drops once the mount exists, with CAP_SETPCAP (it
+# cuts the bounding set of its threads and of its unmount helper with it); reading the images, and
+# writing the index cache and tags folders, whatever their owner and mode, CAP_DAC_OVERRIDE.
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_SETPCAP
 # fusermount3 is setuid root, but sacdfs runs as root and mounts with mount(2) itself.
 NoNewPrivileges=yes
 # /dev/fuse, and the pseudo devices every program may use (/dev/null, /dev/urandom...).
@@ -66,6 +67,11 @@ SystemCallArchitectures=native
 # denied: @mount (sacdfs mounts and unmounts), @resources (the lookup worker lowers its
 # priority with setpriority).
 SystemCallFilter=~@clock @cpu-emulation @debug @module @obsolete @privileged @raw-io @reboot @swap
+# ...except capset, which is in @privileged: sacdfs and its unmount helper give up capabilities with it (CAP_SYS_ADMIN
+# once the mount exists). Without this line the helper cannot start under this unit (its capset fails with
+# EPERM, "could not harden itself") and sacdfs keeps CAP_SYS_ADMIN, as it did before 0.9.1. Checked with systemd
+# 252 (and see docs/deployment.md, "systemd unit").
+SystemCallFilter=capset
 SystemCallErrorNumber=EPERM
 
 [Install]

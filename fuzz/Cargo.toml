@@ -15,7 +15,7 @@ libfuzzer-sys = "0.4"
 # `nfs`: the NFS protocol layer (nfs_rpc).
 sacdfs = { path = "..", features = ["nfs"] }
 # The version sacdfs pins: the same crate, so that its types are the same types.
-scarletbook = "=1.0.2"
+scarletbook = "=1.1.1"
 # The NFS server's runtime, as sacdfs uses it (nfs_rpc).
 tokio = { version = "1", default-features = false, features = ["rt"] }
 

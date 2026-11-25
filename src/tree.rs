@@ -1343,6 +1343,17 @@ impl Tree {
     /// Opens a sidecar file for reading. `ESTALE` if its source file changed (size or mtime)
     /// since it was listed: its attributes, already shown, would no longer match its bytes.
     pub fn open_sidecar(&self, f: &SidecarFile) -> io::Result<fs::File> {
+        match self.open_sidecar_now(f)? {
+            (_, true) => Err(crate::platform::stale()),
+            (file, false) => Ok(file),
+        }
+    }
+
+    /// Opens a sidecar file for reading as it is now, and whether its source file changed
+    /// (size or mtime) since it was listed (#628). The art is then read again at the next look.
+    /// `ESTALE` of [`Tree::open_sidecar`] is for a client that holds the old file's handle; the
+    /// kernel's, which asks again after one, would get it twice from two changes in a row.
+    pub fn open_sidecar_now(&self, f: &SidecarFile) -> io::Result<(fs::File, bool)> {
         let root = self.root_fd().ok_or_else(|| io::Error::from_raw_os_error(crate::platform::IO_ERROR))?;
         let (file, now) = match sidecar::open_file(root, &f.target) {
             Ok(opened) => opened,
@@ -1353,11 +1364,11 @@ impl Tree {
                 return Err(e);
             }
         };
-        if now.size != f.meta.size || now.mtime != f.meta.mtime {
+        let changed = now.size != f.meta.size || now.mtime != f.meta.mtime;
+        if changed {
             self.art_changed();
-            return Err(crate::platform::stale());
         }
-        Ok(file)
+        Ok((file, changed))
     }
 
     /// Notes that a folder's art file was found changed or gone: the art of every area is read
@@ -3593,6 +3604,12 @@ mod tests {
         fs::write(dir.path().join("Artist/folder.jpg"), b"a new and longer cover").unwrap();
         let err = t.open_sidecar(&before).unwrap_err();
         assert!(crate::platform::is_stale(&err), "{err}");
+        // Opened as it is now, for the kernel (#628): the new bytes, and the change noted.
+        let (mut file, changed) = t.open_sidecar_now(&before).unwrap();
+        assert!(changed);
+        let mut now = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut now).unwrap();
+        assert_eq!(now, b"a new and longer cover");
         // The next mount shows the new file under the same number, in a new generation.
         let t2 = tree_sc(dir.path(), false);
         assert_eq!(t2.resolve(Path::new("Artist/folder.jpg")), Some(ino));

@@ -7,13 +7,19 @@
 use std::process::ExitCode;
 
 #[cfg(target_os = "linux")]
+mod deny_list;
+#[cfg(target_os = "linux")]
 mod linux_main;
 #[cfg(target_os = "linux")]
 mod mount_opts;
 #[cfg(target_os = "linux")]
+mod privs;
+#[cfg(target_os = "linux")]
 mod startup;
 #[cfg(target_os = "linux")]
 mod stop_signals;
+#[cfg(target_os = "linux")]
+mod unmount_helper;
 
 fn main() -> ExitCode {
     // `sacdfs verify ...` (#80) has options of its own: see `sacdfs verify --help`.
