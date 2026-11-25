@@ -136,7 +136,7 @@ checked, never as passing.
    nothing else is touched.
 9. **Restart:** restart sacdfs during playback and during a scan. The client recovers by itself or
    the documented step works.
-10. **Output version change:** an option change, such as `--pcm-cutoff`, is seen on the next scan.
+10. **Output version change:** an option change, such as `--pcm-cutoff` or `--pcm-filter`, is seen on the next scan (the WAV files' time and NFS generation move; the DSF files' do not).
 11. **Load on sacdfs:** peak memory, CPU seconds, bytes served, and FUSE requests per kind. A request
     count that jumps is a failure until explained: that is how the Roon request storm was found.
 12. **Logs:** no new errors or warnings on either side.

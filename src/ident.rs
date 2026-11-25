@@ -49,7 +49,7 @@ use std::time::{Duration, SystemTime};
 use scarletbook::Slot;
 use sha2::{Digest, Sha256};
 
-use crate::pcm::{Cutoff, PcmConfig};
+use crate::pcm::{Cutoff, Filter, PcmConfig};
 use crate::sidecar::{Sidecar, SidecarKind};
 use crate::track::{Format, TrackFile};
 use crate::tree::{ROOT, SourceDir};
@@ -76,14 +76,19 @@ pub const DSF_VERSION: u32 = 3;
 /// is scarletbook-pcm (#84), whose samples differ from sacdfs's own converter's. 4: multichannel files' album tag (`IPRD` and the
 /// `id3 ` chunk) has the suffix " (Multichannel)" (#97). 5: `INFO` text is Windows-1252, and a
 /// field with a character outside it is left out (#444).
-pub const WAV_VERSION: u32 = 5;
+/// 6: the converter is dsd2pcm 0.2, whose default `precise` filter changes the samples.
+pub const WAV_VERSION: u32 = 6;
 
-/// Seconds a file's mtime moves forward per output version: more than any PCM offset, so
-/// that a version bump moves every file past every time it showed before.
-const VERSION_STEP: u64 = PCM_OFFSETS;
+/// Seconds a file's mtime moves forward per output version: more than the PCM offsets of one
+/// filter (3 cutoffs times 8401 gains), so that a version bump moves every file past every time it
+/// showed before with the same options. *Why not more:* this step is the same for DSF and WAV,
+/// and it has been 25,203 s since 0.4; a larger one would move every DSF file's time on upgrade
+/// though its bytes do not change (a test pins DSF times to the 0.8.0 values).
+const VERSION_STEP: u64 = 3 * GAINS as u64;
 
-/// Number of distinct PCM offsets: 3 cutoffs times 8401 gains.
-const PCM_OFFSETS: u64 = 3 * GAINS as u64;
+/// Number of distinct PCM offsets: the `precise` filter's `VERSION_STEP` of them, then the `fast`
+/// filter's.
+const PCM_OFFSETS: u64 = 2 * VERSION_STEP;
 
 /// Gains with their own offset: -60.00 to +24.00 dB in steps of 0.01 dB.
 const GAINS: i64 = 8401;
@@ -132,22 +137,34 @@ pub fn pcm_flavour(pcm: &PcmConfig) -> u64 {
     };
     // As the converter: a gain that is not finite counts as 0 (and -0 as 0).
     let gain = if pcm.gain_db.is_finite() && pcm.gain_db != 0.0 { pcm.gain_db.to_bits() } else { 0 };
-    sha64(&[b"sacdfs pcm v1\0", &[cutoff], &gain.to_be_bytes()])
+    let filter: u8 = match pcm.filter {
+        Filter::Precise => 0,
+        Filter::Fast => 1,
+    };
+    sha64(&[b"sacdfs pcm v1\0", &[cutoff], &gain.to_be_bytes(), &[filter]])
 }
 
 /// Seconds added to a WAV file's mtime for the PCM options that change its bytes but not its
-/// size (issue #64): 0 for the default options, else a different number below
-/// `PCM_OFFSETS` for every cutoff and gain in steps of 0.01 dB from -60 to +24 dB (at most
-/// 25,202 s, 7 hours). The rate is not included: it changes the file's size.
+/// size (issue #64): 0 for the `precise` filter with the default cutoff and gain, else a different
+/// number below `PCM_OFFSETS` for every filter, cutoff and gain in steps of 0.01 dB from -60 to
+/// +24 dB (at most 50,405 s, 14 hours). With the `fast` filter, which 0.8.0 and earlier had,
+/// every offset is `VERSION_STEP` more than with `precise`, whatever the build's default filter
+/// is: the same options show the same times on every build. The rate is not included: it
+/// changes the file's size.
 pub fn pcm_mtime_offset(pcm: &PcmConfig) -> u64 {
     let cutoff: u64 = match pcm.cutoff {
         Cutoff::Khz40 => 0,
         Cutoff::Khz30 => 1,
         Cutoff::Wide80 => 2,
     };
+    // The filter actually used, not the build's default.
+    let filter = match pcm.filter {
+        Filter::Precise => 0,
+        Filter::Fast => VERSION_STEP,
+    };
     // As the converter: a gain that is not finite counts as 0. 0 dB first.
     let gain = if pcm.gain_db.is_finite() { (f64::from(pcm.gain_db) * 100.0).round() as i64 } else { 0 };
-    cutoff * GAINS as u64 + gain.rem_euclid(GAINS) as u64
+    filter + cutoff * GAINS as u64 + gain.rem_euclid(GAINS) as u64
 }
 
 /// The modification time shown for a track file (issue #64): its image's, moved forward by
@@ -567,7 +584,8 @@ mod tests {
     #[test]
     fn mtime_offsets() {
         use crate::pcm::PcmRate;
-        let base = PcmConfig::default();
+        // `precise` is explicit: the build's default filter is `fast` on 32-bit x86.
+        let base = PcmConfig { filter: Filter::Precise, ..PcmConfig::default() };
         let o = |gain_db: f32, cutoff: Cutoff| pcm_mtime_offset(&PcmConfig { gain_db, cutoff, ..base });
         // The defaults keep the image's mtime; the rate is not part of it.
         assert_eq!(pcm_mtime_offset(&base), 0);
@@ -576,21 +594,54 @@ mod tests {
         assert_eq!(o(f32::NAN, Cutoff::Khz40), 0);
         // Every gain step of 0.01 dB in the range, with every cutoff, gets its own offset.
         let mut seen = HashSet::new();
-        for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
+        for (cutoff, filter) in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80]
+            .into_iter()
+            .flat_map(|c| [(c, Filter::Precise), (c, Filter::Fast)])
+        {
             for g in -6000..=2400 {
-                let off = o(g as f32 / 100.0, cutoff);
-                assert!(off <= 25_202, "{off}");
-                assert!(seen.insert(off), "gain {g} cutoff {cutoff:?}: offset {off} taken");
+                let off = pcm_mtime_offset(&PcmConfig { gain_db: g as f32 / 100.0, cutoff, filter, ..base });
+                assert!(off <= 50_405, "{off}");
+                assert_eq!(off >= VERSION_STEP, filter == Filter::Fast, "{off}");
+                assert!(seen.insert(off), "gain {g} cutoff {cutoff:?} {filter:?}: offset {off} taken");
             }
         }
-        // A version bump moves past every time shown before, whatever the options.
+        // A version bump moves past every time shown before with the same filter.
         let t = |s: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(s);
         assert_eq!(shown_mtime(t(1000), 1, 0), t(1000));
         assert_eq!(shown_mtime(t(1000), 1, 7), t(1007));
         let highest = seen.iter().copied().max().unwrap();
         assert_eq!(highest, PCM_OFFSETS - 1);
-        assert!(shown_mtime(t(1000), 2, 0) > shown_mtime(t(1000), 1, highest));
-        assert!(shown_mtime(t(1000), 3, 0) > shown_mtime(t(1000), 2, highest));
+        let highest_precise = seen.iter().copied().filter(|o| *o < VERSION_STEP).max().unwrap();
+        assert_eq!(highest_precise, VERSION_STEP - 1);
+        assert!(shown_mtime(t(1000), 2, 0) > shown_mtime(t(1000), 1, highest_precise));
+        assert!(shown_mtime(t(1000), 3, VERSION_STEP) > shown_mtime(t(1000), 2, highest));
+    }
+
+    /// The times of the DSF files did not move from 0.8.0 to 0.9.0 (their bytes did not change),
+    /// and the WAV files' moved past every time 0.8.0 showed, with either filter. The numbers are
+    /// 0.8.0's, written out: a change to the step or the DSF version must change this test.
+    #[test]
+    fn dsf_times_are_those_of_0_8_0() {
+        const STEP_0_8_0: u64 = 25_203;
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        assert_eq!(VERSION_STEP, STEP_0_8_0);
+        assert_eq!(DSF_VERSION, 3);
+        assert_eq!(version_offset(Format::Dsf), Duration::from_secs(2 * STEP_0_8_0));
+        assert_eq!(shown_mtime(t, DSF_VERSION, 0), t + Duration::from_secs(2 * STEP_0_8_0));
+        // The newest DSF time under a folder (a folder of DSF files only), and a file with text
+        // its disc lacks (one version more).
+        assert_eq!(newest_offset(true, false, 0), Duration::from_secs(3 * STEP_0_8_0));
+        assert_eq!(FILLED_STEP, Duration::from_secs(STEP_0_8_0));
+        // 0.8.0's WAV times: version 5, offsets below one step, the filled ones a version on.
+        let newest_0_8_0 = shown_mtime(t, 5 + 1, STEP_0_8_0 - 1);
+        for filter in [Filter::Precise, Filter::Fast] {
+            let off = pcm_mtime_offset(&PcmConfig { filter, ..PcmConfig::default() });
+            assert!(
+                shown_mtime(t, WAV_VERSION, off) > newest_0_8_0 - Duration::from_secs(STEP_0_8_0),
+                "{filter:?}"
+            );
+            assert!(shown_mtime(t, WAV_VERSION, off) > shown_mtime(t, 5, STEP_0_8_0 - 1), "{filter:?}");
+        }
     }
 
     const PINNED: u64 = 0x0fbd_e4b4_daf9_0000;
@@ -603,5 +654,7 @@ mod tests {
         assert_eq!(f(base), f(PcmConfig { gain_db: f32::NAN, ..base }));
         assert_ne!(f(base), f(PcmConfig { gain_db: 1.0, ..base }));
         assert_ne!(f(base), f(PcmConfig { cutoff: Cutoff::Khz30, ..base }));
+        let other = if base.filter == Filter::Fast { Filter::Precise } else { Filter::Fast };
+        assert_ne!(f(base), f(PcmConfig { filter: other, ..base }));
     }
 }

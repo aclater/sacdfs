@@ -35,6 +35,7 @@ fi
 [ -n "${SACDFS_PAUSES:-}" ] && args+=(--pauses "$SACDFS_PAUSES")
 [ -n "${SACDFS_PCM_RATE:-}" ] && args+=(--pcm-rate "$SACDFS_PCM_RATE")
 [ -n "${SACDFS_PCM_CUTOFF:-}" ] && args+=(--pcm-cutoff "$SACDFS_PCM_CUTOFF")
+[ -n "${SACDFS_PCM_FILTER:-}" ] && args+=(--pcm-filter "$SACDFS_PCM_FILTER")
 [ -n "${SACDFS_PCM_GAIN:-}" ] && args+=(--pcm-gain "$SACDFS_PCM_GAIN")
 [ -n "${SACDFS_START_BURST:-}" ] && args+=(--start-burst "$SACDFS_START_BURST")
 [ -n "${SACDFS_START_BURST_SECS:-}" ] && args+=(--start-burst-secs "$SACDFS_START_BURST_SECS")

@@ -182,7 +182,10 @@ no `install.sh` or `nas-compose.yaml`: the installer and the container image are
 install it by hand with [the NAS steps](nas-binary.md), `i686` in place of `x86_64` in the file
 names. From 0.7.1, the installer run on 32-bit x86 (an `i686` kernel, or an x86-64 kernel with
 32-bit programs) stops before downloading anything, names this archive and links here. DST
-decoding takes about 2.3 to 2.5 times the CPU time of the x86_64 build on the same core. If MPD
+decoding takes about 2.3 to 2.5 times the CPU time of the x86_64 build on the same core. For that
+reason this build's default WAV filter is `fast` (the filter of 0.8.0 and earlier), not `precise`,
+whose converter takes 1.67 to 2.16 times as long in dsd2pcm's own measurements of its 32-bit build: `--pcm-filter precise` (`SACDFS_PCM_FILTER=precise`
+in the container) selects it where the CPU has room ([WAV quality](../pcm-quality.md#precise-and-fast)). If MPD
 or Jellyfin scans the mount, use `--format dsf`: at Atom speed their first scan costs about 25 to
 40 s of the whole CPU per disc with WAV files and about 1 s without
 ([deployment](../deployment.md#players-that-scan-the-library-mpd-moode-volumio-jellyfin-plex)).

@@ -6,7 +6,48 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-11-25
+### Added
+
+- **WAV quality comparison per release.** `suites/sacdfs.toml` (dsd-measure 0.1.2, pinned)
+  measures the WAV view against the previous release; the first page is
+  [docs/quality/0.9.0.md](docs/quality/0.9.0.md).
+
+### Changed
+
+- **ARM testing.** Linux aarch64 builds and the arm64 image are built and tested in CI on
+  GitHub's native arm64 runners (the test suite, the container's SMB and NFS checks and the release
+  builds), not under emulation. The tests have not yet been run on ARM hardware of our own; that
+  is planned for when our ARM test machine arrives.
+
+- **WAV conversion by dsd2pcm 0.2; `--pcm-filter precise|fast` (#599).** The conversion behind
+  the WAV files is now the `dsd2pcm` crate (`=0.2.0`, from crates.io) instead of scarletbook-pcm 0.7.0. It has two filters, chosen with `--pcm-filter`
+  (`-o pcm_filter=` as a mount option, `SACDFS_PCM_FILTER` in the container): `precise`, the
+  default, and `fast`, which gives scarletbook-pcm 0.7.0's bytes. **The default WAV output
+  changes.** With `precise`, the 1 kHz test tone measures 141.9 to 145.0 dB SINAD instead of
+  116.0 to 122.1 dB, the 20 Hz to 20 kHz noise floor is 22.3 to 32.5 dB lower, and the worst
+  alias image at 88.2 and 176.4 kHz is 26.7 to 47.5 dB lower
+  ([quality page](docs/quality/0.9.0.md)). The converter takes about 1.8 times the CPU time of
+  `fast`; against 0.8.0 on an i9-13900H, a whole-track WAV read with `precise` was 12 % slower on
+  DST discs and 38 % slower on plain DSD. Use `--pcm-filter fast` for the old samples and the old speed.
+  The 32-bit x86 (i686) build defaults to `fast`, because the Atom-class NAS CPUs it runs on
+  spend most of their time on DST decoding already; `--pcm-filter precise` selects the other
+  filter there. x86_64 and aarch64 default to `precise`. sacdfs does not otherwise choose the
+  filter by CPU.
+  **Times and generations.** `WAV_VERSION` moves to 6, so every WAV file shows a time 7 hours
+  later and has a new NFS generation. The filter is part of the options that move a WAV file's
+  time: `fast` shows a time 7 hours later than `precise`, the same on every build. The DSF
+  files' times do not move, and neither do the folders' of a `--format dsf` mount: the
+  output-version step stays 25,203 s (a test pins the DSF times to 0.8.0's, and the corpus shows
+  the same times, sizes and entries on 0.8.0 and 0.9.0). Where WAV files are shown, the folders
+  above them move 7 hours with them.
+  **Not changed:** DSF, DFF and ISO output (byte-identical on the test corpus in every
+  configuration and on eight real discs), the WAV header and channel mask (from the disc's
+  loudspeaker layout; dsd2pcm 0.2's own change of its WAV channel mask does not reach sacdfs), and
+  the fingerprint of `tags fetch --acoustid`, which keeps the `fast` filter. With `--pcm-filter fast`
+  the corpus's 455 WAV files per configuration equal the previous build's, byte for byte.
+  Details: [PCM quality](docs/pcm-quality.md#what-changed-in-090).
+
+## [0.8.0] - 2026-11-24
 
 ### Added
 

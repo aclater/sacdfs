@@ -68,6 +68,7 @@ const VALUES: &[&str] = &[
     "pauses",
     "pcm_rate",
     "pcm_cutoff",
+    "pcm_filter",
     "pcm_gain",
     "start_burst",
     "start_burst_secs",

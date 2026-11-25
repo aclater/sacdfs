@@ -60,9 +60,10 @@ an ID3v2.4 tag from the disc's text. The **WAV files** are the same tracks conve
 PCM at 176.4 kHz (or 88.2 or 352.8 kHz), band-limited to 40 kHz by default (30 kHz, or about
 80 kHz with `--pcm-cutoff wide`), gapless from one track to the next, with the same tag in an
 `id3 ` chunk and a `LIST`/`INFO` chunk; channel masks follow the disc's speaker layout
-(stereo, 5.0, 5.1), and files over 4 GiB are RF64. The conversion is scarletbook-rs's
-`scarletbook-pcm`: its pass band is flat to ±0.004 dB, its stopband at least 109 dB down, and
-DSD silence comes out as digital silence ([docs/pcm-quality.md](pcm-quality.md)). Sizes are exact; listing, `stat`
+(stereo, 5.0, 5.1), and files over 4 GiB are RF64. The conversion is the `dsd2pcm`
+crate, with its `precise` filter by default or `--pcm-filter fast` (scarletbook-pcm 0.7.0's output, byte for byte).
+The `fast` pass band is flat to ±0.004 dB and its stopband at least 109 dB down; the `precise` figures are in
+[docs/quality/0.9.0.md](quality/0.9.0.md). DSD silence comes out as digital silence ([docs/pcm-quality.md](pcm-quality.md)). Sizes are exact; listing, `stat`
 and reading a WAV file's header or tags never decode anything. Details, and how taggers and
 scanners are served: [user guide](user-guide.md#formats).
 

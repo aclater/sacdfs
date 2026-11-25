@@ -272,8 +272,9 @@ fn df_of_no_images_shows_the_source_size_full() {
 fn pcm_options_move_the_wav_mtime() {
     common::skip_without_fuse!();
     let images = corpus().join("images");
+    // `precise` is named: the default filter of a 32-bit x86 build is `fast`, which shows other times.
     let stats = |extra: &[&str]| -> Vec<(String, u64, SystemTime)> {
-        let mount = Mount::new(&images, extra);
+        let mount = Mount::new(&images, &[&["--pcm-filter", "precise"][..], extra].concat());
         let area = mount.path().join("dsd-stereo-mch-2048/Stereo");
         let mut v: Vec<_> = std::fs::read_dir(&area)
             .unwrap()

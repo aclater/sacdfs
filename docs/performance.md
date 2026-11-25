@@ -658,6 +658,30 @@ No area is more than 10 % slower. The one cell above 1.05, a 0.45 s plain-DSD re
 thread (26 ms), is within the spread of such short reads: the same read with all threads is 5 %
 faster.
 
+## WAV throughput by filter
+
+Whole-track WAV reads of the same track through a mount, as seconds of audio per second of
+wall time (real-time factor, higher is faster), for the build before the dsd2pcm switch (main
+at 08b3528, scarletbook-pcm 0.7.0), and the new build with `--pcm-filter fast` and with the
+default `precise`. 176.4 kHz output, 24-bit, one worker thread (`--threads 1`) on two pinned
+cores of an AMD Ryzen AI Max+ 395 on a busy desktop, a fresh mount per read, median of three
+rounds (range in brackets). **These are indicative figures, taken without the benchmark lock;
+they are not timing claims.** Timing figures on a quiet host follow.
+
+| Track | Before (main) | `fast` | `precise` | `precise` / `fast` |
+|---|---:|---:|---:|---:|
+| Stereo, plain DSD (190.6 s) | 291 [268-304] | 350 [331-363] | 214 [212-215] | 0.61 |
+| Stereo, DST (330.7 s) | 60 [55-63] | 61 [60-62] | 54 [54] | 0.89 |
+| 5.1, DST (297.4 s) | 19.0 [18.9-20.1] | 20.3 [19.8-20.6] | 17.7 [17.7-17.8] | 0.87 |
+
+On a track that needs DST decoding, the decoder is most of the time, so `precise` costs
+11 to 13 % of the throughput; on plain DSD, where the converter is most of the work, `precise`
+reads at 0.61 times the speed of `fast`. dsd2pcm's own figure for the converter alone is about 1.8 times the CPU time for `precise`.
+On the P-cores of an i9-13900H under the benchmark lock (paired against 0.8.0, 5 rounds) the whole-read
+times were 1.12 times 0.8.0's on DST stereo and 5.1 and 1.38 times on plain DSD. sacdfs does not switch filters by itself: on a CPU that
+cannot keep a stream at real time with `precise`, set `--pcm-filter fast`. Rows for slow NAS
+CPUs (no AVX2, aarch64) and timing on a quiet host are still to come.
+
 ## Converter throughput
 
 Since #84 the converter is scarletbook-rs's `scarletbook-pcm` (0.5.3 in these figures); the figures of

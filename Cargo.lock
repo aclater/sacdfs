@@ -409,6 +409,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dsd2pcm"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb31e8aab858c3bc3d15d07332b263cbdfd7b745fb2337d57e90184a8647fc70"
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1156,6 +1162,7 @@ dependencies = [
  "clap_mangen",
  "criterion",
  "dhat",
+ "dsd2pcm",
  "env_logger",
  "fuser",
  "libc",
@@ -1167,7 +1174,6 @@ dependencies = [
  "proptest",
  "rayon",
  "scarletbook",
- "scarletbook-pcm",
  "serde",
  "serde_json",
  "sha2",
@@ -1193,15 +1199,6 @@ name = "scarletbook"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37368f216246374818f64a4b4eed4139e405c3d288542fdbcac65823db807839"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
-name = "scarletbook-pcm"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffa2252919d7515180a8a9280314801806436b22804f8da972c3f6762b657abf"
 dependencies = [
  "thiserror",
 ]

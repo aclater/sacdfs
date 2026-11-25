@@ -134,9 +134,9 @@ The release steps, the repair runs for an earlier release and crates.io publishi
   conversion, file formats, FUSE techniques) may be adapted as above.
 - **SACD knowledge lives in scarletbook.** sacdfs uses its public API only. A parsing or
   decoding problem is fixed there.
-- **Output versions move with the bytes (#89, #64).** The WAV files' audio is scarletbook-pcm's
-  (#84), and scarletbook patch releases may change its bytes without changing its API. So a
-  scarletbook bump, or any change, that alters the pinned PCM hashes in `tests/pcm.rs` must also
+- **Output versions move with the bytes (#89, #64).** The WAV files' audio is dsd2pcm's
+  (scarletbook-pcm's from #84 to 0.8.0), and a release of it may change its bytes without
+  changing its API, as 0.2 did by making `precise` the default filter. So a dsd2pcm or scarletbook bump, or any change, that alters the pinned PCM hashes in `tests/pcm.rs` must also
   bump `WAV_VERSION` in `src/ident.rs` (and the test's `GOLDEN_WAV_VERSION`), and the CHANGELOG
   records it as an output change. Likewise for the DSF files and `DSF_VERSION`, pinned by
   `golden_dsf_corpus` in `tests/corpus.rs`. The PCM pins cover 1, 2 and 6 channels at gains of

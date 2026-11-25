@@ -10,7 +10,7 @@
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use sacdfs::pcm::{Converter, Cutoff, FRAME_BYTES, PcmConfig, PcmRate};
+use sacdfs::pcm::{Converter, Cutoff, FRAME_BYTES, Filter, PcmConfig, PcmRate};
 use std::hint::black_box;
 
 /// Deterministic noise-like DSD bytes (the cost does not depend on the data).
@@ -32,9 +32,12 @@ fn bench(c: &mut Criterion) {
     for channels in [2u8, 6] {
         let n = usize::from(channels) * FRAME_BYTES;
         let frames = [dsd(n, 1), dsd(n, 2), dsd(n, 3)];
-        for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
+        for (cutoff, filter) in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80]
+            .into_iter()
+            .flat_map(|c| [(c, Filter::Fast), (c, Filter::Precise)])
+        {
             for rate in [PcmRate::R88200, PcmRate::R176400, PcmRate::R352800] {
-                let cfg = PcmConfig { rate, cutoff, gain_db: 0.0 };
+                let cfg = PcmConfig { rate, cutoff, gain_db: 0.0, filter };
                 if cfg.validate().is_err() {
                     continue;
                 }
@@ -45,7 +48,7 @@ fn bench(c: &mut Criterion) {
                     Cutoff::Khz30 => "30k",
                     Cutoff::Wide80 => "wide80k",
                 };
-                let id = BenchmarkId::new(format!("{channels}ch-{band}"), rate.hz());
+                let id = BenchmarkId::new(format!("{channels}ch-{band}-{filter:?}"), rate.hz());
                 g.bench_function(id, |b| {
                     b.iter(|| {
                         black_box(conv.convert(
@@ -91,7 +94,7 @@ fn bench(c: &mut Criterion) {
     }
     g.finish();
 
-    // Making a converter (scarletbook-pcm's plan and buffers).
+    // Making a converter (dsd2pcm's plan and buffers).
     let mut g = c.benchmark_group("pcm-new");
     for cutoff in [Cutoff::Khz40, Cutoff::Khz30, Cutoff::Wide80] {
         let cfg = PcmConfig { cutoff, ..PcmConfig::default() };

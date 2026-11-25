@@ -132,7 +132,16 @@ pub fn stream_track(
     if !(1..=2).contains(&channels) {
         return Err(io::Error::other(format!("{channels} channels: only a stereo area is fingerprinted")));
     }
-    let cfg = PcmConfig { rate: PcmRate::R88200, cutoff: Cutoff::Khz30, gain_db: 0.0 };
+    // `fast`, whatever the build's default: a fingerprint must not move with the default filter, and
+    // its cost matters on slow CPUs.
+    // `fast`, whatever the build's default: a fingerprint must not move with the default filter, and
+    // its cost matters on slow CPUs.
+    let cfg = PcmConfig {
+        rate: PcmRate::R88200,
+        cutoff: Cutoff::Khz30,
+        gain_db: 0.0,
+        filter: crate::pcm::Filter::Fast,
+    };
     let mut conv = Converter::new(channels, &cfg);
     let mut decoder = DstDecoder::default();
     let mut decimator = Decimator::new();
