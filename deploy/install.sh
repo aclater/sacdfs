@@ -613,8 +613,19 @@ untar() {
     fi
 }
 
+# A release's install.sh has the checksums of its release built in (RELEASE_SHA256 or
+# MEMBER_SHA256 hold 64-digit lines); the copy in the repository has none, and its
+# DEFAULT_VERSION is an old release that only the tests use.
+is_release_copy() {
+    printf '%s\n%s\n' "$RELEASE_SHA256" "$MEMBER_SHA256" |
+        awk '$1 ~ /^[0-9a-f]+$/ && length($1) == 64 { f = 1 } END { exit !f }'
+}
+
 get_archive() {
     [ -n "$PKGDIR" ] && return 0
+    if [ -z "$VERSION" ] && ! is_release_copy; then
+        die "this install.sh is the repository's copy, not a release's: it names no release (its default, $DEFAULT_VERSION, is an old one) and has no checksums built in. Nothing was changed. Use the release's own: curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sudo sh -s -- --iso-dir PATH (see docs/install/README.md), or give the release with --version X.Y.Z."
+    fi
     v=${VERSION:-$DEFAULT_VERSION}
     pkg=sacdfs-$v-$ARCH-linux
     if [ -n "$ARCHIVE" ]; then

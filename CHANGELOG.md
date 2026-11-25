@@ -6,6 +6,12 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The repository's `install.sh` needs `--version`.** A copy from a clone or from main has no release
+  or checksums built in, and its default was an old release (0.6.0); without `--version` it now stops
+  before downloading and names the release's own `install.sh`. A released `install.sh` is unchanged.
+
 ## [0.9.0] - 2026-11-25
 
 ### Added
