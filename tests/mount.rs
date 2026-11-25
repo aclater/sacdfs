@@ -1777,3 +1777,40 @@ fn cover_name_stays_while_art_is_replaced() {
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// A reader that holds folder art open while the art is replaced reads on (#631). A lookup of
+/// the name after the replacement gives the same node number a new generation, and the kernel
+/// then marks the inode of the open file bad: its reads, `fstat` and `close` fail with `EIO`.
+/// The kernel is told one generation for the art instead, so the open file, which sacdfs
+/// holds as it was opened, reads on, and the name shows the new art.
+#[test]
+fn art_held_open_reads_on_while_it_is_replaced() {
+    common::skip_without_fuse!();
+    let top = tempfile::tempdir().unwrap();
+    let src = top.path().canonicalize().unwrap();
+    let album = src.join("Artist/Album");
+    std::fs::create_dir_all(&album).unwrap();
+    std::os::unix::fs::symlink(corpus().join("images/dsd-stereo-mch-2048.iso"), album.join("disc.iso"))
+        .unwrap();
+    std::fs::write(album.join("cover-0.jpg"), b"art 0").unwrap();
+    let m = Mount::foreground(&src, &[]);
+    let cover = m.path().join("Artist/Album/disc/Stereo/cover.jpg");
+    let mut held = std::fs::File::open(&cover).unwrap();
+    for n in 1..=5 {
+        let body = format!("art {n} and some more bytes");
+        std::fs::write(album.join(".tmp"), &body).unwrap();
+        std::fs::rename(album.join(".tmp"), album.join("cover-0.jpg")).unwrap();
+        // A fresh lookup of the name: it brings the new generation, if there is one.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while std::fs::read(&cover).ok().as_deref() != Some(body.as_bytes()) {
+            assert!(Instant::now() < deadline, "the new art ({n}) did not show");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        held.metadata().unwrap_or_else(|e| panic!("fstat of the held art after replace {n}: {e}"));
+        let mut first = [0u8; 3];
+        std::io::Seek::seek(&mut held, std::io::SeekFrom::Start(0)).unwrap();
+        std::io::Read::read_exact(&mut held, &mut first)
+            .unwrap_or_else(|e| panic!("read of the held art after replace {n}: {e}"));
+    }
+    m.stop("TERM");
+}

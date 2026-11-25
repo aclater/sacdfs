@@ -27,7 +27,10 @@ use fuser::{
 
 use crate::engine::Engine;
 use crate::tree::Tree;
-use crate::vfs::{self, Access, Attr, DataReply, DirOpen, Kind, Listing, ListingPlus, Lookup, Reply, Volume};
+use crate::vfs::{
+    self, Access, Attr, Caching, DataReply, DirOpen, Kind, Listing, ListingPlus, Lookup, Opened, Reply,
+    Volume,
+};
 use crate::watchdog::{Fail, Watchdog};
 
 pub use crate::vfs::MAX_READ;
@@ -111,7 +114,7 @@ fn negative_attr() -> FileAttr {
 impl Reply<Lookup> for ReplyEntry {
     fn reply(self, r: Result<Lookup, vfs::Error>) {
         match r {
-            Ok(Lookup::Found(e)) => self.entry(&e.ttl, &file_attr(&e.attr), Generation(e.generation)),
+            Ok(Lookup::Found(e)) => self.entry(&e.ttl, &file_attr(&e.attr), Generation(e.kernel_generation)),
             // Inode 0 is a negative entry, which the kernel caches for the TTL (#61).
             Ok(Lookup::Missing { ttl }) => self.entry(&ttl, &negative_attr(), Generation(0)),
             Err(e) => self.error(errno(e)),
@@ -129,11 +132,18 @@ impl Reply<(Duration, Attr)> for ReplyAttr {
 }
 
 /// A file's handle: the kernel keeps its cached pages at the next open, as the files never
-/// change.
-impl Reply<u64> for ReplyOpen {
-    fn reply(self, r: Result<u64, vfs::Error>) {
+/// change; folder art's are dropped at each open (#631), and with its source found changed at
+/// the open, read as it is, past the size the kernel knows (#628).
+impl Reply<Opened> for ReplyOpen {
+    fn reply(self, r: Result<Opened, vfs::Error>) {
         match r {
-            Ok(fh) => self.opened(FileHandle(fh), FopenFlags::FOPEN_KEEP_CACHE),
+            Ok(Opened { fh, caching: Caching::Keep }) => {
+                self.opened(FileHandle(fh), FopenFlags::FOPEN_KEEP_CACHE)
+            }
+            Ok(Opened { fh, caching: Caching::Drop }) => self.opened(FileHandle(fh), FopenFlags::empty()),
+            Ok(Opened { fh, caching: Caching::Direct }) => {
+                self.opened(FileHandle(fh), FopenFlags::FOPEN_DIRECT_IO)
+            }
             Err(e) => self.error(errno(e)),
         }
     }
@@ -201,7 +211,7 @@ impl Reply<ListingPlus> for ReplyDirectoryPlus {
         };
         for (next, name, e) in &entries {
             let attr = file_attr(&e.attr);
-            if self.add(attr.ino, *next, name, &e.ttl, &attr, Generation(e.generation)) {
+            if self.add(attr.ino, *next, name, &e.ttl, &attr, Generation(e.kernel_generation)) {
                 break;
             }
         }

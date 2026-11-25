@@ -23,7 +23,7 @@ include = [
 [dependencies]
 # The engine: SACD parsing, demultiplexing and DST decoding, from crates.io, pinned exactly
 # (published from the release tag).
-scarletbook = "=1.0.2"
+scarletbook = "=1.1.1"
 # The DSD-to-PCM converter behind the WAV files, from crates.io, pinned exactly. Without its FLAC
 # reader (default feature `flac`), which sacdfs does not use.
 dsd2pcm = { version = "=0.2.0", default-features = false }
@@ -99,6 +99,26 @@ harness = false
 # One process per trial, and no libtest thread that could take the signal (#334).
 [[test]]
 name = "stop_signals"
+harness = false
+
+# Forks the unmount helper, which needs a process with a single thread (libtest has more).
+[[test]]
+name = "unmount_helper"
+harness = false
+
+# The same against a real FUSE mount: needs /dev/fuse and root, runs in the lab.
+[[test]]
+name = "unmount_helper_fuse"
+harness = false
+
+# The capability drop in every thread, against the kernel (forks a child per case).
+[[test]]
+name = "drop_caps"
+harness = false
+
+# The seccomp deny-list on the real kernel: forks a child per case (and kills some on purpose).
+[[test]]
+name = "deny_list"
 harness = false
 
 [lints.rust]

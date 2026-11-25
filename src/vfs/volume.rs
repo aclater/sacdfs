@@ -70,13 +70,68 @@ pub struct Attr {
     pub blksize: u32,
 }
 
+/// The generation the kernel is told for every folder art file (#631), whatever its
+/// [`EntryAttr::generation`].
+///
+/// *Why:* the kernel treats a node number that comes back with another generation as another
+/// file: it marks the old inode bad, and every reader that holds it (an open, an `fstat`, a
+/// read in progress) gets `EIO`, although sacdfs holds the old file open and could go on
+/// serving it. A cover replaced while it is read did exactly that. So the rule for the
+/// kernel is: **a node number is told with one generation for as long as it is told at
+/// all.** The real generation, which tells a handle to the old file from one to the new, stays
+/// in [`EntryAttr::generation`] for the network file server, which keeps no inode of its own.
+pub const ART_KERNEL_GENERATION: u64 = 1;
+
 /// An entry as a lookup finds it: how long the client may keep it, its attributes and its
 /// generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntryAttr {
     pub ttl: Duration,
     pub attr: Attr,
+    /// The generation of the file as it is now: what a network file handle holds.
     pub generation: u64,
+    /// The generation to tell the kernel: [`ART_KERNEL_GENERATION`] for folder art, else
+    /// `generation`.
+    pub kernel_generation: u64,
+}
+
+/// A reply that wants the file handle only, for the network file server: [`Opened`] without how
+/// the kernel is to read.
+struct Plain<R>(R);
+
+impl<R: Fail> Fail for Plain<R> {
+    fn fail(self, err: Error) {
+        self.0.fail(err);
+    }
+}
+
+impl<R: Reply<u64>> Reply<Opened> for Plain<R> {
+    fn reply(self, r: Result<Opened, Error>) {
+        self.0.reply(r.map(|o| o.fh));
+    }
+}
+
+/// A file handle, and how the kernel is to read through it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Opened {
+    pub fh: u64,
+    pub caching: Caching,
+}
+
+/// What the kernel does with the pages of a file it has read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Caching {
+    /// Keeps them at the next open (`FOPEN_KEEP_CACHE`): a track file's bytes never change under
+    /// its number and generation.
+    Keep,
+    /// Drops them at each open. *Why:* folder art keeps its number and generation (#631) when
+    /// replaced, so a same-size replacement is told by nothing but its time, which the kernel
+    /// does not compare; it used to be told by the new inode.
+    Drop,
+    /// Reads past what it knows and keeps nothing (`FOPEN_DIRECT_IO`): folder art whose source
+    /// file changed since it was listed (#628) is served as the file is now, and the size the
+    /// kernel holds would cut it.
+    Direct,
 }
 
 /// What a lookup found.
@@ -355,23 +410,35 @@ impl Volume {
 
     /// Opens file `ino` for reading: a new file handle. The front end refuses an open for
     /// writing itself, with [`Error::ReadOnly`].
+    ///
+    /// A folder art file whose source changed since it was listed is `ESTALE` here (what a
+    /// network file handle to the old file needs); [`Volume::open_by`] serves it as it is.
     pub fn open(&self, ino: u64, reply: impl Reply<u64>) {
-        self.open_by(ino, 0, reply);
+        self.open_with(ino, 0, true, Plain(reply));
     }
 
     /// [`Volume::open`] for the process (thread) `pid` of the request, 0 if unknown. A network
     /// file server's process opens it for a network client (`network_server`).
-    pub fn open_by(&self, ino: u64, pid: u32, reply: impl Reply<u64>) {
+    ///
+    /// For the kernel: folder art whose source changed after the client looked it up is not
+    /// `ESTALE` (#628). The kernel asks again once, and a second change in that short time
+    /// reached the reader; there is no "again" that cannot be overtaken. The file is opened as
+    /// it is now and the reply says so ([`Caching::Direct`]).
+    pub fn open_by(&self, ino: u64, pid: u32, reply: impl Reply<Opened>) {
+        self.open_with(ino, pid, false, reply);
+    }
+
+    fn open_with(&self, ino: u64, pid: u32, strict: bool, reply: impl Reply<Opened>) {
         // Opening a sidecar opens its source file.
         self.serve(
             What::new("open", Ino(ino)),
             reply,
-            move |sh| (sh.open(ino, sh.tree.get(ino), pid), sh.clone()),
+            move |sh| (sh.open(ino, sh.tree.get(ino), pid, strict), sh.clone()),
             |reply, (r, sh)| match reply {
                 Some(reply) => reply.reply(r),
                 // Too late: the client never learns of the handle, so it is closed here.
                 None => {
-                    if let Ok(fh) = r {
+                    if let Ok(Opened { fh, .. }) = r {
                         sh.handles.lock().unwrap_or_else(|p| p.into_inner()).remove(&fh);
                     }
                 }
@@ -788,7 +855,10 @@ impl Shared {
             Node::File(_) if !crate::tags::installed() => TTL,
             _ => self.ttl(parent, ino),
         };
-        EntryAttr { ttl, attr: self.attr(ino, node), generation: self.tree.generation(node) }
+        let generation = self.tree.generation(node);
+        let kernel_generation =
+            if matches!(node, Node::Sidecar(_)) { ART_KERNEL_GENERATION } else { generation };
+        EntryAttr { ttl, attr: self.attr(ino, node), generation, kernel_generation }
     }
 
     /// The entries of directory `ino` from position `offset` on (`.` and `..` first), with
@@ -836,12 +906,13 @@ impl Shared {
     }
 
     /// Opens `node`: a new file handle.
-    fn open(&self, ino: u64, node: Option<Arc<Node>>, pid: u32) -> Result<u64, Error> {
+    fn open(&self, ino: u64, node: Option<Arc<Node>>, pid: u32, strict: bool) -> Result<Opened, Error> {
         let Some(node) = node else { return Err(self.not_found()) };
         // New readers wait out a shortage, so that the ones reading now go on (#237).
         if self.tree.refusing() && matches!(&*node, Node::File(_)) {
             return Err(Error::NoMemory);
         }
+        let mut caching = Caching::Keep;
         let open = match &*node {
             Node::File(file) => Open::Track(Arc::new(Reader::opened_by(file.clone(), pid, network_server))),
             Node::Sidecar(s) => {
@@ -858,8 +929,12 @@ impl Shared {
                     );
                     return Err(Error::Os(crate::platform::TOO_MANY_OPEN_FILES));
                 };
-                match self.tree.open_sidecar(s) {
-                    Ok(file) => Open::Sidecar(Arc::new(SidecarOpen { file, _slot: slot }), s.clone()),
+                match self.tree.open_sidecar_now(s) {
+                    Ok((_, true)) if strict => return Err(Error::Stale),
+                    Ok((file, changed)) => {
+                        caching = if changed { Caching::Direct } else { Caching::Drop };
+                        Open::Sidecar(Arc::new(SidecarOpen { file, _slot: slot }), s.clone())
+                    }
                     Err(e) => {
                         let gone = e.kind() == io::ErrorKind::NotFound || crate::platform::is_stale(&e);
                         if gone {
@@ -899,7 +974,7 @@ impl Shared {
             }
         }
         self.handles.lock().unwrap_or_else(|p| p.into_inner()).insert(fh, (ino, open));
-        Ok(fh)
+        Ok(Opened { fh, caching })
     }
 
     /// Opens directory `ino` (`keep`: from [`Tree::keep_listing`]). The kernel caches every

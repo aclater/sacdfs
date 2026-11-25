@@ -179,8 +179,7 @@ The verdict looks only at what follows the 10-minute warm-up. **PASS** needs all
   `sidecar` (ENOENT on a `cover-*.jpg` the churner has removed, or under `Artwork/` within
   60 s of the churner toggling it; sacdfs lists a removed file until it has re-read the
   folder, which takes seconds on real discs. Also, in the art-churn album only: ESTALE on a
-  `cover-*.jpg` the churner has replaced or removed, since art whose source changed since it was
-  listed is refused, not served as other bytes, and ENOENT or ESTALE on an area's `cover.jpg`
+  `cover-*.jpg` the churner has removed (one replaced is served as it is now, #628), and ENOENT or ESTALE on an area's `cover.jpg`
   once a cover has been removed, since the file it stood for is gone: [design](design.md),
   "Changes while mounted", #235, #279). Any other errno on these paths, and these errnos on
   any other path, stay unexpected.
