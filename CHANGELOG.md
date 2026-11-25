@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-25
+
 ### Added
 
 - **WAV quality comparison per release.** `suites/sacdfs.toml` (dsd-measure 0.1.2, pinned)
@@ -2315,7 +2317,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.0...v0.7.1

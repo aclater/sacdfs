@@ -4,7 +4,7 @@
 
 How good the DSD-to-PCM conversion behind sacdfs's WAV files is, and how that was measured.
 From #84 to 0.8.0 the converter was scarletbook-rs's `scarletbook-pcm` (0.5.3 to 0.7.0); since
-0.9.0 it is the `dsd2pcm` crate, whose `fast` filter gives scarletbook-pcm 0.7.0's output byte
+0.9.0 it is the crate `dsd2pcm` (0.2.0), whose `fast` filter gives scarletbook-pcm 0.7.0's output byte
 for byte and whose `precise` filter is the default. `sacdfs::pcm` maps sacdfs's options to it
 and feeds it the engine's frames.
 
