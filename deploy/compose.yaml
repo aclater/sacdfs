@@ -63,6 +63,7 @@ services:
       # SACDFS_SIDECARS: default   # folder art, scans and playlists passed through
       # SMB_USER: music
       # SMB_PASSWORD_FILE: /run/secrets/smb_password
+      # SMB_GUEST: "1"          # instead of SMB_USER: guest access on purpose (silences the start-up warning)
       # NFS_CLIENTS: 192.0.2.0/24
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck.sh"]

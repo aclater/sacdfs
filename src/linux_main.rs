@@ -8,13 +8,14 @@ use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
 
-use crate::{mount_opts, startup, stop_signals};
+use crate::unmount_helper::UnmountHelper;
+use crate::{deny_list, mount_opts, privs, startup, stop_signals};
 
 use fuser::{Config, MountOption, Session, SessionACL};
 
@@ -233,6 +234,9 @@ fn run(args: Args) -> io::Result<()> {
     } else {
         Some(daemonize(keeps_stderr(args.log_file.is_some(), std::env::var_os("JOURNAL_STREAM").is_some()))?)
     };
+    // The unmount helper forks here: in the daemon (after the fork above, so that the
+    // waiting parent is not its parent) and before any thread, the signal thread included.
+    let unmounter = Unmounter::start(&mountpoint);
     // The signal handlers go in before mounting (#57), and before any thread exists, which
     // keeps a signal that arrives as they go in from being lost (#334): see stop_signals.rs.
     // A SIGINT, SIGTERM or SIGHUP from here on is held until the check below, before
@@ -313,8 +317,15 @@ fn run(args: Args) -> io::Result<()> {
         dev: top_mount_device(&mountpoint),
         conn: session.as_fd().try_clone_to_owned()?,
     });
+    unmounter.mounted();
+    // With the helper armed, nothing below needs CAP_SYS_ADMIN (src/privs.rs).
+    unmounter.drop_caps();
+    // Then the deny-list (src/deny_list.rs): umount2 is on it only where the capability is gone.
+    unmounter.deny_list();
+    unmounter.watch_helper();
     let at = mountpoint.clone();
     let mine = own.clone();
+    let stopper = unmounter.clone();
     let stop_tree = tags_tree.clone();
     let stop_grace = args.stop_grace;
     std::thread::Builder::new().name("sacdfs-signals".to_owned()).spawn(move || {
@@ -330,7 +341,31 @@ fn run(args: Args) -> io::Result<()> {
                 );
             } else {
                 log::info!("signal {sig}: unmounting");
-                if let Err(e) = unmount(&at) {
+                // The helper detaches (`umount -l`), which is what a busy mount got here
+                // before; if it is not there or fails, the daemon does it as it did.
+                let by_helper = match stopper.detach() {
+                    Some(Ok(())) => true,
+                    Some(Err(e)) => {
+                        if stopper.here() {
+                            log::warn!("unmount helper: {e}; unmounting from here");
+                        } else {
+                            log::error!("unmount helper: {e}");
+                        }
+                        false
+                    }
+                    None => false,
+                };
+                if by_helper {
+                    log::debug!("detached by the unmount helper");
+                } else if !stopper.here() {
+                    // This process has given up CAP_SYS_ADMIN: there is nothing to try.
+                    log::error!(
+                        "cannot unmount {0} from here (sacdfs has dropped CAP_SYS_ADMIN and the unmount helper \
+                         did not do it): unmount it from outside, `umount -l {0}`; the service manager or \
+                         container does it when it stops sacdfs",
+                        at.display()
+                    );
+                } else if let Err(e) = unmount(&at) {
                     // Busy (open files, or an NFS server exporting the mount): detach it, as
                     // fusermount3 does for users other than root. sacdfs then serves the files
                     // still open, for the grace period at most (#276).
@@ -352,7 +387,7 @@ fn run(args: Args) -> io::Result<()> {
             // this process can see it: exiting with it still mounted would leave it dead
             // ("Transport endpoint is not connected").
             std::thread::sleep(Duration::from_secs(stop_grace));
-            if mine.mounted_anywhere() == Some(true) && mine.is_on_top(&at) {
+            if mine.mounted_anywhere() == Some(true) && mine.is_on_top(&at) && stopper.here() {
                 let _ = lazy_unmount(&at);
             }
             match mine.mounted_anywhere() {
@@ -388,9 +423,14 @@ fn run(args: Args) -> io::Result<()> {
         // The session failed while still mounted (an error, not an unmount): don't leave a
         // dead mount behind.
         log::warn!("session ended: {e}; detaching {}", mountpoint.display());
-        let _ = lazy_unmount(&mountpoint);
+        if !matches!(unmounter.detach(), Some(Ok(()))) && unmounter.here() {
+            let _ = lazy_unmount(&mountpoint);
+        }
     }
     background.stop();
+    // The mount is gone or detached: the helper has nothing left to do. Not told on a crash,
+    // where the end of its socket tells it to detach a dead mount.
+    unmounter.stand_down();
     match result {
         // The connection ended: the same end as the ENODEV that fuser takes for one (#322).
         // When a connection ends (an unmount, ours after a signal or one from outside such as
@@ -403,6 +443,190 @@ fn run(args: Args) -> io::Result<()> {
             Ok(())
         }
         r => r,
+    }
+}
+
+/// The unmount helper (src/unmount_helper.rs) shared by the signal thread and the main thread,
+/// or nothing where there is none (no CAP_SYS_ADMIN to keep, as for a rootless mount, or it
+/// could not start): the daemon then unmounts itself, as before the helper existed.
+#[derive(Clone, Default)]
+struct Unmounter {
+    helper: Arc<Mutex<Option<UnmountHelper>>>,
+    /// Set once this process has given up the right to unmount (it dropped CAP_SYS_ADMIN): every
+    /// in-process unmount asks [`Unmounter::here`] first, since it could only fail.
+    cannot_unmount: Arc<std::sync::atomic::AtomicBool>,
+    /// Set before the helper is asked to end (a stop, or standing down): its socket closing then
+    /// is expected, not a death.
+    leaving: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Unmounter {
+    /// Forks the helper. Before any thread exists (it refuses otherwise).
+    fn start(mountpoint: &Path) -> Self {
+        match UnmountHelper::spawn(mountpoint, FSNAME) {
+            Ok(Some(h)) => {
+                if h.degraded() == 0 {
+                    log::info!("unmount helper started (pid {})", h.pid());
+                } else {
+                    log::info!(
+                        "unmount helper started (pid {}), its bounding set not narrowed (CAP_SETPCAP missing)",
+                        h.pid()
+                    );
+                }
+                Self { helper: Arc::new(Mutex::new(Some(h))), ..Self::default() }
+            }
+            Ok(None) => {
+                log::debug!("no unmount helper: no CAP_SYS_ADMIN to keep");
+                Self::default()
+            }
+            Err(e) => {
+                log::warn!("no unmount helper: {e}; sacdfs unmounts by itself");
+                Self::default()
+            }
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<UnmountHelper>> {
+        self.helper.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Arms the helper for the mount, which it checks by itself (type, identity), and logs the
+    /// proof level once. A helper that cannot be armed (an old kernel without `statx`, a mount
+    /// that is not FUSE) is let go: the daemon unmounts by itself.
+    fn mounted(&self) {
+        let mut slot = self.lock();
+        let Some(h) = slot.as_mut() else { return };
+        match h.mounted() {
+            Ok(level) => log::info!(
+                "unmount helper armed, identity proof level {level}: {}",
+                match level {
+                    3 => "unique mount ID",
+                    2 => "mount ID and device number",
+                    _ => "device number with the mount table's mount ID and type",
+                }
+            ),
+            Err(e) => {
+                log::warn!("unmount helper: cannot arm: {e}; unmounting from here");
+                if let Some(mut h) = slot.take() {
+                    h.stand_down();
+                }
+            }
+        }
+    }
+
+    /// Gives up CAP_SYS_ADMIN (src/privs.rs) where that is safe: an ARMED helper does the unmount,
+    /// the architecture has been tested (not ARM until the Jetson arrives), and
+    /// `SACDFS_KEEP_SYS_ADMIN` is not set (an escape hatch for one release). Says which, once.
+    fn drop_caps(&self) {
+        use std::sync::atomic::Ordering;
+        let Ok((has, _)) = privs::own_permitted() else { return };
+        if !has {
+            log::debug!("no CAP_SYS_ADMIN to drop");
+            return;
+        }
+        let why_not = if std::env::var_os("SACDFS_KEEP_SYS_ADMIN").is_some_and(|v| !v.is_empty() && v != "0")
+        {
+            Some("SACDFS_KEEP_SYS_ADMIN is set")
+        } else if self.lock().is_none() {
+            Some(
+                "there is no armed unmount helper to unmount for it (kernel before 4.11, a helper that could not start or arm, or a mount that is not FUSE)",
+            )
+        } else if cfg!(target_arch = "aarch64") {
+            Some("this is an ARM build and the helper has not been run on ARM hardware of our own")
+        } else {
+            None
+        };
+        if let Some(why) = why_not {
+            log::info!("keeping CAP_SYS_ADMIN: {why}");
+            return;
+        }
+        match privs::drop_mount_caps() {
+            Ok(d) => {
+                self.cannot_unmount.store(true, Ordering::Release);
+                log::info!(
+                    "dropped CAP_SYS_ADMIN and every capability but CAP_DAC_OVERRIDE (or CAP_DAC_READ_SEARCH without it) in {} threads (effective now {:#x}){}{}",
+                    d.threads,
+                    d.effective,
+                    if d.bounding_set_kept { "; bounding set NOT cut (CAP_SETPCAP missing)" } else { "" },
+                    if d.securebits_unset { "; securebits NOT set (CAP_SETPCAP missing)" } else { "" }
+                );
+            }
+            Err(e) => {
+                // This thread is cut before the others are reached, and the threads started from
+                // here on (the signal thread among them) inherit it: nothing that unmounts can.
+                if matches!(privs::own_permitted(), Ok((false, _))) {
+                    self.cannot_unmount.store(true, Ordering::Release);
+                }
+                log::error!(
+                    "could not drop CAP_SYS_ADMIN in every thread: {e}; some thread may still hold it, \
+                     and this one and the threads started from now on no longer do"
+                );
+            }
+        }
+    }
+
+    /// Installs the seccomp deny-list on every thread. `umount2` is on it only where this process has
+    /// given up the right to unmount (the capability drop): otherwise the daemon's own unmount (a stop
+    /// without a helper, on ARM, with `SACDFS_KEEP_SYS_ADMIN`) would fail.
+    fn deny_list(&self) {
+        let deny_umount = !self.here();
+        match deny_list::install(&deny_list::Policy::production(deny_umount)) {
+            Ok(0) => log::debug!("no seccomp deny-list for this architecture"),
+            Ok(n) => log::info!(
+                "seccomp deny-list on: {n} system calls fail with EPERM{}",
+                if deny_umount { ", umount2 included" } else { "" }
+            ),
+            Err(e) => {
+                log::warn!("seccomp deny-list not installed: {e} (needs CAP_SYS_ADMIN or no_new_privs)")
+            }
+        }
+    }
+
+    /// Starts a thread that logs the helper's death: the helper can be killed or stopped by the
+    /// daemon's own uid, and then nothing unmounts, which an operator needs to be told.
+    fn watch_helper(&self) {
+        let fd = match self.lock().as_ref().map(UnmountHelper::death_watch_fd) {
+            Some(Ok(fd)) => fd,
+            Some(Err(e)) => {
+                log::warn!("unmount helper: cannot watch for its death: {e}");
+                return;
+            }
+            None => return,
+        };
+        let me = self.clone();
+        let spawned = std::thread::Builder::new().name("sacdfs-helper-watch".to_owned()).spawn(move || {
+            crate::unmount_helper::wait_for_hangup(&fd);
+            if me.leaving.load(std::sync::atomic::Ordering::Acquire) || me.lock().is_none() {
+                return;
+            }
+            log::error!(
+                "the unmount helper ended without being asked to (killed or crashed): sacdfs cannot unmount \
+                 its mount any more and does not try from here; a stop leaves it for the container's or the \
+                 service's own unmount (`umount -l`)"
+            );
+        });
+        if let Err(e) = spawned {
+            log::warn!("unmount helper: cannot watch for its death: {e}");
+        }
+    }
+
+    /// Whether this process may unmount by itself (false once it has dropped CAP_SYS_ADMIN).
+    fn here(&self) -> bool {
+        !self.cannot_unmount.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Has the helper detach the mount. `None`: there is no helper (any more).
+    fn detach(&self) -> Option<io::Result<()>> {
+        self.leaving.store(true, std::sync::atomic::Ordering::Release);
+        self.lock().as_mut().map(UnmountHelper::detach)
+    }
+
+    /// The mount is gone: the helper ends without unmounting anything.
+    fn stand_down(&self) {
+        self.leaving.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(mut h) = self.lock().take() {
+            h.stand_down();
+        }
     }
 }
 

@@ -309,7 +309,7 @@ fn file_handles_survive_a_restart() {
 }
 
 /// A passed-through sidecar file (#79) keeps its number with and without --flatten, its
-/// handle works across a restart, and goes stale when the file changes.
+/// handle works across a restart, and after the file changes reads the new file (#631).
 #[test]
 fn sidecar_handles_survive_a_restart() {
     common::skip_without_fuse!();
@@ -351,11 +351,13 @@ fn sidecar_handles_survive_a_restart() {
     }
     open_dir_by_handle(&m.at, &scans).unwrap();
     m.stop();
-    // A changed cover: its handle goes stale; the others still open.
+    // A changed cover: the kernel is told one generation per art node number (#631), so its
+    // handle reads the new cover under the same name; the others still open.
     std::fs::write(src.path().join("Artist/Album/folder.jpg"), b"a new front").unwrap();
     let m = Mount::new(src.path(), at.path(), cache.path(), &["--flatten"]);
-    let e = open_by_handle(&m.at, &handles[0]).unwrap_err();
-    assert_eq!(e.raw_os_error(), Some(libc::ESTALE), "{e}");
+    let mut got = Vec::new();
+    open_by_handle(&m.at, &handles[0]).unwrap().read_to_end(&mut got).unwrap();
+    assert_eq!(got, b"a new front");
     open_by_handle(&m.at, &handles[1]).unwrap();
     m.stop();
 }
