@@ -49,7 +49,7 @@ API exposes: sector reading (`Image`, positional reads through `ReadAtReader`), 
 reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspeaker layouts (`Area`) and decoding
 (`DstDecoder`, `audio::decode_frame`).
 
-- **The pin is scarletbook 1.0.2, from crates.io (`=1.0.2`)**, on main for 0.8.0; the 0.7.x releases ship 0.6.1 (0.1.0 shipped with v0.5.0, the latest release when its release
+- **The pin is scarletbook 1.1.1, from crates.io (`=1.1.1`)**, on main for 0.9.1 (1.0.2 for 0.8.0 and 0.9.0); the 0.7.x releases ship 0.6.1 (0.1.0 shipped with v0.5.0, the latest release when its release
   preparation started, #45). *Why:* a release ships against the newest scarletbook, taken
   while it passes the correctness gates, and then frozen so that the performance round
   measures the code that ships; each move of the pin is a change of its own, gated like a
@@ -83,7 +83,13 @@ reassembly (`Disc`, `TrackCursor`, `AreaIndex`), TOCs and text (`Toc`), loudspea
   the API follows Semantic Versioning, so later pins are less likely to need a port; bytes
   unchanged, gated as above.
   1.0.2: documentation and comments only, no code, API or ABI change; *why:* same rule; bytes
-  unchanged, gated as above. `scarletbook-pcm` stayed at `=0.7.0` through 0.8.0: it was outside the 1.0 freeze
+  unchanged, gated as above.
+  1.1.1 (from 1.0.2; 1.1.0 only deprecated C functions sacdfs does not use): two fixes to provisional
+  seeking that change which sectors a reading reads, never the frames it returns; *why:* a track's head
+  from a saved seek index no longer re-reads the previous track's tail (#437). Gated as above, and bytes
+  compared with 1.0.2: every DSF and WAV file the mount serves, on the 136-image corpus (910 files) and
+  on six real images, hashes the same; the image bytes read with the index loaded fall (see the
+  CHANGELOG for the measured numbers). `scarletbook-pcm` stayed at `=0.7.0` through 0.8.0: it was outside the 1.0 freeze
   and did not depend on `scarletbook`; 0.9.0 replaced it with dsd2pcm ([why](#why-dsd2pcm)).
 - **Seeking is scarletbook's** (since 0.2.0, #28): its seek index per area, provisional (cold)
   readings and seek hints, through range cursors; sacdfs's own frame locator was removed.
@@ -571,8 +577,10 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   The new domain sorts after directories and images, so on a key collision a directory or
   image keeps its key: adding sidecars never moves an existing number (except through the
   fallback-key case already described below, which needs about 16 million paths).
-  **Generation:** 32 bits of a hash of the source file's size and mtime, never 0, so a handle
-  to a replaced cover is stale (`ESTALE`) instead of serving other bytes; directories keep 0.
+  **Generation:** 32 bits of a hash of the source file's size and mtime, never 0, so a network
+  file handle to a replaced cover is stale (`ESTALE`) instead of serving other bytes; directories
+  keep 0. The kernel is told a fixed generation for every sidecar file instead (see "Changes
+  while mounted").
 - **Attributes pass straight through.** Size, blocks, and the access, modification and change
   times are the source file's, read with one `fstatat` when its directory is first listed
   (in parallel, as images are opened). Mode (0444), owner and inode number are sacdfs's, as
@@ -583,10 +591,29 @@ relative path (`src/sidecar.rs`, listed by `tree.rs`):
   did); `readdir` lists only names, so the `stat` is needed anyway before a name can be shown
   without lying about it.
 - **Changes while mounted.** See "Folder art in the areas" and "Re-reading changed folders"
-  below. Opening a sidecar whose source size or mtime differs from what was listed fails
-  with `ESTALE`. *Why:* the kernel may hold the listed size, so new bytes would be cut off or
-  padded; a clear error until the folder is read again is better than wrong bytes. The
-  re-read shows the new file under the same number with a new generation.
+  below. A sidecar whose source size or mtime differs from what was listed is opened as the file
+  is now, for the kernel, with `FOPEN_DIRECT_IO` (no cached pages, reads not cut at the size the
+  kernel holds); art as listed is opened without `FOPEN_KEEP_CACHE`, since with a fixed generation
+  a replacement of the same size is told by nothing else the kernel compares, and the art is read
+  again at the next look (#628). A network file handle to it
+  gets `ESTALE`. *Why:* the kernel retries an open that fails with `ESTALE` once, with a new
+  lookup, and a second change of the file in that short time (an in-place rewrite is two: the
+  truncate and the write) reached the reader as `ESTALE`; no number of retries makes that
+  impossible. A reader of a file being rewritten gets the file's current bytes, as on any file
+  system. The re-read shows the new file under the same number with a new generation.
+  *The rule for node numbers (#631):* the kernel is told **one generation per node number for
+  as long as it is told the number at all** (`ART_KERNEL_GENERATION` for sidecar files, whose
+  real generation stays in the handles of the network file server). The kernel takes a number
+  that comes back with another generation for another file: it marks the old inode bad, and
+  readers holding it (an open, an `fstat`, a read, a `close`) get `EIO`, although sacdfs still
+  holds the old file open. Measured on a mount with four readers and a writer replacing a cover
+  every 10 ms for 25 s, 0.8.0 gave 400 to 1,000 `EIO` per mode, also for a replace by rename,
+  and none with the generation fixed. *Cost:* a handle to a replaced cover, taken from a mount
+  re-exported by the kernel's NFS server, no longer goes stale by itself: its open does, until
+  the folder is read again, and then it serves the new file. A node whose number carries a new
+  generation by design (a track file whose tag changed, #81; an image replaced) still does the
+  kernel's bad-inode handling; a new view that decides its own node numbers must follow the
+  rule above or change the number with the content.
 - **Reads** go to the request threads, a `pread` of the source file opened at `open` (one
   descriptor per open file, closed at release), with `FOPEN_KEEP_CACHE`. *Why the request
   threads:* the source may be a network share, and a slow read must not hold up the FUSE
@@ -879,8 +906,33 @@ mount, which then cannot be unmounted; and with the export removed, a client is 
 So the server is stopped around a restart of sacdfs, and its clients wait as for a server
 reboot. NFSv3 is stateless and reads on; NFSv4 reclaims its open state in the grace period.
 
+**Dropping `CAP_SYS_ADMIN` (0.9.1).** Once the mount exists and the unmount helper is armed, every thread is cut to
+`CAP_DAC_OVERRIDE` (or `CAP_DAC_READ_SEARCH` where that is not held), with `no_new_privs` and the securebits
+`NOROOT`; `src/privs.rs`. *Why every thread and a read-back:* capabilities are per thread, and rayon pools and
+the engine's workers exist before the mount; each other thread gets the real-time signal `SIGRTMAX-3` (61 on
+Linux; the daemon's only use of a real-time signal, ignored again afterwards), and what each task's
+`/proc/PID/task/TID/status` says is the result, not what the calls returned. *Why more than SYS_ADMIN:* the argument
+that the daemon cannot touch its helper rests on the helper being non-dumpable and the daemon holding no
+`CAP_SYS_PTRACE`, which a bare `sudo sacdfs` has. *What is NOT covered:* **the start-up scan of SOURCE parses
+the images before the drop**, with the full capability set the process started with: the cut protects what comes
+after the mount (every read of an image while serving), not the scan that precedes it. **The programs the daemon can start after the mount** are none: the mounted `sacdfs` runs no other program once it is serving (checked in the source: every `Command` in it is a test, `sacdfs tags` or `sacdfs verify`, which are other processes that never have the cut or the filter, or the setuid `fusermount3 -u -z` of the in-process unmount, which is skipped once the capability is gone). The MusicBrainz lookups of `--musicbrainz` go by barcode or catalogue number over HTTPS in the process itself; Chromaprint's `fpcalc` belongs to `sacdfs tags fetch`. So `no_new_privs` costs nothing on this path. *Why `DAC_READ_SEARCH`
+only without `DAC_OVERRIDE`:* with both it would only add `open_by_handle_at`.
+
+**The seccomp deny-list (0.9.1).** After the mount, `src/deny_list.rs` puts a filter on every thread that fails the calls
+listed in [Privileges](deployment.md#privileges) with `EPERM` and kills another system call ABI.
+*Why a deny-list and not an allow-list:* the decode and FUSE threads, the engine and the servers' helpers
+make hundreds of calls that vary with the kernel and libc, and an allow-list needs a full-suite `strace`
+per release and per platform to stay right (planned for 0.10); a deny-list of what
+a process in a container must never need after the mount cannot break the read path and still closes the
+known routes out (the "shocker" file handle calls, mounting, tracing, BPF, module and namespace calls).
+*Why `EPERM` and not a kill:* a stray call from a library must not take the daemon down; only another
+ABI, which no honest process uses, is killed. *Why `umount2` only after the capability drop:* without it the
+daemon's own stop would fail (ARM, `SACDFS_KEEP_SYS_ADMIN`, no armed helper). *Why after the drop:* whether the daemon still
+may unmount decides the list, and `no_new_privs`, which the drop sets, is what lets the filter be installed without the capability.
+*What it does not do:* it is not installed on ARM until it has run on ARM hardware of our own.
+
 **Stopping a busy mount.** On SIGINT, SIGTERM or SIGHUP, a mount that cannot be unmounted (files open,
-or held by an NFS server) is detached (`MNT_DETACH`, or `fusermount3 -u -z`) with a warning;
+or held by an NFS server) is detached (`MNT_DETACH`, or `fusermount3 -u -z`) with a warning (when sacdfs has an unmount helper, which starts with `SYS_ADMIN`, the helper always detaches with `MNT_DETACH`, through an `O_PATH` descriptor it opens at that moment and checks against the identity it recorded when the mount was made (unique mount ID; see `src/unmount_helper.rs`), and the warning is not logged. *Why `MNT_DETACH` only:* the helper's own descriptor holds the mount, so a plain unmount would always be refused as busy, and a stop with files still open has to succeed (#276). *Accepted gap:* between the check and the unmount, replacing the mount takes the right to mount over that path, which is already root);
 sacdfs serves the files still open and exits when the last is closed, or after `--stop-grace` seconds (10; #276), when it exits with the mount already gone from the mount table (never before: it would leave a dead mount; if the detach fails it stays and says so). *Why:* otherwise a
 container or service manager waiting for sacdfs to stop would hang until it killed it,
 leaving a dead mount behind; for users other than root, `fusermount3 -u -z` already detaches, so root
@@ -2009,8 +2061,8 @@ Art in an area is the exception to the long cache (#235). A listing is made agai
 refresh interval, so for up to that long it can name a file that was replaced or removed, and
 `cover.jpg` (an alias of whichever image is picked, #148) can stand for a file that has just gone.
 A lookup of such a name therefore compares the source file with what was listed (one `fstatat`); if
-it changed, or an open finds it changed or gone (a file gone since the kernel was told of it is
-`ESTALE`, so the kernel looks the name up again), a counter moves and every area reads its art again
+it changed, or an open finds it changed (served as it is now, #628) or gone (a file gone since the
+kernel was told of it is `ESTALE`, so the kernel looks the name up again), a counter moves and every area reads its art again
 at its next look, whatever its directory's time. Replies for these names carry a zero timeout, so the
 kernel asks again each time and never keeps a number whose file is gone. *Why not keep the old
 inode for `cover.jpg`:* the alias is the same node as the image's other name (the same inode, #148),

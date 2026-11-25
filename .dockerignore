@@ -2,7 +2,11 @@
 target
 .git
 tests
-# Except the one test whose target Cargo.toml declares (no libtest harness, #334).
+# Except the tests whose targets Cargo.toml declares (no libtest harness, #334).
 !tests/stop_signals.rs
+!tests/unmount_helper.rs
+!tests/unmount_helper_fuse.rs
+!tests/drop_caps.rs
+!tests/deny_list.rs
 docs
 fuzz

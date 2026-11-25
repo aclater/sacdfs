@@ -211,7 +211,7 @@ all of this already; with `docker run` or `podman run`, pass:
 | `DAC_READ_SEARCH` | NFS-Ganesha opens files by NFS file handle (`open_by_handle_at(2)`), which needs it; Docker's default seccomp profile also allows that call only with this capability | with NFS (the default); can be left out with `NFS=0` |
 | `SETUID`, `SETGID` | smbd, to act as the connecting user or the guest account | always (with SMB) |
 | `NET_BIND_SERVICE` | smbd, to listen on port 445 (with host networking the host's limit on ports under 1024 applies) | always (with SMB) |
-| `SETPCAP` | the entry point, to drop from each program the capabilities it doesn't need (below) | always |
+| `SETPCAP` | the entry point, to drop from each program the capabilities it doesn't need (below); sacdfs, to cut its own bounding set when it drops `SYS_ADMIN` | always |
 | `no-new-privileges` | no program in the container can gain privileges through a setuid or file-capability program. FUSE doesn't need the setuid `fusermount3`: sacdfs mounts as root in the container, and the image clears every setuid and setgid bit | always |
 | `apparmor=unconfined` | Docker's default AppArmor profile forbids `mount(2)` even with `CAP_SYS_ADMIN`, so sacdfs can't mount under it. Only on hosts that use AppArmor (Ubuntu, Debian, TrueNAS SCALE); SELinux hosts (Fedora, RHEL) ignore it | AppArmor hosts |
 
@@ -226,17 +226,73 @@ others back:
 
 | Program | Capabilities |
 |---|---|
-| sacdfs | `SYS_ADMIN`, `DAC_OVERRIDE` |
+| sacdfs | `SYS_ADMIN` and `SETPCAP` until the mount exists (it then drops both and every other capability but `DAC_OVERRIDE`, see below), `DAC_OVERRIDE` |
 | smbd | `SETUID`, `SETGID`, `NET_BIND_SERVICE` |
 | NFS-Ganesha | `DAC_READ_SEARCH` only: the export is read-only, and Ganesha takes on a client's identity only to create files |
 | the entry point | `SYS_ADMIN`, `DAC_OVERRIDE`, `SETPCAP`, and what it hands on |
 
-The sacdfs process, which parses the disc images, runs as root with `SYS_ADMIN` and
-`DAC_OVERRIDE` for its whole life. This is known. `SYS_ADMIN` is needed only to mount, and the plan
-is to drop it once the mount is made. `DAC_OVERRIDE` is there to read images whatever their owner
-and to write the index cache and the tags folder; the plan is to stop needing it by running the
+The sacdfs process, which parses the disc images, runs as root. `SYS_ADMIN` is needed only to mount,
+and since 0.9.1 sacdfs **drops it once the mount exists and the unmount helper is armed** (below), in every
+thread, with every other capability but `DAC_OVERRIDE` (or `DAC_READ_SEARCH`, only where `DAC_OVERRIDE` is not held: with both it would only add `open_by_handle_at`, which sacdfs never uses):
+its permitted, effective and inheritable sets, its bounding set (an `execve` gets nothing back), and the
+securebits `NOROOT` and `NOROOT_LOCKED` (a program run as uid 0 gains nothing), and `no_new_privs` (a setuid program gains nothing either; sacdfs runs none after the mount on this path). That includes
+`CAP_SYS_PTRACE`, which a bare `sudo sacdfs` starts with: the daemon cannot `ptrace` its helper or write its
+`/proc/PID/mem` (the helper is not dumpable). The log says `dropped CAP_SYS_ADMIN ... in N threads`; every
+thread's sets can be read in `/proc/PID/task/*/status`. `DAC_OVERRIDE` is there to read images whatever
+their owner and to write the index cache and the tags folder; the plan is to stop needing it by running the
 process as a user of its own that owns those two folders, with the images readable by its group.
-Running under seccomp and Landlock is being investigated ([SECURITY.md](../SECURITY.md#privileges-of-the-mount-process)).
+Running under Landlock is being investigated ([SECURITY.md](../SECURITY.md#privileges-of-the-mount-process)).
+
+sacdfs **keeps** `SYS_ADMIN` (and says why in the log, `keeping CAP_SYS_ADMIN: ...`) where there is no armed
+unmount helper to unmount for it (a kernel before 4.11, a helper that could not start or arm), on ARM (built and tested on GitHub's arm64 runners, but
+not yet run on ARM hardware of our own, as in the 0.9.0 notes),
+and when `SACDFS_KEEP_SYS_ADMIN=1` is set (an escape hatch for this release only: if the drop breaks
+something on your system, set it and tell us). With the capability gone, sacdfs cannot unmount by itself: a
+stop goes through the helper. If the helper is gone (the daemon's own user can kill or stop it) the log says
+so, in a line `the unmount helper ended without being asked to`, and then `cannot unmount ... from here`
+at the stop: the mount is left for the container's trap, the service's `ExecStopPost` or `umount -l`.
+A service manager's final kill takes sacdfs and its helper down together, which leaves a dead mount, as
+it does for a crash without a helper. The entry point and the shipped unit add `SETPCAP` to sacdfs's
+bounding set for this (the helper's bounding set is cut with it); without `SETPCAP` the sets are cut and
+the log says the bounding set and securebits were not.
+
+When sacdfs runs with `SYS_ADMIN`, it starts a small unmount helper before any thread exists: a
+second process that keeps `SYS_ADMIN`, can unmount only the one mount point it was started for, and
+runs under its own seccomp filter that allows eight system calls (`umount2` and `openat` among them,
+with fixed flags). It checks by itself, once the mount exists, that the mount is FUSE (from the
+mount table), and records the mount's identity (its unique mount ID on Linux 6.8 and later; on older
+kernels the mount ID and device number, which the kernel reuses, so a replacement mount of the same
+type can then not always be told apart: the log says which proof is in use). On a stop it detaches the mount
+(`MNT_DETACH`) on the daemon's word, and refuses, with both identities logged, if the path is no longer
+that mount. Nothing it does on a stop asks the daemon, so a daemon that is stuck or dead does not stop
+it from unmounting. If the daemon dies, it detaches the mount, so a crash does not leave a
+"Transport endpoint is not connected" mount. This is what lets sacdfs drop `SYS_ADMIN` itself (above). The helper's own bounding set
+is cut to `SYS_ADMIN` only where `SETPCAP` is available (the log says when it is not). Before Linux 4.11
+(no `statx`) the helper does not start, and sacdfs unmounts by itself as before.
+
+Once the mount exists, sacdfs also installs a **seccomp deny-list** on all its threads (`src/deny_list.rs`):
+the system calls that a compromised sacdfs would use to get out of a container or to widen its rights,
+and that sacdfs itself never makes after it has mounted, fail with `EPERM`. They are `open_by_handle_at`
+and `name_to_handle_at` (the "shocker" escape, which needs `DAC_READ_SEARCH`, a capability the NFS server
+keeps), `mount` and the new mount API (`fsopen`, `fsconfig`, `fsmount`, `fspick`, `move_mount`,
+`open_tree`, `mount_setattr`), `ptrace`, `bpf`, `keyctl`, `kexec_load`, `kexec_file_load`, `init_module`,
+`finit_module`, `pivot_root`, `setns`, `unshare`, `process_vm_readv` and `process_vm_writev`, `perf_event_open`,
+`userfaultfd`, `add_key` and `request_key`, `io_uring_setup`, `io_uring_enter` and `io_uring_register`, `chroot`, `swapon` and
+`swapoff`, `reboot`, `delete_module` and (x86) `iopl` and `ioperm`; `clone` with a namespace flag (`CLONE_NEWUSER` and the
+other `CLONE_NEW*`, also `EPERM`; a thread or a fork is not touched) and `clone3` (`ENOSYS`, so that the C library falls back to
+`clone`, whose flags a filter can read), since both can make a user namespace without `unshare`; and `umount2`, but only after the capability drop above
+(the helper then does every unmount, nothing else here can, and the log says so: `umount2 included`; it is
+defence in depth there, since a process without `CAP_SYS_ADMIN` cannot unmount anyway). A process that
+calls another system call ABI than its own (32-bit `int 0x80` on x86_64, the x32 ABI), which would walk
+around the list, is killed. Everything else is allowed: it is a deny-list, so that the container
+runtime's own profile underneath stays what limits the rest. The filter is inherited by the
+processes sacdfs starts, which after the mount are none. (A program of another system call ABI than sacdfs's own would be killed
+by it: the 32-bit build on a 64-bit kernel cannot start a 64-bit program. It starts none.) It needs `CAP_SYS_ADMIN` or `no_new_privs` (the capability drop sets it); where the install fails,
+sacdfs logs a warning and goes on without it. A filter that
+cannot be taken off stays for the life of the process, and the container runtime's seccomp profile
+and this one both apply. Tested on
+x86_64 and 32-bit x86 (musl). **On ARM no filter is installed** until it has run on ARM hardware of our own (a filter that does not match kills the process)
+(`tests/deny_list.rs`; the cases are listed in its header).
 
 At its start, the entry point also drops from itself every capability that none of these
 need, so a container started with the runtime's default set (an older Compose file, for
@@ -309,17 +365,36 @@ All settings are environment variables.
 | `SMB` | `1` | `0` to turn the SMB server off |
 | `NFS` | `1` | `0` to turn the NFS server off (then `CAP_DAC_READ_SEARCH` isn't needed, and no process keeps it) |
 | `SHARE_NAME` | `sacd` | the SMB share name, and the NFS export path (`/sacd`) |
-| `SMB_USER` | (none: guest access) | a user name: the share then needs it and `SMB_PASSWORD`, and refuses guests |
+| `SMB_USER` | (none: guest access) | a user name: the share then needs it and `SMB_PASSWORD`, and refuses guests. With neither this nor `SMB_GUEST=1` the entry point warns at every start |
+| `SMB_GUEST` | | `1` to keep guest access on purpose: it is the same as the default and silences the warning. Ignored (with a warning) when `SMB_USER` is set |
 | `SMB_PASSWORD` / `SMB_PASSWORD_FILE` | | the password, or a file holding it (for Docker or Podman secrets) |
 | `SMB_NAME_MAPPING` | `sfm` | how names with characters Windows forbids are shown; see [below](#file-names-over-smb) |
 | `SMB_LOG_LEVEL` | `1` | Samba's `log level`: a number from 0 to 99; anything else is ignored with a warning, and `1` is used |
 | `SMB_EXTRA_GLOBAL` | | extra lines for smb.conf's `[global]` section (for example `server min protocol = SMB3`); several lines are taken, one setting per line, ending in LF, CRLF or CR. From a line that opens a section (starts with `[`) on, the value is ignored, with a warning |
-| `NFS_CLIENTS` | `*` | who may mount over NFS: a comma-separated list of hosts, networks (`192.0.2.0/24`) or `*` |
+| `NFS_CLIENTS` | `*` | who may mount over NFS: a comma-separated list of hosts, networks (`192.0.2.0/24`) or `*`. Unset, or with a `*` in it, the entry point warns at every start |
 | `NFS_LOG_LEVEL` | `EVENT` | NFS-Ganesha's log level: `NULL`, `FATAL`, `MAJ`, `CRIT`, `WARN`, `EVENT`, `INFO`, `DEBUG`, `MID_DEBUG` (or `M_DBG`) or `FULL_DEBUG` (or `F_DBG`), in any case; anything else is ignored with a warning, and `EVENT` is used |
 
 The shares are always read-only. **Guest access** (the default) lets anyone on the network
 read the files; NFS has no passwords (`sec=sys`), so limit it with `NFS_CLIENTS` or a
-firewall, or turn it off. Every NFS client is mapped to the `nobody` user (`all_squash`),
+firewall, or turn it off.
+
+#### Who can reach the shares
+
+Out of the box both shares are open to every host that can reach the ports: SMB lets guests in, and NFS
+exports to every client. That is unchanged in this version, but the entry point now says so in the
+log at every start (one line each, on the first run of the entry point only):
+
+- `SMB: neither SMB_USER nor SMB_GUEST=1 is set ...`: set `SMB_USER` and `SMB_PASSWORD` (or
+  `SMB_PASSWORD_FILE`) to require a login, or `SMB_GUEST=1` to say that guest access is meant. `SMB_GUEST=1`
+  changes nothing else; it only ends the warning.
+- `NFS: NFS_CLIENTS is not set ...`, `NFS: NFS_CLIENTS contains * ...` and the same for `0.0.0.0/0` and `::/0`, which are every address too: list the hosts or networks that
+  need the export (`NFS_CLIENTS=192.0.2.0/24`).
+
+A later version will not start SMB with neither `SMB_USER` nor `SMB_GUEST=1`, and will not start NFS without
+`NFS_CLIENTS`; `SMB_GUEST=1` and `NFS_CLIENTS=*` will stay available as explicit choices. Adding the
+two lines you want now (`SMB_GUEST=1` and `NFS_CLIENTS=*` keep today's behaviour) makes that change a
+non-event. Publishing the ports on one address only (`-p 192.0.2.10:445:445`) or a firewall limits who can
+reach them as well. `deploy/test-exposure-warnings.sh` tests the warnings. Every NFS client is mapped to the `nobody` user (`all_squash`),
 which is all a read-only share needs.
 
 ### Memory
@@ -1902,7 +1977,7 @@ What clients did when the container restarted (about 8 s):
 | Linux gvfs 1.62 | the next listing works, without a remount | same |
 | Windows 11 build 26200 | a handle open during the restart fails; the mapped drive then works, with sizes and times unchanged | 0.4.1-rc.1, by restart |
 | Plex on a kernel CIFS mount | recovered by itself | 0.1.1, a restart mid-test ([clients](clients.md#plex)) |
-| macOS, `mount_smbfs`, in VMs on Apple hardware | **the mount drops and doesn't come back**, with no hang. Mounting it again works | 15.7 on 0.4.0 and 0.4.1-rc.1; 27.2 on 0.4.1-rc.1; restart of about 8 s |
+| macOS, `mount_smbfs`, in VMs on Apple hardware | **the mount drops and doesn't come back**, with no hang. Mounting it again works | 15.7 on 0.4.0 and 0.4.1-rc.1; 27.2 on 0.4.1-rc.1; restart of about 8 s. Again on 0.8.0 and 0.7.2: 27.2 and 15.7.7 dropped the share; a new `mount_smbfs` worked at once and the files hashed as on the server ([#624](https://github.com/dsd-toolbox/sacdfs/issues/624)) |
 
 **After an upgrade (a new image, or a restart), a macOS client has to mount the share again.** That is
 the documented answer to [#204](https://github.com/dsd-toolbox/sacdfs/issues/204), not a bug that a setting
@@ -1935,6 +2010,21 @@ known about the shipped Samba configuration:
   same identity.
 
 None of these settings has been run on macOS, so none is recommended for it.
+
+What [#624](https://github.com/dsd-toolbox/sacdfs/issues/624) added, from macOS 27.2 and 15.7.7 in VMs on
+Apple hardware with `mount_smbfs` against 0.8.0 and 0.7.2 (the drop is therefore not new in 0.8.0):
+
+- **The remedy is the one above: mount the share again** (Finder: Go, Connect to Server; or `mount_smbfs`).
+  Whether `mount_smbfs` options change the drop was not tested.
+- **A read right after a restart can return no data once.** In one earlier run on the same setup the share
+  stayed mounted, and the first read of one DSF file after the restart returned nothing and was correct
+  3 s later. Why the client dropped the mount in one run and kept it in the other is not known: the likely
+  difference is when the client notices the lost connection, which was not shown.
+- **sacdfs can't prevent it:** the container's SMB service is gone for a few seconds during a restart.
+- **Not explained:** the same macOS 27.2 mount also disappeared twice without any restart ("Socket is not
+  connected": once after about 5 minutes of Spotlight activity on 0.8.0, once during a read on 0.7.2). It may be
+  how the SMB server container or the macOS client handles an idle connection; a monitored re-run is needed
+  to tell, and none has been done.
 
 ## NFS and restarts
 
@@ -1972,15 +2062,16 @@ Without a container, on a NAS or Linux host with systemd, sacdfs runs from the u
 archive ([deploy/systemd/sacdfs.service](../deploy/systemd/sacdfs.service); steps in
 [install/nas-binary.md](install/nas-binary.md#start-at-boot-and-stop-safely)). Since 0.6.4 (#387)
 it limits what sacdfs may do, with every systemd option that keeps the mount visible to the rest of
-the system. `systemd-analyze security sacdfs` rates it 4.1 ("OK"), from 9.6 ("UNSAFE") before.
+the system. `systemd-analyze security sacdfs` rates it 4.4 ("OK"; measured offline with systemd 262, which rated the 0.9.0 unit 4.0: 0.9.1 adds `CAP_SETPCAP` to the bounding set and allows `capset` under the system-call filter), from 9.6 ("UNSAFE") before. Other systemd versions score slightly differently.
 
 | Option | What it does |
 |---|---|
-| `CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE` | sacdfs keeps only the right to mount, and to read the images (and write the index cache and tags folders) whatever their owner and mode |
+| `CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_SETPCAP` | sacdfs has only the right to mount (which it drops once the mount exists, with `CAP_SETPCAP`), and to read the images (and write the index cache and tags folders) whatever their owner and mode |
 | `NoNewPrivileges=yes` | no setuid or file-capability program can raise its privileges. sacdfs mounts as root with `mount(2)`, not through the setuid `fusermount3` |
 | `DevicePolicy=closed`, `DeviceAllow=/dev/fuse rw` | no device but `/dev/fuse` and the usual pseudo devices (`/dev/null`, `/dev/urandom`...) |
 | `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | the journal and systemd's notify socket, and MusicBrainz lookups (`--musicbrainz`) |
 | `SystemCallFilter=~@clock @cpu-emulation @debug @module @obsolete @privileged @raw-io @reboot @swap`, `SystemCallErrorNumber=EPERM` | a deny list: those calls fail with `EPERM` |
+| `SystemCallFilter=capset` | an exception to the deny list above (`capset` is in `@privileged`): sacdfs and its unmount helper give up capabilities with it, `CAP_SYS_ADMIN` once the mount exists. Without this line the helper cannot start under the unit (its `capset` fails, the log says `could not harden itself (step 3)`) and sacdfs keeps `CAP_SYS_ADMIN`, as before 0.9.1: found by running the unit on RHEL 9.8 |
 | `SystemCallArchitectures=native`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `ProtectClock=yes`, `ProtectHostname=yes` | each closes a kind of call sacdfs never makes |
 | `Environment=XDG_CACHE_HOME=/var/cache`, `CacheDirectory=sacdfs` | the seek index cache in `/var/cache/sacdfs`, since a service has no `HOME` (#465; `--index-cache` in `SACDFS_OPTIONS` overrides it). The installer's `--uninstall` deletes it. systemd before v235 ignores `CacheDirectory=`, and sacdfs makes the folder itself |
 | `PermissionsStartOnly=yes` | the helper lines (`modprobe fuse` when `/dev/fuse` is missing, `mkdir`, `umount -l` after a stop) run without these limits, so `modprobe` can still load FUSE |

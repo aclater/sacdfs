@@ -34,6 +34,13 @@ class Check(unittest.TestCase):
         r = check({"headtail": phase(19815, 1416357584)}, {"headtail": phase(19815, 1416357584)})
         self.assertEqual(r.returncode, 0, r.stdout)
 
+    def test_the_second_mount_phase_is_checked_too(self):
+        r = check({"headtail2": phase(19815, 1416357584)}, {"headtail2": phase(20522, 1528744192)})
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAIL headtail2 bytes", r.stdout)
+        r = check({"headtail2": phase(19815, 1528744192)}, {"headtail2": phase(19815, 1416357584)})
+        self.assertEqual(r.returncode, 0, r.stdout)
+
     def test_eight_percent_more_bytes_fails(self):
         r = check({"headtail": phase(19815, 1416357584)}, {"headtail": phase(20522, 1528744192)})
         self.assertEqual(r.returncode, 1, r.stdout)

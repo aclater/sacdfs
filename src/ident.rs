@@ -36,8 +36,10 @@
 //! flavour: a handle to a file whose bytes may differ fails with `ESTALE` instead of serving
 //! other data. Directories have generation 0: they are named containers, and a handle to one
 //! whose content changed still finds it. A sidecar file's generation is a hash of its source
-//! file's size and modification time ([`sidecar_generation`]), so a handle to a replaced
-//! cover goes stale the same way.
+//! file's size and modification time ([`sidecar_generation`]), so a network file handle to a
+//! replaced cover goes stale the same way. The kernel is told a fixed one for it
+//! ([`crate::vfs::ART_KERNEL_GENERATION`], #631): it takes a number that comes back with another
+//! generation for another file, and fails the readers of the old one with `EIO`.
 //! A track file whose tag a tags file changed (#81) mixes a hash of that tag into its
 //! generation, and its mtime is no older than the tags file. A track file with text its disc
 //! lacks (#185) counts as one output version on (`file_version`).

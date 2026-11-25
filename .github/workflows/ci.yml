@@ -279,3 +279,7 @@ jobs:
         run: bash scripts/test-check-private-names.sh
       - name: Equal copies and container hardening (.github/scripts/check-copies.sh)
         run: sh .github/scripts/check-copies.sh
+      - name: The release hash lists fail on an unreadable file (tests/hash-tree.sh)
+        run: bash tests/hash-tree.sh
+      - name: The exposure warnings of the entry point (deploy/test-exposure-warnings.sh)
+        run: bash deploy/test-exposure-warnings.sh

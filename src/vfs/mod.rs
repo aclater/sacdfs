@@ -17,8 +17,8 @@ pub use image_reads::HUNG_READS_PER_IMAGE;
 pub(crate) use image_reads::ImageReads;
 pub(crate) use size::ShareSize;
 pub use volume::{
-    Access, Attr, DataReply, DirOpen, EntryAttr, Kind, Listing, ListingPlus, Lookup, Reply, StatFs, TTL,
-    Volume,
+    ART_KERNEL_GENERATION, Access, Attr, Caching, DataReply, DirOpen, EntryAttr, Kind, Listing, ListingPlus,
+    Lookup, Opened, Reply, StatFs, TTL, Volume,
 };
 pub use workers::{MAX_POOL_THREADS, Workers};
 

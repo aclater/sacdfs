@@ -145,11 +145,12 @@ Clients then name the ports when they mount: see [linux-client.md](linux-client.
 
 - **`label=disable`** is for SELinux hosts (Fedora, RHEL): it leaves your folder's labels alone.
 - **A password on the SMB share:** add `-e SMB_USER=music -e SMB_PASSWORD=...` to step 2. Windows 11
-  needs one: it refuses guest shares. Without these two, the shares are open to the whole network, read-only.
+  needs one: it refuses guest shares. Without these two (or `-e SMB_GUEST=1`, to say guests are meant), the shares are open to the whole network, read-only, and the log warns about it at every start.
 - **Music servers that scan with FFmpeg** (Jellyfin, MPD) and **Roon:** add `-e SACDFS_FORMATS=dsf`.
   See [your player's guide](README.md#3-which-player-or-music-server).
 <!-- docs-lint: ignore private-info -- an example address for the reader's own network, not a real one -->
 - **Who may mount over NFS:** `-e NFS_CLIENTS=192.168.1.0/24` (default: everyone).
+- **The log warns at every start** when the shares are open to everyone: no `SMB_USER` or `SMB_GUEST=1`, or `NFS_CLIENTS` unset or naming every address. The addresses in these examples are examples: use your own LAN's subnet. See [Who can reach the shares](../deployment.md#who-can-reach-the-shares).
 - **The `--health-*` lines:** the published image is in OCI format, which has no field for a health
   check, so Podman needs them. Docker reads the check from the image.
 - **Rootless Podman** works for SMB only: add `-e NFS=0` and the `--health-*` options, and leave out
@@ -188,7 +189,7 @@ Raise the period if you raise the grace. In 0.5.0 and earlier, a stop within a f
 sometimes took 10 s or more, and Podman, whose default stop timeout is 10 s, killed the container
 (`StopSignal SIGTERM failed to stop container ... resorting to SIGKILL`); the container came back healthy
 either way. The entry point of 0.6.0 no longer waits for a mount that is already gone. Why macOS must
-mount again after a restart: [SMB and restarts](../deployment.md#smb-and-restarts).
+mount again after a restart (it may drop the share; mount it again from Finder or with `mount_smbfs`): [SMB and restarts](../deployment.md#smb-and-restarts).
 
 ### What was checked
 
