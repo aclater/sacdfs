@@ -11,8 +11,12 @@ The Unraid template isn't
 listed yet. This page says what is in the repository, how to use the Unraid template today,
 and what was checked where.
 
+In 0.9.1 the Compose file, the Unraid template and the TrueNAS app name the image by its tag; a
+follow-up change pins them by the image's digest once it is published, as for 0.9.0. Until then the
+tag is a name, not a fixed image.
+
 Both entries run the same published image as [deploy/nas-compose.yaml](../../deploy/nas-compose.yaml):
-`ghcr.io/dsd-toolbox/sacdfs:0.9.0`, with the FUSE device, all capabilities dropped but the seven
+`ghcr.io/dsd-toolbox/sacdfs:0.9.1`, with the FUSE device, all capabilities dropped but the seven
 the programs need (`SYS_ADMIN`, `DAC_OVERRIDE`, `DAC_READ_SEARCH`, `SETUID`, `SETGID`,
 `NET_BIND_SERVICE`, `SETPCAP`; [why each one](../deployment.md#privileges)), no new privileges,
 AppArmor unconfined, SMB on port 10445 and NFS on 12049 (the NAS's own

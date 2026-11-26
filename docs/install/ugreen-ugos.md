@@ -45,8 +45,8 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-linux.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-x86_64-linux.tar.gz.sha256
    # /facts
    ```
 
@@ -56,27 +56,27 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
-   sha256sum -c sacdfs-0.9.0-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.9.1-x86_64-linux.tar.gz.sha256
    # /facts
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.9.0-x86_64-linux.tar.gz: OK`<!-- /facts -->.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.9.1-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 6. **Unpack it and put the program and the start-up unit in place.** The unit is the file that tells systemd (the part of the system that starts services) how to run sacdfs.
 
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz'
-   tar -xzf sacdfs-0.9.0-x86_64-linux.tar.gz
+   tar -xzf sacdfs-0.9.1-x86_64-linux.tar.gz
    # /facts
    mkdir -p /usr/local/bin
    # facts:release repo=dsd-toolbox/sacdfs fmt='cp sacdfs-{version}-x86_64-linux/sacdfs /usr/local/bin/sacdfs\ncp sacdfs-{version}-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service'
-   cp sacdfs-0.9.0-x86_64-linux/sacdfs /usr/local/bin/sacdfs
-   cp sacdfs-0.9.0-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
+   cp sacdfs-0.9.1-x86_64-linux/sacdfs /usr/local/bin/sacdfs
+   cp sacdfs-0.9.1-x86_64-linux/sacdfs.service /etc/systemd/system/sacdfs.service
    # /facts
    /usr/local/bin/sacdfs --version
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.9.0`<!-- /facts -->.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.9.1`<!-- /facts -->.
 7. **Write the settings file.** Change the first line to your images folder.
 
    <!-- docs-run: -->

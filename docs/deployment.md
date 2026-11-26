@@ -91,8 +91,8 @@ architecture:
 <!-- docs-run: skip="needs a container engine and the GitHub CLI signed in" -->
 ```sh
 # facts:release repo=dsd-toolbox/sacdfs fmt='docker pull ghcr.io/dsd-toolbox/sacdfs:{version}       # a release; :latest is the newest\ngh attestation verify oci://ghcr.io/dsd-toolbox/sacdfs:{version} -R dsd-toolbox/sacdfs'
-docker pull ghcr.io/dsd-toolbox/sacdfs:0.9.0       # a release; :latest is the newest
-gh attestation verify oci://ghcr.io/dsd-toolbox/sacdfs:0.9.0 -R dsd-toolbox/sacdfs
+docker pull ghcr.io/dsd-toolbox/sacdfs:0.9.1       # a release; :latest is the newest
+gh attestation verify oci://ghcr.io/dsd-toolbox/sacdfs:0.9.1 -R dsd-toolbox/sacdfs
 # /facts
 ```
 
@@ -1125,7 +1125,7 @@ The names of screens and fields may differ between releases.
    services:
      sacdfs:
        # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/dsd-toolbox/sacdfs:{version}'
-       image: ghcr.io/dsd-toolbox/sacdfs:0.9.0
+       image: ghcr.io/dsd-toolbox/sacdfs:0.9.1
        # /facts
        restart: unless-stopped
        devices:
@@ -1353,7 +1353,7 @@ player wait for sacdfs's health check:
 services:
   sacdfs:
     # facts:release repo=dsd-toolbox/sacdfs fmt='image: ghcr.io/dsd-toolbox/sacdfs:{version}'
-    image: ghcr.io/dsd-toolbox/sacdfs:0.9.0
+    image: ghcr.io/dsd-toolbox/sacdfs:0.9.1
     # /facts
     # needed with 0.4.1 and earlier images only (0.5.0 makes /srv/sacd itself); or make sacd in the host directory first
     entrypoint: ["bash", "-c", "mkdir -p /srv/sacd 2>/dev/null; exec /usr/local/bin/entrypoint.sh"]
