@@ -12,7 +12,7 @@
 # What each guide checked, and where, is in docs/install/. Every setting: docs/deployment.md.
 services:
   sacdfs:
-    image: ghcr.io/dsd-toolbox/sacdfs:0.9.1
+    image: ghcr.io/dsd-toolbox/sacdfs:0.9.1@sha256:9c5bf42ed2a35301114014ee8f0cf58ebf1f95e7b327df50fa4a377227027d8a
     container_name: sacdfs
     # hostname: sacdfs   # keeps the SMB server identity across a recreate (docs/deployment.md#smb-and-restarts)
     restart: unless-stopped
