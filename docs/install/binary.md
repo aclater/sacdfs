@@ -41,8 +41,8 @@ See [Details](#details).
    ```sh
    cd ~
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-linux.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-x86_64-linux.tar.gz.sha256
    # /facts
    ```
 
@@ -51,27 +51,27 @@ See [Details](#details).
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
-   sha256sum -c sacdfs-0.9.0-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.9.1-x86_64-linux.tar.gz.sha256
    # /facts
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.9.0-x86_64-linux.tar.gz: OK`<!-- /facts -->.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.9.1-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 
 4. **Unpack it and put the program in your own `bin` folder.**
 
    <!-- docs-run: expect="sacdfs {version}" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz'
-   tar -xzf sacdfs-0.9.0-x86_64-linux.tar.gz
+   tar -xzf sacdfs-0.9.1-x86_64-linux.tar.gz
    # /facts
    mkdir -p ~/.local/bin
    # facts:release repo=dsd-toolbox/sacdfs fmt='install -m 0755 sacdfs-{version}-x86_64-linux/sacdfs ~/.local/bin/'
-   install -m 0755 sacdfs-0.9.0-x86_64-linux/sacdfs ~/.local/bin/
+   install -m 0755 sacdfs-0.9.1-x86_64-linux/sacdfs ~/.local/bin/
    # /facts
    ~/.local/bin/sacdfs --version
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.9.0`<!-- /facts -->.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.9.1`<!-- /facts -->.
 
 5. **Make an empty folder to mount on, and start sacdfs.** While it runs, this folder shows the
    DSF and WAV files; anything already in it is hidden.
@@ -159,9 +159,9 @@ clean stop on SIGTERM with a file open ([testing](../design.md#oldest-distributi
 <!-- docs-run: skip="needs the GitHub CLI signed in, or a personal API key" -->
 ```sh
 # facts:release repo=dsd-toolbox/sacdfs fmt='gh release download {tag} -R dsd-toolbox/sacdfs -p '"'"'sacdfs-{version}-x86_64-linux.tar.gz*'"'"'\nsha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256\ngh attestation verify sacdfs-{version}-x86_64-linux.tar.gz -R dsd-toolbox/sacdfs'
-gh release download v0.9.0 -R dsd-toolbox/sacdfs -p 'sacdfs-0.9.0-x86_64-linux.tar.gz*'
-sha256sum -c sacdfs-0.9.0-x86_64-linux.tar.gz.sha256
-gh attestation verify sacdfs-0.9.0-x86_64-linux.tar.gz -R dsd-toolbox/sacdfs
+gh release download v0.9.1 -R dsd-toolbox/sacdfs -p 'sacdfs-0.9.1-x86_64-linux.tar.gz*'
+sha256sum -c sacdfs-0.9.1-x86_64-linux.tar.gz.sha256
+gh attestation verify sacdfs-0.9.1-x86_64-linux.tar.gz -R dsd-toolbox/sacdfs
 # /facts
 ```
 

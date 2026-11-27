@@ -6,6 +6,8 @@ All notable changes to sacdfs are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-27
+
 ### Added
 
 - **A seccomp deny-list after the mount.** Once sacdfs has mounted, it refuses itself (with `EPERM`)
@@ -42,10 +44,12 @@ All notable changes to sacdfs are recorded here. The format follows
 - **scarletbook 1.1.1 (was 1.0.2).** Two fixes to provisional seeking: no more fallback to an exact scan of the
   area where the bit rate rises (#434), and a track's head, opened from a saved seek index, begins at the track's
   start instead of at the previous track's tail (#437). They change which sectors are read, never the frames.
-  Measured against 1.0.2 on 40 real images (499 DSF files, head and tail of each, the mount opened a second
-  time on the saved index): image bytes read 120,219,648 -> 94,623,744 (-21.3 %) at the same 1,000 calls; on
-  the first mount 165,126,144 -> 137,056,256 (-17.0 %), calls 1,967 -> 1,979 (+0.6 %). Every DSF and WAV file the
-  mount serves hashes the same: 910 files of the 136-image test corpus and 156 files of 6 real images.
+- **No performance claim for this release.** The stereo and corpus timing comparison against 0.9.0 was not
+  valid on this run (the benchmark could not tell a doubling from noise there), so none is made; the
+  multichannel comparison is valid and shows no slowdown. A valid stereo run follows.
+- **Deploy files name the tag; the digest follows.** The Compose file, the Unraid template and the TrueNAS
+  app name the image `0.9.1` in this release; a follow-up change pins them by the digest of that image once
+  it is published, as for 0.9.0. A tag can move; a digest cannot.
 
 ### Fixed
 
@@ -2377,7 +2381,8 @@ The first release.
   signal handlers were set up after mounting. They are now set up before. SIGHUP's behaviour
   (unmount and stop, like SIGTERM) is documented.
 
-[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/dsd-toolbox/sacdfs/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/dsd-toolbox/sacdfs/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/dsd-toolbox/sacdfs/compare/v0.7.1...v0.7.2

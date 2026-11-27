@@ -49,8 +49,8 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-linux.tar.gz.sha256'
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-linux.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-linux.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-x86_64-linux.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-x86_64-linux.tar.gz.sha256
    # /facts
    ```
 
@@ -60,23 +60,23 @@ Since 0.6.2, [the installer](README.md#the-installer-one-line) does these steps 
    <!-- docs-run: -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='sha256sum -c sacdfs-{version}-x86_64-linux.tar.gz.sha256'
-   sha256sum -c sacdfs-0.9.0-x86_64-linux.tar.gz.sha256
+   sha256sum -c sacdfs-0.9.1-x86_64-linux.tar.gz.sha256
    # /facts
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.9.0-x86_64-linux.tar.gz: OK`<!-- /facts -->.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-x86_64-linux.tar.gz: OK`' -->`sacdfs-0.9.1-x86_64-linux.tar.gz: OK`<!-- /facts -->.
 6. **Unpack it and copy out the program and its start script.**
 
    <!-- docs-run: skip="copies into QNAP's own volume path, which the docs-run container does not have" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-x86_64-linux.tar.gz\ncp sacdfs-{version}-x86_64-linux/sacdfs sacdfs-{version}-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/.sacdfs/'
-   tar -xzf sacdfs-0.9.0-x86_64-linux.tar.gz
-   cp sacdfs-0.9.0-x86_64-linux/sacdfs sacdfs-0.9.0-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/.sacdfs/
+   tar -xzf sacdfs-0.9.1-x86_64-linux.tar.gz
+   cp sacdfs-0.9.1-x86_64-linux/sacdfs sacdfs-0.9.1-x86_64-linux/sacdfs-ctl /share/CACHEDEV1_DATA/.sacdfs/
    # /facts
    /share/CACHEDEV1_DATA/.sacdfs/sacdfs --version
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.9.0`<!-- /facts -->.
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs {version}`' -->`sacdfs 0.9.1`<!-- /facts -->.
 7. **Write the settings file.** Change the first line to your images folder. Keep each path in single quotes.
 
    <!-- docs-run: skip="writes into QNAP's own volume path, which the docs-run container does not have" -->
@@ -156,7 +156,7 @@ ls /share/CACHEDEV1_DATA/sacd
 
 ## If something goes wrong
 
-- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses <!-- facts:release repo=dsd-toolbox/sacdfs fmt='{version}' -->0.9.0<!-- /facts -->).
+- **You see:** `` weak version `GLIBC_2.28' not found ``. **Do this:** that is sacdfs 0.4.1 or older, which needs a newer system library than QNAP has. Use 0.5.0 or newer (this page uses <!-- facts:release repo=dsd-toolbox/sacdfs fmt='{version}' -->0.9.1<!-- /facts -->).
 - **You see:** `sha256sum: ... no properly formatted SHA256 checksum lines found`, or `gzip: stdin: not in gzip format`. **Do this:** the download saved an error page. Delete the two downloaded files and run step 4 again later.
 - **You see:** `Permission denied` when a share or an app opens the folder. **Do this:** you started sacdfs without being root. Run `id -u` (it must print `0`), stop sacdfs (see above) and start it again.
 

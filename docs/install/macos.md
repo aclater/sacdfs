@@ -32,8 +32,8 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    mkdir -p ~/sacdfs
    cd ~/sacdfs
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-aarch64-macos.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-aarch64-macos.tar.gz.sha256'
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-aarch64-macos.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-aarch64-macos.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-aarch64-macos.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-aarch64-macos.tar.gz.sha256
    # /facts
    ```
 
@@ -44,8 +44,8 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    mkdir -p ~/sacdfs
    cd ~/sacdfs
    # facts:release repo=dsd-toolbox/sacdfs fmt='curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-macos.tar.gz\ncurl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/{tag}/sacdfs-{version}-x86_64-macos.tar.gz.sha256'
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-macos.tar.gz
-   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.0/sacdfs-0.9.0-x86_64-macos.tar.gz.sha256
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-x86_64-macos.tar.gz
+   curl -fLO https://github.com/dsd-toolbox/sacdfs/releases/download/v0.9.1/sacdfs-0.9.1-x86_64-macos.tar.gz.sha256
    # /facts
    ```
 
@@ -56,12 +56,12 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='shasum -a 256 -c sacdfs-{version}-aarch64-macos.tar.gz.sha256'
-   shasum -a 256 -c sacdfs-0.9.0-aarch64-macos.tar.gz.sha256
+   shasum -a 256 -c sacdfs-0.9.1-aarch64-macos.tar.gz.sha256
    # /facts
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-aarch64-macos.tar.gz: OK`' -->`sacdfs-0.9.0-aarch64-macos.tar.gz: OK`<!-- /facts -->. On a computer with the GitHub CLI,
-   <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`gh attestation verify sacdfs-{version}-aarch64-macos.tar.gz -R dsd-toolbox/sacdfs`' -->`gh attestation verify sacdfs-0.9.0-aarch64-macos.tar.gz -R dsd-toolbox/sacdfs`<!-- /facts --> also checks that
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-{version}-aarch64-macos.tar.gz: OK`' -->`sacdfs-0.9.1-aarch64-macos.tar.gz: OK`<!-- /facts -->. On a computer with the GitHub CLI,
+   <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`gh attestation verify sacdfs-{version}-aarch64-macos.tar.gz -R dsd-toolbox/sacdfs`' -->`gh attestation verify sacdfs-0.9.1-aarch64-macos.tar.gz -R dsd-toolbox/sacdfs`<!-- /facts --> also checks that
    GitHub's release workflow built it.
 
 3. **Unpack it:**
@@ -69,12 +69,12 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
    ```sh
    # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-aarch64-macos.tar.gz\n~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs --version'
-   tar -xzf sacdfs-0.9.0-aarch64-macos.tar.gz
-   ~/sacdfs/sacdfs-0.9.0-aarch64-macos/sacdfs-nfs --version
+   tar -xzf sacdfs-0.9.1-aarch64-macos.tar.gz
+   ~/sacdfs/sacdfs-0.9.1-aarch64-macos/sacdfs-nfs --version
    # /facts
    ```
 
-   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-nfs {version}`' -->`sacdfs-nfs 0.9.0`<!-- /facts -->. The folder holds `sacdfs-nfs` (the mount), `sacdfs`
+   *You should see* <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`sacdfs-nfs {version}`' -->`sacdfs-nfs 0.9.1`<!-- /facts -->. The folder holds `sacdfs-nfs` (the mount), `sacdfs`
    (`verify` and `tags`), and the licences.
 
 4. **Make an empty folder to mount on, and start sacdfs.**
@@ -83,7 +83,7 @@ refuses them until you take one step ([Downloaded with a browser](#downloaded-wi
    ```sh
    mkdir -p ~/SACD
    # facts:release repo=dsd-toolbox/sacdfs fmt='~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs ~/Music/"SACD images" ~/SACD'
-   ~/sacdfs/sacdfs-0.9.0-aarch64-macos/sacdfs-nfs ~/Music/"SACD images" ~/SACD
+   ~/sacdfs/sacdfs-0.9.1-aarch64-macos/sacdfs-nfs ~/Music/"SACD images" ~/SACD
    # /facts
    ```
 
@@ -106,13 +106,13 @@ you unpack it**:
 ```sh
 cd ~/Downloads
 # facts:release repo=dsd-toolbox/sacdfs fmt='shasum -a 256 -c sacdfs-{version}-aarch64-macos.tar.gz.sha256\nxattr -d com.apple.quarantine sacdfs-{version}-aarch64-macos.tar.gz'
-shasum -a 256 -c sacdfs-0.9.0-aarch64-macos.tar.gz.sha256
-xattr -d com.apple.quarantine sacdfs-0.9.0-aarch64-macos.tar.gz
+shasum -a 256 -c sacdfs-0.9.1-aarch64-macos.tar.gz.sha256
+xattr -d com.apple.quarantine sacdfs-0.9.1-aarch64-macos.tar.gz
 # /facts
 mkdir -p ~/sacdfs
 # facts:release repo=dsd-toolbox/sacdfs fmt='tar -xzf sacdfs-{version}-aarch64-macos.tar.gz -C ~/sacdfs\n~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs --version'
-tar -xzf sacdfs-0.9.0-aarch64-macos.tar.gz -C ~/sacdfs
-~/sacdfs/sacdfs-0.9.0-aarch64-macos/sacdfs-nfs --version
+tar -xzf sacdfs-0.9.1-aarch64-macos.tar.gz -C ~/sacdfs
+~/sacdfs/sacdfs-0.9.1-aarch64-macos/sacdfs-nfs --version
 # /facts
 ```
 
@@ -160,7 +160,7 @@ screen.
 
    *You should see* `Installed package sacdfs ...` (`executables sacdfs, sacdfs-nfs`), then
    `sacdfs-nfs` and its version. The programs are in `~/.cargo/bin`: use
-   `~/.cargo/bin/sacdfs-nfs` where this guide says <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs`' -->`~/sacdfs/sacdfs-0.9.0-aarch64-macos/sacdfs-nfs`<!-- /facts -->.
+   `~/.cargo/bin/sacdfs-nfs` where this guide says <!-- facts:release repo=dsd-toolbox/sacdfs fmt='`~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs`' -->`~/sacdfs/sacdfs-0.9.1-aarch64-macos/sacdfs-nfs`<!-- /facts -->.
 
 ## Start it at each login
 
@@ -169,7 +169,7 @@ Instead of step 4, write a launch agent with the same command and `--launch-agen
 <!-- docs-run: skip="macOS commands; the docs-run container is Linux" -->
 ```sh
 # facts:release repo=dsd-toolbox/sacdfs fmt='~/sacdfs/sacdfs-{version}-aarch64-macos/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD'
-~/sacdfs/sacdfs-0.9.0-aarch64-macos/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD
+~/sacdfs/sacdfs-0.9.1-aarch64-macos/sacdfs-nfs --launch-agent ~/Music/"SACD images" ~/SACD
 # /facts
 launchctl load -w ~/Library/LaunchAgents/io.github.aclater.sacdfs-nfs.plist
 ```
