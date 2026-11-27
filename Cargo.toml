@@ -28,7 +28,7 @@ scarletbook = "=1.1.1"
 # reader (default feature `flac`), which sacdfs does not use.
 dsd2pcm = { version = "=0.2.0", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
-clap_mangen = { version = "0.2", optional = true }
+clap_mangen = { version = "0.3", optional = true }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 libc = "0.2"
 log = "0.4"
